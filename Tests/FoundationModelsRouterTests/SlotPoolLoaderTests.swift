@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import MLXFoundationModels
+import Observation
 import Synchronization
 import Testing
 
@@ -333,6 +334,33 @@ struct SlotPoolLoaderTests {
         await stream.reduce(into: []) { steps, step in steps.append(step) }
     }
 
+    /// Waits until `condition` holds for the slots of `progress`.
+    ///
+    /// ``ResolutionProgress`` is `@Observable`. Each cycle starts an
+    /// observation of ``ResolutionProgress/slots`` that signals at the next
+    /// change, and then reads the state through `condition`. A change after
+    /// the start of the observation thus wakes the wait. No clock ends the
+    /// wait.
+    ///
+    /// - Parameters:
+    ///   - progress: The progress whose slots the test reads.
+    ///   - condition: Reads the slots, and tells whether they are the slots
+    ///     that the test wants.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   first.
+    @MainActor
+    private static func waitForSlots(of progress: ResolutionProgress, until condition: () -> Bool) async throws {
+        let changes = ChangeSignal()
+        try await changes.wait(until: {
+            withObservationTracking {
+                _ = progress.slots
+            } onChange: {
+                changes.signal()
+            }
+            return condition()
+        })
+    }
+
     // MARK: - The live loader
 
     @Test("the live loader loads an embedding key through the Extras loader protocol with its model loader")
@@ -392,10 +420,11 @@ struct SlotPoolLoaderTests {
         }
 
         #expect(modelLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .llm)])
-        #expect(
-            await BoundedWait.conditionReached("the standard slot shows the bytes of the download") {
-                await progress.slots[.standard]?.bytesDownloaded == Self.reportedDownload.bytesDownloaded
-            })
+        // The reporter applies the download on a main-actor task of its own,
+        // so the test waits for that change of the slots.
+        try await Self.waitForSlots(of: progress) {
+            progress.slots[.standard]?.bytesDownloaded == Self.reportedDownload.bytesDownloaded
+        }
         #expect(progress.slots[.standard]?.bytesTotal == Self.reportedDownload.bytesTotal)
     }
 

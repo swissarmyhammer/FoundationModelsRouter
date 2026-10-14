@@ -52,6 +52,10 @@ struct SettledTranscriptTests {
         /// The transcript so far.
         private let entries: Mutex<[Transcript.Entry]> = Mutex([])
 
+        /// The signal that the backend sends after it appends each entry, so
+        /// a test waits for an entry with no clock.
+        let changes = ChangeSignal()
+
         /// Makes a backend whose held call waits on `release`.
         ///
         /// - Parameter release: The latch the held call waits on.
@@ -119,11 +123,13 @@ struct SettledTranscriptTests {
             self.entries.withLock { $0 = entries }
         }
 
-        /// Appends one entry to the transcript.
+        /// Appends one entry to the transcript, then signals ``changes``
+        /// after the lock.
         ///
         /// - Parameter entry: The entry to append.
         private func append(_ entry: Transcript.Entry) {
             entries.withLock { $0.append(entry) }
+            changes.signal()
         }
     }
 
@@ -163,29 +169,6 @@ struct SettledTranscriptTests {
         }
     }
 
-    /// Keeps the entries that one transcript read returned, so the test
-    /// polls for them inside a bound.
-    ///
-    /// The read runs in a task of its own. A read that waits for a
-    /// submission cannot be cancelled, so an awaited read would hang the
-    /// suite instead of failing this test.
-    private final class ReadBox: Sendable {
-        /// The entries of the read, or `nil` while the read has not returned.
-        private let stored: Mutex<[Transcript.Entry]?> = Mutex(nil)
-
-        /// The entries of the read, or `nil` while the read has not returned.
-        var entries: [Transcript.Entry]? {
-            stored.withLock { $0 }
-        }
-
-        /// Keeps the entries that the read returned.
-        ///
-        /// - Parameter entries: The entries of the read.
-        func setEntries(_ entries: [Transcript.Entry]) {
-            stored.withLock { $0 = entries }
-        }
-    }
-
     // MARK: - A read while a submission runs
 
     @Test("a transcript read from another task while a submission runs returns at once, with the entries of the last settled point")
@@ -202,23 +185,20 @@ struct SettledTranscriptTests {
         let backend = try #require(container.lastBackend)
 
         let heldAnswer = Task { try await session.respond(to: Self.heldPrompt) }
-        let heldSubmissionStarted = await BoundedWait.conditionReached("the held submission appending its prompt") {
-            backend.transcriptEntries().count == Self.entriesOfOneWholeSubmission + Self.entriesOfTheHeldSubmissionSoFar
-        }
+        let entriesWhileHeld = Self.entriesOfOneWholeSubmission + Self.entriesOfTheHeldSubmissionSoFar
+        try await backend.changes.wait(until: { backend.transcriptEntries().count == entriesWhileHeld })
 
         // The read comes from a task that is not the held submission, while
-        // that submission still runs. The bound of `MountFixtures.poll`
-        // limits the read: a read that waits for the held submission does
-        // not return inside it.
-        let readBox = ReadBox()
-        Task { readBox.setEntries(Array(await session.transcript)) }
-        let read = try await MountFixtures.poll { readBox.entries }
+        // that submission still runs. Only the test opens the latch of the
+        // held submission, and it does so after the read returns. Thus a read
+        // that waited for the held submission never returns, and the test
+        // stops here: a stack of the test process shows it.
+        let read = Task { Array(await session.transcript) }
+        let entries = await read.value
 
         await container.release.open()
         #expect(try await heldAnswer.value == HeldSubmissionBackend.answer(to: Self.heldPrompt))
 
-        try #require(heldSubmissionStarted)
-        let entries = try #require(read, "The read waited for the running submission.")
         // The settled point is the end of the first submission: its prompt and
         // its answer, and nothing of the held submission.
         #expect(entries.count == Self.entriesOfOneWholeSubmission)

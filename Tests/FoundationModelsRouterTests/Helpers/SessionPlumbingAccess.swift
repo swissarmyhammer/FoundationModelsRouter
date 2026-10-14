@@ -33,6 +33,24 @@ extension RoutedSession {
     /// change of the session — see ``RoutedSessionActor/idleChanges``.
     nonisolated var idleWaitCount: Int { (self as! RoutedSessionActor).idleChanges.waiterCount }
 
+    /// The signal of each change of the work of the session: the end of the
+    /// pump, the settlement of a background run, and the close — see
+    /// ``RoutedSessionActor/idleChanges``.
+    nonisolated var idleChanges: ChangeSignal { (self as! RoutedSessionActor).idleChanges }
+
+    /// The signal of each change of ``idleWaitCount``: an
+    /// ``RoutedSession/awaitIdle()`` call that starts to wait, or that stops.
+    nonisolated var idleWaiterChanges: ChangeSignal {
+        // The session makes its idle signal with the observation of its
+        // waiters, so the report is always there.
+        (self as! RoutedSessionActor).idleChanges.waiterChanges!
+    }
+
+    /// The signal of each change of a state that sends no event of its own:
+    /// a mail that the queue got, a stop of the running work, and a cancel
+    /// of the running compaction — see ``RoutedSessionActor/stateChanges``.
+    nonisolated var stateChanges: ChangeSignal { (self as! RoutedSessionActor).stateChanges }
+
     /// Asks the session to stop the work its pump runs now, and does not
     /// wait (``RoutedSessionActor/requestCancelOfRunningWork()``). This is
     /// the first step of the stop of the running answer in
@@ -61,15 +79,45 @@ extension RoutedSession {
         outbox.queue.pending.filter { !$0.isRunMail }.count
     }
 
-    /// Whether this session becomes idle inside ``BoundedWait``'s bound: its
-    /// pump ends, and no user-type mail waits in its queue. The session then
-    /// holds no answer, and nothing of it is stranded.
+    /// Waits until this session becomes idle: no pump runs, and no user-type
+    /// mail waits in its queue. The session then holds no answer, and
+    /// nothing of it is stranded.
     ///
-    /// - Returns: Whether the session became idle inside the bound.
+    /// The wait reads the state, and waits for the next change of
+    /// ``idleChanges`` while the state does not hold. The end of each pump is
+    /// such a change. A user-type mail that waits wakes a pump
+    /// (``RoutedSessionActor/mail(_:)``), and that pump ends with a change,
+    /// so the wait reads the state again after it. No clock ends the wait.
+    ///
+    /// - Returns: `true` when the session is idle, or `false` when the
+    ///   waiting task was cancelled first.
     func becomesIdle() async -> Bool {
-        await BoundedWait.conditionReached("the session becoming idle") {
-            let pumpRunning = await self.isPumpRunning
-            return !pumpRunning && self.waitingUserMailCount == 0
+        do {
+            try await idleChanges.wait(until: {
+                let pumpRunning = await self.isPumpRunning
+                return !pumpRunning && self.waitingUserMailCount == 0
+            })
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Waits until no pump of this session runs.
+    ///
+    /// The end of each pump is a change of ``idleChanges``, so the wait
+    /// reads the state again after each end. A pump that never started also
+    /// satisfies the wait: the caller first waits for an event of the pump,
+    /// for example a prompt that reached the backend.
+    ///
+    /// - Returns: `true` when no pump runs, or `false` when the waiting task
+    ///   was cancelled first.
+    func pumpEnds() async -> Bool {
+        do {
+            try await idleChanges.wait(until: { await !self.isPumpRunning })
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -77,10 +125,9 @@ extension RoutedSession {
     /// waits in its queue. The session then holds no answer, and nothing of
     /// it is stranded.
     ///
-    /// ``becomesIdle()`` asks the same question under the wall clock of
-    /// ``BoundedWait``. This one waits for the end of
-    /// ``RoutedSessionActor/pumpTask`` itself, so a loaded machine makes it
-    /// slower and never wrong. The wait ends when the pump ends.
+    /// This waits for the end of ``RoutedSessionActor/pumpTask`` itself, and
+    /// then reads the queue one time. It does not wait for a pump that a mail
+    /// is about to wake: use ``becomesIdle()`` for that.
     ///
     /// - Returns: Whether no user-type mail waits after the last pump ended.
     func isIdleOnceThePumpEnds() async -> Bool {

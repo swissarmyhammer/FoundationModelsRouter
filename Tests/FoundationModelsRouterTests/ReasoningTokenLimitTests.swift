@@ -28,13 +28,12 @@ struct ReasoningTokenLimitTests {
     /// The reasoning of a pass that stays below the default limit, in tokens.
     private static let shortReasoningTokens = 2_000
 
-    /// The hold of a call that the session must stop. It ends only when the
-    /// session cancels it, or the test fails on the answer that follows.
-    private static let stoppedHold = Duration.seconds(5)
-
-    /// The hold of a call that the session must not stop: long enough for
-    /// the watch to read the whole reasoning.
-    private static let unstoppedHold = Duration.milliseconds(200)
+    /// The script of a call that the session must stop: it writes new lines
+    /// up to the default limit, then waits until the session stops it. The
+    /// call writes no line after the limit, so the stop reads the same
+    /// reasoning in each run, and that reasoning is shorter than
+    /// ``longReasoningTokens``.
+    private static let stoppedScript = RepeatingReasoningScript.reasoningHeldAtLimit()
 
     /// Lines that are all new, whose text holds at least `tokens` tokens
     /// (``RepeatingReasoningScript/distinctLines(totalling:)``).
@@ -66,13 +65,20 @@ struct ReasoningTokenLimitTests {
         if let logger {
             await fixture.session.useCaptureLogger(for: logger)
         }
-        let events = try await collect(fixture.session.streamEvents(to: prompt))
+        let events = try await fixture.answer(to: prompt)
         return (fixture, events)
     }
 
     /// The finish reason of each ended submission among `events`, in order.
     private static func finishReasons(in events: [SessionEvent]) -> [FinishReason] {
         events.submissionEnds.map(\.finishReason)
+    }
+
+    /// The hold of a call that the session must not stop: a new gate, which
+    /// opens only after the watch read the whole reasoning and found no stop.
+    /// So a stop could only come before the call ends.
+    private static var unstoppedHold: RepeatingReasoningHold {
+        .untilOpened(ReasoningHoldGate())
     }
 
     /// The joined text of every `.reasoning` entry of `transcript`.
@@ -85,8 +91,7 @@ struct ReasoningTokenLimitTests {
 
     @Test("a reasoning of 10,000 tokens of new lines stops at the limit, and the recovery prompt reaches the model")
     func longReasoningStopsAndRecovers() async throws {
-        let script = RepeatingReasoningScript(
-            reasoningLines: Self.newLines(totalling: Self.longReasoningTokens), hold: Self.stoppedHold)
+        let script = Self.stoppedScript
         let ((fixture, events), logs) = try await TelemetryCapture.run(forbidding: []) { context in
             let answer = try await Self.runAnswer(script: script, logger: context.logger)
             return (answer, context)
@@ -120,10 +125,7 @@ struct ReasoningTokenLimitTests {
 
     @Test("the recovery after a reasoning stop asks the model to turn its reasoning off")
     func recoveryRunsWithReasoningOff() async throws {
-        let script = RepeatingReasoningScript(
-            reasoningLines: Self.newLines(totalling: Self.longReasoningTokens), hold: Self.stoppedHold)
-
-        let (fixture, events) = try await Self.runAnswer(script: script)
+        let (fixture, events) = try await Self.runAnswer(script: Self.stoppedScript)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
@@ -148,11 +150,8 @@ struct ReasoningTokenLimitTests {
 
     @Test("with no recovery left, a final pass with the reasoning off gives the answer")
     func noRecoveryLeftEndsWithNamedFinishReason() async throws {
-        let script = RepeatingReasoningScript(
-            reasoningLines: Self.newLines(totalling: Self.longReasoningTokens), hold: Self.stoppedHold)
-
         let (fixture, events) = try await Self.runAnswer(
-            script: script, detection: RepetitionDetection(recoveriesPerAnswer: 0))
+            script: Self.stoppedScript, detection: RepetitionDetection(recoveriesPerAnswer: 0))
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let stop = try #require(events.reasoningStops.first)

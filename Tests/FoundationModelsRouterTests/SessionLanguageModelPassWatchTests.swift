@@ -19,11 +19,6 @@ struct SessionLanguageModelPassWatchTests {
     /// The prompt of each call.
     private static let prompt = "look up the record"
 
-    /// How long a watch waits for its cancel. A watch that the end of its pass
-    /// does not cancel ends after this span, and the log then records an end
-    /// that no cancel caused.
-    private static let watchHold: Duration = .seconds(60)
-
     /// Makes a session over a new wrapper of a model that asks for one tool
     /// in its first pass and answers in its second pass.
     ///
@@ -38,12 +33,17 @@ struct SessionLanguageModelPassWatchTests {
     /// Makes a watch that records its start, waits for its cancel, and
     /// records its end.
     ///
+    /// The watch holds on an event that nobody sends. Only a cancel ends the
+    /// hold, so no clock is in the test. A watch that the end of its pass does
+    /// not cancel keeps the test waiting, and a stack of the test process
+    /// then shows the open hold.
+    ///
     /// - Parameter log: The log the watch records into.
     /// - Returns: The watch.
     private static func recordingWatch(into log: PassWatchLog) -> SessionLanguageModelState.PassWatch {
         {
             log.recordStart()
-            try? await Task.sleep(for: watchHold)
+            try? await AwaitedEvent().wait()
             log.recordEnd(cancelled: Task.isCancelled)
         }
     }

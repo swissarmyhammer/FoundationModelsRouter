@@ -100,6 +100,10 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     /// The one lock the captures are behind.
     private let captures = Mutex(Captures())
 
+    /// The signal of each change of the captures, sent after the change. A
+    /// test waits on it for a prompt or a tool output with no clock.
+    let changes = ChangeSignal()
+
     /// Every prompt this backend was asked to respond to, in call order.
     var receivedPrompts: [String] { captures.withLock { $0.receivedPrompts } }
 
@@ -124,7 +128,7 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     }
 
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        let isFirstCall = captures.withLock { captures in
+        let isFirstCall = capture { captures in
             captures.receivedPrompts.append(prompt)
             return captures.toolCallCount == 0
         }
@@ -139,12 +143,21 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
                 let mounted = ToolFailureDelivery.throwingTool(of: tool)
                     as? BackgroundToolRunner<BackgroundFixtureArguments>
             else { continue }
-            captures.withLock { $0.toolCallCount += 1 }
+            capture { $0.toolCallCount += 1 }
             rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
-            captures.withLock { [rendered] in $0.toolOutputs.append(rendered) }
+            capture { [rendered] in $0.toolOutputs.append(rendered) }
         }
         await holdFirstAnswer?.waitUntilOpen()
         return rendered
+    }
+
+    /// Changes the captures under their lock, and then signals ``changes``.
+    ///
+    /// - Parameter change: The change of the captures.
+    /// - Returns: What `change` returns.
+    private func capture<Value>(_ change: (inout Captures) -> Value) -> Value {
+        defer { changes.signal() }
+        return captures.withLock { change(&$0) }
     }
 
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {

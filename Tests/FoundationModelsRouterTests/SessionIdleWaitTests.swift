@@ -99,35 +99,45 @@ struct SessionIdleWaitTests {
         return Fixture(session: session, backend: backend, router: router, directory: directory)
     }
 
+    /// One ``RoutedSession/awaitIdle()`` call that runs in a task of its own.
+    struct IdleWait {
+        /// The task of the call, which a test can cancel.
+        let waiting: Task<Bool, Never>
+
+        /// Gets the result of the call. A test reads the result here, not
+        /// from the task.
+        let outcome: RecordedWaitResult
+    }
+
     /// Starts one ``RoutedSession/awaitIdle()`` call in a task of its own,
     /// and returns when the call waits for the next change of the session,
     /// or when it returned first.
     ///
-    /// - Parameters:
-    ///   - session: The session to wait on.
-    ///   - outcome: Gets the result of the call.
-    /// - Returns: The task of the call, which a test can cancel. A test reads
-    ///   the result from `outcome`, not from the task.
+    /// The result of the call reports to
+    /// ``RoutedSession/idleWaiterChanges``, the signal of each change of the
+    /// waiters of the session. So one wait on that signal sees the call
+    /// start to wait, and also sees the call return first.
+    ///
+    /// - Parameter session: The session to wait on.
+    /// - Returns: The task of the call and its result.
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   before the call waited or returned.
-    @discardableResult
-    private static func startIdleWait(
-        on session: any RoutedSession, recording outcome: RecordedWaitResult
-    ) async throws -> Task<Bool, Never> {
+    private static func startIdleWait(on session: any RoutedSession) async throws -> IdleWait {
+        let outcome = RecordedWaitResult(reportingTo: session.idleWaiterChanges)
         let waiting = Task {
             let idle = await session.awaitIdle()
             outcome.record(idle)
             return idle
         }
-        try await AwaitedCondition.wait(until: { session.idleWaitCount == 1 || outcome.value != nil })
-        return waiting
+        try await session.idleWaiterChanges.wait(until: { session.idleWaitCount == 1 || outcome.value != nil })
+        return IdleWait(waiting: waiting, outcome: outcome)
     }
 
     /// Runs `work` in a task of its own, and records what it gives in the
     /// result that this function returns.
     ///
-    /// A test reads the result with ``AwaitedCondition/wait(until:)``, or
-    /// reads it one time to see that `work` did not return yet.
+    /// A test reads the result with ``result(of:)``, or reads it one time to
+    /// see that `work` did not return yet.
     ///
     /// - Parameter work: The work to run.
     /// - Returns: The result that gets what `work` gives.
@@ -137,14 +147,15 @@ struct SessionIdleWaitTests {
         return outcome
     }
 
-    /// Waits until `outcome` has a result, and gives it.
+    /// Waits until `outcome` has a result, and gives it. The record of the
+    /// result signals the changes of `outcome`.
     ///
     /// - Parameter outcome: The result of a wait that runs in a task of its own.
     /// - Returns: The result.
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   before the result came.
     private static func result(of outcome: RecordedWaitResult) async throws -> Bool? {
-        try await AwaitedCondition.wait(until: { outcome.value != nil })
+        try await outcome.changes.wait(until: { outcome.value != nil })
         return outcome.value
     }
 
@@ -212,14 +223,13 @@ struct SessionIdleWaitTests {
             container: BackgroundingLLMContainer(holdLaterAnswers: holdMailAnswer))
         let events = await fixture.session.streamSessionEvents().events
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = RecordedWaitResult()
-        try await Self.startIdleWait(on: fixture.session, recording: outcome)
+        let outcome = try await Self.startIdleWait(on: fixture.session).outcome
         #expect(outcome.value == nil)
 
         // The run settles, and its mail starts an answer, which the backend
         // holds open: the session is busy.
         await gate.open()
-        try await AwaitedCondition.wait(until: {
+        try await fixture.backend.changes.wait(until: {
             fixture.backend.receivedPrompts.count == Self.promptsWithAMailAnswer
         })
         #expect(outcome.value == nil)
@@ -244,10 +254,9 @@ struct SessionIdleWaitTests {
         let responded = Self.startResponding(on: fixture.session)
 
         // The run settled inside its own tool call, and the answer is held.
-        try await AwaitedCondition.wait(until: { fixture.backend.toolOutputs.count == 1 })
+        try await fixture.backend.changes.wait(until: { fixture.backend.toolOutputs.count == 1 })
         #expect(await fixture.session.runPlane.backgroundRuns().isEmpty)
-        let outcome = RecordedWaitResult()
-        try await Self.startIdleWait(on: fixture.session, recording: outcome)
+        let outcome = try await Self.startIdleWait(on: fixture.session).outcome
         #expect(outcome.value == nil)
 
         await holdFirstAnswer.open()
@@ -265,13 +274,12 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = RecordedWaitResult()
-        let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
-        #expect(outcome.value == nil)
+        let idleWait = try await Self.startIdleWait(on: fixture.session)
+        #expect(idleWait.outcome.value == nil)
 
-        waiting.cancel()
+        idleWait.waiting.cancel()
 
-        #expect(try await Self.result(of: outcome) == false)
+        #expect(try await Self.result(of: idleWait.outcome) == false)
         #expect(await fixture.session.runPlane.backgroundRuns().count == 1)
         await Self.end(fixture, opening: [gate])
     }
@@ -282,8 +290,7 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = RecordedWaitResult()
-        try await Self.startIdleWait(on: fixture.session, recording: outcome)
+        let outcome = try await Self.startIdleWait(on: fixture.session).outcome
         #expect(outcome.value == nil)
 
         // The body of the run does not see its cancel until the gate opens,
@@ -341,9 +348,7 @@ struct SessionIdleWaitTests {
             withUnsafeCurrentTask { $0?.cancel() }
             return await fixture.session.awaitIdle()
         }
-        try await AwaitedCondition.wait(until: { outcome.value != nil })
-
-        #expect(outcome.value == false)
+        #expect(try await Self.result(of: outcome) == false)
         #expect(fixture.session.idleWaitCount == 0)
         await Self.end(fixture, opening: [gate])
     }
@@ -427,7 +432,7 @@ struct SessionIdleWaitTests {
         let workId = await session.lastWorkId
         let reads = await session.readRunsAndMail()
         let responded = Self.startResponding(on: fixture.session)
-        try await AwaitedCondition.wait(until: { fixture.backend.receivedPrompts.count == 1 })
+        try await fixture.backend.changes.wait(until: { fixture.backend.receivedPrompts.count == 1 })
 
         let workIdOfTheAnswer = await session.lastWorkId
         #expect(workIdOfTheAnswer != workId)

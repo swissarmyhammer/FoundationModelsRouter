@@ -15,7 +15,8 @@ import Testing
 ///
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``NoOpToolCallModel``. No GPU is in the loop. A ``RunLatch`` holds
-/// the background job, and each wait reads a state until it holds.
+/// the background job, and each wait waits for an event on the feed of the
+/// session.
 @Suite("A no-op tool call stops the generation while an operation is pending")
 struct NoOpToolCallStopTests {
     /// The suite's temp-directory prefix.
@@ -60,16 +61,6 @@ struct NoOpToolCallStopTests {
         }
     }
 
-    /// Waits, bounded, until the model received `count` calls.
-    ///
-    /// - Parameters:
-    ///   - count: How many calls to wait for.
-    ///   - log: The log that the model writes.
-    /// - Returns: `true` when the calls arrived inside the bound.
-    private static func callsArrive(_ count: Int, in log: RenderProbeLog) async -> Bool {
-        await BoundedWait.conditionReached("\(count) model calls") { log.renders.count >= count }
-    }
-
     @Test("pending job and a no-op call: the generation stops, the call is not in the context, and the result is next")
     func aNoOpCallStopsTheGenerationWhileAJobIsPending() async throws {
         let fixture = try await NoOpToolCallSessionFixture.make(
@@ -81,9 +72,15 @@ struct NoOpToolCallStopTests {
         #expect(fixture.log.renders.count == Self.callsBeforeTheResult)
         #expect(!Self.holdsRunCodeCall(await fixture.session.transcript))
 
+        let (events, drain) = await SessionEventLog.watch(fixture.session)
         await fixture.gate.open()
-        #expect(await Self.callsArrive(Self.callsBeforeTheResult + 1, in: fixture.log))
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        // The settled job starts the answer that delivers its result. That
+        // answer calls the model before it ends, so its end comes after the
+        // render of the call.
+        try await events.wait(until: { delivered in delivered.contains { $0.isAnswerEnd } })
+        drain.cancel()
+        #expect(await fixture.session.pumpEnds())
+        #expect(fixture.log.renders.count >= Self.callsBeforeTheResult + 1)
         let next = try #require(fixture.log.renders.last)
         let nextPrompt = try #require(next.promptTexts.last)
         #expect(nextPrompt.contains(NoOpToolCallSessionFixture.jobOutput))

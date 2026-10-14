@@ -194,6 +194,12 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// what keeps a read beside a live stream producer sound.
     private let state: Mutex<State>
 
+    /// The signal of each generation call this backend recorded, sent after
+    /// the call is recorded, whether or not the call throws. A test waits on
+    /// it for a prompt with no clock:
+    /// `backend.changes.wait(until: { backend.receivedPrompts.count == 2 })`.
+    let changes = ChangeSignal()
+
     /// The canned text every generation entry point returns on success.
     var responseText: String {
         get { state.withLock { $0.responseText } }
@@ -472,7 +478,10 @@ final class StubSessionBackend: LanguageModelSessionBackend {
         reasoningOff: Bool = false,
         preflight: () throws -> Void = {}
     ) throws -> String {
-        try state.withLock { state in
+        // After the lock: a waiter that reads the state on the signal sees
+        // the whole call.
+        defer { changes.signal() }
+        return try state.withLock { state in
             state.callCount += 1
             state.receivedPrompts.append(prompt)
             generationLog?.record(prompt: prompt, maxTokens: maxTokens, reasoningOff: reasoningOff)

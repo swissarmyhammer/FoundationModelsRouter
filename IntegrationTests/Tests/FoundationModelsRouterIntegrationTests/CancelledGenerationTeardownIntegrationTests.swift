@@ -5,6 +5,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
+@testable import MLXFoundationModels
 
 /// The model this suite cancels mid-generation: the same 1B model the
 /// compaction smoke suite drives, small enough to keep the whole suite fast.
@@ -12,19 +13,12 @@ private let cancellationSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instr
 
 /// The response-token ceiling of the generation this suite cancels.
 ///
-/// Sized so the generation is still decoding on the GPU when the cancel
-/// lands at ``cancellationDelaySeconds``: at the 1B model's measured decode
-/// rate this many tokens run well past that point, and — should cancellation
-/// fail to propagate at all — a full uncancelled run still stops at this
-/// ceiling rather than hanging the suite.
+/// The suite cancels the generation at the first text that the executor
+/// decodes. Thus the prefill is over and the decode is on the GPU. This many
+/// tokens give a decode that continues long after that first text. If the
+/// cancel does not reach the generation, a full run still stops at this
+/// ceiling.
 private let cancelledGenerationMaxTokens = 2048
-
-/// How long the suite lets the doomed generation run before it cancels it.
-///
-/// Long enough that the short prompt's prefill is over and token decode is in
-/// flight on the GPU — the state the gated eval was in when the cancellation
-/// reached it — and short enough to keep the suite fast.
-private let cancellationDelaySeconds = 2
 
 /// Regression coverage for task `^bkdm97c`: a gated eval whose test task was
 /// cancelled mid-generation aborted the whole process on a Metal assertion —
@@ -58,22 +52,41 @@ struct CancelledGenerationTeardownIntegrationTests {
     /// mid-decode, and waits for it to end.
     ///
     /// The prompt asks the model to count without stopping, so it decodes
-    /// until the token ceiling, and the cancel after
-    /// ``cancellationDelaySeconds`` always lands mid-decode.
+    /// until the token ceiling. The cancel comes at the first text that the
+    /// MLX executor sends into its channel. That text is the first event of
+    /// the decode, so the cancel always comes after the prefill and in the
+    /// decode.
+    ///
+    /// The executor shows each text to the test-only task-local observer
+    /// `MLXLanguageModel.Executor.generationObserver` before it sends the
+    /// text. The generation task inherits the observer, and the SDK runs the
+    /// executor with the task-local values of that task.
+    ///
+    /// The end of the generation finishes the stream of texts. A generation
+    /// that sends no text then also ends the wait. The cancel that follows has
+    /// no effect, and the test records the `.success` outcome as an issue.
     ///
     /// - Parameter backend: The backend to generate on.
     /// - Returns: How the cancelled generation ended.
-    /// - Throws: What the sleep before the cancel throws.
     private static func runCancelledGeneration(
         on backend: any LanguageModelSessionBackend
-    ) async throws -> Result<String, any Error> {
-        let doomed = Task {
-            try await backend.respond(
-                to: "Count upward from 1, one number per line, without stopping.",
-                maxTokens: cancelledGenerationMaxTokens
-            )
+    ) async -> Result<String, any Error> {
+        let (decodedTexts, decodedText) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let doomed = MLXLanguageModel.Executor.$generationObserver.withValue({ event in
+            if case .appendText = event {
+                decodedText.yield()
+            }
+        }) {
+            Task {
+                defer { decodedText.finish() }
+                return try await backend.respond(
+                    to: "Count upward from 1, one number per line, without stopping.",
+                    maxTokens: cancelledGenerationMaxTokens
+                )
+            }
         }
-        try await Task.sleep(for: .seconds(cancellationDelaySeconds))
+        var firstDecodedText = decodedTexts.makeAsyncIterator()
+        _ = await firstDecodedText.next()
         doomed.cancel()
         return await doomed.result
     }
@@ -91,7 +104,7 @@ struct CancelledGenerationTeardownIntegrationTests {
         // cancellation. A `.success` here means cancellation never reached
         // the generation at all — the card's open question 2 — and is a
         // failure of its own, distinct from the signal-6 abort.
-        let outcome = try await Self.runCancelledGeneration(on: backend)
+        let outcome = await Self.runCancelledGeneration(on: backend)
         switch outcome {
         case .success(let text):
             Issue.record(
@@ -144,7 +157,7 @@ struct CancelledGenerationTeardownIntegrationTests {
             instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
         let usageBefore = try #require(backend.usageTokenCounts())
 
-        let outcome = try await Self.runCancelledGeneration(on: backend)
+        let outcome = await Self.runCancelledGeneration(on: backend)
 
         #expect(throws: CancellationError.self) { try outcome.get() }
         let usageAfter = try #require(backend.usageTokenCounts())

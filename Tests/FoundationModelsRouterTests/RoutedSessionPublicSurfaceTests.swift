@@ -81,23 +81,30 @@ struct RoutedSessionPublicSurfaceTests {
         #expect(result.summary != nil)
     }
 
-    /// Whether the transcript of `session` holds a prompt with `text`, and no
-    /// message of it waits or runs, inside ``BoundedWait``'s bound. Only
-    /// public members are read.
+    /// Waits for the answer to the mail `id`, then tells whether the
+    /// transcript of `session` holds a prompt with `text`, and no message of
+    /// it waits or runs. Only public members are read.
+    ///
+    /// The answer is the terminal event of the mail. The session records the
+    /// prompt before the answer ends, and the mail left the queue when its
+    /// answer started. Thus one read after the answer is enough.
     ///
     /// - Parameters:
+    ///   - id: The id of the sent mail.
     ///   - session: The session to read.
     ///   - text: The prompt text to find.
-    /// - Returns: Whether the session answered the prompt inside the bound.
-    private static func answered(_ session: any RoutedSession, prompt text: String) async -> Bool {
-        await BoundedWait.conditionReached("the answer to the sent message") {
-            let prompts = Array(await session.transcript).compactMap { entry -> String? in
-                guard case .prompt(let prompt) = entry else { return nil }
-                return Self.text(of: prompt)
-            }
-            let depth = await session.mailQueueDepth()
-            return prompts.contains(text) && depth.total == 0
+    /// - Returns: Whether the session answered the prompt.
+    /// - Throws: What ``RoutedSession/awaitAnswer(of:)`` throws.
+    private static func answered(
+        _ id: MailID, on session: any RoutedSession, prompt text: String
+    ) async throws -> Bool {
+        _ = try await session.awaitAnswer(of: id)
+        let prompts = Array(await session.transcript).compactMap { entry -> String? in
+            guard case .prompt(let prompt) = entry else { return nil }
+            return Self.text(of: prompt)
         }
+        let depth = await session.mailQueueDepth()
+        return prompts.contains(text) && depth.total == 0
     }
 
     // MARK: - send(_ prompt: String)
@@ -112,7 +119,7 @@ struct RoutedSessionPublicSurfaceTests {
 
         let id: MailID = try fixture.session.send(Self.sentPromptText)
 
-        #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
+        #expect(try await Self.answered(id, on: fixture.session, prompt: Self.sentPromptText))
         #expect(await fixture.session.pendingMessages().allSatisfy { $0.id != id })
     }
 
@@ -132,7 +139,7 @@ struct RoutedSessionPublicSurfaceTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let feed = await fixture.session.streamSessionEvents()
         let id = try fixture.session.send(Self.sentPromptText)
-        #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
+        #expect(try await Self.answered(id, on: fixture.session, prompt: Self.sentPromptText))
 
         let cancelSignal: SignalID = fixture.session.cancel(id)
         let replaceSignal: SignalID = fixture.session.replace(

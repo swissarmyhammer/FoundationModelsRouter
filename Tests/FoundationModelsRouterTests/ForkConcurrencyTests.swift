@@ -17,7 +17,8 @@ import Testing
 ///   each whole call to it; when wired with a test-controlled
 ///   ``SerialObserver`` + release gate, the backend can suspend a call, so the
 ///   queue's non-overlap and FIFO order are made deterministic through the
-///   queue's `waitingCount` observability rather than sleeps.
+///   ``SessionEvent/submissionQueued(_:)`` event of each waiting session
+///   rather than sleeps.
 ///
 /// Real prefix reuse (no recompute) is gated to the milestone 7 integration
 /// suite; here the abstraction is asserted through the stub.
@@ -32,10 +33,15 @@ struct ForkConcurrencyTests {
         private(set) var active = 0
         private(set) var maxActive = 0
 
+        /// The signal that ``enter(_:)`` sends after each entry, so a test
+        /// waits for an entry with no clock.
+        nonisolated let changes = ChangeSignal()
+
         func enter(_ id: Int) {
             entryOrder.append(id)
             active += 1
             maxActive = max(maxActive, active)
+            changes.signal()
         }
 
         func exit() {
@@ -445,21 +451,27 @@ struct ForkConcurrencyTests {
         let callers: [any RoutedSession] = [root, fork1, fork2, fork3]
 
         let queue = container.generationQueue
+        var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
+        for caller in callers.dropFirst() {
+            feeds.append(await SessionEventLog.watch(caller))
+        }
+        defer { feeds.forEach { $0.drain.cancel() } }
 
         // Launch call 0; its submission runs on the worker and suspends.
         let task0 = Task { try await callers[0].respond(to: "0") }
-        await BoundedWait.spin(until: { await queue.isRunning })
-        await BoundedWait.spin(until: { await observer.entryOrder == [0] })
+        try await observer.changes.wait(until: { await observer.entryOrder == [0] })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous
         // submission has actually joined the queue — establishing a
-        // deterministic FIFO arrival order without sleeping.
+        // deterministic FIFO arrival order without sleeping. The session
+        // sends `submissionQueued` when its submission joins the queue.
         let task1 = Task { try await callers[1].respond(to: "1") }
-        await BoundedWait.spin(until: { await queue.waitingCount == 1 })
+        try await feeds[0].log.waitForQueuedSubmissions(1)
         let task2 = Task { try await callers[2].respond(to: "2") }
-        await BoundedWait.spin(until: { await queue.waitingCount == 2 })
+        try await feeds[1].log.waitForQueuedSubmissions(1)
         let task3 = Task { try await callers[3].respond(to: "3") }
-        await BoundedWait.spin(until: { await queue.waitingCount == 3 })
+        try await feeds[2].log.waitForQueuedSubmissions(1)
+        #expect(await queue.waitingCount == callers.count - 1)
 
         // Only one pass has entered so far — the queue held the rest out.
         #expect(await observer.entryOrder == [0])

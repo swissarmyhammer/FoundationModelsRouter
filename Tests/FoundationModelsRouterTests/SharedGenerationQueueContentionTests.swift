@@ -77,20 +77,19 @@ struct SharedGenerationQueueContentionTests {
 
         let holder = profile.standard.makeSession()
         let waiter = profile.flash.makeSession()
+        let waiterFeed = await SessionEventLog.watch(waiter)
+        defer { waiterFeed.drain.cancel() }
 
         let holderAnswer = Task { try await holder.respond(to: Self.firstPrompt) }
-        #expect(
-            await BoundedWait.conditionReached("the standard session's pass in the model") {
-                await fixture.observer.enteredCount == 1
-            })
+        await fixture.observer.waitUntil { $0.entered == 1 }
 
         // The flash session's submission now waits in the very same queue.
-        // This is the contention: two handles, one container, one queue.
+        // This is the contention: two handles, one container, one queue. The
+        // session sends `submissionQueued` when its submission joins the
+        // queue behind the other job.
         let waiterAnswer = Task { try await waiter.respond(to: Self.secondPrompt) }
-        #expect(
-            await BoundedWait.conditionReached("the flash session's submission waiting in the shared queue") {
-                await queue.waitingCount == 1
-            })
+        try await waiterFeed.log.waitForQueuedSubmissions(1)
+        #expect(await queue.waitingCount == 1)
 
         // The waiting submission never reached the model, so one pass is in
         // flight rather than two.

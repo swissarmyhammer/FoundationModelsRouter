@@ -22,6 +22,8 @@ extension RoutedSessionActor {
     /// two. A hit after the put, while this mail is still queued, cancels
     /// this mail again.
     ///
+    /// A mail that stays in the queue is a change of ``stateChanges``.
+    ///
     /// - Parameter mail: The mail to put in the queue.
     /// - Returns: The output of the mail, up to and including its terminal
     ///   event.
@@ -45,6 +47,7 @@ extension RoutedSessionActor {
         // The record comes before the wake of the pump, so the transcript
         // holds the arrival of the mail before its delivery.
         recordMail([.mailQueued(mail)])
+        stateChanges.signal()
         Task { await self.mailDidArrive() }
         return subscription
     }

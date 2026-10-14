@@ -9,16 +9,16 @@ import Testing
 /// The contract under test: the sequence first yields the current phase, then
 /// yields each observed phase transition exactly once, and finishes when the
 /// phase reaches ``ResolutionProgress/Phase/ready`` or
-/// ``ResolutionProgress/Phase/failed(_:)``. Every wait here goes through
-/// ``BoundedWait``, so a broken stream fails the test instead of hanging the
-/// suite.
+/// ``ResolutionProgress/Phase/failed(_:)``. Each wait here waits for the
+/// change signal of the log of the consumer, so no clock ends a wait.
 @Suite("ResolutionProgress.phases: progress as an AsyncSequence")
 struct ResolutionProgressPhasesTests {
     /// Collects what one consumer task saw: the yielded transitions, and
     /// whether the sequence finished.
     ///
     /// `@MainActor` so the consumer task's appends and the test's reads are
-    /// serialized on one actor.
+    /// serialized on one actor. Each record is a change of ``changes``, so a
+    /// test waits for a transition with no clock.
     @MainActor
     private final class TransitionLog {
         /// The transitions the consumer received, in arrival order.
@@ -27,14 +27,21 @@ struct ResolutionProgressPhasesTests {
         /// Whether the `for await` loop ended.
         private(set) var finished = false
 
-        /// Records one received transition.
+        /// The signal that each record sends.
+        nonisolated let changes = ChangeSignal()
+
+        /// Records one received transition, and signals ``changes``.
+        ///
+        /// - Parameter transition: The transition the consumer received.
         func record(_ transition: (phase: ResolutionProgress.Phase, fraction: Double)) {
             transitions.append(transition)
+            changes.signal()
         }
 
-        /// Records that the sequence finished.
+        /// Records that the sequence finished, and signals ``changes``.
         func markFinished() {
             finished = true
+            changes.signal()
         }
     }
 
@@ -53,36 +60,24 @@ struct ResolutionProgressPhasesTests {
 
     @Test("yields the current phase, then each transition once, and finishes at .ready")
     @MainActor
-    func yieldsEachTransitionOnceAndFinishesAtReady() async {
+    func yieldsEachTransitionOnceAndFinishesAtReady() async throws {
         let progress = ResolutionProgress()
         let log = startConsumer(of: progress)
 
-        guard
-            await BoundedWait.conditionReached(
-                "the initial sizing transition", when: { await log.transitions.count == 1 })
-        else { return }
+        try await log.changes.wait(until: { log.transitions.count == 1 })
 
         progress.phase = .downloading
-        guard
-            await BoundedWait.conditionReached(
-                "the downloading transition", when: { await log.transitions.count == 2 })
-        else { return }
+        try await log.changes.wait(until: { log.transitions.count == 2 })
 
         // A write of the same phase again is not a transition, so it must
         // yield nothing: the next element the consumer sees is .loading.
         progress.phase = .downloading
         progress.phase = .loading
-        guard
-            await BoundedWait.conditionReached(
-                "the loading transition", when: { await log.transitions.count == 3 })
-        else { return }
+        try await log.changes.wait(until: { log.transitions.count == 3 })
 
         progress.fraction = 1.0
         progress.phase = .ready
-        guard
-            await BoundedWait.conditionReached(
-                "the finished sequence", when: { await log.finished })
-        else { return }
+        try await log.changes.wait(until: { log.finished })
 
         #expect(log.transitions.map(\.phase) == [.sizing, .downloading, .loading, .ready])
         #expect(log.transitions.first?.fraction == 0)
@@ -91,20 +86,14 @@ struct ResolutionProgressPhasesTests {
 
     @Test("finishes at .failed, with the failure as the last element")
     @MainActor
-    func finishesAtFailed() async {
+    func finishesAtFailed() async throws {
         let progress = ResolutionProgress()
         let log = startConsumer(of: progress)
 
-        guard
-            await BoundedWait.conditionReached(
-                "the initial sizing transition", when: { await log.transitions.count == 1 })
-        else { return }
+        try await log.changes.wait(until: { log.transitions.count == 1 })
 
         progress.phase = .failed("no candidate fit the budget")
-        guard
-            await BoundedWait.conditionReached(
-                "the finished sequence", when: { await log.finished })
-        else { return }
+        try await log.changes.wait(until: { log.finished })
 
         #expect(
             log.transitions.map(\.phase) == [.sizing, .failed("no candidate fit the budget")])
@@ -112,16 +101,13 @@ struct ResolutionProgressPhasesTests {
 
     @Test("a subscriber that arrives after .ready gets one terminal element")
     @MainActor
-    func lateSubscriberGetsTheTerminalPhaseOnly() async {
+    func lateSubscriberGetsTheTerminalPhaseOnly() async throws {
         let progress = ResolutionProgress()
         progress.fraction = 1.0
         progress.phase = .ready
 
         let log = startConsumer(of: progress)
-        guard
-            await BoundedWait.conditionReached(
-                "the finished sequence", when: { await log.finished })
-        else { return }
+        try await log.changes.wait(until: { log.finished })
 
         #expect(log.transitions.map(\.phase) == [.ready])
         #expect(log.transitions.first?.fraction == 1.0)

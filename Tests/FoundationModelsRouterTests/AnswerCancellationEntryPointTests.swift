@@ -171,10 +171,9 @@ extension AnswerCancellationTests {
         #expect(await fixture.observer.toolSawCancellation)
 
         // After the end of the answer and of the pump: no work to stop, and
-        // the request that stays cannot go into the next answer. That is a
-        // statement about the pump too, so the next answer goes through
-        // `followUpAnswerCompletes`, and the test does not wait for it
-        // directly.
+        // the request that stays cannot go into the next answer.
+        // `followUpAnswerCompletes` waits for the next answer, and then
+        // checks that its model call ended.
         #expect(await session.becomesIdle())
         #expect(await session.stopRunningWork() == false)
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
@@ -238,11 +237,9 @@ extension AnswerCancellationTests {
         await insideFirstAnswer.wait()
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
-        // No event tells that the message joined the queue, so the test reads
-        // the count until it holds. The wait has no wall clock: the message
-        // always arrives, and a loaded machine only delays it. The wait ends
-        // when the message is in the queue.
-        try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
+        // The session signals `stateChanges` after it puts a mail in the
+        // queue. The wait ends when the message is in the queue.
+        try await session.stateChanges.wait(until: { session.waitingUserMailCount == 1 })
         let queuedId = try #require(session.outbox.queue.pending.first { !$0.isRunMail }?.id)
 
         // Cancelled while its mail waits. The mail leaves the queue, and it

@@ -6,6 +6,7 @@ import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
+@testable import MLXFoundationModels
 
 /// The working context of ``twoModelProfile``, in tokens: 4k. It is the short
 /// context of the spill measurements of fork task ^mre55m3.
@@ -119,7 +120,7 @@ struct PromptCacheBudgetIntegrationTests {
         try await answerOnce(on: try #require(profile).standard)
         try await answerOnce(on: try #require(profile).flash)
 
-        let usage = try await promptCacheUsageOnceWritten(by: loader)
+        let usage = await promptCacheUsageOnceWritten(by: loader)
         #expect(usage.diskBytes > 0)
         #expect(Int64(usage.memoryBytes) <= promptCacheRoomBytes)
         #expect(pool.footprint.totalBytes + Int64(usage.residentBytes) <= workingSet)
@@ -168,10 +169,16 @@ struct PromptCacheBudgetIntegrationTests {
     /// The prompt-cache usage of `loader` once no entry is being written to
     /// disk.
     ///
+    /// The executor of the fork checks the entry of an answer in before the
+    /// answer returns. That check-in puts the write of a spilled entry in the
+    /// queue of the store. Thus when both answers returned, the store knows
+    /// each write. `waitForSpills()` returns at the end of the last write, and
+    /// no answer runs after it. So one read gives the final usage.
+    ///
     /// - Parameter loader: The loader whose prompt cache to read.
     /// - Returns: The usage.
-    /// - Throws: `CancellationError` when the test is cancelled.
-    private func promptCacheUsageOnceWritten(by loader: LiveModelLoader) async throws -> PromptCacheUsage {
-        try await SettledValuePoll.value(of: { await loader.promptCacheUsage }) { $0.spillingBytes == 0 }
+    private func promptCacheUsageOnceWritten(by loader: LiveModelLoader) async -> PromptCacheUsage {
+        await ExecutorPromptCacheStore.current.waitForSpills()
+        return await loader.promptCacheUsage
     }
 }

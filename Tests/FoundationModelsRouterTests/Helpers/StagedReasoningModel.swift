@@ -7,9 +7,11 @@ import FoundationModelsRouterTestSupport
 /// A deterministic `LanguageModel` that plays one script for each call, in
 /// call order (task ^0dcsd3t).
 ///
-/// Call `i` writes the reasoning of `scripts[i]` and waits for its hold, as a
-/// ``RepeatingReasoningModel`` call does, then writes the ending of the
-/// script: the answer, or one ``CountingRunCodeTool`` call. A call after the
+/// Call `i` writes the reasoning of `scripts[i]` and does what its hold names,
+/// as a ``RepeatingReasoningModel`` call does, then writes the ending of the
+/// script: the answer, or one ``CountingRunCodeTool`` call. A call whose
+/// hold is ``RepeatingReasoningHold/untilStopped`` writes no ending: only
+/// the stop of the session ends it. A call after the
 /// last script answers with ``RepeatingReasoningModel/Executor/answerText``
 /// at once. So a test can make the first call repeat itself and the next
 /// calls reason past the limit, or make a recovery call a tool. Each call

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsRouterTestSupport
+import Metrics
 import Synchronization
 import Testing
 
@@ -295,14 +296,20 @@ struct ExtrasPoolResolveTests {
         let resolve = Task { try await router.resolve(profile: trio, reporting: ResolutionProgress()) }
         // The admission job of the router now runs its first load.
         await entrySignal.wait()
+        let probe = QueueDepthProbe()
         let direct = Task {
-            try await pool.acquire(
-                directKey, footprintBytes: Self.directFootprintBytes, sessionBytes: 0, loader: directLoader)
+            try await withMetricsFactory(probe) {
+                try await pool.acquire(
+                    directKey, footprintBytes: Self.directFootprintBytes, sessionBytes: 0, loader: directLoader)
+            }
         }
-        // The direct acquire waits in the admission queue behind the router.
-        #expect(await BoundedWait.conditionReached("the direct acquire waits") {
-            await pool.admissions.waitingCount == 1
-        })
+        // The admission queue records its depth meter when it makes the job of
+        // the direct acquire, and puts the job in its input in the same
+        // `submit` call, with no suspension point between. The admission job
+        // of the router holds the gate, so it cannot end before the test
+        // opens the gate. Thus the direct job joins the queue behind the job
+        // of the router.
+        await probe.enqueued.wait()
         releaseGate.signal()
         let profile = try await resolve.value
         let hold = try await direct.value

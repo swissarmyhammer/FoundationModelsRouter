@@ -257,12 +257,15 @@ extension RoutedSessionActor {
     /// It never reaches a running compaction: a compaction is signal work,
     /// and its summarizer call is not ``inFlightModelCall``.
     ///
+    /// The stop is a change of ``stateChanges``.
+    ///
     /// - Returns: `true` when the pump ran work.
     @discardableResult
     func requestCancelOfRunningWork() -> Bool {
         guard let workId = pumpWork?.id else { return false }
         cancelRequestedWorkId = workId
         inFlightModelCall?.cancel()
+        stateChanges.signal()
         return true
     }
 }

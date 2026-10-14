@@ -218,6 +218,21 @@ final class SessionOutputHub: Sendable {
     /// The state of the hub.
     private let state = Mutex(State())
 
+    /// Reports each change of ``waiterCount``.
+    ///
+    /// The hub signals it after a wait of ``awaitTerminal(of:orThrow:)``
+    /// starts to wait, and after waits stop: a cancel, a terminal event, an
+    /// end of a pending id (``endPending(_:)``), or ``close()``. Each signal
+    /// comes after the lock of the hub is released. Only the tests read it:
+    /// a test waits on it until a task waits for a terminal event, and then
+    /// checks that the wait did not return.
+    let waiterChanges = ChangeSignal()
+
+    /// How many waits of ``awaitTerminal(of:orThrow:)`` wait now.
+    var waiterCount: Int {
+        state.withLock { $0.waiters.count }
+    }
+
     /// Makes a hub with no reader.
     init() {}
 
@@ -331,6 +346,9 @@ final class SessionOutputHub: Sendable {
         for waiter in resumed {
             waiter.resume(returning: terminal)
         }
+        if !resumed.isEmpty {
+            waiterChanges.signal()
+        }
         return isDelivered ? endedKeys : []
     }
 
@@ -414,6 +432,9 @@ final class SessionOutputHub: Sendable {
         for waiter in ended {
             waiter.continuation.resume(throwing: waiter.unknown)
         }
+        if !ended.isEmpty {
+            waiterChanges.signal()
+        }
     }
 
     /// Waits for the terminal event of `key`. Returns at once when the
@@ -440,11 +461,14 @@ final class SessionOutputHub: Sendable {
                 let waiter = Waiter(key: key, unknown: unknown, continuation: continuation)
                 if let immediate = state.withLock({ $0.register(waiter, as: waiterKey) }) {
                     continuation.resume(with: immediate)
+                } else {
+                    waiterChanges.signal()
                 }
             }
         } onCancel: {
-            state.withLock { $0.waiters.removeValue(forKey: waiterKey) }?.continuation.resume(
-                throwing: CancellationError())
+            guard let waiter = state.withLock({ $0.waiters.removeValue(forKey: waiterKey) }) else { return }
+            waiter.continuation.resume(throwing: CancellationError())
+            waiterChanges.signal()
         }
     }
 
@@ -467,6 +491,9 @@ final class SessionOutputHub: Sendable {
         }
         for waiter in waiters {
             waiter.resume(throwing: MailRefusal.closed)
+        }
+        if !waiters.isEmpty {
+            waiterChanges.signal()
         }
     }
 

@@ -35,10 +35,6 @@ struct WatchStopUsageTests {
         String(repeating: promptSentence, count: promptSentenceCount)
     }
 
-    /// The reasoning of a pass that goes past the default reasoning limit,
-    /// in tokens.
-    private static let longReasoningTokens = 10_000
-
     /// The window of the repetition detection: small, so a short script
     /// fills it.
     private static let repetitionWindow = 200
@@ -50,21 +46,19 @@ struct WatchStopUsageTests {
     /// ``repetitionWindow`` of tokens.
     private static let repetitionCycleCount = 40
 
-    /// The hold of a call that the session must stop. It ends only when the
-    /// session cancels it, or the test fails on the answer that follows.
-    private static let stoppedHold = Duration.seconds(5)
-
-    /// A script whose reasoning goes past the default reasoning limit.
+    /// A script whose reasoning reaches the default reasoning limit, and that
+    /// then waits until the session stops it
+    /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``).
     private static var reasoningScript: RepeatingReasoningScript {
-        RepeatingReasoningScript(
-            reasoningLines: RepeatingReasoningScript.distinctLines(totalling: longReasoningTokens), hold: stoppedHold)
+        RepeatingReasoningScript.reasoningHeldAtLimit()
     }
 
-    /// A script that writes a cycle of lines again and again.
+    /// A script that writes a cycle of lines again and again, then waits
+    /// until the repetition watch of the session stops it.
     private static var repeatingScript: RepeatingReasoningScript {
         .repeating(
             newLines: [], cycle: RepeatingReasoningScript.distinctLines(totalling: repetitionCycleTokens),
-            cycleCount: repetitionCycleCount, hold: stoppedHold)
+            cycleCount: repetitionCycleCount, hold: .untilStopped)
     }
 
     /// One answer of this suite: the fixture, the events of the answer, and

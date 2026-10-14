@@ -182,12 +182,16 @@ extension AnswerCancellationTests {
     /// Waits until the close has cancelled the running compaction of
     /// `session`. The wait ends when the compaction is cancelled.
     ///
+    /// The cancel of the running compaction
+    /// (``RoutedSessionActor/cancelActiveCompaction()``) cancels its task and
+    /// then signals ``RoutedSessionActor/stateChanges``.
+    ///
     /// - Parameter session: The session that closes.
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   before the compaction was cancelled.
     static func awaitCompactionCancelled(on session: any RoutedSession) async throws {
         let actor = try #require(session as? RoutedSessionActor)
-        try await AwaitedCondition.wait(until: { await actor.activeCompaction?.isCancelled == true })
+        try await session.stateChanges.wait(until: { await actor.activeCompaction?.isCancelled == true })
     }
 
     /// The count of the summarizer calls that entered the model.
@@ -521,8 +525,15 @@ extension AnswerCancellationTests {
             fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
         let actor = try #require(session as? RoutedSessionActor)
         // A short summary, so that the compaction shrinks the live context and
-        // applies its snapshot.
-        fixture.hook.reply = { Self.isSummarizerCall($0) ? "short summary" : nil }
+        // applies its snapshot. The backend asks for the reply text after the
+        // summarizer call ran its tool hook, as the last step of the call, so
+        // the reply is the event that tells that the summarizer call ran.
+        let summarizerReplied = AwaitedEvent()
+        fixture.hook.reply = { prompt in
+            guard Self.isSummarizerCall(prompt) else { return nil }
+            summarizerReplied.signal()
+            return "short summary"
+        }
 
         // The answer holds its open submission in a cancellation-aware tool.
         let holdingPrompt = "holds-the-pump"
@@ -534,10 +545,10 @@ extension AnswerCancellationTests {
         await insideTool.wait()
 
         // The compaction does not wait for the answer: its summarizer call
-        // enters and ends while the answer still holds its submission. No
-        // event tells that end, so the test reads the observer until it holds.
+        // runs to its reply while the answer still holds its submission. The
+        // answer cannot end before the stop below, so the reply comes first.
         let id = session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
-        try await AwaitedCondition.wait(until: { await fixture.observer.exited.contains(where: Self.isSummarizerCall) })
+        try await summarizerReplied.wait()
         #expect(await fixture.observer.toolSawCancellation == false)
         // The snapshot waits until no submission is open, so the compaction
         // has no terminal event yet.

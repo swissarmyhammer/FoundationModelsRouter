@@ -46,16 +46,11 @@ struct RepetitionStopTests {
     /// one ``window`` of tokens.
     private static let cycleCount = 40
 
-    /// The hold of a call that the session must stop. It ends only when the
-    /// session cancels it, or the test fails on the answer that follows.
-    private static let stoppedHold = Duration.seconds(5)
-
-    /// The hold of a call that the session must not stop: long enough for
-    /// the watch to read the whole reasoning.
-    private static let unstoppedHold = Duration.milliseconds(200)
-
     /// A script that writes ``newLines``, then ``cycle`` ``cycleCount`` times.
-    private static func repeatingScript(hold: Duration) -> RepeatingReasoningScript {
+    ///
+    /// - Parameter hold: What the call does after its last line.
+    /// - Returns: The script.
+    private static func repeatingScript(hold: RepeatingReasoningHold) -> RepeatingReasoningScript {
         .repeating(newLines: newLines, cycle: cycle, cycleCount: cycleCount, hold: hold)
     }
 
@@ -84,7 +79,7 @@ struct RepetitionStopTests {
         if let logger {
             await fixture.session.useCaptureLogger(for: logger)
         }
-        let events = try await collect(fixture.session.streamEvents(to: prompt))
+        let events = try await fixture.answer(to: prompt)
         return (fixture, events)
     }
 
@@ -119,7 +114,7 @@ struct RepetitionStopTests {
     func repeatingCallStopsWithLogAndEvent() async throws {
         let ((fixture, events), logs) = try await TelemetryCapture.run(forbidding: []) { context in
             let answer = try await Self.runAnswer(
-                script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: false,
+                script: Self.repeatingScript(hold: .untilStopped), repeatsAfterStop: false,
                 detection: Self.detection, logger: context.logger)
             return (answer, context)
         }
@@ -159,7 +154,10 @@ struct RepetitionStopTests {
             "Step \(index): check the branch named \(DigitFreeLabel.spelling(index)) of the parser."
         }
         let lines = longLines.flatMap { line in [line] + shortLines }
-        let script = RepeatingReasoningScript(reasoningLines: lines, hold: Self.unstoppedHold)
+        // The call waits on a gate after its last line. The gate opens only
+        // after the watch read the whole reasoning and found no stop, so a
+        // stop could only come before the call ends.
+        let script = RepeatingReasoningScript(reasoningLines: lines, hold: .untilOpened(ReasoningHoldGate()))
 
         let (fixture, events) = try await Self.runAnswer(script: script, repeatsAfterStop: false, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -172,7 +170,7 @@ struct RepetitionStopTests {
     @Test("after a stop, the next call does not receive the repeated part, and the record keeps the full entry")
     func repeatedPartLeavesTheRenderAndStaysInTheRecord() async throws {
         let (fixture, events) = try await Self.runAnswer(
-            script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: false, detection: Self.detection)
+            script: Self.repeatingScript(hold: .untilStopped), repeatsAfterStop: false, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         #expect(Self.stops(in: events).count == 1)
 
@@ -194,7 +192,7 @@ struct RepetitionStopTests {
     )
     func recoveriesStopAtTheConfiguredCount() async throws {
         let (fixture, events) = try await Self.runAnswer(
-            script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: true, detection: Self.detection)
+            script: Self.repeatingScript(hold: .untilStopped), repeatsAfterStop: true, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer
@@ -221,8 +219,12 @@ struct RepetitionStopTests {
         var detection = Self.detection
         detection.isEnabled = false
 
+        // A detection that is not enabled starts no watch, and the call ends
+        // with an answer, not inside its reasoning. So no code of the session
+        // can stop the call, and the call needs no hold: the check of the
+        // stops after the answer reads the whole run.
         let (fixture, events) = try await Self.runAnswer(
-            script: Self.repeatingScript(hold: Self.unstoppedHold), repeatsAfterStop: false, detection: detection)
+            script: Self.repeatingScript(hold: .noHold), repeatsAfterStop: false, detection: detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         #expect(Self.stops(in: events).isEmpty)

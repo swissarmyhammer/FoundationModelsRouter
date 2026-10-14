@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsRouterTestSupport
+import Metrics
 import Synchronization
 import Testing
 
@@ -12,8 +13,10 @@ import Testing
 /// handle names the queue of the pool entry, and each embed call of a
 /// ``RoutedEmbedder`` waits in the queue of the embedding model.
 ///
-/// Each test waits on real signals (a latch, a semaphore, the count of the
-/// waiting jobs of the queue), never on the clock. No network, no GPU.
+/// Each test waits on real signals (a latch, a semaphore, the
+/// ``SessionEvent/submissionQueued(_:)`` event of a session, the queue depth
+/// metric that a queue records when it accepts a job), never on the clock. No
+/// network, no GPU.
 @Suite("The work queue of the pool entry")
 struct PoolEntryQueueTests {
     // MARK: - Fixed values
@@ -164,18 +167,26 @@ struct PoolEntryQueueTests {
         #expect(fromSecond.standard.backendQueue === queue)
 
         // The first call holds the model. The next two wait in the one queue,
-        // in the order they are submitted.
+        // in the order they are submitted. A session sends
+        // `submissionQueued` when its submission joins the queue behind
+        // another job.
         let sessions = [fromFirst, fromSecond, fromFirst].map { $0.standard.makeSession() }
+        var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
+        for session in sessions {
+            feeds.append(await SessionEventLog.watch(session))
+        }
+        defer { feeds.forEach { $0.drain.cancel() } }
         var answers: [Task<String, any Error>] = []
         for (index, session) in sessions.enumerated() {
             let prompt = Self.prompts[index]
             answers.append(Task { try await session.respond(to: prompt) })
-            #expect(
-                await BoundedWait.conditionReached("call \(index) is in the model or waits in the queue") {
-                    let entered = await fixture.observer.enteredCount
-                    let waiting = await queue.waitingCount
-                    return entered == 1 && waiting == index
-                })
+            if index == 0 {
+                await fixture.observer.waitUntil { $0.entered == 1 }
+            } else {
+                try await feeds[index].log.waitForQueuedSubmissions(1)
+            }
+            #expect(await fixture.observer.enteredCount == 1)
+            #expect(await queue.waitingCount == index)
         }
         #expect(await fixture.observer.maximumActive == 1)
 
@@ -218,11 +229,15 @@ struct PoolEntryQueueTests {
         let directEmbedder = try PooledEmbedder(hold: directHold)
         let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
         await directLoader.embedding.entered.wait()
-        let routerCall = Task { try await profile.embedding.embed(texts: Self.texts) }
-        #expect(
-            await BoundedWait.conditionReached("the router embed call waits in the queue of the pool entry") {
-                await directHold.queue.waitingCount == 1
-            })
+        // The queue of the pool entry records its depth metric when it makes
+        // the job of the router call, on the task of that call, with the
+        // factory that the task binds. The same `submit` call then puts the
+        // job in the queue, with no suspension point between the two steps.
+        let probe = QueueDepthProbe()
+        let routerCall = Task {
+            try await withMetricsFactory(probe) { try await profile.embedding.embed(texts: Self.texts) }
+        }
+        await probe.enqueued.wait()
 
         directLoader.embedding.gate.signal()
         directLoader.embedding.gate.signal()

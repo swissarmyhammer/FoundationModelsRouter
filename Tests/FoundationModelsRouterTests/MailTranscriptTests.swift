@@ -191,7 +191,7 @@ struct MailTranscriptTests {
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
 
         let held = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = try session.send(Self.secondPrompt)
         let third = try session.send(Self.thirdPrompt)
         await latch.open()
@@ -230,7 +230,7 @@ struct MailTranscriptTests {
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
 
         let held = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let replaced = try session.send(Self.secondPrompt)
         let swept = try session.send(Self.thirdPrompt)
         let newBody = MailBody.userMessage(prompt: Self.replacedPrompt, options: UserMessageOptions())
@@ -347,7 +347,7 @@ struct MailTranscriptTests {
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
 
         let first = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = try session.send(Self.secondPrompt)
         await latch.open()
         _ = try await session.awaitTerminal(of: second)
@@ -537,15 +537,15 @@ struct MailTranscriptTests {
         // The held answer and the mail behind it have no terminal record when
         // the process stops.
         let held = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let queued = try session.send(Self.secondPrompt)
         let sessionId = session.id
-        #expect(
-            await BoundedWait.conditionReached("the two queued records are on disk") {
-                let tree = try? TranscriptTree.load(under: routerDirectory)
-                let events = (try? tree?.events(forSession: sessionId)) ?? []
-                return events.flatMap(\.mailRecords).count == 2
-            })
+        // Each send puts its queued record on the serial record chain of the
+        // session before it returns. The flush ends after each write that
+        // came before it, so the two queued records are on disk after it.
+        await (session as! RoutedSessionActor).flushMailRecords()
+        let queuedTree = try TranscriptTree.load(under: routerDirectory)
+        #expect(try queuedTree.events(forSession: sessionId).flatMap(\.mailRecords).count == 2)
 
         // The first restore reports each mail as lost, in record order.
         let router2 = Self.makeRouter(

@@ -71,9 +71,16 @@ struct NestedRunTerminalForwardingTests {
         /// Every settled terminal delivered so far, in delivery order.
         private(set) var terminals: [OperationEvent] = []
 
-        /// Appends one delivered terminal.
+        /// Signals after each recorded terminal, so a test waits for a
+        /// terminal with no poll.
+        nonisolated let changes = ChangeSignal()
+
+        /// Appends one delivered terminal, then signals ``changes``.
+        ///
+        /// - Parameter terminal: The delivered terminal.
         func record(_ terminal: OperationEvent) {
             terminals.append(terminal)
+            changes.signal()
         }
 
         /// The delivered terminals whose `correlationID` is `token`.
@@ -111,14 +118,20 @@ struct NestedRunTerminalForwardingTests {
         /// The task that drains the subscription into ``settledRuns``.
         let collecting: Task<Void, Never>
 
-        /// Waits, bounded, for one settled terminal under `token`.
+        /// Waits for the first settled terminal under `token`, then makes
+        /// sure that the stream delivered exactly one.
+        ///
+        /// The wait has no time limit. It ends when the subscription delivers
+        /// the `runSettled` event of the run.
         ///
         /// - Parameter token: The run's completion token.
-        func awaitSettlement(of token: String) async {
-            #expect(
-                await BoundedWait.conditionReached("runSettled for \(token) on streamSessionEvents()") {
-                    await settledRuns.terminals(for: token).count == 1
-                })
+        /// - Throws: ``ConditionNeverHeld`` when the test was cancelled before
+        ///   the terminal arrived.
+        func awaitSettlement(of token: String) async throws {
+            try await settledRuns.changes.wait(until: {
+                await !settledRuns.terminals(for: token).isEmpty
+            })
+            #expect(await settledRuns.terminals(for: token).count == 1)
         }
 
         /// Closes the session, which ends the subscription, then waits for
@@ -202,7 +215,7 @@ struct NestedRunTerminalForwardingTests {
     ///
     /// - Parameter session: The session both runs are tracked on.
     /// - Returns: The tokens and the nested run's terminal.
-    /// - Throws: When a run does not settle inside the run plane wait.
+    /// - Throws: When a run plane wait ends and the run did not settle.
     private static func settleNestedRun(on session: any RoutedSession) async throws -> SettledNesting {
         let gate = RunLatch()
         let runner = backgroundRunner(wrapping: NestingTool(gate: gate), on: session)
@@ -250,7 +263,7 @@ struct NestedRunTerminalForwardingTests {
         defer { try? FileManager.default.removeItem(at: observation.directory) }
 
         let nesting = try await Self.settleNestedRun(on: observation.session)
-        await observation.awaitSettlement(of: nesting.nestedToken)
+        try await observation.awaitSettlement(of: nesting.nestedToken)
 
         // The stream carries the run's real outcome, and the very event `wait`
         // returned. The outer funnel dropped the re-stamped copy, so this
@@ -275,7 +288,7 @@ struct NestedRunTerminalForwardingTests {
         defer { try? FileManager.default.removeItem(at: observation.directory) }
 
         let nesting = try await Self.settleNestedRun(on: observation.session)
-        await observation.awaitSettlement(of: nesting.nestedToken)
+        try await observation.awaitSettlement(of: nesting.nestedToken)
 
         // The journal appends before it delivers `runSettled`, so the write is
         // in the recorder by the time the stream carried the event.
@@ -301,7 +314,7 @@ struct NestedRunTerminalForwardingTests {
 
         await gate.open()
         let terminal = try await MountFixtures.settledTerminal(of: token, in: observation.session.runPlane)
-        await observation.awaitSettlement(of: token)
+        try await observation.awaitSettlement(of: token)
 
         // The funnel journaled the terminal before the run plane forwarded it,
         // and the journal refused the second write. One event on each side.
@@ -320,7 +333,7 @@ struct NestedRunTerminalForwardingTests {
         defer { try? FileManager.default.removeItem(at: observation.directory) }
 
         let nesting = try await Self.settleNestedRun(on: observation.session)
-        await observation.awaitSettlement(of: nesting.nestedToken)
+        try await observation.awaitSettlement(of: nesting.nestedToken)
 
         await observation.close()
 

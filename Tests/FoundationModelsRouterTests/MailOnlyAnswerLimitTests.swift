@@ -59,6 +59,10 @@ struct MailOnlyAnswerLimitTests {
         /// The prompt of each call so far, in call order.
         var prompts: [String] { inner.receivedPrompts }
 
+        /// The signal that the backend sends after it records each prompt of
+        /// ``prompts``.
+        var changes: ChangeSignal { inner.changes }
+
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             let ordinal = callCount.withLock { count in
                 count += 1
@@ -214,16 +218,28 @@ struct MailOnlyAnswerLimitTests {
             session: session, backend: backend, events: events, drain: drain, router: router, directory: directory)
     }
 
-    /// Waits, bounded, until the session sent `count` pause events.
+    /// Waits until the session sent `count` pause events.
     ///
     /// - Parameters:
     ///   - count: How many pause events to wait for.
     ///   - fixture: The fixture whose events are watched.
-    /// - Returns: `true` when the events arrived inside the bound.
-    private static func pausesArrive(_ count: Int, on fixture: Fixture) async -> Bool {
-        await BoundedWait.conditionReached("\(count) mail delivery pauses on the session feed") {
-            await fixture.events.mailDeliveryPauses.count == count
-        }
+    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func waitForPauses(_ count: Int, on fixture: Fixture) async throws {
+        try await fixture.events.wait(until: { $0.mailDeliveryPauses.count == count })
+    }
+
+    /// Closes the session, and gives each event of its feed.
+    ///
+    /// The close finishes the feed after the last event of the session, so
+    /// the drain task ends after it appended that event. Thus the log then
+    /// holds each event that the session sent.
+    ///
+    /// - Parameter fixture: The fixture to close.
+    /// - Returns: Each event of the feed, in delivery order.
+    private static func everyEventAfterClose(of fixture: Fixture) async -> [SessionEvent] {
+        await fixture.session.close()
+        await fixture.drain.value
+        return await fixture.events.events
     }
 
     /// The mail that waits in the outbox of the session.
@@ -253,15 +269,15 @@ struct MailOnlyAnswerLimitTests {
         _ = try await fixture.session.respond(to: Self.firstPrompt)
 
         // The caller answer, then `limit` answers that mail alone started.
-        #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await Self.waitForPauses(1, on: fixture)
+        #expect(await fixture.session.pumpEnds())
         #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
         // The mail of the last run waits, held: its progress report and its
         // terminal.
         let held = await Self.waitingMail(of: fixture)
         #expect(held.filter { $0.event.kind == .completed }.count == 1)
         #expect(held.allSatisfy { $0.isHeld })
-        let pause = try #require(await fixture.events.mailDeliveryPauses.first)
+        let pause = try #require(await fixture.events.events.mailDeliveryPauses.first)
         #expect(pause == MailDeliveryPause(limit: Self.limit, heldMail: held.map(\.event)))
     }
 
@@ -272,8 +288,8 @@ struct MailOnlyAnswerLimitTests {
         let fixture = try await Self.makeFixture(runStartingCalls: Self.promptsOfOneChain)
         defer { Self.tearDown(fixture) }
         _ = try await fixture.session.respond(to: Self.firstPrompt)
-        #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await Self.waitForPauses(1, on: fixture)
+        #expect(await fixture.session.pumpEnds())
         let held = try #require(await Self.waitingMail(of: fixture).first { $0.event.kind == .completed })
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
@@ -289,15 +305,15 @@ struct MailOnlyAnswerLimitTests {
         let fixture = try await Self.makeFixture(runStartingCalls: nil)
         defer { Self.tearDown(fixture) }
         _ = try await fixture.session.respond(to: Self.firstPrompt)
-        #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await Self.waitForPauses(1, on: fixture)
+        #expect(await fixture.session.pumpEnds())
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
 
         // The second chain pauses too: one pause for each chain.
         let pausesOfTwoChains = 2
-        #expect(await Self.pausesArrive(pausesOfTwoChains, on: fixture))
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await Self.waitForPauses(pausesOfTwoChains, on: fixture)
+        #expect(await fixture.session.pumpEnds())
         #expect(fixture.backend.prompts.count == Self.promptsOfOneChain + Self.promptsOfOneChain)
     }
 
@@ -310,13 +326,15 @@ struct MailOnlyAnswerLimitTests {
 
         // Each of the first `limit` calls started a run, and the mail of each
         // run started one more answer.
-        #expect(
-            await BoundedWait.conditionReached("every settled run delivered in an answer of its own") {
-                fixture.backend.prompts.count == Self.promptsOfOneChain
-            })
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await fixture.backend.changes.wait(until: {
+            fixture.backend.prompts.count == Self.promptsOfOneChain
+        })
+        #expect(await fixture.session.pumpEnds())
         #expect(await Self.waitingMail(of: fixture).isEmpty)
-        #expect(await fixture.events.mailDeliveryPauses.isEmpty)
+        // Only the pump sends a pause, and the pump ended. The close then
+        // finishes the feed after each event that the pump sent, so a pause
+        // is in the events now, or never came.
+        #expect(await Self.everyEventAfterClose(of: fixture).mailDeliveryPauses.isEmpty)
         #expect(fixture.backend.prompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
     }
 
@@ -327,8 +345,8 @@ struct MailOnlyAnswerLimitTests {
 
         _ = try await fixture.session.respond(to: Self.firstPrompt)
 
-        #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await Self.waitForPauses(1, on: fixture)
+        #expect(await fixture.session.pumpEnds())
         #expect(fixture.backend.prompts == [Self.firstPrompt])
         let held = await Self.waitingMail(of: fixture)
         #expect(!held.isEmpty)
@@ -361,10 +379,10 @@ struct MailOnlyAnswerLimitTests {
     }
 }
 
-extension SessionEventLog {
-    /// Every mail delivery pause delivered so far, in delivery order.
+extension Sequence<SessionEvent> {
+    /// The mail delivery pauses among these events, in order.
     var mailDeliveryPauses: [MailDeliveryPause] {
-        events.compactMap { event in
+        compactMap { event in
             guard case .mailDeliveryPaused(let pause) = event else { return nil }
             return pause
         }

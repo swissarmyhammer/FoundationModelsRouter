@@ -61,15 +61,19 @@ struct CancellableWaitTests {
     @Test("a caller cancelled before the call throws and never starts the work")
     func alreadyCancelledCallerNeverStartsTheWork() async {
         let started = Mutex(false)
+        let cancelled = RunLatch()
 
         let caller = Task {
-            while !Task.isCancelled { await Task.yield() }
+            // The test opens the latch only after it cancelled this task, so
+            // the task is cancelled before the call.
+            await cancelled.waitUntilOpen()
             return try await CancellableWait.value {
                 started.withLock { $0 = true }
                 return 1
             }
         }
         caller.cancel()
+        await cancelled.open()
         await #expect(throws: CancellationError.self) { try await caller.value }
 
         #expect(started.withLock { $0 } == false)

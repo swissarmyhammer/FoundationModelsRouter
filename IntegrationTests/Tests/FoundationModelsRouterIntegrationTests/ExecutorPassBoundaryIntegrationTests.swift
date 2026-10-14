@@ -25,21 +25,6 @@ private let passBoundaryModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
     .exclusiveRealModel
 )
 struct ExecutorPassBoundaryIntegrationTests {
-    /// How long the tool body holds. Far longer than the gap between two
-    /// events of one pass, so a pass kept open across the body shows.
-    private static let toolHold = Duration.seconds(2)
-
-    /// How long the slow consumer waits after each snapshot.
-    ///
-    /// The tool path of the MLX executor buffers its output and sends few
-    /// events: the run of 2026-09-24 gave 4 snapshots for a whole tool-using answer.
-    /// With so few snapshots, this test cannot show if a much slower consumer
-    /// keeps the last pass open for its last send. It shows only that the pass
-    /// that emits the tool call still ends before the tool body under a slow
-    /// consumer. `ExecutorPassBoundaryTests` shows, over the scripted model,
-    /// that no pass waits for the consumer.
-    private static let slowConsumerPause = Duration.milliseconds(20)
-
     /// The instructions that make the model call the probe tool one time.
     private static let instructions = """
         You always call the `\(PassBoundaryProbeTool.toolName)` tool exactly once with the value \
@@ -54,7 +39,10 @@ struct ExecutorPassBoundaryIntegrationTests {
         samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
 
     /// Loads the model, and builds a session over the timed MLX model with the
-    /// holding tool mounted.
+    /// probe tool mounted.
+    ///
+    /// The checks read the order of the pass and tool events, not a clock, so
+    /// the tool body needs no hold.
     ///
     /// - Parameter log: The log the model and the tool record into.
     /// - Returns: The session, and the loaded container to evict at the end.
@@ -65,8 +53,7 @@ struct ExecutorPassBoundaryIntegrationTests {
         let loaded = try await RealModelContainer.load(ref: passBoundaryModel)
         let model = PassBoundaryProbeModel(wrapping: loaded.container.model, log: log)
         let session = LanguageModelSession(
-            model: model, tools: [PassBoundaryProbeTool(log: log, holdDuration: toolHold)],
-            instructions: instructions)
+            model: model, tools: [PassBoundaryProbeTool(log: log)], instructions: instructions)
         return (session, loaded)
     }
 
@@ -87,8 +74,8 @@ struct ExecutorPassBoundaryIntegrationTests {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
 
-        let snapshotCount = try await PassBoundaryExpectations.consumeSlowly(
-            session.streamResponse(to: Self.prompt, options: Self.answerOptions), pausingAfterEach: .zero)
+        let snapshotCount = try await PassBoundaryExpectations.consume(
+            session.streamResponse(to: Self.prompt, options: Self.answerOptions))
 
         #expect(snapshotCount > 0)
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
@@ -96,15 +83,24 @@ struct ExecutorPassBoundaryIntegrationTests {
         await loaded.container.model.evict()
     }
 
+    /// The slow consumer reads the next snapshot only after each pass that
+    /// started has ended. So it is slower than any pass, and no clock sets
+    /// how slow.
+    ///
+    /// The tool path of the MLX executor buffers its output and sends few
+    /// events: the run of 2026-09-24 gave 4 snapshots for a whole tool-using
+    /// answer. A pass that waits for the consumer before it ends never ends
+    /// under this consumer, and the test then waits with no end. A stack of
+    /// the test process shows that pass. `ExecutorPassBoundaryTests` shows the
+    /// same, over the scripted model.
     @Test("stream: with a slow consumer, the MLX pass still ends before the tool body")
     func slowStreamConsumerStillEndsPassBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
 
         let consumeStarted = ContinuousClock.now
-        let snapshotCount = try await PassBoundaryExpectations.consumeSlowly(
-            session.streamResponse(to: Self.prompt, options: Self.answerOptions),
-            pausingAfterEach: Self.slowConsumerPause)
+        let snapshotCount = try await PassBoundaryExpectations.consumeAfterEachOpenPassEnds(
+            session.streamResponse(to: Self.prompt, options: Self.answerOptions), log: log)
         let consumeEnded = ContinuousClock.now
 
         #expect(snapshotCount > 0)

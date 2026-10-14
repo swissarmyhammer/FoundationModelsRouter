@@ -128,12 +128,56 @@ struct GenerationStallDiagnosticTests {
 
     // MARK: - Tool-using backend
 
+    /// The two steps of one element of the stream of a ``ToolAnswerBackend``:
+    /// the backend reports that the session asks for the next element, and
+    /// then waits until the test lets it give that element.
+    ///
+    /// The session asks for the next element only after it noted the element
+    /// before it. So when ``asked`` gives a permit, the test reads the state
+    /// of the watch after that note, at a point of a fixed order.
+    private final class AppendHandshake: Sendable {
+        /// Gets one permit each time the session asks for the next element.
+        let asked = AsyncSemaphore(value: 0)
+
+        /// Gives one permit each time the test lets the backend give the
+        /// next element.
+        let proceed = AsyncSemaphore(value: 0)
+
+        /// Reports the request of the session, and waits until the test lets
+        /// the backend go on.
+        func pass() async {
+            asked.signal()
+            await proceed.wait()
+        }
+    }
+
+    /// The position of the next element in the stream of one call of a
+    /// ``ToolAnswerBackend``.
+    private final class StreamCursor: Sendable {
+        /// The position, under a lock.
+        private let position = Mutex(0)
+
+        /// Takes the position of the next element, and moves past it.
+        ///
+        /// - Returns: The position of the element.
+        func take() -> Int {
+            position.withLock { position in
+                defer { position += 1 }
+                return position
+            }
+        }
+    }
+
     /// A ``LanguageModelSessionBackend`` whose stream reports appends with no
     /// text, as the snapshots of a tool-using submission do: each append is a
     /// fragment with empty text and a ``GenerationProgressKind`` such as
     /// ``GenerationProgressKind/toolCall``. After the last append the stream
     /// either writes one line of text and finishes, or suspends until a test
     /// releases it.
+    ///
+    /// The stream makes each element only when the session asks for it. With
+    /// a ``AppendHandshake``, the stream also waits for the test before each
+    /// append and before the element after the last append.
     ///
     /// Plain `Sendable`: every stored property is a `let` of a `Sendable` type.
     private final class ToolAnswerBackend: LanguageModelSessionBackend, Sendable {
@@ -143,11 +187,12 @@ struct GenerationStallDiagnosticTests {
         /// The appends the stream reports, in order.
         let appends: [GenerationProgressKind]
 
-        /// The pause before each append.
-        let pause: Duration
-
         /// Whether the stream suspends on ``release`` after its last append.
         let holdsAfterLastAppend: Bool
+
+        /// The steps the stream waits for before each element, or `nil` for
+        /// a stream that waits for no step.
+        let handshake: AppendHandshake?
 
         /// Awaited after the last append when ``holdsAfterLastAppend`` is set.
         let release = AsyncSemaphore(value: 0)
@@ -159,12 +204,13 @@ struct GenerationStallDiagnosticTests {
         ///
         /// - Parameters:
         ///   - appends: The appends the stream reports, in order.
-        ///   - pause: The pause before each append.
         ///   - holdsAfterLastAppend: Whether the stream suspends after its last append.
-        init(appends: [GenerationProgressKind], pause: Duration, holdsAfterLastAppend: Bool) {
+        ///   - handshake: The steps the stream waits for before each element,
+        ///     or `nil` (the default) for none.
+        init(appends: [GenerationProgressKind], holdsAfterLastAppend: Bool, handshake: AppendHandshake? = nil) {
             self.appends = appends
-            self.pause = pause
             self.holdsAfterLastAppend = holdsAfterLastAppend
+            self.handshake = handshake
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
@@ -178,25 +224,28 @@ struct GenerationStallDiagnosticTests {
         func streamResponseFragments(
             to prompt: String, maxTokens: Int?
         ) -> AsyncThrowingStream<ResponseFragment, Error> {
-            let appends = appends
-            let pause = pause
-            let holdsAfterLastAppend = holdsAfterLastAppend
-            let release = release
-            return AsyncThrowingStream { continuation in
-                let task = Task {
-                    for kind in appends {
-                        try await Task.sleep(for: pause)
-                        continuation.yield(ResponseFragment(text: "", progress: kind))
-                    }
-                    if holdsAfterLastAppend {
-                        await release.wait()
-                    } else {
-                        continuation.yield(ResponseFragment(text: Self.answer))
-                    }
-                    continuation.finish()
-                }
-                continuation.onTermination = { @Sendable _ in task.cancel() }
+            let cursor = StreamCursor()
+            return AsyncThrowingStream(unfolding: { [self] in
+                await element(at: cursor.take())
+            })
+        }
+
+        /// The element at `position` of the stream: an append, then the text
+        /// or the hold after the last append, then the end.
+        ///
+        /// - Parameter position: The position of the element.
+        /// - Returns: The element, or `nil` at the end of the stream.
+        private func element(at position: Int) async -> ResponseFragment? {
+            guard position <= appends.count else { return nil }
+            await handshake?.pass()
+            if position < appends.count {
+                return ResponseFragment(text: "", progress: appends[position])
             }
+            if holdsAfterLastAppend {
+                await release.wait()
+                return nil
+            }
+            return ResponseFragment(text: Self.answer)
         }
 
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
@@ -249,7 +298,7 @@ struct GenerationStallDiagnosticTests {
     private static let testReportInterval: Duration = .milliseconds(50)
 
     /// A reporting interval no test answer can reach — installed by the
-    /// negative test, so an answer that finishes normally is proved to report
+    /// negative tests, so an answer that finishes normally is proved to report
     /// nothing rather than merely to have outrun a short clock.
     private static let unreachableReportInterval: Duration = .seconds(600)
 
@@ -433,22 +482,26 @@ struct GenerationStallDiagnosticTests {
         "a session with no interval installed reports nothing after five seconds of silence")
     @MainActor
     func aSessionWithNoIntervalReportsNothing() async throws {
-        let silence: Duration = .seconds(5)
         let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: nil)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
         let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await backend.suspended.wait()
-        try await Task.sleep(for: silence)
-        let stallsDuringSilence = await log.stalls
+        // With no interval, the watch of the call starts no timer. The test
+        // does not wait for a time: it reads the installed interval, and then
+        // the feed up to the end of the answer.
+        #expect(await session.installedGenerationStallReportInterval == .zero)
 
         backend.release.signal()
         _ = try await answerTask.value
+        // The feed gives each stall report of the answer before the end of
+        // the answer. So when the end is on the feed, each report of the
+        // silence is on the feed too.
+        try await log.wait(until: { $0.contains(where: \.isAnswerEnd) })
         drain.cancel()
 
-        #expect(await session.installedGenerationStallReportInterval == .zero)
-        #expect(stallsDuringSilence.isEmpty)
+        #expect(await log.stalls.isEmpty)
     }
 
     @Test(
@@ -513,34 +566,42 @@ struct GenerationStallDiagnosticTests {
         "an answer that makes tool calls with no text for longer than the interval reports no stall")
     @MainActor
     func toolCallsWithNoTextReportNoStall() async throws {
-        // The appends are close together and the interval is far wider than
-        // one pause, but the whole run of appends outlasts the interval. A
-        // watchdog that timed only text fragments reports a stall here.
-        let reportInterval: Duration = .milliseconds(400)
-        let pause: Duration = .milliseconds(20)
+        // A watchdog that timed only text fragments measures the whole run of
+        // appends from the start of the call. The watch of the session must
+        // measure from the last append. The test reads the watch after each
+        // append, so it needs no clock: a report measures from the instant
+        // that the watch reads here.
         let appendCount = 40
         let appends = (0..<appendCount).map { $0.isMultiple(of: 2) ? GenerationProgressKind.toolCall : .toolResult }
-        let backend = ToolAnswerBackend(appends: appends, pause: pause, holdsAfterLastAppend: false)
+        let handshake = AppendHandshake()
+        let backend = ToolAnswerBackend(appends: appends, holdsAfterLastAppend: false, handshake: handshake)
         let (session, dir) = try await Self.makeSession(
-            over: ToolAnswerLLMContainer(backend: backend), reportInterval: reportInterval)
+            over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.unreachableReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
+        let actor = try #require(session as? RoutedSessionActor)
 
-        let start = ContinuousClock.now
-        var stalls: [GenerationStall] = []
-        var text = ""
-        for try await event in await session.streamEvents(to: Self.prompt) {
-            switch event {
-            case .generationStalled(let stall):
-                stalls.append(stall)
-            case .textDelta(let delta):
-                text += delta
-            default:
-                continue
+        let (log, drain) = SessionEventLog.collect(await session.streamEvents(to: Self.prompt))
+        var watches: [GenerationStallWatch] = []
+        for position in 0...appendCount {
+            await handshake.asked.wait()
+            // The session asks for this element only after it noted the
+            // append before it.
+            if position > 0 {
+                watches.append(try #require(await actor.appliedStallWatch()))
             }
+            handshake.proceed.signal()
         }
+        try await drain.value
 
-        #expect(start.duration(to: .now) > reportInterval)
-        #expect(stalls.isEmpty)
+        let events = await log.events
+        let text = events.compactMap { event -> String? in
+            guard case .textDelta(let delta) = event else { return nil }
+            return delta
+        }.joined()
+        #expect(watches.map(\.lastProgressKind) == appends)
+        #expect(watches.allSatisfy { $0.measuredFrom == $0.lastProgressAt })
+        #expect(watches.allSatisfy { $0.fragmentsObserved == 0 })
+        #expect(await log.stalls.isEmpty)
         #expect(text == ToolAnswerBackend.answer)
     }
 
@@ -548,8 +609,7 @@ struct GenerationStallDiagnosticTests {
         "an answer that stops after a tool result reports a stall that names the tool result")
     @MainActor
     func anAnswerThatStopsAfterAToolResultNamesIt() async throws {
-        let backend = ToolAnswerBackend(
-            appends: [.toolCall, .toolResult], pause: .zero, holdsAfterLastAppend: true)
+        let backend = ToolAnswerBackend(appends: [.toolCall, .toolResult], holdsAfterLastAppend: true)
         let (session, dir) = try await Self.makeSession(
             over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }

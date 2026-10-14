@@ -103,13 +103,35 @@ public final class AsyncSemaphore: Sendable {
 
     private let state: Mutex<State>
 
+    /// Reports each change of ``waiterCount``, or `nil` when the semaphore
+    /// does not observe its waiters (``init(value:observingWaiters:)``).
+    ///
+    /// A caller that joins the FIFO queue reports one change. A
+    /// ``signal()`` that resumes a waiter, and a cancel that removes one,
+    /// each report one change. Each report comes after the change, outside
+    /// the lock. Only the tests read it: a test waits on it until a task
+    /// waits for a permit, and then gives the permit.
+    let waiterChanges: ChangeSignal?
+
     /// Creates a semaphore with `value` permits available.
     ///
     /// - Parameter value: The initial permit count. `1` yields a serial gate;
     ///   `N` admits up to `N` concurrent holders.
-    public init(value: Int) {
+    public convenience init(value: Int) {
+        self.init(value: value, observingWaiters: false)
+    }
+
+    /// Creates a semaphore with `value` permits available, which reports each
+    /// change of its waiters when `observingWaiters` is `true`.
+    ///
+    /// - Parameters:
+    ///   - value: The initial permit count.
+    ///   - observingWaiters: Whether ``waiterChanges`` reports each change
+    ///     of ``waiterCount``.
+    init(value: Int, observingWaiters: Bool) {
         precondition(value >= 0, "AsyncSemaphore value must be non-negative")
         state = Mutex(State(permits: value))
+        waiterChanges = observingWaiters ? ChangeSignal() : nil
     }
 
     /// Acquires a permit, suspending in FIFO order while none is available.
@@ -136,6 +158,8 @@ public final class AsyncSemaphore: Sendable {
             }
             if acquired {
                 continuation.resume()
+            } else {
+                waiterChanges?.signal()
             }
         }
     }
@@ -194,6 +218,7 @@ public final class AsyncSemaphore: Sendable {
                 case .cancelled:
                     continuation.resume(throwing: CancellationError())
                 case .queued:
+                    waiterChanges?.signal()
                     onQueued()
                 }
             }
@@ -212,7 +237,9 @@ public final class AsyncSemaphore: Sendable {
                 }
                 return nil
             }
-            continuation?.resume(throwing: CancellationError())
+            guard let continuation else { return }
+            continuation.resume(throwing: CancellationError())
+            waiterChanges?.signal()
         }
     }
 
@@ -230,7 +257,9 @@ public final class AsyncSemaphore: Sendable {
             state.order.removeFirst()
             return state.takeResumption(ticket: ticket)
         }
-        next?.resumeAcquired()
+        guard let next else { return }
+        next.resumeAcquired()
+        waiterChanges?.signal()
     }
 
     /// Acquires a permit, runs `body`, and releases the permit on the way out.

@@ -18,15 +18,31 @@ struct ObservedPass: Sendable, Equatable {
 ///
 /// A `Mutex`, not an actor: an executor records its pass before its first
 /// suspension, so the order of the log is the order the passes started.
+///
+/// Each record is a change of ``changes``, so a test waits for a pass with
+/// no clock.
 final class ObservedPassLog: Sendable {
     /// The passes so far, in the order they started.
     private let passes = Mutex<[ObservedPass]>([])
 
-    /// Records one pass.
+    /// The signal that ``record(_:)`` sends after each pass.
+    let changes = ChangeSignal()
+
+    /// Records one pass, and signals ``changes``.
     ///
     /// - Parameter pass: The pass that started.
     func record(_ pass: ObservedPass) {
         passes.withLock { $0.append(pass) }
+        changes.signal()
+    }
+
+    /// Waits until `count` passes started.
+    ///
+    /// - Parameter count: How many passes to wait for.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   first.
+    func waitForPasses(_ count: Int) async throws {
+        try await changes.wait(until: { recorded.count >= count })
     }
 
     /// Every pass so far, in the order it started.

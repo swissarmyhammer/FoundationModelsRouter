@@ -514,11 +514,9 @@ struct SessionMailQueueTests {
         let terminal = try await MountFixtures.settledTerminal(of: token, in: session.runPlane)
 
         // No caller call: the settlement is mail, and the pump of the session
-        // starts the delivery submission by itself.
-        #expect(
-            await BoundedWait.conditionReached("the delivery submission reaching the backend") {
-                backend.receivedPrompts.count == 2
-            })
+        // starts the delivery submission by itself. The backend signals
+        // after it records each prompt.
+        try await backend.changes.wait(until: { backend.receivedPrompts.count == 2 })
         #expect(await session.becomesIdle())
 
         // The model heard the terminal on that submission, and never called
@@ -952,11 +950,9 @@ struct SessionMailQueueTests {
         // The second respond is a message that waits in the queue. Its
         // caller never sees the id, so the test reads it off the queue.
         let waitingRespond = Task { try await session.respond(to: "waiting prompt") }
-        // No event tells that the message joined the queue, so the test reads
-        // the count until it holds. Neither wait below has a wall clock (task
-        // ^v4zh807): a loaded machine only delays the change. Each wait ends
-        // when its state holds.
-        try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
+        // Each mail that joins the queue is a change of the state signal of
+        // the session, so the test reads the count again after each change.
+        try await session.stateChanges.wait(until: { session.waitingUserMailCount == 1 })
         let id = try #require(await session.pendingMessages().first?.id)
 
         try await Self.expectSignalDone(session.cancel(id), on: session)

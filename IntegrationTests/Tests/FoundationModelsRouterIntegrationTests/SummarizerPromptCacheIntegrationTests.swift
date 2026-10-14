@@ -124,16 +124,22 @@ struct SummarizerPromptCacheIntegrationTests {
     /// The key count and the byte totals of the prompt cache, once no entry
     /// is being written to disk.
     ///
+    /// The executor of the fork checks the entry of a pass in before the call
+    /// of that pass returns, and a check-in puts each write to disk in the
+    /// queue of the store. The caller reads this state only after its answer
+    /// or its compaction returned, so the store knows each write.
+    /// `waitForSpills()` returns at the end of the last write, and no pass
+    /// runs after it. So one read gives the final state.
+    ///
     /// - Returns: The state of the prompt cache.
-    /// - Throws: `CancellationError` when the test is cancelled.
-    private static func settledPromptCacheState() async throws -> PromptCacheState {
-        try await SettledValuePoll.value(of: {
-            let usage = await MLXLanguageModel.promptCacheUsage
-            return PromptCacheState(
-                keyCount: await ExecutorPromptCacheStore.current.retainedSessionCount,
-                usage: PromptCacheUsage(
-                    memoryBytes: usage.memoryBytes, spillingBytes: usage.spillingBytes, diskBytes: usage.diskBytes))
-        }) { $0.usage.spillingBytes == 0 }
+    private static func settledPromptCacheState() async -> PromptCacheState {
+        let store = ExecutorPromptCacheStore.current
+        await store.waitForSpills()
+        let usage = await MLXLanguageModel.promptCacheUsage
+        return PromptCacheState(
+            keyCount: await store.retainedSessionCount,
+            usage: PromptCacheUsage(
+                memoryBytes: usage.memoryBytes, spillingBytes: usage.spillingBytes, diskBytes: usage.diskBytes))
     }
 
     /// The production change that makes this test fail: a summarizer backend
@@ -145,10 +151,10 @@ struct SummarizerPromptCacheIntegrationTests {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.session.respond(to: fillingPrompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let before = try await Self.settledPromptCacheState()
+        let before = await Self.settledPromptCacheState()
 
         let result = try await fixture.session.compactAndAwait(budget: CompactionRoundTripFixture.compactionBudget)
-        let after = try await Self.settledPromptCacheState()
+        let after = await Self.settledPromptCacheState()
 
         #expect(result.stagesApplied == [Summarization.stageName])
         #expect(before.keyCount > 0, "the answer before the compaction must leave the entry of the session")

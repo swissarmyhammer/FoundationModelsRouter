@@ -73,6 +73,15 @@ final class GenerationPassObserver: Sendable {
     /// The state, under one lock.
     private let state = Mutex(State())
 
+    /// Reports each phase that a call records.
+    ///
+    /// ``record(_:)`` signals it after the phase is in the pending list and
+    /// after it wakes the reader of the model call. Only the tests read it: a
+    /// test reads the state of the session again after each recorded phase,
+    /// for example until the pass before a tool body ended. The session
+    /// itself reads the phases through ``takePhases()``.
+    let phaseChanges = ChangeSignal()
+
     /// Records that the submission of the call waits behind another item.
     ///
     /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
@@ -112,7 +121,8 @@ final class GenerationPassObserver: Sendable {
         record(.passEnded)
     }
 
-    /// Appends `phase`, and wakes the reader of the model call in flight.
+    /// Appends `phase`, wakes the reader of the model call in flight, and
+    /// signals ``phaseChanges``.
     ///
     /// - Parameter phase: The phase to record.
     private func record(_ phase: GenerationCallPhase) {
@@ -121,6 +131,7 @@ final class GenerationPassObserver: Sendable {
             return state.wake?.continuation
         }
         continuation?.yield()
+        phaseChanges.signal()
     }
 
     /// Takes every phase recorded since the last take, in the order of the

@@ -28,18 +28,11 @@ struct ReasoningStopRecoveryTests {
     /// The detection of this suite: ``window``, and each other default.
     private static let detection = RepetitionDetection(windowTokens: window)
 
-    /// The hold of a call that the session must stop. It ends only when the
-    /// session cancels it, or the test fails on the answer that follows.
-    private static let stoppedHold = Duration.seconds(5)
-
-    /// The reasoning of a pass that goes past the default reasoning limit, in
-    /// tokens.
-    private static let longReasoningTokens = 10_000
-
     /// A ceiling the caller names for a ``CeilingProbeLanguageModel`` answer.
     private static let requestedCeiling = 256
 
-    /// A script that writes two new lines, then three lines again and again.
+    /// A script that writes two new lines, then three lines again and again,
+    /// then waits until the repetition watch of the session stops it.
     private static var repeatingScript: RepeatingReasoningScript {
         .repeating(
             newLines: [
@@ -51,20 +44,20 @@ struct ReasoningStopRecoveryTests {
                 "Let me look at how the compiler resolves it.",
                 "So the compiler keeps the alias from the join.",
             ],
-            cycleCount: 40, hold: stoppedHold)
+            cycleCount: 40, hold: .untilStopped)
     }
 
-    /// A script whose reasoning goes past the default reasoning limit with
-    /// new lines only.
+    /// A script whose reasoning reaches the default reasoning limit with new
+    /// lines only, and that then waits until the session stops it
+    /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``).
     private static var longReasoningScript: RepeatingReasoningScript {
-        RepeatingReasoningScript(
-            reasoningLines: RepeatingReasoningScript.distinctLines(totalling: longReasoningTokens), hold: stoppedHold)
+        RepeatingReasoningScript.reasoningHeldAtLimit()
     }
 
     /// A script whose call writes no reasoning and asks for one
     /// ``CountingRunCodeTool`` call at once.
     private static var toolCallScript: RepeatingReasoningScript {
-        RepeatingReasoningScript(reasoningLines: [], hold: .zero, ending: .toolCall)
+        RepeatingReasoningScript(reasoningLines: [], hold: .noHold, ending: .toolCall)
     }
 
     /// Runs one streamed answer over a ``StagedReasoningSessionFixture``.

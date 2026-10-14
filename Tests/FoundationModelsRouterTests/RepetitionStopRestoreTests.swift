@@ -46,16 +46,14 @@ struct RepetitionStopRestoreTests {
     /// ``window`` of tokens.
     private static let cycleCount = 40
 
-    /// The hold of the stopped call. It ends only when the session cancels it.
-    private static let stoppedHold = Duration.seconds(5)
-
-    /// The script of the live model: its first call repeats and is stopped.
+    /// The script of the live model: its first call repeats, then waits until
+    /// the repetition watch of the session stops it.
     private static let liveScript = RepeatingReasoningScript.repeating(
-        newLines: newLines, cycle: cycle, cycleCount: cycleCount, hold: stoppedHold)
+        newLines: newLines, cycle: cycle, cycleCount: cycleCount, hold: .untilStopped)
 
     /// The script of the model the restored session runs over: a call that
     /// writes no reasoning and answers at once.
-    private static let restoredScript = RepeatingReasoningScript(reasoningLines: [], hold: .zero)
+    private static let restoredScript = RepeatingReasoningScript(reasoningLines: [], hold: .noHold)
 
     /// The reasoning text the render keeps after the stop: each new line one
     /// time, with its line feed.

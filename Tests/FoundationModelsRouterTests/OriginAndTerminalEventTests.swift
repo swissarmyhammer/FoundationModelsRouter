@@ -243,7 +243,7 @@ struct OriginAndTerminalEventTests {
         let feed = await session.streamSessionEvents()
 
         let first = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = try session.send(Self.secondPrompt)
         let third = try session.send(Self.thirdPrompt)
         await latch.open()
@@ -358,7 +358,7 @@ struct OriginAndTerminalEventTests {
         let feed = await session.streamSessionEvents()
 
         let first = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let withdrawn = try session.send(Self.secondPrompt)
         let removal = session.cancel(withdrawn)
         try await Self.awaitSignalEnd(removal, on: session)
@@ -400,7 +400,7 @@ struct OriginAndTerminalEventTests {
         let feed = await session.streamSessionEvents()
 
         let running = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = try session.send(Self.secondPrompt)
         let third = try session.send(Self.thirdPrompt)
         let stop = session.cancelAll()
@@ -444,7 +444,7 @@ struct OriginAndTerminalEventTests {
         let feed = await session.streamSessionEvents()
 
         let stopped = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let stop = session.cancelAll()
         try await Self.awaitSignalEnd(stop, on: session)
         // The signal ended, so its cancel of the queued mail does not remove
@@ -476,7 +476,7 @@ struct OriginAndTerminalEventTests {
         let feed = await session.streamSessionEvents()
 
         let first = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let joined = try session.send(Self.secondPrompt)
         let withdrawn = try session.send(Self.thirdPrompt)
         let removal = session.cancel(withdrawn)

@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Metrics
 import Synchronization
 import Testing
 
@@ -227,14 +228,19 @@ struct ResolveCancellationTests {
         await gate.reached.wait()
 
         let queuedProgress = ResolutionProgress()
+        let probe = QueueDepthProbe()
         let queued = Task {
-            try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: queuedProgress)
+            try await withMetricsFactory(probe) {
+                try await router.resolve(
+                    profile: RouterTestFixtures.profile(), reporting: queuedProgress)
+            }
         }
-        // The admission job of the second resolve waits behind the first.
-        #expect(await BoundedWait.conditionReached("the second admission job waits") {
-            await router.pool.admissions.waitingCount == 1
-        })
+        // The admission queue records its depth meter when it makes the
+        // admission job of the second resolve, and puts the job in its input
+        // in the same `submit` call, with no suspension point between. The
+        // job of the first resolve holds the gate until the test releases it,
+        // so the second job waits behind it.
+        await probe.enqueued.wait()
 
         // It throws while the holder is still suspended — no `release.signal()`
         // has been sent, so the throw cannot have come from an ended job.

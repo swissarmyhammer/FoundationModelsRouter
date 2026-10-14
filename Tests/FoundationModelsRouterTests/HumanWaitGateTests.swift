@@ -26,13 +26,11 @@ import Testing
 /// the moment sends (task ^1qpmghh): an ``AwaitedEvent`` from the tool body or
 /// from the end of a task, ``SessionEvent/submissionQueued(_:)`` for a
 /// submission that waits behind another, and the end of the pump task of the
-/// session for an idle session. One state has no signal — a message that waits
-/// in the outbox — and the test reads it through ``AwaitedCondition``, which
-/// has no deadline of its own. No wait here ends on a wall clock, so a loaded
-/// machine makes these tests slower and never red. Before, each wait gave up
-/// after the five seconds of ``BoundedWait``, and a full parallel `swift test`
-/// that starved the main actor for longer failed a correct test. Each wait
-/// ends on its event.
+/// session for an idle session. A message that waits in the outbox is a
+/// change of ``RoutedSessionActor/stateChanges``, which the session signals
+/// after it puts the message in the queue. No wait here ends on a wall
+/// clock, so a loaded machine makes these tests slower and never red. Each
+/// wait ends on its event.
 ///
 /// The complementary claim — that the order of submissions does not change
 /// when no tool waits for a person — is covered where it already was:
@@ -537,10 +535,10 @@ struct HumanWaitGateTests {
 
         // The second respond is a message. It waits in the outbox, and never
         // goes into the running submission, which keeps the model for the
-        // whole wait. The outbox sends no event when a message joins it, so
-        // the test reads the count until it holds.
+        // whole wait. The session signals `stateChanges` after it puts a
+        // message in the queue, so the test waits on that signal.
         let second = ObservedRun { try await session.respond(to: "second") }
-        try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
+        try await session.stateChanges.wait(until: { session.waitingUserMailCount == 1 })
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)
@@ -755,8 +753,7 @@ struct HumanWaitGateTests {
         let session = fixture.model.makeSession()
 
         // Every moment this test waits for is an ``AwaitedEvent``, resumed by the
-        // run that reaches it, rather than a reading polled until ``BoundedWait``'s
-        // wall clock runs out (task ^q8cnmb2): a loaded machine makes this test
+        // run that reaches it (task ^q8cnmb2): a loaded machine makes this test
         // slower and never red. Each wait ends on its event, and no wait here
         // gives up early. The semaphores that remain are the ones
         // this test *signals* rather than waits on — a release the test itself

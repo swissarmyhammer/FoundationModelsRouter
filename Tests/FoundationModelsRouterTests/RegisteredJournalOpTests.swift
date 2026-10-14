@@ -24,12 +24,7 @@ import Testing
 /// that, so the plane question is not left to a reader.
 @Suite("Registered journal op: a registration site gives a tool the op its events carry")
 struct RegisteredJournalOpTests {
-  // MARK: - Interval fixtures
-
-  /// The ceiling on any await this suite performs against the run plane —
-  /// present only so a broken handshake ends the test instead of hanging the
-  /// suite.
-  private static let settlementDeadline: TimeInterval = 30
+  // MARK: - Mount fixtures
 
   /// The mount every tool of this suite is registered under: background, so
   /// a call is handed back as a token at once and no test waits on a wall
@@ -207,9 +202,7 @@ struct RegisteredJournalOpTests {
     _ run: BackgroundRun, gate: RunLatch, on host: ToolContext
   ) async {
     await gate.open()
-    _ = await host.wait(
-      completionToken: run.completionToken, seconds: settlementDeadline
-    )
+    _ = await host.wait(completionToken: run.completionToken, seconds: nil)
   }
 
   // MARK: - The op a registration site gives

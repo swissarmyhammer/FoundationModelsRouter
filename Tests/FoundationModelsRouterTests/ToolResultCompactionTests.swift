@@ -140,16 +140,14 @@ struct ToolResultCompactionTests {
 
         let (log, answer) = SessionEventLog.collect(
             await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil))
-        let answered = await BoundedWait.conditionReached("the answer after the own-model compaction") {
-            await !log.events.answers.isEmpty
-        }
-        if !answered {
-            // A self-deadlock never ends. The stop of the running work takes
-            // the waiting item out, so the test fails and does not hang the
-            // run.
-            await fixture.session.stopRunningWork()
-        }
+        // The drain ends with the stream of the answer. A self-deadlock never
+        // ends the answer, so the test then stops here: a stack of the test
+        // process shows the summarizer item that waits behind the submission.
         try await answer.value
+        // The pump submits each job of the answer and waits for it. A job
+        // leaves the count of the queue before its submitter resumes, so after
+        // the end of the pump the queue holds no job of this answer.
+        #expect(await fixture.session.pumpEnds())
 
         let events = await log.events
         let compaction = try #require(events.compactionResults.first)

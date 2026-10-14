@@ -44,12 +44,15 @@ struct GenerationQueueTests {
     ///   - prompt: The prompt of the call.
     ///   - backend: The backend whose call is the item.
     ///   - queue: The queue the item goes to.
+    ///   - onQueued: Called when the item must wait behind another item. The
+    ///     default does nothing.
     /// - Returns: The answer of the call.
     /// - Throws: What the queue or the call throws.
     private static func submitCall(
-        _ prompt: String, of backend: any LanguageModelSessionBackend, to queue: GenerationQueue
+        _ prompt: String, of backend: any LanguageModelSessionBackend, to queue: GenerationQueue,
+        onQueued: @Sendable () -> Void = {}
     ) async throws -> String {
-        try await queue.submit { try await backend.respond(to: prompt, maxTokens: nil) }
+        try await queue.submit(onQueued: onQueued) { try await backend.respond(to: prompt, maxTokens: nil) }
     }
 
     @Test("two whole calls submitted to the queue of one container never run at the same time")
@@ -58,15 +61,14 @@ struct GenerationQueueTests {
         let first = fixture.container.makeSession(instructions: nil)
         let second = fixture.container.makeSession(instructions: nil)
         let queue = try #require(first.generationQueue)
+        let secondQueued = AsyncSemaphore(value: 0)
 
         let firstCall = Task { try await Self.submitCall("first", of: first, to: queue) }
-        _ = await BoundedWait.conditionReached("the first pass entered the model") {
-            await fixture.observer.enteredCount == 1
+        await fixture.observer.waitUntil { $0.entered == 1 }
+        let secondCall = Task {
+            try await Self.submitCall("second", of: second, to: queue, onQueued: { secondQueued.signal() })
         }
-        let secondCall = Task { try await Self.submitCall("second", of: second, to: queue) }
-        _ = await BoundedWait.conditionReached("the second submission waited for the worker") {
-            await fixture.queue.waitingCount == 1
-        }
+        await secondQueued.wait()
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
@@ -117,14 +119,14 @@ struct GenerationQueueTests {
         let holder = fixture.container.makeSession(instructions: nil)
         let waiter = fixture.container.makeSession(instructions: nil)
 
+        let waiterQueued = AsyncSemaphore(value: 0)
+
         let holdingCall = Task { try await Self.submitCall("holder", of: holder, to: fixture.queue) }
-        _ = await BoundedWait.conditionReached("the holding pass entered the model") {
-            await fixture.observer.enteredCount == 1
+        await fixture.observer.waitUntil { $0.entered == 1 }
+        let waitingCall = Task {
+            try await Self.submitCall("waiter", of: waiter, to: fixture.queue, onQueued: { waiterQueued.signal() })
         }
-        let waitingCall = Task { try await Self.submitCall("waiter", of: waiter, to: fixture.queue) }
-        _ = await BoundedWait.conditionReached("the second submission waited for the worker") {
-            await fixture.queue.waitingCount == 1
-        }
+        await waiterQueued.wait()
         waitingCall.cancel()
         let waitingOutcome = await waitingCall.result
         let waiterCountAfterCancel = await fixture.queue.waitingCount
@@ -145,6 +147,9 @@ struct GenerationQueueTests {
         let release = AsyncSemaphore(value: 0)
         let holderWaits = AsyncSemaphore(value: 0)
         let waiterWaits = AsyncSemaphore(value: 0)
+        // The test waits on this one. Thus the count of `waiterWaits` stays
+        // the count of the reports of the waiter.
+        let waiterQueued = AsyncSemaphore(value: 0)
 
         let holdingSubmission = Task {
             try await queue.submit(onQueued: { holderWaits.signal() }) {
@@ -152,19 +157,18 @@ struct GenerationQueueTests {
                 await release.wait()
             }
         }
-        let holderInside = await BoundedWait.signalArrived(entered, named: "the holding submission started")
+        await entered.wait()
         let waitingSubmission = Task {
-            try await queue.submit(onQueued: { waiterWaits.signal() }) {}
+            try await queue.submit(onQueued: {
+                waiterWaits.signal()
+                waiterQueued.signal()
+            }) {}
         }
-        let waiterQueued = await BoundedWait.conditionReached("the second submission waited for the worker") {
-            await queue.waitingCount == 1
-        }
+        await waiterQueued.wait()
         release.signal()
         try await holdingSubmission.value
         try await waitingSubmission.value
 
-        #expect(holderInside)
-        #expect(waiterQueued)
         #expect(holderWaits.availablePermits == 0)
         #expect(waiterWaits.availablePermits == 1)
         #expect(await queue.isRunning == false)

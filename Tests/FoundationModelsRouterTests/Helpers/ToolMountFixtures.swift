@@ -18,21 +18,8 @@ struct MountArguments {
 enum MountFixtures {
     // MARK: - Intervals
 
-    /// A timeout, or a hold, short enough to keep a suite fast but long
-    /// enough that a fixture never spuriously elapses it.
-    static let shortInterval: TimeInterval = 0.2
-
     /// A deadline a test treats as "never elapses within this test".
     static let generousInterval: TimeInterval = 30
-
-    /// The ceiling on any await a test performs against the run plane.
-    static let settlementDeadline: TimeInterval = 30
-
-    /// The pause between two polls of a run-plane fact, in nanoseconds.
-    static let pollIntervalNanoseconds: UInt64 = 5_000_000
-
-    /// How many polls a bounded poll makes before it gives up.
-    static let pollAttempts = 1_000
 
     // MARK: - Sink
 
@@ -44,12 +31,17 @@ enum MountFixtures {
         /// Every report a closing call posted, in post order.
         private(set) var reports: [ToolCallReport] = []
 
+        /// Signals after each event or report that the sink records.
+        nonisolated let changes = ChangeSignal()
+
         func post(event: OperationEvent) {
             events.append(event)
+            changes.signal()
         }
 
         func post(report: ToolCallReport) {
             reports.append(report)
+            changes.signal()
         }
     }
 
@@ -121,7 +113,7 @@ enum MountFixtures {
         let next: String
     }
 
-    /// The error a helper throws when the fact it polls for never appears.
+    /// The error a helper throws when the fact it waits for never comes.
     struct FixtureError: Error, Equatable {}
 
     /// Decodes the pending envelope out of a returned rendered output.
@@ -129,28 +121,24 @@ enum MountFixtures {
         try JSONDecoder().decode(DecodedEnvelope.self, from: Data(rendered.utf8))
     }
 
-    /// Awaits the run's settlement through the run plane and returns its
-    /// terminal event.
+    /// Waits for the settlement of the run through the run plane, with no
+    /// deadline, and returns its terminal event.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The completion token of the run.
+    ///   - runPlane: The run plane of the run.
+    /// - Returns: The terminal event of the run.
+    /// - Throws: ``FixtureError`` when the wait ends with no settlement (a
+    ///   cancel of the test, or an unknown token).
     static func settledTerminal(
         of completionToken: String, in runPlane: RunPlane
     ) async throws -> OperationEvent {
-        let result = await runPlane.wait(completionToken: completionToken, seconds: settlementDeadline)
+        let result = await runPlane.wait(completionToken: completionToken, seconds: nil)
         guard case .settled(let terminal) = result else {
             Issue.record("run \(completionToken) did not settle: \(result)")
             throw FixtureError()
         }
         return terminal
-    }
-
-    /// Polls `fact` (bounded) until it returns a value.
-    static func poll<Value>(_ fact: () async -> Value?) async throws -> Value? {
-        for _ in 0..<pollAttempts {
-            if let value = await fact() {
-                return value
-            }
-            try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-        }
-        return nil
     }
 
     // MARK: - Tools
@@ -165,26 +153,49 @@ enum MountFixtures {
         }
     }
 
+    /// Opens `entered` when it is not `nil`, then blocks on `gate` until the
+    /// test opens it.
+    ///
+    /// The body of a call does this first step, so a test that waits for
+    /// `entered` knows that the call runs the body of the tool.
+    ///
+    /// - Parameters:
+    ///   - entered: The latch to open when the body starts, or `nil`.
+    ///   - gate: The latch that the body waits on.
+    static func enterAndHold(_ entered: RunLatch?, on gate: RunLatch) async {
+        await entered?.open()
+        await gate.waitUntilOpen()
+    }
+
     /// Blocks on a ``RunLatch`` until the test opens it.
     struct GatedTool: Tool {
         let name = "gated_tool"
         let description = "blocks until its gate opens"
         let gate: RunLatch
 
+        /// The latch the call opens when its body starts, or `nil`.
+        var entered: RunLatch?
+
         func call(arguments: MountArguments) async throws -> String {
-            await gate.waitUntilOpen()
+            await enterAndHold(entered, on: gate)
             return "gated: \(arguments.value)"
         }
     }
 
-    /// Sleeps for `duration` seconds and posts no progress, then returns.
+    /// Posts no progress and blocks on its gate, then returns. The test opens
+    /// the gate, so the run is quiet for as long as the test wants.
     struct QuietTool: Tool {
         let name = "quiet_tool"
         let description = "runs for a time with no progress, then returns"
-        let duration: TimeInterval
+
+        /// The latch the call opens when its body starts.
+        let entered: RunLatch
+
+        /// The latch that ends the quiet run.
+        let gate: RunLatch
 
         func call(arguments: MountArguments) async throws -> String {
-            try await Task.sleep(for: .seconds(duration))
+            await enterAndHold(entered, on: gate)
             return "quiet: \(arguments.value)"
         }
     }
@@ -195,10 +206,13 @@ enum MountFixtures {
         let description = "declares the mount it cannot work without"
         let gate: RunLatch
 
+        /// The latch the call opens when its body starts, or `nil`.
+        var entered: RunLatch?
+
         var mount: ToolMount? { .synchronous }
 
         func call(arguments: MountArguments) async throws -> String {
-            await gate.waitUntilOpen()
+            await enterAndHold(entered, on: gate)
             return "declared: \(arguments.value)"
         }
     }

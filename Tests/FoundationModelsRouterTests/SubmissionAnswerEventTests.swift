@@ -14,9 +14,8 @@ import Testing
 ///
 /// Everything runs against ``SessionMessagePumpTests/PumpProbeBackend``, a
 /// stub backend that can hold a call open, so the suite needs no network and
-/// no GPU. No wait here is a bare `await` on an answer that can stay
-/// suspended: each wait is bounded, so a regression fails the test and does
-/// not hang the run.
+/// no GPU. Each wait waits for an event: a prompt that reaches the backend,
+/// or the end of an answer on the feed of the session. No clock ends a wait.
 @Suite("The submission and answer events of a session (task ^x7cxsg3)")
 struct SubmissionAnswerEventTests {
     /// The backend the suite scripts.
@@ -55,18 +54,15 @@ struct SubmissionAnswerEventTests {
         return (profile.standard.makeSession(), profile)
     }
 
-    /// Waits, bounded, until `log` holds `count` events that end an answer:
+    /// Waits until `log` holds `count` events that end an answer:
     /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
     ///
     /// - Parameters:
     ///   - count: How many ends of an answer to wait for.
     ///   - log: The log of the session-wide feed.
-    /// - Returns: `true` when the events arrived inside the bound.
-    private static func waitForAnswersToEnd(_ count: Int, in log: SessionEventLog) async -> Bool {
-        await BoundedWait.conditionReached("\(count) answers ending on the session feed") {
-            let events = await log.events
-            return events.answers.count + events.answerFailures.count >= count
-        }
+    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func waitForAnswersToEnd(_ count: Int, in log: SessionEventLog) async throws {
+        try await log.wait(until: { $0.answers.count + $0.answerFailures.count >= count })
     }
 
     @Test("one answered event names every message that its chain delivered in one submission")
@@ -79,14 +75,13 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let first = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = try session.send(Self.secondPrompt)
         let third = try session.send(Self.thirdPrompt)
         await latch.open()
-        let ended = await Self.waitForAnswersToEnd(Self.twoAnswers, in: log)
+        try await Self.waitForAnswersToEnd(Self.twoAnswers, in: log)
         drain.cancel()
 
-        #expect(ended)
         let events = await log.events
         #expect(events.eventsInsideEachAnswerFrame().count == Self.twoAnswers)
         #expect(events.answers.map(\.mailIds) == [[first], [second, third]])
@@ -107,15 +102,14 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let first = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = try session.send(Self.secondPrompt)
         // The first submission ends with a rejected tool call. The retry is a
         // continuation of the same chain, and the waiting message joins it.
         await latch.open()
-        let ended = await Self.waitForAnswersToEnd(1, in: log)
+        try await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
-        #expect(ended)
         let events = await log.events
         _ = eventsInsideAnswerFrame(events)
         #expect(events.answers.map(\.mailIds) == [[first, second]])
@@ -138,17 +132,20 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         // The latch never opens, so only cancelAll() can end the held call.
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
-        let ended = await Self.waitForAnswersToEnd(1, in: log)
+        try await Self.waitForAnswersToEnd(1, in: log)
         // cancelAll() does not wait for the pump. The test waits for the end
         // of the stopped work, so a late event of that work can come first.
         #expect(await session.isIdleOnceThePumpEnds())
-        drain.cancel()
+        // The close finishes the feed after each event of the stopped work,
+        // and the drain ends after the last of them. Thus a late end of the
+        // submission is in the log now, or it never came.
+        await session.close()
+        await drain.value
 
-        #expect(ended)
         let events = await log.events
         #expect(events.answerFailures == [AnswerFailure(mailIds: [id], reason: .cancelled)])
         #expect(events.answers.isEmpty)
@@ -168,10 +165,9 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = try session.send(Self.firstPrompt)
-        let ended = await Self.waitForAnswersToEnd(1, in: log)
+        try await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
-        #expect(ended)
         let events = await log.events
         _ = eventsInsideAnswerFrame(events)
         let reason = AnswerFailure.Reason.error(String(describing: SessionMessagePumpTests.PumpProbeError.refused))
@@ -189,23 +185,20 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let run = AnswerDrivenRun(waitingFor: "the respond of the first prompt") {
-            try await session.respond(to: Self.firstPrompt, observing: nil)
-        }
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        let run = Task { try await session.respond(to: Self.firstPrompt, observing: nil) }
+        try await backend.waitForPrompts(1)
         // The stream of the message ends with no error when the task that
         // reads it is cancelled. The respond must throw, not stop the process.
         run.cancel()
 
-        await #expect(throws: CancellationError.self) { try await run.deliveredAnswer() }
+        await #expect(throws: CancellationError.self) { try await run.value }
 
         // The mail left the queue before the cancel, so the cancel of the
         // caller does not stop its answer: the answer goes on to its end.
         await latch.open()
-        let ended = await Self.waitForAnswersToEnd(1, in: log)
+        try await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
-        #expect(ended)
         let events = await log.events
         #expect(events.answers.map(\.reply) == [Backend.answer(ofCall: 1)])
         #expect(events.answerFailures.isEmpty)

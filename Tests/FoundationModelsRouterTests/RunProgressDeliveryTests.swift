@@ -139,10 +139,9 @@ struct RunProgressDeliveryTests {
 
         await Self.post(posted, to: fixture)
 
-        #expect(
-            await BoundedWait.conditionReached("each progress event on the session feed") {
-                await fixture.events.runProgress == posted
-            })
+        let postedCount = posted.count
+        try await fixture.events.wait(until: { $0.runProgress.count >= postedCount })
+        #expect(await fixture.events.events.runProgress == posted)
     }
 
     @Test("the runProgress event of a plan carries the whole plan to the host")
@@ -153,10 +152,8 @@ struct RunProgressDeliveryTests {
 
         await Self.post([planEvent], to: fixture)
 
-        #expect(
-            await BoundedWait.conditionReached("the plan event on the session feed") {
-                await fixture.events.runProgress.map(\.plan) == [PlanFixtures.plan()]
-            })
+        try await fixture.events.wait(until: { !$0.runProgress.isEmpty })
+        #expect(await fixture.events.events.runProgress.map(\.plan) == [PlanFixtures.plan()])
     }
 
     // MARK: - The plan stays out of the model input
@@ -233,10 +230,10 @@ struct RunProgressDeliveryTests {
     }
 }
 
-extension SessionEventLog {
-    /// Every run progress event delivered so far, in delivery order.
+extension Sequence<SessionEvent> {
+    /// The run progress events among these events, in order.
     var runProgress: [OperationEvent] {
-        events.compactMap { event in
+        compactMap { event in
             guard case .runProgress(let progress) = event else { return nil }
             return progress
         }

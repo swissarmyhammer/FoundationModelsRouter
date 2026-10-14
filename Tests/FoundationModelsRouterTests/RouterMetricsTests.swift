@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsExtras
+import Metrics
 import MetricsTestKit
 import TelemetryTestSupport
 import Testing
@@ -60,6 +61,22 @@ struct RouterMetricsTests {
 
     /// The name of the timer of the pause of the mail queue for a compaction.
     private static let pauseDurationName = "FoundationModelsRouter.mail_queue.pause_duration"
+
+    /// The name of the gauge of the bytes that the models of the pool use.
+    private static let residentBytesName = "FoundationModelsRouter.model_pool.resident_bytes"
+
+    /// Tells whether a feed of a session reported that a submission of that
+    /// session waits in the queue of its model.
+    ///
+    /// - Parameter events: The events of the feed so far.
+    /// - Returns: `true` when the events contain
+    ///   ``SessionEvent/submissionQueued(_:)``.
+    private static func containsQueuedSubmission(_ events: [SessionEvent]) -> Bool {
+        events.contains { event in
+            guard case .submissionQueued = event else { return false }
+            return true
+        }
+    }
 
     /// The dimensions of a metric of one session: its model and its slot.
     ///
@@ -179,22 +196,26 @@ struct RouterMetricsTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try await TelemetryCapture.run(forbidding: []) { context in
-            let router = RouterTestFixtures.makeRouter(
-                cacheDir: dir,
-                loader: StubModelLoader(
-                    container: UndrivenLanguageModelContainer(), dimension: RouterTestFixtures.stubDimension))
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            let residentBytes = Double(router.pool.footprint.totalBytes)
-            #expect(residentBytes > 0)
-
             let factory = context.metricsFactory
-            let reached = await BoundedWait.conditionReached("the resident bytes of the resolved profile") {
-                (try? factory.expectGauge("FoundationModelsRouter.model_pool.resident_bytes"))?.lastValue
-                    == residentBytes
+            let signalling = SignallingMetricsFactory(wrapping: factory)
+            // The footprints task of the router is a plain task. It reads the
+            // factory that is bound when the router is made, so each gauge
+            // record of that task signals `signalling.changes`.
+            try await withMetricsFactory(signalling) {
+                let router = RouterTestFixtures.makeRouter(
+                    cacheDir: dir,
+                    loader: StubModelLoader(
+                        container: UndrivenLanguageModelContainer(), dimension: RouterTestFixtures.stubDimension))
+                let profile = try await router.resolve(
+                    profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+                let residentBytes = Double(router.pool.footprint.totalBytes)
+                #expect(residentBytes > 0)
+
+                try await signalling.changes.wait(until: {
+                    (try? factory.expectGauge(Self.residentBytesName))?.lastValue == residentBytes
+                })
+                withExtendedLifetime(profile) {}
             }
-            #expect(reached)
-            withExtendedLifetime(profile) {}
         }
     }
 
@@ -214,19 +235,16 @@ struct RouterMetricsTests {
             context in
             await session.useCaptureMetrics(for: context.metricsFactory)
             let holding = Task { try await session.respond(to: Self.holdingPrompt) }
-            let holdingInside = await BoundedWait.conditionReached("the pass of the holding answer") {
-                fixture.passes.recorded.count == 1
-            }
+            try await fixture.passes.waitForPasses(1)
             for prompt in Self.waitingPrompts {
                 _ = try session.send(prompt)
             }
             await fixture.latch.open()
             _ = try await holding.value
-            let drained = await BoundedWait.conditionReached("the answer of the waiting messages") {
-                await session.mailQueueDepth().total == 0
-            }
-            #expect(holdingInside)
-            #expect(drained)
+            // The session is idle only after its pump answered the waiting
+            // messages, so the queue is empty when the test reads it.
+            #expect(await session.becomesIdle())
+            #expect(await session.mailQueueDepth().total == 0)
             return try MailKind.allCases.map { kind in
                 (kind, try context.metricsFactory.expectRecorder(Self.queueDepthName, [("mail.kind", kind.rawValue)]).values)
             }
@@ -258,16 +276,13 @@ struct RouterMetricsTests {
             context in
             await session.useCaptureMetrics(for: context.metricsFactory)
             let holding = Task { try await session.respond(to: Self.holdingPrompt) }
-            let holdingInside = await BoundedWait.conditionReached("the pass of the holding answer") {
-                fixture.passes.recorded.count == 1
-            }
+            try await fixture.passes.waitForPasses(1)
             let waiting = try session.send(Self.waitingPrompts[0])
             let cancel = session.cancel(waiting)
             #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
             #expect(try await session.awaitTerminal(of: waiting) == .cancelled(waiting))
             await fixture.latch.open()
             _ = try await holding.value
-            #expect(holdingInside)
             return try context.metricsFactory.expectCounter(Self.cancelledMailName).totalValue
         }
 
@@ -280,15 +295,17 @@ struct RouterMetricsTests {
         let values = try await TelemetryCapture.run(forbidding: []) { context in
             let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: nil, tempDirPrefix: Self.tempDirPrefix)
-            await session.useCaptureMetrics(for: context.metricsFactory)
+            let factory = context.metricsFactory
+            let signalling = SignallingMetricsFactory(wrapping: factory)
+            await session.useCaptureMetrics(for: signalling)
 
             _ = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
             // The queue resumes after the terminal event of the compaction.
-            let factory = context.metricsFactory
-            let recorded = await BoundedWait.conditionReached("the pause of the mail queue") {
+            // The record of the pause at the resume signals
+            // `signalling.changes`.
+            try await signalling.changes.wait(until: {
                 (try? factory.expectTimer(Self.pauseDurationName))?.values.isEmpty == false
-            }
-            #expect(recorded)
+            })
             return try factory.expectTimer(Self.pauseDurationName).values
         }
 
@@ -312,25 +329,29 @@ struct RouterMetricsTests {
             for session in [holding] + waiting {
                 await session.useCaptureMetrics(for: context.metricsFactory)
             }
-            let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
-            let holdingInside = await BoundedWait.conditionReached("the pass of the holding answer") {
-                fixture.passes.recorded.count == 1
+            var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
+            for session in waiting {
+                feeds.append(await SessionEventLog.watch(session))
             }
+            let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
+            try await fixture.passes.waitForPasses(1)
             var waitingAnswers: [Task<String, any Error>] = []
             for (index, session) in waiting.enumerated() {
                 let prompt = Self.waitingPrompts[index]
                 waitingAnswers.append(Task { try await session.respond(to: prompt) })
-                let queued = await BoundedWait.conditionReached("waiting submission \(index + 1)") {
-                    await queue.waitingCount == index + 1
-                }
-                #expect(queued)
+                // The queue counts the submission before it reports the wait,
+                // and the holding answer keeps each submission in the queue.
+                try await feeds[index].log.wait(until: { Self.containsQueuedSubmission($0) })
+                #expect(await queue.waitingCount == index + 1)
             }
             await fixture.latch.open()
             _ = try await holdingAnswer.value
             for answer in waitingAnswers {
                 _ = try await answer.value
             }
-            #expect(holdingInside)
+            for feed in feeds {
+                feed.drain.cancel()
+            }
             let gauge = try context.metricsFactory.expectGauge(
                 "FoundationModelsRouter.generation_queue.waiting", [("model.ref", holding.modelRefDimension)])
             return (gauge.values, holding.modelRefDimension)
@@ -370,5 +391,155 @@ struct RouterMetricsTests {
         let count = try factory.expectCounter(
             "FoundationModelsRouter.compaction.count", [("compaction.trigger", "caller")])
         #expect(count.totalValue == 1)
+    }
+}
+
+/// A metrics factory that makes each metric through the `TestMetrics` of a
+/// capture, and signals ``changes`` after each value of a recorder (also a
+/// gauge) or of a timer.
+///
+/// `TestMetrics` sends no event when a metric gets a value. A test gives this
+/// factory to the code under test, and waits on ``changes`` for the value
+/// that it reads back from the `TestMetrics`. Each metric stays in the
+/// `TestMetrics`, so the capture still checks its name and its dimensions.
+/// A counter and a meter get no signal: no test waits for one.
+final class SignallingMetricsFactory: MetricsFactory {
+    /// The factory that makes and keeps each metric.
+    let inner: TestMetrics
+
+    /// The signal that each value of a recorder or a timer sends.
+    let changes = ChangeSignal()
+
+    /// Makes a factory over `inner`.
+    ///
+    /// - Parameter inner: The factory that makes and keeps each metric.
+    init(wrapping inner: TestMetrics) {
+        self.inner = inner
+    }
+
+    /// Makes the counter in ``inner``. It sends no signal.
+    ///
+    /// - Parameters:
+    ///   - label: The label of the counter.
+    ///   - dimensions: The dimensions of the counter.
+    /// - Returns: The counter of ``inner``.
+    func makeCounter(label: String, dimensions: [(String, String)]) -> CounterHandler {
+        inner.makeCounter(label: label, dimensions: dimensions)
+    }
+
+    /// Makes the recorder in ``inner``, wrapped so that each value signals
+    /// ``changes``.
+    ///
+    /// - Parameters:
+    ///   - label: The label of the recorder.
+    ///   - dimensions: The dimensions of the recorder.
+    ///   - aggregate: Whether the recorder aggregates its values.
+    /// - Returns: The wrapped recorder.
+    func makeRecorder(label: String, dimensions: [(String, String)], aggregate: Bool) -> RecorderHandler {
+        SignallingRecorder(
+            inner: inner.makeRecorder(label: label, dimensions: dimensions, aggregate: aggregate), changes: changes)
+    }
+
+    /// Makes the timer in ``inner``, wrapped so that each value signals
+    /// ``changes``.
+    ///
+    /// - Parameters:
+    ///   - label: The label of the timer.
+    ///   - dimensions: The dimensions of the timer.
+    /// - Returns: The wrapped timer.
+    func makeTimer(label: String, dimensions: [(String, String)]) -> TimerHandler {
+        SignallingTimer(inner: inner.makeTimer(label: label, dimensions: dimensions), changes: changes)
+    }
+
+    /// Destroys the counter in ``inner``.
+    ///
+    /// - Parameter handler: The counter to destroy.
+    func destroyCounter(_ handler: CounterHandler) {
+        inner.destroyCounter(handler)
+    }
+
+    /// Destroys the recorder in ``inner``.
+    ///
+    /// - Parameter handler: The recorder to destroy, wrapped or not.
+    func destroyRecorder(_ handler: RecorderHandler) {
+        inner.destroyRecorder((handler as? SignallingRecorder)?.inner ?? handler)
+    }
+
+    /// Destroys the timer in ``inner``.
+    ///
+    /// - Parameter handler: The timer to destroy, wrapped or not.
+    func destroyTimer(_ handler: TimerHandler) {
+        inner.destroyTimer((handler as? SignallingTimer)?.inner ?? handler)
+    }
+}
+
+/// A recorder that gives each value to a recorder of a `TestMetrics`, and
+/// then signals a change.
+private final class SignallingRecorder: RecorderHandler {
+    /// The recorder that keeps the values.
+    let inner: any RecorderHandler
+
+    /// The signal that each value sends.
+    let changes: ChangeSignal
+
+    /// Makes a recorder over `inner`.
+    ///
+    /// - Parameters:
+    ///   - inner: The recorder that keeps the values.
+    ///   - changes: The signal that each value sends.
+    init(inner: any RecorderHandler, changes: ChangeSignal) {
+        self.inner = inner
+        self.changes = changes
+    }
+
+    /// Records `value` in ``inner``, then signals ``changes``.
+    ///
+    /// - Parameter value: The value.
+    func record(_ value: Int64) {
+        inner.record(value)
+        changes.signal()
+    }
+
+    /// Records `value` in ``inner``, then signals ``changes``.
+    ///
+    /// - Parameter value: The value.
+    func record(_ value: Double) {
+        inner.record(value)
+        changes.signal()
+    }
+}
+
+/// A timer that gives each duration to a timer of a `TestMetrics`, and then
+/// signals a change.
+private final class SignallingTimer: TimerHandler {
+    /// The timer that keeps the durations.
+    let inner: any TimerHandler
+
+    /// The signal that each duration sends.
+    let changes: ChangeSignal
+
+    /// Makes a timer over `inner`.
+    ///
+    /// - Parameters:
+    ///   - inner: The timer that keeps the durations.
+    ///   - changes: The signal that each duration sends.
+    init(inner: any TimerHandler, changes: ChangeSignal) {
+        self.inner = inner
+        self.changes = changes
+    }
+
+    /// Records `duration` in ``inner``, then signals ``changes``.
+    ///
+    /// - Parameter duration: The duration in nanoseconds.
+    func recordNanoseconds(_ duration: Int64) {
+        inner.recordNanoseconds(duration)
+        changes.signal()
+    }
+
+    /// Gives the display unit to ``inner``.
+    ///
+    /// - Parameter unit: The unit to display the durations in.
+    func preferDisplayUnit(_ unit: TimeUnit) {
+        inner.preferDisplayUnit(unit)
     }
 }

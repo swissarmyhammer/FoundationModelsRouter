@@ -12,14 +12,11 @@ import Testing
 /// waits for a child answer on the same model would otherwise wait for a place
 /// its own submission holds. ``PassBoundaryProbeModel`` brackets each executor call
 /// of ``ScriptedToolCallingModel`` with two events, and ``PassBoundaryProbeTool``
-/// brackets its body, which holds for ``toolHold``, with two more. The gated
-/// twin over `MLXLanguageModel` is `ExecutorPassBoundaryIntegrationTests`.
+/// brackets its body with two more. The checks read the order of the events,
+/// not a clock, so the tool body needs no hold. The gated twin over
+/// `MLXLanguageModel` is `ExecutorPassBoundaryIntegrationTests`.
 @Suite("Executor pass boundary: a pass ends before the SDK runs its tool body (task ^8nqkten)")
 struct ExecutorPassBoundaryTests {
-    /// How long the tool body holds. Long enough that a pass kept open across
-    /// the body cannot hide inside scheduling noise.
-    private static let toolHold = Duration.seconds(1)
-
     /// How many executor calls the submission makes: the pass that emits the tool
     /// call, and the pass that answers after the tool output.
     private static let expectedPassCount = 2
@@ -36,15 +33,14 @@ struct ExecutorPassBoundaryTests {
         narration: "Let me look that up."
     )
 
-    /// A session over the timed scripted model, with the holding tool mounted.
+    /// A session over the timed scripted model, with the probe tool mounted.
     ///
     /// - Parameter log: The log the model and the tool record into.
     /// - Returns: A fresh session.
     private static func makeSession(recordingInto log: PassBoundaryLog) -> LanguageModelSession {
         let model = PassBoundaryProbeModel(
             wrapping: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()), log: log)
-        return LanguageModelSession(
-            model: model, tools: [PassBoundaryProbeTool(log: log, holdDuration: toolHold)])
+        return LanguageModelSession(model: model, tools: [PassBoundaryProbeTool(log: log)])
     }
 
     @Test("respond: the pass that emits a tool call ends before the SDK runs the tool body")
@@ -63,61 +59,26 @@ struct ExecutorPassBoundaryTests {
         let log = PassBoundaryLog()
 
         let snapshots = Self.makeSession(recordingInto: log).streamResponse(to: ScriptedToolFixture.prompt)
-        let snapshotCount = try await PassBoundaryExpectations.consumeSlowly(
-            snapshots, pausingAfterEach: .zero)
+        let snapshotCount = try await PassBoundaryExpectations.consume(snapshots)
 
         #expect(snapshotCount > 0)
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
         try PassBoundaryExpectations.expectNextPassStartsAfterToolBody(in: log)
     }
 
+    /// The earlier form of this test compared each pass with a 300 ms pause
+    /// of the consumer, and a loaded machine made a pass longer than that with
+    /// no consumer involved (task ^v4zh807). Now the consumer waits for the
+    /// pass boundaries after each element, so no clock decides the result.
     @Test("stream: a consumer slower than generation keeps no pass open")
     func slowStreamConsumerKeepsNoPassOpen() async throws {
         let log = PassBoundaryLog()
 
         let snapshots = Self.makeSession(recordingInto: log).streamResponse(to: ScriptedToolFixture.prompt)
-        let snapshotCount = try await Self.consumeAfterEachOpenPassEnds(snapshots, log: log)
+        let snapshotCount = try await PassBoundaryExpectations.consumeAfterEachOpenPassEnds(snapshots, log: log)
 
         #expect(snapshotCount > 0)
         #expect(log.passDurations.count == Self.expectedPassCount, "\(log.boundaries)")
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
-    }
-
-    /// Reads every element of `stream`, and after each one waits until every
-    /// pass that `log` saw start has ended: a consumer slower than any pass.
-    ///
-    /// The wait is on the pass boundaries, not on a clock (task ^v4zh807). A
-    /// pass that holds its end until the consumer reads the next element
-    /// never ends, so the wait never ends. A pass that a loaded machine makes
-    /// slow only makes the wait longer. The earlier form of this test compared
-    /// each pass with a 300 ms pause of the consumer, and a loaded machine made
-    /// a pass longer than that with no consumer involved.
-    ///
-    /// - Parameters:
-    ///   - stream: The stream to read.
-    ///   - log: The log the executor records each pass into.
-    /// - Returns: How many elements the stream gave.
-    /// - Throws: What the stream throws, or ``ConditionNeverHeld`` when the
-    ///   test task was cancelled during a wait.
-    private static func consumeAfterEachOpenPassEnds<Stream: AsyncSequence>(
-        _ stream: Stream, log: PassBoundaryLog
-    ) async throws -> Int {
-        var elementCount = 0
-        for try await _ in stream {
-            elementCount += 1
-            try await AwaitedCondition.wait(until: { hasNoOpenPass(in: log) })
-        }
-        return elementCount
-    }
-
-    /// Whether every pass that `log` saw start has also ended.
-    ///
-    /// - Parameter log: The log the executor records each pass into.
-    /// - Returns: Whether the log holds as many pass ends as pass starts.
-    private static func hasNoOpenPass(in log: PassBoundaryLog) -> Bool {
-        let boundaries = log.boundaries
-        let starts = boundaries.filter { $0 == .executorEntered }.count
-        let ends = boundaries.filter { $0 == .executorExited }.count
-        return starts == ends
     }
 }

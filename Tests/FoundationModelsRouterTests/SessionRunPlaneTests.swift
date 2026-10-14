@@ -22,9 +22,6 @@ struct SessionRunPlaneTests {
     /// The prefix of the temp directories of this suite.
     private static let tempDirPrefix = "SessionRunPlaneTests"
 
-    /// The deadline, in seconds, of each wait for a run in this suite.
-    private static let waitDeadlineSeconds: Double = 5
-
     /// Makes a router over the stub fixtures, resolves the standard profile,
     /// and makes a session.
     ///
@@ -82,13 +79,15 @@ struct SessionRunPlaneTests {
         let tokenB = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
         let elicitationId = ULID.generate()
-        let rejected = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId) swept by close()") {
-            await session.runPlane.awaitAnswer(to: PendingElicitationFixtures.formRequest(elicitationId: elicitationId))
+        let postings = ElicitationPostings()
+        let rejected = Task {
+            await session.runPlane.awaitAnswer(
+                to: PendingElicitationFixtures.formRequest(elicitationId: elicitationId),
+                posting: { postings.record() })
         }
-        #expect(
-            await PendingElicitationFixtures.eventually {
-                await session.runPlane.pendingElicitationIds() == [elicitationId]
-            })
+        // The run plane makes the elicitation pending before it posts it.
+        try await postings.waitForPosts(1)
+        #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         await session.close()
 
@@ -98,7 +97,7 @@ struct SessionRunPlaneTests {
         #expect(await session.runPlane.backgroundRuns().isEmpty)
         #expect(await session.runPlane.pendingElicitationIds().isEmpty)
         // The pending elicitation was rejected.
-        #expect(try await rejected.deliveredAnswer() == .cancel)
+        #expect(await rejected.value == .cancel)
 
         // The journal opens with the session's meta line — a close that
         // journals anything records the `.session` meta event first, exactly
@@ -129,7 +128,7 @@ struct SessionRunPlaneTests {
 
         // A swept token's wait() reports the settled terminal event rather
         // than hanging or claiming the token is unknown.
-        let sweptWait = await session.runPlane.wait(completionToken: tokenA, seconds: Self.waitDeadlineSeconds)
+        let sweptWait = await session.runPlane.wait(completionToken: tokenA, seconds: nil)
         let settledTerminal: OperationEvent? = if case .settled(let terminal) = sweptWait { terminal } else { nil }
         let terminal = try #require(settledTerminal, "expected .settled after sweep, got \(sweptWait)")
         #expect(terminal.correlationID == tokenA)
@@ -242,6 +241,6 @@ struct SessionRunPlaneTests {
         #expect(await child.runPlane.backgroundRuns().isEmpty)
 
         await latch.open()
-        _ = await session.runPlane.wait(completionToken: token, seconds: Self.waitDeadlineSeconds)
+        _ = await session.runPlane.wait(completionToken: token, seconds: nil)
     }
 }

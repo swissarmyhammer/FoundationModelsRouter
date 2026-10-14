@@ -57,11 +57,6 @@ struct CancelAllSignalTests {
     /// with no ceiling.
     private static let namedCeiling = 100
 
-    /// The time that a test gives the session to send output that it must
-    /// not send. The test uses it only to prove that something does not
-    /// happen.
-    private static let noOutputWindow = Duration.milliseconds(100)
-
     // MARK: - The gated stream backend
 
     /// A backend whose stream call gives one fragment at once, and then waits
@@ -119,6 +114,11 @@ struct CancelAllSignalTests {
         /// The one lock that each mutable field is behind.
         private let state = Mutex(State())
 
+        /// Signals after each change of ``prompts``,
+        /// ``isLateFragmentWaiting`` and ``isLateFragmentGiven``. A test
+        /// waits on it for the stream call to reach the gate.
+        let changes = ChangeSignal()
+
         /// The gate that holds the late fragment of the stream. The wait on
         /// it ignores the cancel of the task.
         let gate = RunLatch()
@@ -159,7 +159,7 @@ struct CancelAllSignalTests {
         ///     read it.
         /// - Returns: The answer text.
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            state.withLock { state in
+            let answer = state.withLock { state in
                 state.prompts.append(prompt)
                 let answer = Self.answer(ofCall: state.prompts.count)
                 state.entries.append(
@@ -168,6 +168,8 @@ struct CancelAllSignalTests {
                     .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: answer))])))
                 return answer
             }
+            changes.signal()
+            return answer
         }
 
         /// A stream with no text. The session reads
@@ -191,6 +193,7 @@ struct CancelAllSignalTests {
         /// - Returns: The stream of the fragments.
         func streamResponseFragments(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<ResponseFragment, Error> {
             state.withLock { $0.prompts.append(prompt) }
+            changes.signal()
             let counter = FragmentCounter()
             return AsyncThrowingStream(unfolding: { [self] in
                 switch counter.next() {
@@ -210,8 +213,10 @@ struct CancelAllSignalTests {
         /// - Returns: The late fragment.
         private func lateFragment() async -> ResponseFragment {
             state.withLock { $0.isLateFragmentWaiting = true }
+            changes.signal()
             await gate.waitUntilOpen()
             state.withLock { $0.isLateFragmentGiven = true }
+            changes.signal()
             return ResponseFragment(text: Self.lateText)
         }
 
@@ -285,6 +290,9 @@ struct CancelAllSignalTests {
         /// Each output so far, in order.
         private let recorded = Mutex<[SessionOutput]>([])
 
+        /// Signals after each output that the recorder keeps.
+        let changes = ChangeSignal()
+
         /// The task that reads the feed. It ends when the feed ends.
         private let reading = Mutex<Task<Void, Never>?>(nil)
 
@@ -301,6 +309,7 @@ struct CancelAllSignalTests {
             let task = Task {
                 for await output in feed {
                     recorder.recorded.withLock { $0.append(output) }
+                    recorder.changes.signal()
                 }
             }
             recorder.reading.withLock { $0 = task }
@@ -312,14 +321,34 @@ struct CancelAllSignalTests {
             recorded.withLock { $0 }
         }
 
-        /// Waits, bounded, until the outputs so far satisfy `condition`.
+        /// Waits until the outputs so far satisfy `condition`. The wait reads
+        /// the outputs again after each output that the recorder keeps.
         ///
-        /// - Parameters:
-        ///   - label: What the test waits for, for the issue.
-        ///   - condition: The condition on the outputs so far.
-        /// - Throws: When the condition did not hold inside the bound.
-        func waitFor(_ label: String, _ condition: @escaping @Sendable ([SessionOutput]) -> Bool) async throws {
-            try #require(await BoundedWait.conditionReached(label) { condition(self.outputs) })
+        /// - Parameter condition: The condition on the outputs so far.
+        /// - Throws: ``ConditionNeverHeld`` when the waiting task is cancelled
+        ///   before the condition holds.
+        func waitFor(_ condition: ([SessionOutput]) -> Bool) async throws {
+            try await changes.wait(until: { condition(self.outputs) })
+        }
+
+        /// Sends a probe signal to `session`, and waits until the recorder
+        /// kept the end of the probe. A cancel of an unknown id sends only its
+        /// ``SessionEvent/signalDone(_:)``.
+        ///
+        /// The session feed keeps the order in which the session sends its
+        /// output. So when the recorder has the end of the probe, it also has
+        /// each output that the session sent before the probe. A test uses
+        /// this fixed order to prove that an output did not come.
+        ///
+        /// - Parameter session: The session of the feed.
+        /// - Returns: The id of the probe signal, and each output so far.
+        /// - Throws: When the wait for the end of the probe fails.
+        func outputsUpToProbe(
+            on session: any RoutedSession
+        ) async throws -> (probe: SignalID, outputs: [SessionOutput]) {
+            let probe = session.cancel(MailID())
+            try await waitFor { outputs in outputs.contains { $0.event == .signalDone(probe) } }
+            return (probe, outputs)
         }
 
         /// Waits until the feed ended, and gives each output. Call it after
@@ -346,6 +375,9 @@ struct CancelAllSignalTests {
         /// Whether the canceler started.
         private let cancelerStarted = Mutex(false)
 
+        /// Signals after the canceler records its start.
+        let changes = ChangeSignal()
+
         /// Makes the record of the run `token`.
         ///
         /// - Parameter token: The completion token of the run.
@@ -359,9 +391,10 @@ struct CancelAllSignalTests {
             cancelerStarted.withLock { $0 }
         }
 
-        /// Records that the canceler started.
+        /// Records that the canceler started, and signals ``changes``.
         func markCancelerStarted() {
             cancelerStarted.withLock { $0 = true }
+            changes.signal()
         }
     }
 
@@ -391,20 +424,17 @@ struct CancelAllSignalTests {
     ///   - backend: The backend of the session.
     ///   - recorder: The recorder of the feed of the session.
     /// - Returns: The mail and its subscription.
-    /// - Throws: When the early text or the wait did not come inside the
-    ///   bound.
+    /// - Throws: When the waiting task is cancelled before the early text or
+    ///   the wait at the gate.
     private static func startGatedStream(
         on session: any RoutedSession, backend: GatedStreamBackend, recorder: OutputRecorder
     ) async throws -> (mail: Mail, subscription: MailSubscription<SessionOutput>) {
         let mail = RoutedSessionActor.userMessage(streamPrompt, maxTokens: nil, mode: .stream)
         let subscription = try session.mail(mail)
-        try await recorder.waitFor("the early text of the stream") { outputs in
+        try await recorder.waitFor { outputs in
             outputs.contains { $0.event == .textDelta(GatedStreamBackend.earlyText) }
         }
-        try #require(
-            await BoundedWait.conditionReached("the late fragment waiting at the gate") {
-                backend.isLateFragmentWaiting
-            })
+        try await backend.changes.wait(until: { backend.isLateFragmentWaiting })
         return (mail, subscription)
     }
 
@@ -415,11 +445,11 @@ struct CancelAllSignalTests {
     ///   - session: The session.
     ///   - backend: The backend of the session.
     /// - Returns: The id of the held message.
-    /// - Throws: When the submission does not reach the backend inside the
-    ///   bound.
+    /// - Throws: When the waiting task is cancelled before the submission
+    ///   reached the backend.
     private static func startHeldAnswer(on session: any RoutedSession, backend: ProbeBackend) async throws -> MailID {
         let held = try session.send(heldPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         return held
     }
 
@@ -572,20 +602,30 @@ struct CancelAllSignalTests {
         let mailOutputs = await MailQueueFixtures.readToEnd(subscription)
         #expect(mailOutputs.last?.event == .answerFailed(failure))
         #expect(TerminalEventLedger(outputs: mailOutputs).endedMailIds == [[stopped.id]])
+        // The recorder reads the feed in a task of its own, so the test waits
+        // until the recorder has the end of the answer.
+        try await recorder.waitFor { outputs in
+            Self.events(of: stopped.id, in: outputs).contains(.answerFailed(failure))
+        }
         let atStop = Self.events(of: stopped.id, in: recorder.outputs)
         #expect(atStop.last == .answerFailed(failure))
 
-        // While the model call runs on, no output of the answer arrives.
-        try await Task.sleep(for: Self.noOutputWindow)
-        #expect(Self.events(of: stopped.id, in: recorder.outputs) == atStop)
+        // While the model call runs on, no output of the answer arrives. The
+        // model call waits at the shut gate. The recorder has the end of a
+        // probe signal, so it also has each output that came before the
+        // probe.
+        let early = try await recorder.outputsUpToProbe(on: session)
+        #expect(Self.events(of: stopped.id, in: early.outputs) == atStop)
 
         // The model call gives its late fragment and ends. Its output and
-        // its own end do not arrive.
+        // its own end do not arrive. The pump sent each output of the model
+        // call before the pump ended, so the probe after the end of the pump
+        // comes after that output.
         await backend.gate.open()
         #expect(await session.isIdleOnceThePumpEnds())
         #expect(backend.isLateFragmentGiven)
-        try await Task.sleep(for: Self.noOutputWindow)
-        #expect(Self.events(of: stopped.id, in: recorder.outputs) == atStop)
+        let late = try await recorder.outputsUpToProbe(on: session)
+        #expect(Self.events(of: stopped.id, in: late.outputs) == atStop)
         await session.close()
 
         let outputs = await recorder.finished()
@@ -595,7 +635,7 @@ struct CancelAllSignalTests {
         #expect(backend.prompts == [Self.streamPrompt])
         let ledger = TerminalEventLedger(outputs: outputs)
         ledger.expectExactlyOneTerminal(for: [stopped.id])
-        ledger.expectExactlyOneTerminal(forSignals: [signal])
+        ledger.expectExactlyOneTerminal(forSignals: [signal, early.probe, late.probe])
         withExtendedLifetime(profile) {}
     }
 
@@ -614,19 +654,24 @@ struct CancelAllSignalTests {
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
 
         // The canceler starts, and waits at the shut gate. The run is open.
-        try #require(await BoundedWait.conditionReached("the start of the canceler") { run.isCancelerStarted })
+        // Its body ends only after the canceler goes past the gate, so no
+        // terminal of the run can be on the feed yet.
+        try await run.changes.wait(until: { run.isCancelerStarted })
         #expect(await session.runPlane.backgroundRuns().map(\.completionToken) == [run.token])
         #expect(Self.settledEvents(of: run.token, in: recorder.outputs).isEmpty)
 
         // The cancel ends, and the run gets its terminal.
         await run.cancelerGate.open()
-        try await recorder.waitFor("the terminal of the run") { outputs in
+        try await recorder.waitFor { outputs in
             !Self.settledEvents(of: run.token, in: outputs).isEmpty
         }
         await session.runPlane.joinRunBodies()
         #expect(await session.runPlane.backgroundRuns().isEmpty)
-        // The body of the run ended after the sweep: no second terminal.
-        try await Task.sleep(for: Self.noOutputWindow)
+        // The body of the run ended after the sweep: no second terminal. The
+        // body posts its terminal and waits for the post before it ends, and
+        // the close waits for each body. So a second terminal is on the feed
+        // before the close finishes the feed, and the check of all the
+        // outputs below sees it.
         await session.close()
 
         let outputs = await recorder.finished()

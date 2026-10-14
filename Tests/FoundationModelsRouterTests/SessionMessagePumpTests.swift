@@ -79,6 +79,10 @@ struct SessionMessagePumpTests {
         /// The one lock every mutable field is behind.
         private let state: Mutex<State>
 
+        /// Signals after each call records its prompt in ``prompts``. A test
+        /// waits on it for a prompt that reaches the backend.
+        let changes = ChangeSignal()
+
         /// Makes a backend that follows `script`.
         ///
         /// - Parameters:
@@ -91,6 +95,15 @@ struct SessionMessagePumpTests {
         /// The prompt of each call so far, in call order.
         var prompts: [String] {
             state.withLock { $0.prompts }
+        }
+
+        /// Waits until at least `count` prompts reached this backend.
+        ///
+        /// - Parameter count: How many prompts to wait for.
+        /// - Throws: ``ConditionNeverHeld`` when the waiting task is cancelled
+        ///   first.
+        func waitForPrompts(_ count: Int) async throws {
+            try await changes.wait(until: { self.prompts.count >= count })
         }
 
         /// The answer the call with `ordinal` gives.
@@ -106,6 +119,7 @@ struct SessionMessagePumpTests {
                 state.prompts.append(prompt)
                 return (state.prompts.count, state.script[state.prompts.count] ?? .answer)
             }
+            changes.signal()
             if case .failAfterPrompt = scripted {
                 state.withLock { $0.entries.append(Self.promptEntry(prompt)) }
                 throw PumpProbeError.refused
@@ -291,30 +305,29 @@ struct SessionMessagePumpTests {
     /// - Parameters:
     ///   - session: The session to start the answer on.
     ///   - backend: The backend of the session.
-    /// - Throws: When the run does not settle, or when the submission does
-    ///   not reach the backend inside the bound.
+    /// - Throws: When the run does not settle, or ``ConditionNeverHeld`` when
+    ///   the task is cancelled before the submission reaches the backend.
     private static func startMailOnlyAnswer(on session: any RoutedSession, backend: PumpProbeBackend) async throws {
         let settledRun = try await settledRunTerminal(on: session)
         _ = try await session.respond(to: firstPrompt)
         await session.outbox.post(event: settledRun)
-        try await BoundedWait.awaitPrompts(mailOnlySubmission, in: { backend.prompts })
+        try await backend.waitForPrompts(mailOnlySubmission)
         #expect(backend.prompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
     }
 
-    /// Waits, bounded, until `count` caller messages wait in the outbox of
-    /// `session`.
+    /// Waits until `count` caller messages wait in the outbox of `session`.
+    ///
+    /// Each mail that the queue gets is a change of
+    /// ``RoutedSession/stateChanges``, so the wait reads the count again
+    /// after each new message.
     ///
     /// - Parameters:
     ///   - count: How many waiting caller messages to wait for.
     ///   - session: The session whose outbox is watched.
-    /// - Throws: ``SignalNeverArrived`` when the messages did not arrive
-    ///   inside the bound.
+    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
+    ///   messages arrive.
     private static func awaitWaitingMessages(_ count: Int, on session: any RoutedSession) async throws {
-        guard
-            await BoundedWait.conditionReached(
-                "\(count) caller messages waiting in the outbox",
-                when: { session.waitingUserMailCount == count })
-        else { throw SignalNeverArrived() }
+        try await session.stateChanges.wait(until: { session.waitingUserMailCount == count })
     }
 
     /// Whether `event` is the terminal event ``SessionEvent/answered(_:)``.
@@ -364,7 +377,7 @@ struct SessionMessagePumpTests {
         let id = try session.send(Self.firstPrompt)
 
         // No driver call and no wait: the pump takes the message by itself.
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         #expect(Self.isAnswered(try await session.awaitTerminal(of: id)))
         #expect(await session.becomesIdle())
         #expect(backend.prompts == [Self.firstPrompt])
@@ -385,7 +398,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let waiting = try session.send(Self.secondPrompt)
         #expect(await session.pendingMessages().map(\.id) == [waiting])
 
@@ -409,7 +422,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let id = try session.send(Self.firstPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         #expect(await session.mailQueueDepth().running == [id])
 
         // The mail left the queue, so the signal of the cancel finds
@@ -421,7 +434,7 @@ struct SessionMessagePumpTests {
         // The answer ends at once; the pump ends when the call unwinds.
         try await Self.expectSignalEnds(session.cancelAll(), on: session)
         #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
-        #expect(await BoundedWait.pumpStops(on: session))
+        #expect(await session.pumpEnds())
         #expect(backend.prompts == [Self.firstPrompt])
         // A cancel after the end finds nothing: the terminal event stays.
         try await Self.expectSignalEnds(session.cancel(id), on: session)
@@ -440,7 +453,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         // The later prompts arrive one after the other, so their order in
         // the outbox is known.
         let second = Task { try await session.respond(to: Self.secondPrompt) }
@@ -477,7 +490,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = Task { try await session.respond(to: Self.secondPrompt) }
         try await Self.awaitWaitingMessages(1, on: session)
 
@@ -512,7 +525,7 @@ struct SessionMessagePumpTests {
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         await session.outbox.post(event: settledRun)
         await latch.open()
         let firstAnswer = try await first.value
@@ -522,14 +535,14 @@ struct SessionMessagePumpTests {
         #expect(backend.prompts.first == Self.firstPrompt)
 
         // No caller asks again: the mail itself starts the next submission.
-        try await BoundedWait.awaitPrompts(2, in: { backend.prompts })
+        try await backend.waitForPrompts(2)
         let deliveryPrompt = try #require(backend.prompts.last)
         #expect(deliveryPrompt.contains(OperationEventSegment.renderedLine(for: settledRun)))
         #expect(deliveryPrompt.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt))
-        #expect(
-            await BoundedWait.conditionReached("the outbox giving its mail to the delivery submission") {
-                await session.outbox.pending().events.isEmpty
-            })
+        // The pump takes the mail before it renders the prompt of the
+        // delivery submission, so the outbox gave its mail away before the
+        // prompt reached the backend.
+        #expect(await session.outbox.pending().events.isEmpty)
         withExtendedLifetime(profile) {}
     }
 
@@ -545,15 +558,15 @@ struct SessionMessagePumpTests {
         // posted terminal starts a delivery submission.
         _ = try await session.respond(to: Self.firstPrompt)
         await session.outbox.post(event: settledRun)
-        try await BoundedWait.awaitPrompts(2, in: { backend.prompts })
+        try await backend.waitForPrompts(2)
 
-        // The delivery submission failed with no `.prompt` entry, so the mail
-        // goes back into the outbox, and no third call runs for it.
-        #expect(
-            await BoundedWait.conditionReached("the failed delivery putting its mail back") {
-                await session.outbox.pending().events.map(\.event) == [settledRun]
-            })
-        #expect(await BoundedWait.pumpStops(on: session))
+        // The delivery submission failed with no `.prompt` entry. The pump
+        // itself puts the mail back into the outbox before it ends, so the
+        // end of the pump comes after the put back. A third call for the
+        // mail could only come from that pump, so the count of the prompts
+        // after its end is final.
+        #expect(await session.pumpEnds())
+        #expect(await session.outbox.pending().events.map(\.event) == [settledRun])
         #expect(backend.prompts.count == 2)
 
         // The next caller message carries the mail that came back.
@@ -645,11 +658,14 @@ struct SessionMessagePumpTests {
 
         let cancelled = Task { try await session.respond(to: Self.secondPrompt) }
         try await Self.awaitWaitingMessages(1, on: session)
+        let cancelledID = try #require(await session.pendingMessages().first { !$0.isRunMail }?.id)
         cancelled.cancel()
 
-        // The cancel handler of the caller withdraws the message, which
-        // gives its caller `CancellationError` before the value is read.
-        try await Self.awaitWaitingMessages(0, on: session)
+        // The cancel handler of the caller withdraws the message. The
+        // session removes the message from the queue before it sends the
+        // terminal event `cancelled`, so the queue is empty after that event.
+        #expect(try await session.awaitTerminal(of: cancelledID) == .cancelled(cancelledID))
+        #expect(session.waitingUserMailCount == 0)
         await #expect(throws: CancellationError.self) { try await cancelled.value }
         await latch.open()
 
@@ -673,7 +689,7 @@ struct SessionMessagePumpTests {
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let second = Task { try await session.respond(to: Self.secondPrompt) }
         try await Self.awaitWaitingMessages(1, on: session)
         await session.outbox.post(event: settledRun)
@@ -687,7 +703,7 @@ struct SessionMessagePumpTests {
         // The stop of all work cancels the run mail too.
         #expect(await session.outbox.pending().events.isEmpty)
         #expect(try await session.awaitTerminal(of: runMailID) == .cancelled(runMailID))
-        #expect(await BoundedWait.pumpStops(on: session))
+        #expect(await session.pumpEnds())
         #expect(backend.prompts == [Self.firstPrompt])
         withExtendedLifetime(profile) {}
     }

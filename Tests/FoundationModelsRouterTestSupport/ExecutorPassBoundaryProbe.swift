@@ -25,6 +25,9 @@ public enum PassBoundary: Sendable, Equatable {
 }
 
 /// One boundary and the instant it was recorded.
+///
+/// The instant is data for a printed measurement only. No check reads it: the
+/// checks read the order of the events.
 public struct PassBoundaryEvent: Sendable {
     /// The boundary that was crossed.
     public let boundary: PassBoundary
@@ -39,23 +42,79 @@ public struct PassBoundaryEvent: Sendable {
 /// order from each event's position and two events at one clock instant never
 /// tie. A `Mutex`, not an actor: the executor records its exit from a `defer`,
 /// which cannot `await`.
+///
+/// A test waits for a state of the log with ``waitUntil(_:)``. Each record is
+/// the event that wakes the wait, so the wait needs no clock and no poll.
 public final class PassBoundaryLog: Sendable, Hashable {
-    /// The events so far, in the order they were recorded.
-    private let events = Mutex<[PassBoundaryEvent]>([])
+    /// One task that waits until its condition holds.
+    private struct Waiter {
+        /// The condition the task waits for, over the boundaries so far.
+        let condition: @Sendable ([PassBoundary]) -> Bool
+
+        /// Resumes the task.
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    /// The events and the waiting tasks, under one lock.
+    private struct State {
+        /// The events so far, in the order they were recorded.
+        var events: [PassBoundaryEvent] = []
+
+        /// The tasks that wait for a condition that did not hold yet.
+        var waiters: [Waiter] = []
+
+        /// Every boundary so far, in the order it was crossed.
+        var boundaries: [PassBoundary] { events.map(\.boundary) }
+    }
+
+    /// The events and the waiting tasks.
+    private let state = Mutex(State())
 
     /// Creates a log that holds no event.
     public init() {}
 
-    /// Records that `boundary` was crossed now.
+    /// Records that `boundary` was crossed now, and resumes each waiter whose
+    /// condition now holds.
     ///
     /// - Parameter boundary: The boundary that was crossed.
     public func record(_ boundary: PassBoundary) {
         let event = PassBoundaryEvent(boundary: boundary, instant: .now)
-        events.withLock { $0.append(event) }
+        let satisfied = state.withLock { state -> [Waiter] in
+            state.events.append(event)
+            let boundaries = state.boundaries
+            let satisfied = state.waiters.filter { $0.condition(boundaries) }
+            state.waiters.removeAll { $0.condition(boundaries) }
+            return satisfied
+        }
+        for waiter in satisfied {
+            waiter.continuation.resume()
+        }
+    }
+
+    /// Waits until `condition` holds for the boundaries of this log.
+    ///
+    /// The wait reads the boundaries at once, and again after each record.
+    /// Nothing else ends the wait: a boundary that never comes keeps the test
+    /// waiting, and a stack of the test process then shows the missing
+    /// boundary.
+    ///
+    /// - Parameter condition: Tells whether the boundaries so far are the
+    ///   boundaries that the test waits for.
+    public func waitUntil(_ condition: @escaping @Sendable ([PassBoundary]) -> Bool) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let holdsNow = state.withLock { state -> Bool in
+                if condition(state.boundaries) { return true }
+                state.waiters.append(Waiter(condition: condition, continuation: continuation))
+                return false
+            }
+            if holdsNow {
+                continuation.resume()
+            }
+        }
     }
 
     /// Every event so far, in the order it was recorded.
-    public var recorded: [PassBoundaryEvent] { events.withLock { $0 } }
+    public var recorded: [PassBoundaryEvent] { state.withLock { $0.events } }
 
     /// Every boundary so far, in the order it was crossed.
     public var boundaries: [PassBoundary] { recorded.map(\.boundary) }
@@ -218,8 +277,13 @@ public struct PassBoundaryProbeArguments {
     public let value: String
 }
 
-/// A tool whose body holds for a fixed time between two ``PassBoundary``
-/// events, so a pass that stays open across the body shows as an overlap.
+/// A tool whose body records two ``PassBoundary`` events, one at its start and
+/// one at its end, with an optional hold between them.
+///
+/// The checks of ``PassBoundaryExpectations`` read the order of the events, not
+/// the time between them. The pass that emits the tool call must end before
+/// the body starts. Thus the order alone shows a pass that stays open across
+/// the body, and the body needs no hold for that check.
 public struct PassBoundaryProbeTool: FoundationModels.Tool {
     /// The model-facing name every probe script and prompt uses.
     public static let toolName = "probe"
@@ -233,28 +297,29 @@ public struct PassBoundaryProbeTool: FoundationModels.Tool {
     /// The log the body records into.
     public let log: PassBoundaryLog
 
-    /// How long the body holds before it returns.
-    public let holdDuration: Duration
+    /// What the body waits for between its two events.
+    private let hold: @Sendable () async throws -> Void
 
-    /// Creates a tool that holds for `holdDuration`.
+    /// Creates a tool whose body waits for `hold` between its two events.
     ///
     /// - Parameters:
     ///   - log: The log to record into.
-    ///   - holdDuration: How long the body holds before it returns.
-    public init(log: PassBoundaryLog, holdDuration: Duration) {
+    ///   - hold: What the body waits for, for example a gate that the test
+    ///     opens. The default returns at once.
+    public init(log: PassBoundaryLog, hold: @escaping @Sendable () async throws -> Void = {}) {
         self.log = log
-        self.holdDuration = holdDuration
+        self.hold = hold
     }
 
-    /// Records the start, holds for ``holdDuration``, records the end, and
-    /// echoes the argument.
+    /// Records the start, waits for the hold, records the end, and echoes the
+    /// argument.
     ///
     /// - Parameter arguments: The call's arguments.
     /// - Returns: A line that carries the argument.
-    /// - Throws: `CancellationError` when the hold is cancelled.
+    /// - Throws: What the hold throws, for example `CancellationError`.
     public func call(arguments: PassBoundaryProbeArguments) async throws -> String {
         log.record(.toolBodyStarted)
-        try await Task.sleep(for: holdDuration)
+        try await hold()
         log.record(.toolBodyEnded)
         return "probe found \(arguments.value)"
     }
@@ -314,22 +379,50 @@ public enum PassBoundaryExpectations {
         #expect(bodyEnd < nextPassStart, "\(log.boundaries)", sourceLocation: sourceLocation)
     }
 
-    /// Reads every element of `stream`, and waits `pause` after each one: a
-    /// consumer slower than generation.
+    /// Reads every element of `stream` as soon as it comes.
+    ///
+    /// - Parameter stream: The stream to read.
+    /// - Returns: How many elements the stream gave.
+    /// - Throws: What the stream throws.
+    public static func consume<Stream: AsyncSequence>(_ stream: Stream) async throws -> Int {
+        var elementCount = 0
+        for try await _ in stream {
+            elementCount += 1
+        }
+        return elementCount
+    }
+
+    /// Reads every element of `stream`, and after each one waits until every
+    /// pass that `log` saw start has ended: a consumer slower than any pass.
+    ///
+    /// The wait is on the pass boundaries, not on a clock (task ^v4zh807). A
+    /// pass that holds its end until the consumer reads the next element
+    /// never ends, so the wait never ends. A pass that a loaded machine makes
+    /// slow only makes the wait longer.
     ///
     /// - Parameters:
     ///   - stream: The stream to read.
-    ///   - pause: How long to wait after each element.
+    ///   - log: The log the executor records each pass into.
     /// - Returns: How many elements the stream gave.
-    /// - Throws: What the stream or the wait throws.
-    public static func consumeSlowly<Stream: AsyncSequence>(
-        _ stream: Stream, pausingAfterEach pause: Duration
+    /// - Throws: What the stream throws.
+    public static func consumeAfterEachOpenPassEnds<Stream: AsyncSequence>(
+        _ stream: Stream, log: PassBoundaryLog
     ) async throws -> Int {
         var elementCount = 0
         for try await _ in stream {
             elementCount += 1
-            try await Task.sleep(for: pause)
+            await log.waitUntil { hasNoOpenPass($0) }
         }
         return elementCount
+    }
+
+    /// Whether every pass in `boundaries` that started has also ended.
+    ///
+    /// - Parameter boundaries: The boundaries of one submission so far.
+    /// - Returns: Whether they hold as many pass ends as pass starts.
+    private static func hasNoOpenPass(_ boundaries: [PassBoundary]) -> Bool {
+        let starts = boundaries.filter { $0 == .executorEntered }.count
+        let ends = boundaries.filter { $0 == .executorExited }.count
+        return starts == ends
     }
 }

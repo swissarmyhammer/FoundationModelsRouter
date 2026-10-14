@@ -332,14 +332,6 @@ struct BackgroundRunTranscriptTests {
 
     // MARK: - One run, one recorded ending
 
-    /// How long a test canceler waits for the run it just cancelled to settle.
-    ///
-    /// Generous, because it bounds a handshake the test itself drives to
-    /// completion rather than a real cancellation: the wait resolves as soon as
-    /// the run plane marks the run settled, and the ceiling only exists so a
-    /// broken handshake ends the test instead of hanging the suite.
-    private static let settlementWaitSeconds: Double = 5
-
     /// Every journaled terminal (`.completed`) event recorded for one run.
     ///
     /// - Parameters:
@@ -389,8 +381,9 @@ struct BackgroundRunTranscriptTests {
                 // Returning only once the run plane has retained the natural
                 // terminal is what holds `sweep()` inside the window it
                 // suspends across, so the race is run rather than hoped for.
-                _ = await runPlane.wait(
-                    completionToken: token, seconds: Self.settlementWaitSeconds)
+                // The body posts the natural terminal and then ends, so this
+                // wait has no time limit: the run settles before it returns.
+                _ = await runPlane.wait(completionToken: token, seconds: nil)
                 return .cancelled
             },
             body: { await settling.value })
@@ -408,7 +401,7 @@ struct BackgroundRunTranscriptTests {
     @Test("a swept run that finishes cooperatively afterwards does not journal a second, contradicting terminal")
     @MainActor
     func aSweptRunFinishingAfterwardsJournalsNoSecondTerminal() async throws {
-        let recorder = InMemoryRecorder()
+        let recorder = SignallingTranscriptRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -435,9 +428,10 @@ struct BackgroundRunTranscriptTests {
 
         // The close journals the terminal of the sweep, and then waits for the
         // body of the run. So the close runs in a task of its own until the
-        // body may end.
+        // body may end. The recorder signals after each append, so the test
+        // waits for the journal entry of the sweep terminal.
         let closing = Task { await session.close() }
-        try await AwaitedCondition.wait(until: {
+        try await recorder.changes.wait(until: {
             !Self.journaledTerminals(forRun: token, in: await recorder.events).isEmpty
         })
 

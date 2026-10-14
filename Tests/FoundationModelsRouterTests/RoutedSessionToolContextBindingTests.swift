@@ -138,85 +138,108 @@ struct RoutedSessionToolContextBindingTests {
         }
     }
 
-    /// A backend whose `respond`/`streamResponse` poll the ambient
-    /// context's `isCancelled` — never structured task cancellation — and
-    /// return the moment the flag flips, proving the binding's probe
-    /// mirrors the bound model-call task rather than reporting a constant.
+    /// A backend whose `respond`/`streamResponse` hold until a cancel reaches
+    /// the task that runs them, and then read the ambient context's
+    /// `isCancelled` one time. The read proves that the probe of the binding
+    /// mirrors the bound model-call task, and does not report a constant.
+    ///
+    /// The cancel of the answer cancels the model-call task first. On the
+    /// `respond` path the backend runs in that task. On the streaming path
+    /// the end of the cancelled consumer cancels the producer task of the
+    /// stream. So when the hold ends, the model-call task is cancelled
+    /// already, and the probe must report `true`.
     ///
     /// `@unchecked Sendable` on different terms than
-    /// ``ContextProbingBackend``: tests poll this backend's observation
-    /// flags *while* the driving answer is still in flight (that concurrent
-    /// observation is the whole point), so every flag is a `Mutex`-guarded
-    /// `Bool` (the ``ModelCallCancellationProbe`` precedent) and the only
-    /// other stored property, `inner`, is an immutable reference to a
-    /// ``StubSessionBackend``, which guards its own state. That guard is
-    /// load-bearing here: the stream's producer task drives `inner` only
-    /// after it observed the cancellation, so it appends the entries of the
-    /// submission while the recording of the cancelled submission reads
-    /// `inner.transcriptEntries()` on the actor (task ^9smkhk8).
+    /// ``ContextProbingBackend``: tests read this backend's observations
+    /// *while* the driving answer is still in flight (that concurrent
+    /// observation is the whole point), so the observations are behind one
+    /// `Mutex` (the ``ModelCallCancellationProbe`` precedent), ``changes``
+    /// is a `Sendable` signal, and the only other stored property, `inner`,
+    /// is an immutable reference to a ``StubSessionBackend``, which guards
+    /// its own state. That guard is load-bearing here: the stream's producer
+    /// task drives `inner` only after it observed the cancellation, so it
+    /// appends the entries of the submission while the recording of the
+    /// cancelled submission reads `inner.transcriptEntries()` on the actor
+    /// (task ^9smkhk8).
     private final class CancellationObservingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        /// What the backend observed so far.
+        private struct Observations {
+            /// Whether `respond` started its hold.
+            var respondStarted = false
+
+            /// Whether the ambient probe that `respond` read reported `true`.
+            var observedCancellation = false
+
+            /// Whether the producer task of the stream started its hold.
+            var streamStarted = false
+
+            /// What the ambient probe on the streaming path reported, or
+            /// `nil` before the producer task read it.
+            var streamProbe: Bool?
+        }
+
         private let inner = StubSessionBackend()
 
-        /// How many times a polling loop re-reads the ambient flag before
-        /// giving up.
-        private static let pollIterations = 6_000
+        /// The observations, behind a lock: the backend writes while the
+        /// test reads.
+        private let observations = Mutex(Observations())
 
-        /// How long each polling iteration sleeps.
-        private static let pollIntervalNanoseconds: UInt64 = 5_000_000
+        /// Signalled after each change of the observations.
+        let changes = ChangeSignal()
 
-        /// Backing storage for ``respondStarted``.
-        private let respondStartedFlag = Mutex(false)
-
-        /// Backing storage for ``observedCancellation``.
-        private let observedCancellationFlag = Mutex(false)
-
-        /// Backing storage for ``streamStarted``.
-        private let streamStartedFlag = Mutex(false)
-
-        /// Backing storage for ``observedStreamCancellation``.
-        private let observedStreamCancellationFlag = Mutex(false)
-
-        /// Flips when `respond` begins polling, so a test can wait for the
+        /// Whether `respond` started its hold, so a test can wait for the
         /// model call to be in flight before cancelling the answer.
-        var respondStarted: Bool { respondStartedFlag.withLock { $0 } }
+        var respondStarted: Bool { observations.withLock { $0.respondStarted } }
 
-        /// Whether the ambient probe `respond` polled ever reported `true`.
-        var observedCancellation: Bool { observedCancellationFlag.withLock { $0 } }
+        /// Whether the ambient probe `respond` read reported `true`.
+        var observedCancellation: Bool { observations.withLock { $0.observedCancellation } }
 
-        /// Flips when `streamResponse`'s production task begins polling, so
-        /// a test can wait for the streaming model call to be in flight
-        /// before cancelling the answer.
-        var streamStarted: Bool { streamStartedFlag.withLock { $0 } }
+        /// Whether the producer task of the stream started its hold, so a
+        /// test can wait for the streaming model call to be in flight before
+        /// cancelling the answer.
+        var streamStarted: Bool { observations.withLock { $0.streamStarted } }
 
-        /// Whether the ambient probe polled on the streaming path ever
-        /// reported `true`.
-        var observedStreamCancellation: Bool { observedStreamCancellationFlag.withLock { $0 } }
+        /// Whether the producer task of the stream read the ambient probe.
+        var streamProbeRead: Bool { observations.withLock { $0.streamProbe != nil } }
 
-        /// Polls the ambient probe until it reports cancellation or the
-        /// iteration budget runs out, returning whether cancellation was
-        /// ever observed. `nil` context — no binding — observes nothing.
-        private static func pollForCancellation(_ context: ToolContext?) async -> Bool {
+        /// Whether the ambient probe read on the streaming path reported
+        /// `true`.
+        var observedStreamCancellation: Bool { observations.withLock { $0.streamProbe == true } }
+
+        /// Changes the observations, and then signals ``changes``.
+        ///
+        /// - Parameter change: The change.
+        private func record(_ change: (inout Observations) -> Void) {
+            observations.withLock { change(&$0) }
+            changes.signal()
+        }
+
+        /// Holds until the calling task is cancelled, and then reads the
+        /// ambient probe one time. A `nil` context (no binding) reads
+        /// nothing, and the hold does not start.
+        ///
+        /// The hold is an event that nobody sends: only the cancel of the
+        /// calling task ends it.
+        ///
+        /// - Parameter context: The ambient context of the call.
+        /// - Returns: What the probe reported, or `false` with no context.
+        private static func readProbeAfterCancel(_ context: ToolContext?) async -> Bool {
             guard let context else { return false }
-            for _ in 0..<pollIterations {
-                if context.isCancelled { return true }
-                // Deliberately swallow the cancellation error: this
-                // backend cooperates through the ambient flag alone.
-                try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-            }
-            return false
+            try? await AwaitedEvent().wait()
+            return context.isCancelled
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            respondStartedFlag.withLock { $0 = true }
-            if await Self.pollForCancellation(ToolContext.current) {
-                observedCancellationFlag.withLock { $0 = true }
-            }
+            let context = ToolContext.current
+            record { $0.respondStarted = true }
+            let observed = await Self.readProbeAfterCancel(context)
+            record { $0.observedCancellation = observed }
             return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             // Captured at call time — inside the binding of the submission —
-            // then polled from the stream's own production task: the probe is
+            // then read from the stream's own production task: the probe is
             // a plain closure, so it stays honest across the task hop, and
             // the binding contract covers the streaming entry point exactly
             // as it covers `respond`.
@@ -224,10 +247,9 @@ struct RoutedSessionToolContextBindingTests {
             let inner = self.inner
             return AsyncThrowingStream { continuation in
                 let task = Task {
-                    self.streamStartedFlag.withLock { $0 = true }
-                    if await Self.pollForCancellation(context) {
-                        self.observedStreamCancellationFlag.withLock { $0 = true }
-                    }
+                    self.record { $0.streamStarted = true }
+                    let observed = await Self.readProbeAfterCancel(context)
+                    self.record { $0.streamProbe = observed }
                     do {
                         for try await chunk in inner.streamResponse(to: prompt, maxTokens: maxTokens) {
                             continuation.yield(chunk)
@@ -288,6 +310,10 @@ struct RoutedSessionToolContextBindingTests {
     /// The suite's temp-directory prefix, handed to
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "RoutedSessionToolContextBindingTests"
+
+    /// The prompt of each answer that a ``CancellationObservingBackend``
+    /// holds until the cancel.
+    private static let holdPrompt = "hold until the cancel"
 
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``ContextProbingBackend`` — guided by `grammar` when supplied.
@@ -413,18 +439,17 @@ struct RoutedSessionToolContextBindingTests {
         let (session, backend, dir) = try await Self.makeCancellationObservingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let answerTask = Task { try await session.respond(to: "poll the flag") }
-        for _ in 0..<600 {
-            if backend.respondStarted { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        #expect(backend.respondStarted)
+        let answerTask = Task { try await session.respond(to: Self.holdPrompt) }
+        // The backend records the start of its hold inside the model call,
+        // so the cancel below reaches a model call in flight.
+        try await backend.changes.wait(until: { backend.respondStarted })
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         _ = try? await answerTask.value
         // cancelAll() ends the answer at once and does not wait for the
-        // model call. The probe is read after the pump ended, so the model
-        // call saw the cancel before the read.
+        // model call. The pump waits for the model-call task, and the
+        // backend records its read of the probe in that task before it
+        // returns. So the read is in the backend when the pump ended.
         #expect(await session.isIdleOnceThePumpEnds())
 
         #expect(backend.observedCancellation)
@@ -437,24 +462,19 @@ struct RoutedSessionToolContextBindingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let answerTask = Task {
-            for try await _ in await session.streamResponse(to: "poll the flag") {}
+            for try await _ in await session.streamResponse(to: Self.holdPrompt) {}
         }
-        for _ in 0..<600 {
-            if backend.streamStarted { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        #expect(backend.streamStarted)
+        // The producer task of the stream records the start of its hold, so
+        // the cancel below reaches a streaming model call in flight.
+        try await backend.changes.wait(until: { backend.streamStarted })
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         _ = try? await answerTask.value
 
-        // The polling loop runs in the stream's own production task, which
-        // outlives the cancelled submission briefly — wait for its
-        // observation.
-        for _ in 0..<600 {
-            if backend.observedStreamCancellation { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        // The probe is read in the stream's own production task, which
+        // outlives the cancelled submission. The backend signals the read,
+        // and the test waits for that event.
+        try await backend.changes.wait(until: { backend.streamProbeRead })
         #expect(backend.observedStreamCancellation)
     }
 }

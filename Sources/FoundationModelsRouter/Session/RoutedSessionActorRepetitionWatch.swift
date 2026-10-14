@@ -255,7 +255,11 @@ extension RoutedSessionActor {
     /// task of its own, feeds the text of the attempt's entries to a
     /// ``RepetitionDetector``, and reports the first finding to
     /// ``noteRepetition(_:liveEntries:watchId:)`` or
-    /// ``noteReasoningLimit(_:liveEntries:watchId:)``.
+    /// ``noteReasoningLimit(_:liveEntries:watchId:)``. After each read that
+    /// finds no stop, it stores the texts of the read in
+    /// ``lastRepetitionWatchRead`` and signals ``repetitionWatchReads``, so
+    /// that a test knows what the watch read. The watch reads only the values
+    /// of the stream, and the stream reads the transcript only inside a pass.
     ///
     /// - Returns: The task of the watch, which the caller cancels, or `nil`.
     private func startRepetitionWatch() -> Task<Void, Never>? {
@@ -279,8 +283,20 @@ extension RoutedSessionActor {
                     await self?.noteReasoningLimit(finding, liveEntries: entries, watchId: watchId)
                     return
                 }
+                self?.noteWatchReadWithNoStop(texts)
             }
         }
+    }
+
+    /// Stores `texts` in ``lastRepetitionWatchRead``, then signals
+    /// ``repetitionWatchReads``. The watch calls it after each read that
+    /// found no stop. Only the tests read the two members.
+    ///
+    /// - Parameter texts: The texts of the attempt that the read gave to the
+    ///   detector.
+    nonisolated func noteWatchReadWithNoStop(_ texts: [WatchedText]) {
+        lastRepetitionWatchRead.withLock { $0 = texts }
+        repetitionWatchReads.signal()
     }
 
     /// The number of the recovery that follows a stop now, from 1, or `nil`

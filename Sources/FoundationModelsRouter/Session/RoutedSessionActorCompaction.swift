@@ -375,9 +375,12 @@ extension RoutedSessionActor {
     /// and the transcript keeps no compacted value. A compaction that already
     /// applies its snapshot goes on to its end, because that step is local
     /// and short.
+    ///
+    /// The cancel is a change of ``stateChanges``.
     func cancelActiveCompaction() async {
         guard let activeCompaction else { return }
         activeCompaction.cancel()
+        stateChanges.signal()
         _ = await activeCompaction.value
     }
 

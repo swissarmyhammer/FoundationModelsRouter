@@ -181,9 +181,7 @@ struct SubmissionQueueSpikeTests {
         // answer of the child. The subscription opens before the first
         // submission, so it cannot miss the terminal.
         let sessionEvents = await parent.streamSessionEvents().events
-        let runSettled = AsyncSemaphore(value: 0)
         let settledRun = Task { () -> OperationEvent? in
-            defer { runSettled.signal() }
             for await event in sessionEvents {
                 if case .runSettled(let terminal) = event {
                     return terminal
@@ -194,31 +192,18 @@ struct SubmissionQueueSpikeTests {
 
         // The first submission of the parent. `streamEvents` ends with its SDK
         // call and does not wait for the background run, as a submission must
-        // not wait. Bounded, so a tool that waits in its body fails the test
-        // and does not hang the run.
-        let firstSubmissionEnded = AsyncSemaphore(value: 0)
-        let firstSubmission = Task {
-            defer { firstSubmissionEnded.signal() }
-            try await worker.submit(Self.parentLabel) {
-                for try await _ in await parent.streamEvents(to: Self.parentPrompt) {}
-            }
+        // not wait. A tool that waits in its body keeps this wait open.
+        try await worker.submit(Self.parentLabel) {
+            for try await _ in await parent.streamEvents(to: Self.parentPrompt) {}
         }
-        try #require(
-            await BoundedWait.signalArrived(
-                firstSubmissionEnded, named: "the first submission of the parent, while its tool starts the child"))
-        try await firstSubmission.value
 
-        try #require(
-            await BoundedWait.signalArrived(
-                runSettled, named: "the terminal of the background run, after the submission of the child"))
+        // The terminal of the background run comes after the submission of
+        // the child.
         let terminal = await settledRun.value
 
         // The pump of the parent: the waiting mail causes the next submission,
         // with no caller call (task ^3qx0mpt).
-        #expect(
-            await BoundedWait.conditionReached("the delivery submission of the parent") {
-                fixture.passes.recorded.count > Self.passesBeforeDelivery
-            })
+        try await fixture.passes.waitForPasses(Self.passesBeforeDelivery + 1)
         #expect(await parent.becomesIdle())
 
         let childAnswer = PassObservingModel.answer(to: Self.childPrompt)

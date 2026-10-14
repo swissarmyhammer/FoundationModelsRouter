@@ -216,32 +216,34 @@ struct ElicitationRoutingTests {
     }
 
     /// Suspends a real `elicit(_:)` on `session` and waits until its pending
-    /// entry is registered, returning the run that resumes with the answer.
+    /// entry is registered, returning the task that resumes with the answer.
     ///
-    /// The run is an ``AnswerDrivenRun`` rather than a bare `Task` so that
-    /// every test reads its answer under a bound: a break anywhere on the
-    /// inbound answer route leaves the run suspended forever, and awaiting it
-    /// directly would hang the whole suite instead of failing the test that
-    /// caught the break.
+    /// The run plane makes the entry pending before it posts the request. So
+    /// the post that ``ElicitationPostings`` records is the event that tells
+    /// the test the entry is registered. The test reads the answer with
+    /// `try await task.value`. A break on the inbound answer route keeps the
+    /// task suspended, and a stack of the test process then shows the open
+    /// wait.
     ///
     /// - Parameters:
     ///   - request: The request to suspend on.
     ///   - session: The session whose run plane holds the pending entry.
-    ///   - sink: Where the request's event is posted. See ``makeContext(for:postingTo:)``.
+    ///   - downstream: Where the request's event goes after the count, or
+    ///     `nil` to drop it. Pass `session.outbox` to reach the journal of the
+    ///     session.
+    /// - Returns: The task that resumes with the answer.
+    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled before the
+    ///   post.
     private static func suspendOnElicitation(
         _ request: ElicitationRequest,
         on session: any RoutedSession,
-        postingTo sink: any OperationEventSink = DiscardingOperationEventSink()
-    ) async -> AnswerDrivenRun<ElicitationResponse> {
-        let context = makeContext(for: session, postingTo: sink)
-        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
-            try await context.elicit(request)
-        }
-        #expect(
-            await Pending.eventually {
-                await session.runPlane.pendingElicitationIds().contains(request.elicitationId)
-            }
-        )
+        forwardingTo downstream: (any OperationEventSink)? = nil
+    ) async throws -> Task<ElicitationResponse, Error> {
+        let postings = ElicitationPostings(forwardingTo: downstream)
+        let context = makeContext(for: session, postingTo: postings)
+        let answering = Task { try await context.elicit(request) }
+        try await postings.waitForPosts(1)
+        #expect(await session.runPlane.pendingElicitationIds().contains(request.elicitationId))
         return answering
     }
 
@@ -254,11 +256,11 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
+        let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
 
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
-        #expect(try await answering.deliveredAnswer() == answer)
+        #expect(try await answering.value == answer)
         #expect(await session.runPlane.pendingElicitationIds().isEmpty)
 
         // A second respond addresses an already-answered id: a safe no-op.
@@ -272,10 +274,10 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
+        let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
 
         #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
-        #expect(try await answering.deliveredAnswer() == .decline)
+        #expect(try await answering.value == .decline)
     }
 
     // MARK: - URL-mode two-step
@@ -287,7 +289,7 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: elicitationId), on: session)
+        let answering = try await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: elicitationId), on: session)
 
         // The accept only means the user agreed to open the URL — the entry
         // stays open and the run stays running.
@@ -296,7 +298,7 @@ struct ElicitationRoutingTests {
 
         // The out-of-band flow's completion is what resumes the run.
         #expect(await session.complete(elicitationId: elicitationId.description) == .completed)
-        #expect(try await answering.deliveredAnswer() == .accept(content: nil))
+        #expect(try await answering.value == .accept(content: nil))
         #expect(await session.runPlane.pendingElicitationIds().isEmpty)
 
         // A duplicate complete is a safe no-op.
@@ -313,28 +315,23 @@ struct ElicitationRoutingTests {
 
         let firstId = ULID.generate()
         let secondId = ULID.generate()
-        let context = Self.makeContext(for: session)
-        let firstAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(firstId)") {
-            try await context.elicit(Pending.formRequest(elicitationId: firstId))
-        }
-        let secondAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(secondId)") {
-            try await context.elicit(Pending.formRequest(elicitationId: secondId))
-        }
-        #expect(
-            await Pending.eventually {
-                await session.runPlane.pendingElicitationIds().count == 2
-            }
-        )
+        let postings = ElicitationPostings()
+        let context = Self.makeContext(for: session, postingTo: postings)
+        let firstAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: firstId)) }
+        let secondAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: secondId)) }
+        // The run plane posts each request after it made the request pending.
+        try await postings.waitForPosts(2)
+        #expect(await session.runPlane.pendingElicitationIds().count == 2)
 
         let firstAnswer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: firstId.description, response: firstAnswer) == .delivered)
-        #expect(try await firstAnswering.deliveredAnswer() == firstAnswer)
+        #expect(try await firstAnswering.value == firstAnswer)
 
         // The other elicitation is untouched: still running, still pending.
         #expect(await session.runPlane.pendingElicitationIds() == [secondId])
 
         #expect(await session.respond(elicitationId: secondId.description, response: .decline) == .delivered)
-        #expect(try await secondAnswering.deliveredAnswer() == .decline)
+        #expect(try await secondAnswering.value == .decline)
     }
 
     @Test("unknown-id and malformed-id respond()/complete() are safe no-ops")
@@ -363,7 +360,7 @@ struct ElicitationRoutingTests {
         // of a pending id route to its elicitation instead of falling into the
         // malformed no-op path. Cover both functions with both cases.
         let upperRespondId = ULID.generate()
-        let upperAnswering = await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: upperRespondId), on: session)
+        let upperAnswering = try await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: upperRespondId), on: session)
         #expect(
             await session.respond(
                 elicitationId: upperRespondId.description.uppercased(),
@@ -371,10 +368,10 @@ struct ElicitationRoutingTests {
             ) == .acceptedAwaitingCompletion
         )
         #expect(await session.complete(elicitationId: upperRespondId.description.lowercased()) == .completed)
-        #expect(try await upperAnswering.deliveredAnswer() == .accept(content: nil))
+        #expect(try await upperAnswering.value == .accept(content: nil))
 
         let lowerRespondId = ULID.generate()
-        let lowerAnswering = await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: lowerRespondId), on: session)
+        let lowerAnswering = try await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: lowerRespondId), on: session)
         #expect(
             await session.respond(
                 elicitationId: lowerRespondId.description.lowercased(),
@@ -382,7 +379,7 @@ struct ElicitationRoutingTests {
             ) == .acceptedAwaitingCompletion
         )
         #expect(await session.complete(elicitationId: lowerRespondId.description.uppercased()) == .completed)
-        #expect(try await lowerAnswering.deliveredAnswer() == .accept(content: nil))
+        #expect(try await lowerAnswering.value == .accept(content: nil))
     }
 
     @Test("cross-session isolation: respond on session A never resumes session B's elicitation")
@@ -394,7 +391,7 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dirB) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: sessionB)
+        let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: sessionB)
 
         // Session A knows nothing about B's elicitation: the answer is a
         // no-op there, and B's run stays running.
@@ -404,7 +401,7 @@ struct ElicitationRoutingTests {
 
         // The same answer through session B resumes it.
         #expect(await sessionB.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
-        #expect(try await answering.deliveredAnswer() == .decline)
+        #expect(try await answering.value == .decline)
     }
 
     // MARK: - The pending elicitation reaches a host live (task ^59wvx80)
@@ -512,13 +509,13 @@ struct ElicitationRoutingTests {
         defer { draining.cancel() }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(
-            Pending.formRequest(elicitationId: elicitationId), on: session, postingTo: session.outbox)
+        let answering = try await Self.suspendOnElicitation(
+            Pending.formRequest(elicitationId: elicitationId), on: session, forwardingTo: session.outbox)
 
         let request = try await watch.waitForFirst()
         #expect(request.elicitation?.elicitationId == elicitationId)
         #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
-        #expect(try await answering.deliveredAnswer() == .decline)
+        #expect(try await answering.value == .decline)
 
         await session.close()
         try await draining.value

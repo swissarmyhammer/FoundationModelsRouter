@@ -39,22 +39,32 @@ struct GenerationQueuePublicSurfaceTests {
         }
     }
 
-    /// How many times each pass yields while it holds the place, so a pass
-    /// that did not wait would enter while the other is inside.
-    private static let yieldsInsideThePass = 1_000
+    /// Waits for the first element of `events`. A one-shot event of the test:
+    /// the producer yields once, and nothing else ends the wait.
+    ///
+    /// - Parameter events: The stream of the event.
+    private static func firstEvent(of events: AsyncStream<Void>) async {
+        for await _ in events {
+            return
+        }
+    }
 
-    /// One scripted pass: it enters, yields while it holds the place, leaves,
-    /// and returns `name`.
+    /// One scripted pass: it enters, holds its place until `release` sends
+    /// its event, leaves, and returns `name`.
     ///
     /// - Parameters:
     ///   - name: The answer of the pass.
     ///   - counter: The counter the pass reports to.
+    ///   - entered: Gets one element when the pass entered.
+    ///   - release: The event that lets the pass leave.
     /// - Returns: `name`.
-    private static func scriptedPass(named name: String, reportingTo counter: PassCounter) async -> String {
+    private static func heldPass(
+        named name: String, reportingTo counter: PassCounter,
+        entered: AsyncStream<Void>.Continuation, release: AsyncStream<Void>
+    ) async -> String {
         await counter.enter()
-        for _ in 0..<yieldsInsideThePass {
-            await Task.yield()
-        }
+        entered.yield()
+        await firstEvent(of: release)
         await counter.exit()
         return name
     }
@@ -63,11 +73,32 @@ struct GenerationQueuePublicSurfaceTests {
     func scriptedPassesOnOneQueueNeverOverlap() async throws {
         let queue = GenerationQueue()
         let counter = PassCounter()
+        let (entered, enteredSignal) = AsyncStream<Void>.makeStream()
+        let (queued, queuedSignal) = AsyncStream<Void>.makeStream()
+        let (release, releaseSignal) = AsyncStream<Void>.makeStream()
 
-        async let first = queue.submit { await Self.scriptedPass(named: "first", reportingTo: counter) }
-        async let second = queue.submit { await Self.scriptedPass(named: "second", reportingTo: counter) }
+        // The first item holds the worker until the test sends the release.
+        let first = Task {
+            try await queue.submit {
+                await Self.heldPass(named: "first", reportingTo: counter, entered: enteredSignal, release: release)
+            }
+        }
+        await Self.firstEvent(of: entered)
+        // The queue calls `onQueued` when the second item must wait behind
+        // the first.
+        let second = Task {
+            try await queue.submit(onQueued: { queuedSignal.yield() }) {
+                await counter.enter()
+                await counter.exit()
+                return "second"
+            }
+        }
+        await Self.firstEvent(of: queued)
+        // The first item still holds the worker, so the second did not enter.
+        #expect(await counter.entered == 1)
 
-        let answers = try await [first, second]
+        releaseSignal.yield()
+        let answers = [try await first.value, try await second.value]
         #expect(answers == ["first", "second"])
         #expect(await counter.entered == 2)
         #expect(await counter.peak == 1)

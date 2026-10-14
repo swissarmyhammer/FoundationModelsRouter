@@ -19,11 +19,10 @@ import Testing
 /// `SubmissionQueueSpikeTests`. The cancellation of an answer whose submission
 /// waits is held by `NestedGenerationReentryTests`.
 ///
-/// No wait here is a bare `await` on an answer that can stay suspended. Each
-/// answer signals a semaphore when it ends, and the test observes that signal
-/// under the bound of ``BoundedWait``. A test then opens every latch and
-/// releases every step before it awaits an answer, so a regression fails the
-/// test and does not hang the run.
+/// Each wait here waits for an event: a semaphore that a tool body signals, a
+/// pass that the model records, or the ``SessionEvent/submissionQueued(_:)``
+/// of a session whose submission must wait. No wait has a clock or a limit. A
+/// test opens every latch and releases every step before it awaits an answer.
 @Suite("The item of the generation queue is one whole submission (task ^1psqdm9)")
 struct GenerationQueueSubmissionTests {
     /// A tool whose body signals that it started, and then waits on a latch:
@@ -139,33 +138,11 @@ struct GenerationQueueSubmissionTests {
     /// The prompt of the second session of a test.
     private static let secondPrompt = "b"
 
-    /// The upper bound a background run is allowed before it settles. The run
-    /// makes one stubbed pass, so only a real stall reaches it, and the bound
-    /// makes such a stall fail the test instead of hanging it.
-    private static let runSettlementSeconds: TimeInterval = 30
-
     /// How many passes of one submission call a tool in the FIFO test.
     private static let loopingToolRounds = 3
 
     /// The temp-directory prefix of this suite.
     private static let tempDirPrefix = "GenerationQueueSubmissionTests"
-
-    /// Starts `answer` in a task of its own that signals `finished` when it
-    /// ends, however it ends.
-    ///
-    /// - Parameters:
-    ///   - finished: The semaphore to signal when the answer ends.
-    ///   - answer: The answer to run.
-    /// - Returns: The task that runs the answer.
-    private static func startAnswer(
-        signalling finished: AsyncSemaphore,
-        _ answer: @escaping @Sendable () async throws -> String
-    ) -> Task<String, Error> {
-        Task {
-            defer { finished.signal() }
-            return try await answer()
-        }
-    }
 
     /// The text of each response in the transcript of `session`, in order.
     ///
@@ -194,37 +171,26 @@ struct GenerationQueueSubmissionTests {
         let waiting = resolved.profile.standard.makeSession(tools: [WaitingTool(entered: entered, latch: toolLatch)])
         let other = resolved.profile.standard.makeSession()
 
-        let waitingFinished = AsyncSemaphore(value: 0)
-        let waitingAnswerTask = Self.startAnswer(signalling: waitingFinished) {
-            try await waiting.respond(to: Self.firstPrompt)
-        }
-        let toolStarted = await BoundedWait.signalArrived(entered, named: "the tool body of the waiting session")
+        let otherFeed = await SessionEventLog.watch(other)
+        defer { otherFeed.drain.cancel() }
+
+        let waitingAnswerTask = Task { try await waiting.respond(to: Self.firstPrompt) }
+        await entered.wait()
 
         // The other submission waits behind the submission whose tool body
         // waits: the tool body is a step of that submission.
-        let otherFinished = AsyncSemaphore(value: 0)
-        let otherAnswerTask = Self.startAnswer(signalling: otherFinished) {
-            try await other.respond(to: Self.secondPrompt)
-        }
-        let otherWaitsDuringTheToolBody = await BoundedWait.conditionReached(
-            "the submission of the other session waiting while the tool body runs"
-        ) {
-            await queue.waitingCount == 1
-        }
+        let otherAnswerTask = Task { try await other.respond(to: Self.secondPrompt) }
+        try await otherFeed.log.waitForQueuedSubmissions(1)
         let passesDuringTheToolBody = fixture.passes.recorded.map(\.prompt)
 
         await toolLatch.open()
         let otherAnswer = try await otherAnswerTask.value
         let waitingAnswer = try await waitingAnswerTask.value
 
-        #expect(toolStarted)
-        #expect(otherWaitsDuringTheToolBody)
         #expect(passesDuringTheToolBody == [Self.firstPrompt])
         #expect(otherAnswer == PassObservingModel.answer(to: Self.secondPrompt))
         #expect(waitingAnswer == PassObservingModel.answer(to: Self.firstPrompt))
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.secondPrompt])
-        #expect(await BoundedWait.signalArrived(waitingFinished, named: "the end of the waiting answer"))
-        #expect(await BoundedWait.signalArrived(otherFinished, named: "the end of the other answer"))
         #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
@@ -243,45 +209,37 @@ struct GenerationQueueSubmissionTests {
         let second = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
         let passesPerSubmission = Self.loopingToolRounds + 1
 
-        let firstFinished = AsyncSemaphore(value: 0)
-        let firstAnswerTask = Self.startAnswer(signalling: firstFinished) { try await first.respond(to: Self.firstPrompt) }
-        let firstInside = await BoundedWait.conditionReached("the first pass of the first session") {
-            passes.recorded.count == 1
-        }
-        let secondFinished = AsyncSemaphore(value: 0)
-        let secondAnswerTask = Self.startAnswer(signalling: secondFinished) { try await second.respond(to: Self.secondPrompt) }
-        let secondQueued = await BoundedWait.conditionReached("the submission of the second session in the queue") {
-            await queue.waitingCount == 1
-        }
+        let secondFeed = await SessionEventLog.watch(second)
+        defer { secondFeed.drain.cancel() }
+
+        let firstAnswerTask = Task { try await first.respond(to: Self.firstPrompt) }
+        try await passes.waitForPasses(1)
+        let secondAnswerTask = Task { try await second.respond(to: Self.secondPrompt) }
+        try await secondFeed.log.waitForQueuedSubmissions(1)
 
         // Release one pass at a time. Each pass of the first submission
         // starts while the second submission still waits: its tool bodies do
-        // not give the worker to the other session.
-        var everyStepWasObserved = firstInside && secondQueued
-        var stepsReleased = 0
-        for released in 1..<passesPerSubmission where everyStepWasObserved {
+        // not give the worker to the other session. A pass holds on its step,
+        // so the count of the passes is exact at each read.
+        let releasedOneAtATime = passesPerSubmission - 1
+        for released in 1...releasedOneAtATime {
             step.signal()
-            stepsReleased += 1
-            everyStepWasObserved = await BoundedWait.conditionReached("pass \(released + 1) of the first submission") {
-                let waitingCount = await queue.waitingCount
-                return passes.recorded.count == released + 1 && waitingCount == 1
-            }
+            try await passes.waitForPasses(released + 1)
+            #expect(passes.recorded.count == released + 1)
+            #expect(await queue.waitingCount == 1)
         }
         // One step for each pass not yet released, so a regression that
         // interleaves the passes still ends both answers.
-        for _ in stepsReleased..<(passesPerSubmission * 2) { step.signal() }
+        for _ in releasedOneAtATime..<(passesPerSubmission * 2) { step.signal() }
         let firstAnswer = try await firstAnswerTask.value
         let secondAnswer = try await secondAnswerTask.value
 
         let wholeSubmissions =
             Array(repeating: Self.firstPrompt, count: passesPerSubmission)
             + Array(repeating: Self.secondPrompt, count: passesPerSubmission)
-        #expect(everyStepWasObserved)
         #expect(passes.recorded.map(\.prompt) == wholeSubmissions)
         #expect(firstAnswer == PassObservingModel.answer(to: Self.firstPrompt))
         #expect(secondAnswer == PassObservingModel.answer(to: Self.secondPrompt))
-        #expect(await BoundedWait.signalArrived(firstFinished, named: "the end of the first loop"))
-        #expect(await BoundedWait.signalArrived(secondFinished, named: "the end of the second loop"))
         #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
@@ -298,16 +256,10 @@ struct GenerationQueueSubmissionTests {
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(tools: [ChildAnswerTool(child: child, refusal: refusal)])
 
-        let parentFinished = AsyncSemaphore(value: 0)
-        let parentAnswerTask = Self.startAnswer(signalling: parentFinished) {
-            try await parent.respond(to: Self.firstPrompt)
-        }
-        // Bounded, so a regression that parks the child behind the submission
-        // of its parent fails here and does not hang the run.
-        try #require(
-            await BoundedWait.signalArrived(
-                parentFinished, named: "the parent answer, after the refusal in its tool body"))
-        let parentAnswer = try await parentAnswerTask.value
+        // The refusal in the tool body ends the answer of the parent. A
+        // regression that parks the child behind the submission of its
+        // parent keeps this wait open.
+        let parentAnswer = try await parent.respond(to: Self.firstPrompt)
 
         let refused = try #require(refusal.error as? GenerationQueueError)
         #expect(refused == .waitInsideOpenSubmission(model: resolved.profile.standard.chosen))
@@ -340,37 +292,24 @@ struct GenerationQueueSubmissionTests {
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(tools: [ChildAnswerTool(child: child, refusal: refusal)])
 
+        let childFeed = await SessionEventLog.watch(child)
+        defer { childFeed.drain.cancel() }
+
         // The parent's submission runs, and its first pass holds on its step.
-        let parentFinished = AsyncSemaphore(value: 0)
-        let parentAnswerTask = Self.startAnswer(signalling: parentFinished) {
-            try await parent.respond(to: Self.firstPrompt)
-        }
-        let parentInside = await BoundedWait.conditionReached("the first pass of the parent") {
-            fixture.passes.recorded.count == 1
-        }
+        let parentAnswerTask = Task { try await parent.respond(to: Self.firstPrompt) }
+        try await fixture.passes.waitForPasses(1)
         // The pump of the child runs its answer, and its submission waits
         // behind the parent's.
-        let childFinished = AsyncSemaphore(value: 0)
-        let childAnswerTask = Self.startAnswer(signalling: childFinished) {
-            try await child.respond(to: Self.childOwnPrompt)
-        }
-        let childWaits = await BoundedWait.conditionReached("the child's submission behind the parent's") {
-            await queue.waitingCount == 1
-        }
+        let childAnswerTask = Task { try await child.respond(to: Self.childOwnPrompt) }
+        try await childFeed.log.waitForQueuedSubmissions(1)
 
         // The tool body of the parent now asks the busy child for an answer.
         // A wait for an answer of the busy child would never end.
         for _ in 0..<Self.busyChildPassCount { step.signal() }
-        try #require(
-            await BoundedWait.signalArrived(
-                parentFinished, named: "the parent answer, after the refusal in its tool body"))
-        try #require(await BoundedWait.signalArrived(childFinished, named: "the child's own answer"))
         let parentAnswer = try await parentAnswerTask.value
         let childAnswer = try await childAnswerTask.value
 
         let refused = try #require(refusal.error as? GenerationQueueError)
-        #expect(parentInside)
-        #expect(childWaits)
         #expect(refused == .waitInsideOpenSubmission(model: resolved.profile.standard.chosen))
         #expect(
             fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.childOwnPrompt])
@@ -394,23 +333,16 @@ struct GenerationQueueSubmissionTests {
             tools: [BackgroundChildAnswerTool(child: child, start: runStart)])
 
         // A stream of events ends with its answer, and does not wait for the
-        // background runs of that answer.
-        let parentFinished = AsyncSemaphore(value: 0)
-        let parentAnswerTask = Task {
-            defer { parentFinished.signal() }
-            for try await _ in await parent.streamEvents(to: Self.firstPrompt) {}
-        }
-        let answerEndedBeforeTheRun = await BoundedWait.signalArrived(
-            parentFinished, named: "the end of the answer that started the run")
+        // background runs of that answer. The run waits on its latch, so the
+        // answer ends before the run asks the child for an answer.
+        for try await _ in await parent.streamEvents(to: Self.firstPrompt) {}
         let runs = await parent.runPlane.backgroundRuns()
 
         // Only now does the run ask the child for an answer.
         await runStart.open()
-        #expect(answerEndedBeforeTheRun)
         #expect(runs.count == 1)
         let token = try #require(runs.first?.completionToken)
-        let outcome = await parent.runPlane.wait(completionToken: token, seconds: Self.runSettlementSeconds)
-        try await parentAnswerTask.value
+        let outcome = await parent.runPlane.wait(completionToken: token, seconds: nil)
 
         var terminal: OperationEvent?
         if case .settled(let settled) = outcome {
@@ -421,15 +353,13 @@ struct GenerationQueueSubmissionTests {
 
         // The terminal is mail: the pump of the parent delivers it in one
         // more submission, with no caller call, and then ends.
-        #expect(
-            await BoundedWait.conditionReached("the delivery submission of the parent") {
-                fixture.passes.recorded.count > Self.passesBeforeDelivery
-            })
+        try await fixture.passes.waitForPasses(Self.passesBeforeDelivery + 1)
         #expect(await parent.becomesIdle())
-        #expect(
-            await BoundedWait.conditionReached("the queue of the model ending its work") {
-                await !queue.isRunning
-            })
+        // The pump of the parent ended, so its last submission ended. The
+        // queue releases the count of a job before its submitter resumes, and
+        // the answer of the child ended before the run settled. Thus no job
+        // runs or waits now.
+        #expect(await queue.isRunning == false)
         // The two passes of the ended answer, then the pass of the run on the
         // child, then the passes of the delivery submission, which carries
         // the answer of the child.

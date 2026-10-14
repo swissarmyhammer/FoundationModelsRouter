@@ -68,9 +68,6 @@ struct ToolContextMountSinkPublicSurfaceTests {
     /// `call(arguments:)` has already handed its envelope back.
     private static let backgroundHandoffCount = 2
 
-    /// The ceiling on the wait for the background run to settle, in seconds.
-    private static let settlementDeadlineSeconds: Double = 30
-
     // MARK: - Fixtures
 
     /// A sink written the way a caller outside this package writes one: a
@@ -430,9 +427,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
             // Let the run go, and stay in this answer until it has settled.
             await handoff.arriveAndWait()
             for run in tracked {
-                _ = await context.wait(
-                    completionToken: run.completionToken,
-                    seconds: Self.settlementDeadlineSeconds)
+                _ = await context.wait(completionToken: run.completionToken, seconds: nil)
             }
         }
 

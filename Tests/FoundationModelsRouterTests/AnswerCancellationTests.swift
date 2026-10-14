@@ -130,7 +130,16 @@ struct AnswerCancellationTests {
     }
 
     /// Waits until the work that the pump of `session` runs has a stop
-    /// requested (``RoutedSessionActor/isWorkCancelled``).
+    /// requested (``RoutedSessionActor/cancelRequestedWorkId``).
+    ///
+    /// Each stop of the running work
+    /// (``RoutedSessionActor/requestCancelOfRunningWork()``) sets the id and
+    /// then signals ``RoutedSessionActor/stateChanges``. The end of the work
+    /// clears the id. So a set id tells that the running work has a stop
+    /// requested.
+    ///
+    /// The wait does not read ``RoutedSessionActor/isWorkCancelled``: that
+    /// read also gives `true` when the task of the reader is cancelled.
     ///
     /// Use it only when the work cannot end before the test lets it end:
     /// else the work can end before the read, and the wait never ends. The
@@ -141,7 +150,7 @@ struct AnswerCancellationTests {
     ///   before the stop was requested.
     static func awaitStopRequested(on session: any RoutedSession) async throws {
         let actor = try #require(session as? RoutedSessionActor)
-        try await AwaitedCondition.wait(until: { await actor.isWorkCancelled })
+        try await session.stateChanges.wait(until: { await actor.cancelRequestedWorkId != nil })
     }
 
     /// Failures a test's own stand-in tool raises — to mark a path that must never
@@ -257,10 +266,9 @@ struct AnswerCancellationTests {
         #expect(close.ms != nil)
 
         // Nothing was left half-written: an ordinary answer on the same session
-        // records its own whole prompt/response pair straight after. Run through
-        // `followUpAnswerCompletes` rather than awaited directly, so a regression
-        // that stranded the pump fails here instead of suspending the follow-up
-        // answer — and the suite with it — forever.
+        // records its own whole prompt/response pair straight after.
+        // `followUpAnswerCompletes` waits for that answer, and then checks
+        // that its model call ended.
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
         let afterEvents = await fixture.recorder.events.withoutMailRecords
         #expect(afterEvents.map(\.kind) == [.session, .prompt, .response, .prompt, .response])

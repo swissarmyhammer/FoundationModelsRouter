@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -28,14 +29,20 @@ struct PooledResidencyTests {
         private(set) var maxActive = 0
         private(set) var entryOrder: [String] = []
 
+        /// The signal that ``enter(_:)`` and ``exit()`` send after each
+        /// change, so a test waits for a count with no clock.
+        nonisolated let changes = ChangeSignal()
+
         func enter(_ id: String) {
             entryOrder.append(id)
             active += 1
             maxActive = max(maxActive, active)
+            changes.signal()
         }
 
         func exit() {
             active -= 1
+            changes.signal()
         }
     }
 
@@ -46,8 +53,8 @@ struct PooledResidencyTests {
     /// The backend declares no ``LanguageModelSessionBackend/generationQueue``,
     /// so the session runs its calls directly. Each call submits itself as one
     /// item to the ``GenerationQueue`` of its container instead, through
-    /// ``GenerationQueue/submit(isolation:_:)``: the pattern a consumer's own
-    /// stub container follows.
+    /// ``GenerationQueue/submit(isolation:onQueued:_:)``: the pattern a
+    /// consumer's own stub container follows.
     private final class SuspendingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let observer: ConcurrencyObserver
         private let releaseGate: AsyncSemaphore
@@ -56,14 +63,22 @@ struct PooledResidencyTests {
         /// one item.
         private let containerQueue: GenerationQueue
 
-        init(observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, containerQueue: GenerationQueue) {
+        /// Signalled once for each call that must wait behind another item
+        /// of ``containerQueue``.
+        private let queued: AsyncSemaphore
+
+        init(
+            observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, containerQueue: GenerationQueue,
+            queued: AsyncSemaphore
+        ) {
             self.observer = observer
             self.releaseGate = releaseGate
             self.containerQueue = containerQueue
+            self.queued = queued
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            try await containerQueue.submit { [observer, releaseGate] in
+            try await containerQueue.submit(onQueued: { [queued] in queued.signal() }) { [observer, releaseGate] in
                 await observer.enter(prompt)
                 await releaseGate.wait()
                 await observer.exit()
@@ -94,14 +109,25 @@ struct PooledResidencyTests {
         let observer: ConcurrencyObserver
         let releaseGate: AsyncSemaphore
 
+        /// Signalled once for each call that must wait in ``generationQueue``.
+        let queued: AsyncSemaphore
+
         /// The queue every backend of this container shares.
         let generationQueue = GenerationQueue()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, containerQueue: generationQueue)
+            makeBackend()
         }
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, containerQueue: generationQueue)
+            makeBackend()
+        }
+
+        /// A backend over the parts of this container.
+        ///
+        /// - Returns: The backend.
+        private func makeBackend() -> any LanguageModelSessionBackend {
+            SuspendingSessionBackend(
+                observer: observer, releaseGate: releaseGate, containerQueue: generationQueue, queued: queued)
         }
     }
 
@@ -111,12 +137,15 @@ struct PooledResidencyTests {
         RouterTestFixtures.makeTempDir(prefix: "PooledResidencyTests")
     }
 
-    /// Observes the release of `session` without a strong reference to it.
+    /// Waits for the first footprint of `footprints` that has no resident
+    /// model.
     ///
-    /// - Parameter session: The session to observe.
-    /// - Returns: A closure that tells whether `session` is released.
-    private static func releaseObservation(of session: any RoutedSession) -> @Sendable () -> Bool {
-        { [weak session] in session == nil }
+    /// - Parameter footprints: The footprint stream of the pool, from
+    ///   `ModelPool.footprints`.
+    private static func waitUntilNothingIsResident(in footprints: AsyncStream<ModelPoolFootprint>) async {
+        for await footprint in footprints where footprint.resident.isEmpty {
+            return
+        }
     }
 
     // MARK: - The pool a router uses.
@@ -338,11 +367,14 @@ struct PooledResidencyTests {
 
         // `respond` returns when the answer arrives, but the pump of the
         // session can run after that and holds the session until it ends. So
-        // the release of the session, not the return of `respond`, is the
-        // signal that the last reference is gone.
-        let sessionIsReleased = Self.releaseObservation(of: try #require(session))
+        // the return of `respond` is not the signal that the last reference
+        // is gone. The pool sends a footprint after each change, and it keeps
+        // an evicted model in each footprint until the evict call of its
+        // loader returns. Thus a footprint with no resident model comes only
+        // after the release of the session and each of the three evictions.
+        let footprints = router.pool.footprints
         session = nil
-        #expect(await BoundedWait.conditionReached("the release of the session") { sessionIsReleased() })
+        await Self.waitUntilNothingIsResident(in: footprints)
 
         // Now unreferenced by anyone: all three models evicted.
         #expect(try await router.pool.admittedFootprint.resident.isEmpty)
@@ -359,13 +391,16 @@ struct PooledResidencyTests {
         let spy = LoadSpy()
         let observer = ConcurrencyObserver()
         let releaseGate = AsyncSemaphore(value: 0)
+        let queued = AsyncSemaphore(value: 0)
         // Fits one trio plus the second profile's two-KV-cache reuse charge.
         let router = ResidencyFixtures.makeRouter(
             spy: spy,
             recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.reusedTrioCharge
                 + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir,
-            llmContainer: { _ in SuspendingLLMContainer(observer: observer, releaseGate: releaseGate) }
+            llmContainer: { _ in
+                SuspendingLLMContainer(observer: observer, releaseGate: releaseGate, queued: queued)
+            }
         )
 
         let shared = ProfileDefinition(
@@ -386,8 +421,9 @@ struct PooledResidencyTests {
         // Let one call reach (and suspend inside) the shared model, and the
         // other wait in the shared queue, before releasing them, so the queue
         // — not scheduling luck — is what is under test.
-        #expect(await BoundedWait.conditionReached("one pass inside the shared model") { await observer.active == 1 })
-        #expect(await BoundedWait.conditionReached("the other pass waiting in the shared queue") { await queue.waitingCount == 1 })
+        try await observer.changes.wait(until: { await observer.active == 1 })
+        await queued.wait()
+        #expect(await queue.waitingCount == 1)
         #expect(await observer.maxActive == 1)
 
         releaseGate.signal()
@@ -751,9 +787,11 @@ struct PooledResidencyTests {
         // of B's resolve.
         resolvedA.dropReference()
 
-        // Give that eviction every chance to run if it does not wait.
-        for _ in 0..<20 { await Task.yield() }
-
+        // The order is fixed, so no wait is necessary here. The release of a
+        // hold puts its eviction job in the admission queue in the same step
+        // (`ModelPool.release`). That queue runs one job at a time, first in
+        // first out, and the admission job of B's resolve runs now, held by
+        // the gate. Thus the eviction job runs only after B's resolve ends.
         releaseGate.signal()
         var resolvedB: LanguageModelProfile? = try await #require(resolveBTask).value
         // A finished task holds its own result, so that handle is a second

@@ -27,8 +27,15 @@ struct SubmissionBoundaryToolTests {
     private actor CallOrderLog {
         private(set) var events: [String] = []
 
+        /// The signal that ``record(_:)`` sends after each entry.
+        nonisolated let changes = ChangeSignal()
+
+        /// Appends one entry, and signals ``changes``.
+        ///
+        /// - Parameter event: The entry.
         func record(_ event: String) {
             events.append(event)
+            changes.signal()
         }
     }
 
@@ -285,7 +292,8 @@ struct SubmissionBoundaryToolTests {
         await session.outbox.post(event: terminal)
 
         let expected = Self.oneSubmission + Self.oneSubmission
-        #expect(await BoundedWait.conditionReached("the mail submission reaching the backend") { await log.events == expected })
+        try await log.changes.wait(until: { await log.events.count >= expected.count })
+        #expect(await log.events == expected)
         #expect(await session.becomesIdle())
     }
 }

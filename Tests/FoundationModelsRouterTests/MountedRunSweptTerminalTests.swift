@@ -75,9 +75,7 @@ struct MountedRunSweptTerminalTests {
         ) -> (@Sendable () async -> OperationOutcome)? {
             { [gate, runPlane] in
                 await gate.open()
-                _ = await runPlane.wait(
-                    completionToken: completionToken,
-                    seconds: MountFixtures.settlementDeadline)
+                _ = await runPlane.wait(completionToken: completionToken, seconds: nil)
                 return .cancelled
             }
         }
@@ -144,7 +142,7 @@ struct MountedRunSweptTerminalTests {
 
     @Test("a background run swept by close() reaches the journal under its own token, and the terminal the run plane built never reaches the caller's sink")
     func builtTerminalReachesTheJournalAndNotTheCallerSink() async throws {
-        let recorder = InMemoryRecorder()
+        let recorder = SignallingTranscriptRecorder()
         let (session, directory) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -166,10 +164,9 @@ struct MountedRunSweptTerminalTests {
         // it waits for the body of the run, which the shut gate holds, so the
         // close runs in a task of its own until the test opens the gate.
         let closing = Task { await session.close() }
-        _ = try #require(
-            await MountFixtures.poll {
-                await recorder.events.flatMap(\.operationEvents).first { $0.kind == .completed }
-            })
+        try await recorder.changes.wait(until: {
+            await recorder.events.flatMap(\.operationEvents).contains { $0.kind == .completed }
+        })
 
         let atClose = await sink.events
 
@@ -207,10 +204,8 @@ struct MountedRunSweptTerminalTests {
         await gate.open()
         // The close returns only after the body of the run ended.
         await closing.value
-        let ownTerminal = try #require(
-            await MountFixtures.poll {
-                await sink.events.first { $0.kind == .completed }
-            })
+        try await sink.changes.wait(until: { await sink.events.contains { $0.kind == .completed } })
+        let ownTerminal = try #require(await sink.events.first { $0.kind == .completed })
         #expect(ownTerminal.correlationID == token)
         #expect(ownTerminal.outcome == .succeeded)
     }
@@ -219,7 +214,7 @@ struct MountedRunSweptTerminalTests {
 
     @Test("a run that settles inside the sweep's canceler window posts its own terminal to the caller's sink, and close() journals that same terminal")
     func naturalTerminalReachesTheSinkAndTheJournal() async throws {
-        let recorder = InMemoryRecorder()
+        let recorder = SignallingTranscriptRecorder()
         let (session, directory) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: directory) }
 

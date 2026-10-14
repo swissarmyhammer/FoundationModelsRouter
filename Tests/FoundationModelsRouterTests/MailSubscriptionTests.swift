@@ -38,11 +38,6 @@ struct MailSubscriptionTests {
     /// with no ceiling.
     private static let namedCeiling = 100
 
-    /// The time a test gives a wait to return when the wait must not
-    /// return. The test uses it only to prove that something does not
-    /// happen.
-    private static let noReturnWindow = Duration.milliseconds(100)
-
     /// The grammar of the guided session.
     private static let grammar = Grammar.jsonSchema(#"{"type":"string"}"#)
 
@@ -71,11 +66,11 @@ struct MailSubscriptionTests {
     ///   - session: The session.
     ///   - backend: The backend of the session.
     /// - Returns: The id of the held message.
-    /// - Throws: When the submission does not reach the backend inside the
-    ///   bound.
+    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
+    ///   submission reaches the backend.
     private static func startHeldAnswer(on session: any RoutedSession, backend: Backend) async throws -> MailID {
         let held = try session.send(heldPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         return held
     }
 
@@ -147,7 +142,7 @@ struct MailSubscriptionTests {
 
         let running = Self.reply(Self.heldPrompt)
         let subscription = try session.mail(running)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         let copy = Mail(
             id: running.id, sender: .user,
             body: .userMessage(prompt: Self.firstPrompt, options: UserMessageOptions()))
@@ -239,9 +234,11 @@ struct MailSubscriptionTests {
             defer { mark.mark() }
             return try await session.awaitTerminal(of: held)
         }
-        // The latch is shut, so no terminal can come. A short wait proves
-        // that the call does not return.
-        try await Task.sleep(for: Self.noReturnWindow)
+        // The latch is shut, so no terminal can come. After the wait is in
+        // the hub, only a terminal event, a cancel or a close can end it, and
+        // none of them comes before the latch opens. So the check below reads
+        // a wait that is open.
+        try await hub.waiterChanges.wait(until: { hub.waiterCount == 1 })
         #expect(!mark.isMarked)
         #expect(hub.terminal(for: .mail(held)) == nil)
         await latch.open()
@@ -291,22 +288,23 @@ struct MailSubscriptionTests {
         let feed = await session.streamSessionEvents()
 
         let elicitationId = ULID.generate()
+        // The run plane makes the elicitation pending before it posts the
+        // request to the sink, so the post is the event after which the
+        // answer finds the elicitation.
+        let postings = ElicitationPostings()
         let context = ToolContext(
-            sessionID: session.id, runPlane: session.runPlane, sink: DiscardingOperationEventSink(),
+            sessionID: session.id, runPlane: session.runPlane, sink: postings,
             tool: MailQueueFixtures.runTool, op: MailQueueFixtures.runOp,
             completionToken: RunPlane.makeCompletionToken(), isCancelled: { false })
-        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId)") {
+        let answering = Task {
             try await context.elicit(PendingElicitationFixtures.formRequest(elicitationId: elicitationId))
         }
-        #expect(
-            await BoundedWait.conditionReached("the elicitation \(elicitationId) pending") {
-                await session.runPlane.pendingElicitationIds().contains(elicitationId)
-            })
+        try await postings.waitForPosts(1)
         #expect(backend.prompts.isEmpty)
 
         let response = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: elicitationId.description, response: response) == .delivered)
-        #expect(try await answering.deliveredAnswer() == response)
+        #expect(try await answering.value == response)
         #expect(await session.becomesIdle())
         await session.close()
 

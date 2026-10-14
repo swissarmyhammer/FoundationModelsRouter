@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises milestone 5b: the generation-session surface
@@ -149,8 +150,17 @@ struct SessionChokepointTests {
 
     /// Counts how many containers were evicted through the loader.
     private actor EvictionSpy {
+        /// The number of evictions so far.
         private(set) var count = 0
-        func record() { count += 1 }
+
+        /// Signalled after each eviction that ``record()`` counts.
+        nonisolated let changes = ChangeSignal()
+
+        /// Counts one eviction, and signals ``changes``.
+        func record() {
+            count += 1
+            changes.signal()
+        }
     }
 
     // MARK: - Stubs
@@ -270,13 +280,37 @@ struct SessionChokepointTests {
         )
     }
 
-    /// Polls the eviction spy until it reaches `count` or the timeout elapses,
-    /// so a `deinit`-triggered (async) eviction can be observed deterministically.
+    /// The number of models that one resolve of ``profile`` keeps resident:
+    /// standard, flash and embedding.
+    private static let profileModelCount = 3
+
+    /// Waits until the eviction spy counted at least `count` evictions.
+    ///
+    /// The last release of a hold starts its eviction as a job on the
+    /// admission queue of the pool, so the eviction comes after the release.
+    /// The spy signals each eviction, and the wait reads the count again at
+    /// each signal.
+    ///
+    /// - Parameters:
+    ///   - spy: The eviction spy.
+    ///   - count: The number of evictions to wait for.
+    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
     private static func waitForEvictions(_ spy: EvictionSpy, count: Int) async throws {
-        for _ in 0..<200 {
-            if await spy.count >= count { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await spy.changes.wait(until: { await spy.count >= count })
+    }
+
+    /// Runs an empty job on the admission queue of `pool`, and waits until
+    /// the job ran.
+    ///
+    /// The queue is one FIFO line, and the last release of a hold puts its
+    /// eviction job in that line before the release returns. So when this
+    /// job runs, each eviction that a release before this call started has
+    /// ended, and the spy counted it.
+    ///
+    /// - Parameter pool: The pool of the router under test.
+    /// - Throws: What `GenerationQueue.submit` throws.
+    private static func drainAdmissions(of pool: ModelPool) async throws {
+        try await pool.admissions.submit {}
     }
 
     // MARK: - Chokepoint events
@@ -466,23 +500,26 @@ struct SessionChokepointTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let spy = EvictionSpy()
-        let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
+        let pool = ModelPool()
+        let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir, pool: pool)
 
         var profile: LanguageModelProfile? = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         var session: (any RoutedSession)? = profile!.standard.makeSession()
 
         // Dropping the external profile handle while the session is alive must
-        // not evict: the session holds the profile resident. Wait past any
-        // racing deinit before asserting, so a missing retention would have had
-        // time to fire its eviction.
+        // not evict: the session holds the profile resident. A missing
+        // retention releases the holds in this assignment, and each release
+        // puts its eviction job in the FIFO admission queue of the pool
+        // before the assignment returns. The empty job below runs after those
+        // jobs, so when it ran, each such eviction is in the spy already.
         profile = nil
-        try await Task.sleep(for: .milliseconds(100))
+        try await Self.drainAdmissions(of: pool)
         #expect(await spy.count == 0)
 
         // Releasing the last session lets the profile deinit and evict all three.
         session = nil
-        try await Self.waitForEvictions(spy, count: 3)
-        #expect(await spy.count == 3)
+        try await Self.waitForEvictions(spy, count: Self.profileModelCount)
+        #expect(await spy.count == Self.profileModelCount)
 
         _ = session
     }

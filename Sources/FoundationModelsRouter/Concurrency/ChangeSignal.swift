@@ -34,6 +34,24 @@ final class ChangeSignal: Sendable {
     /// The state, guarded so that check-and-suspend is atomic.
     private let state = Mutex(State())
 
+    /// Reports each change of ``waiterCount``, or `nil` when the owner did
+    /// not ask for it (``init(observingWaiters:)``).
+    ///
+    /// A wait that registers reports one change, and so does each wait that
+    /// a cancel removes. One ``signal()`` that resumes waits reports one
+    /// change. Each report comes after the change, outside the lock of this
+    /// signal. Only the tests read it: a test waits on it until a task waits
+    /// on this signal, and then makes the change that the task waits for.
+    let waiterChanges: ChangeSignal?
+
+    /// Makes a signal with no change and no waiter.
+    ///
+    /// - Parameter observingWaiters: Whether the signal reports each change
+    ///   of ``waiterCount`` through ``waiterChanges``. The default is `false`.
+    init(observingWaiters: Bool = false) {
+        waiterChanges = observingWaiters ? ChangeSignal() : nil
+    }
+
     /// How many changes ``signal()`` reported so far.
     var changeCount: UInt64 {
         state.withLock { $0.changeCount }
@@ -54,6 +72,9 @@ final class ChangeSignal: Sendable {
         }
         for waiter in woken {
             waiter.resume(returning: true)
+        }
+        if !woken.isEmpty {
+            waiterChanges?.signal()
         }
     }
 
@@ -82,11 +103,14 @@ final class ChangeSignal: Sendable {
                 }
                 if let outcome {
                     continuation.resume(returning: outcome)
+                } else {
+                    waiterChanges?.signal()
                 }
             }
         } onCancel: {
-            let waiter = state.withLock { $0.waiters.removeValue(forKey: ticket) }
-            waiter?.resume(returning: false)
+            guard let waiter = state.withLock({ $0.waiters.removeValue(forKey: ticket) }) else { return }
+            waiter.resume(returning: false)
+            waiterChanges?.signal()
         }
     }
 }

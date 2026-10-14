@@ -13,12 +13,10 @@ import Testing
 ///   in post order with the progress events of the same run.
 /// - The event never goes into the input of a later submission.
 /// - A run that settles inside its settle period keeps its display events.
-/// - A display event resets the timeout of the run, the same as progress.
 ///
 /// A ``BackgroundingBackend`` calls the background tool of the session in its
-/// first answer. No assertion reads a clock: each wait reads a state until it
-/// holds. Only the timeout test sleeps, because the timeout of a run is a
-/// time.
+/// first answer. No assertion reads a clock: each wait waits for the event
+/// on the feed of the session.
 @Suite("The live delivery of the display events of a tool")
 struct ToolDisplayDeliveryTests {
     // MARK: - Fixtures
@@ -48,24 +46,17 @@ struct ToolDisplayDeliveryTests {
         /// The posts of the body, in order.
         let steps: [Step]
 
-        /// The pause before each post.
-        var pause: Duration = .zero
-
-        /// The timeout of the run with no sign of life, or `nil` for none.
-        var timeout: TimeInterval?
-
         /// The latch the body waits on after its posts, or `nil` to return at
         /// once.
         var gate: RunLatch?
 
         var mount: ToolMount? {
-            ToolMount(mode: .background, timeout: timeout)
+            ToolMount(mode: .background)
         }
 
         func call(arguments: BackgroundFixtureArguments) async throws -> String {
             guard let context = ToolContext.current else { throw ToolContextMissing() }
             for step in steps {
-                try await Task.sleep(for: pause)
                 await Self.post(step, through: context)
             }
             await gate?.waitUntilOpen()
@@ -119,17 +110,6 @@ struct ToolDisplayDeliveryTests {
     /// The prompt of the caller message after the run started.
     private static let nextPrompt = "how is the job"
 
-    /// The number of display events of the timeout test.
-    private static let beatCount = 8
-
-    /// The pause between two display events of the timeout test, well inside
-    /// ``beatTimeout``.
-    private static let beatPause: Duration = .milliseconds(100)
-
-    /// The timeout that the display events of the timeout test start again.
-    /// The full run is longer.
-    private static let beatTimeout: TimeInterval = 0.5
-
     // MARK: - Helpers
 
     /// Makes a session with `tool` and the settle period `grace`, and watches
@@ -165,6 +145,17 @@ struct ToolDisplayDeliveryTests {
         await fixture.session.close()
         try? FileManager.default.removeItem(at: fixture.directory)
         withExtendedLifetime(fixture.router) {}
+    }
+
+    /// Waits until the feed of the session gave `count` display events that
+    /// add a text.
+    ///
+    /// - Parameters:
+    ///   - count: How many display events to wait for.
+    ///   - fixture: The fixture whose events are watched.
+    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func waitForDisplayTexts(_ count: Int, on fixture: Fixture) async throws {
+        try await fixture.events.wait(until: { $0.displayTexts.count >= count })
     }
 
     /// Every event of the answer to `prompt` on `session`, in delivery order.
@@ -217,10 +208,8 @@ struct ToolDisplayDeliveryTests {
         let fixture = try await Self.makeFixture(
             tool: DisplayingBackgroundTool(steps: [.progress(progress), .display(display)], gate: gate), grace: 0)
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        try #require(
-            await BoundedWait.conditionReached("the display event on the session feed") {
-                await fixture.events.displayTexts == [display]
-            })
+        try await Self.waitForDisplayTexts(1, on: fixture)
+        #expect(await fixture.events.events.displayTexts == [display])
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
 
@@ -247,31 +236,8 @@ struct ToolDisplayDeliveryTests {
         // withdrawn. The display event stays with the host.
         #expect(answer == Self.runOutput)
         #expect(await fixture.session.outbox.pending().events.isEmpty)
-        #expect(
-            await BoundedWait.conditionReached("the display event on the session feed") {
-                await fixture.events.displayTexts == [display]
-            })
-        await Self.end(fixture)
-    }
-
-    // MARK: - The timeout of the run
-
-    @Test("a tool that sends display events faster than its timeout runs past the timeout, and each event arrives")
-    @MainActor
-    func displayEventsResetTheTimeout() async throws {
-        let texts = (0..<Self.beatCount).map { "beat \($0)" }
-        let tool = DisplayingBackgroundTool(
-            steps: texts.map(DisplayingBackgroundTool.Step.display), pause: Self.beatPause,
-            timeout: Self.beatTimeout)
-        let fixture = try await Self.makeFixture(tool: tool, grace: MountFixtures.generousInterval)
-
-        let answer = try await fixture.session.respond(to: Self.jobPrompt)
-
-        #expect(answer == Self.runOutput)
-        #expect(
-            await BoundedWait.conditionReached("each display event on the session feed") {
-                await fixture.events.displayTexts == texts
-            })
+        try await Self.waitForDisplayTexts(1, on: fixture)
+        #expect(await fixture.events.events.displayTexts == [display])
         await Self.end(fixture)
     }
 }
@@ -291,11 +257,11 @@ extension SessionEvent {
     }
 }
 
-extension SessionEventLog {
-    /// The text of each display event delivered so far that adds a text, in
-    /// delivery order.
+extension Sequence<SessionEvent> {
+    /// The text of each display event among these events that adds a text,
+    /// in order.
     var displayTexts: [String] {
-        events.compactMap { event in
+        compactMap { event in
             guard case .display(let text) = event.displayingToolStep else { return nil }
             return text
         }

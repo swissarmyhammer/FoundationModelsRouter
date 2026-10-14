@@ -20,10 +20,6 @@ import Testing
 struct SessionMountCompositionTests {
     private typealias Fixtures = MountFixtures
 
-    /// How long, in seconds, the tool with no stated timeout runs with no
-    /// progress. Task ^50c8zer names this length.
-    private static let quietRunSeconds: TimeInterval = 3
-
     /// The step every marker-tool call of this suite names.
     private static let step = "ONE"
 
@@ -71,11 +67,13 @@ struct SessionMountCompositionTests {
     @Test("a tool that declares nothing mounts run-to-completion with no timeout, and its slow call stays in band")
     func undeclaredToolMountsRunToCompletion() async throws {
         let gate = RunLatch()
+        let entered = RunLatch()
         let runPlane = RunPlane()
         let sink = Fixtures.RecordingSink()
         let mounted = try #require(
             Self.makeSessionMounted(
-                Fixtures.GatedTool(gate: gate), sessionID: ULID.generate(), runPlane: runPlane, sink: sink
+                Fixtures.GatedTool(gate: gate, entered: entered), sessionID: ULID.generate(), runPlane: runPlane,
+                sink: sink
             ) as? RunToCompletionRunner<MountArguments>
         )
 
@@ -84,8 +82,10 @@ struct SessionMountCompositionTests {
         let calling = Task {
             try await mounted.call(arguments: MountArguments(value: "edit"))
         }
-        try await Task.sleep(for: .seconds(Fixtures.shortInterval))
-        // No token was handed out: the call is still in band.
+        // The body of the tool runs now. The mount does its work before it
+        // calls the body, so a token that the mount handed out is on the run
+        // plane already. None is: the call is still in band.
+        await entered.waitUntilOpen()
         #expect(await runPlane.backgroundRuns().isEmpty)
         await gate.open()
 
@@ -96,13 +96,24 @@ struct SessionMountCompositionTests {
 
     @Test("a tool with no stated timeout that runs with no progress completes")
     func unstatedTimeoutLetsAQuietRunComplete() async throws {
+        let entered = RunLatch()
+        let gate = RunLatch()
         let mounted = Self.makeSessionMounted(
-            Fixtures.QuietTool(duration: Self.quietRunSeconds), sessionID: ULID.generate(),
+            Fixtures.QuietTool(entered: entered, gate: gate), sessionID: ULID.generate(),
             runPlane: RunPlane(), sink: Fixtures.RecordingSink()
         )
         let quiet = try #require(mounted as? RunToCompletionRunner<MountArguments>)
+        // The mount has no timer: no time with no progress can end the run.
+        #expect(quiet.timeout == nil)
 
-        let rendered = try await quiet.call(arguments: MountArguments(value: "slow"))
+        let calling = Task {
+            try await quiet.call(arguments: MountArguments(value: "slow"))
+        }
+        // The run is in the body of the tool and posts no progress. The test
+        // ends the quiet run when it opens the gate.
+        await entered.waitUntilOpen()
+        await gate.open()
+        let rendered = try await calling.value
 
         #expect(rendered == "quiet: slow")
     }
@@ -137,12 +148,14 @@ struct SessionMountCompositionTests {
         let runPlane = RunPlane()
         let sink = Fixtures.RecordingSink()
         let blockingGate = RunLatch()
+        let blockingEntered = RunLatch()
         let backgroundingGate = RunLatch()
         // Both tools take the one session-mount composition, under one
         // session identity, one run plane, and one sink.
         let blocking = try #require(
             Self.makeSessionMounted(
-                Fixtures.DeclaredRunToCompletionRunner(gate: blockingGate), sessionID: sessionID,
+                Fixtures.DeclaredRunToCompletionRunner(gate: blockingGate, entered: blockingEntered),
+                sessionID: sessionID,
                 runPlane: runPlane, sink: sink
             ) as? RunToCompletionRunner<MountArguments>
         )
@@ -162,7 +175,10 @@ struct SessionMountCompositionTests {
         let discovering = Task {
             try await blocking.call(arguments: MountArguments(value: "catalogue"))
         }
-        try await Task.sleep(for: .seconds(Fixtures.shortInterval))
+        // The body of the blocking tool runs now. The mount does its work
+        // before it calls the body, so a token that the mount handed out is
+        // on the run plane already.
+        await blockingEntered.waitUntilOpen()
 
         // One run is tracked, and it is the background tool's.
         let runs = await runPlane.backgroundRuns()
@@ -322,6 +338,9 @@ struct SessionMountCompositionTests {
         /// The terminal that the sink got, or `nil` before it got one.
         private(set) var heldTerminal: OperationEvent?
 
+        /// Signals after the sink records ``heldTerminal``.
+        nonisolated let changes = ChangeSignal()
+
         /// Makes a sink that holds the terminal until `release` opens.
         ///
         /// - Parameter release: The latch that the post of the terminal waits on.
@@ -332,23 +351,9 @@ struct SessionMountCompositionTests {
         func post(event: OperationEvent) async {
             guard event.kind == .completed else { return }
             heldTerminal = event
+            changes.signal()
             await release.waitUntilOpen()
         }
-    }
-
-    /// Whether the run with `token` settles while the sink of the run holds
-    /// its terminal. The reading asks the run plane through the yields of
-    /// ``BoundedWait/poll(until:givingUpWhen:)``, and stops after them with
-    /// no clock. A settlement that only a few task suspensions keep back
-    /// lands in these yields.
-    ///
-    /// - Parameters:
-    ///   - token: The completion token of the run.
-    ///   - runPlane: The run plane of the run.
-    /// - Returns: `true` when the run settled before the yields were spent.
-    private static func settlesWhileTheTerminalIsHeld(_ token: String, in runPlane: RunPlane) async -> Bool {
-        await BoundedWait.poll(
-            until: { await runPlane.settledRunTokens().contains(token) }, givingUpWhen: { true })
     }
 
     /// The idle check of a session (``RoutedSessionActor/isIdle()``) reads the
@@ -373,10 +378,12 @@ struct SessionMountCompositionTests {
         let token = envelope.completionToken
 
         await gate.open()
-        try await AwaitedCondition.wait(until: { await sink.heldTerminal != nil })
+        try await sink.changes.wait(until: { await sink.heldTerminal != nil })
 
-        // The latch is closed: the sink holds the terminal.
-        #expect(await Self.settlesWhileTheTerminalIsHeld(token, in: runPlane) == false)
+        // The latch is closed: the sink holds the terminal. The funnel of the
+        // run settles the run on the run plane only after the post of the
+        // terminal returns, in one serial order. A settlement before the post
+        // would be on the run plane already, so one read is the proof.
         #expect(await runPlane.settledRunTokens().contains(token) == false)
         #expect(await runPlane.backgroundRuns().map(\.completionToken) == [token])
 

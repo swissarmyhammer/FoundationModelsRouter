@@ -379,7 +379,35 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Wakes each ``awaitIdle()`` call that waits for the next change of the
     /// work of this session. See ``signalWorkChange()``.
-    nonisolated let idleChanges = ChangeSignal()
+    ///
+    /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
+    /// so a test can wait until an ``awaitIdle()`` call waits.
+    nonisolated let idleChanges = ChangeSignal(observingWaiters: true)
+
+    /// Reports each change of a state of this session that sends no event of
+    /// its own: a mail that ``mail(_:)`` put in the queue, a stop of the
+    /// running work (``requestCancelOfRunningWork()``), and a cancel of the
+    /// running compaction (``cancelActiveCompaction()``).
+    ///
+    /// Only the tests read it. A test reads the state, and waits on this
+    /// signal for the next change when the state is not the state it wants.
+    nonisolated let stateChanges = ChangeSignal()
+
+    /// Reports each read of the repetition watch that found no stop
+    /// (``startRepetitionWatch()``). The watch first stores the texts of
+    /// that read in ``lastRepetitionWatchRead``, then signals.
+    ///
+    /// Only the tests read it. A test that checks that the watch does not
+    /// stop a call waits on this signal until the watch read the whole
+    /// reasoning, and only then lets the call end.
+    nonisolated let repetitionWatchReads = ChangeSignal()
+
+    /// The texts of the attempt that the last read of the repetition watch
+    /// gave to the detector, when that read found no stop. Empty before the
+    /// first such read.
+    ///
+    /// Only the tests read it, with ``repetitionWatchReads``.
+    nonisolated let lastRepetitionWatchRead = Mutex<[WatchedText]>([])
 
     /// Whether ``close()`` started. It stays set, so each ``awaitIdle()``
     /// call after it returns `false` at once, and the work of no signal

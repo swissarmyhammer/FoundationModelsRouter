@@ -146,19 +146,15 @@ struct InlineSettleGraceSessionTests {
         #expect(fixture.backend.toolOutputs == [answer])
 
         await gate.open()
-        let outcome = await fixture.session.runPlane.wait(completionToken: envelope.completionToken, seconds: nil)
-        guard case .settled(let terminal) = outcome else {
-            Issue.record("expected run \(envelope.completionToken) to settle, got \(outcome)")
-            await Self.end(fixture)
-            return
-        }
+        let terminal = try await MountFixtures.settledTerminal(
+            of: envelope.completionToken, in: fixture.session.runPlane)
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == Self.runOutput)
 
         // The terminal is mail: it starts one more answer by itself, and its
         // line reaches the model one time over every prompt.
-        try await BoundedWait.awaitPrompts(2, in: { fixture.backend.receivedPrompts })
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        try await fixture.backend.changes.wait(until: { fixture.backend.receivedPrompts.count >= 2 })
+        #expect(await fixture.session.pumpEnds())
         let prompts = fixture.backend.receivedPrompts
         #expect(prompts.count == 2)
         #expect(prompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
@@ -188,7 +184,11 @@ struct InlineSettleGraceSessionTests {
         // The run settled, and its staged events were withdrawn: no mail
         // waits, and no mail starts one more answer.
         #expect(await fixture.session.runPlane.backgroundRuns().isEmpty)
-        #expect(await BoundedWait.pumpStops(on: fixture.session))
+        // The run settled and its events were withdrawn before the answer
+        // came back, so a mail of the run is in the queue before this point
+        // or never. A mail in the queue keeps the pump running, so the end
+        // of the pump is the point after which one read is the proof.
+        #expect(await fixture.session.pumpEnds())
         #expect(fixture.backend.receivedPrompts == [Self.jobPrompt])
         #expect(await fixture.session.outbox.pending().events.isEmpty)
         await Self.end(fixture)

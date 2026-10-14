@@ -262,19 +262,16 @@ extension AnswerCancellationTests {
     }
 
     /// Whether one further ordinary answer on `session` runs to completion,
-    /// observed through `observer` rather than by awaiting the answer.
+    /// and its model call ended.
     ///
-    /// The indirection is the point: a regression that strands the pump
-    /// blocks every later message on that session forever, and a bare
-    /// `respond(to:)` that no pump takes never ends. So awaiting such an
-    /// answer directly would hang the whole suite instead of failing the test
-    /// that caught it.
+    /// The helper waits for the answer itself, with no clock and no limit.
+    /// Then it reads ``AnswerObserver/exited`` one time. The order is fixed:
+    /// the model call records its exit before it gives its reply, and the
+    /// answer returns only after the reply. So when the answer returned, the
+    /// exit is already in the observer.
     ///
-    /// The wait for the model call has no wall clock (task ^v4zh807): a loaded
-    /// machine only delays the answer, and a clock of some seconds failed a
-    /// correct test under parallel stress. The wait ends when the model call
-    /// of the answer ends. If a cancel of the waiting task ends the wait
-    /// first, the answer is cancelled and not awaited.
+    /// A regression that strands the pump keeps the answer waiting. A stack
+    /// of the test process then shows the open wait.
     ///
     /// - Parameters:
     ///   - session: The session to run one more answer on.
@@ -286,70 +283,8 @@ extension AnswerCancellationTests {
         observer: AnswerObserver,
         prompt: String = "after"
     ) async -> Bool {
-        let task = Task { try await session.respond(to: prompt) }
-        guard await modelCallEnds(of: prompt, observer: observer) else {
-            // Never admitted to the model at all — its message was stranded. The
-            // suite must not await it.
-            task.cancel()
-            return false
-        }
-        return (try? await task.value) != nil
-    }
-
-    /// Whether the model call of the answer named `prompt` ended before the
-    /// waiting task was cancelled.
-    ///
-    /// The wait reads ``AnswerObserver/exited`` until it holds, with no wall
-    /// clock. The wait ends when the model call ends, or when the waiting
-    /// task is cancelled.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt of the answer whose model call is watched.
-    ///   - observer: The observer that the model call reports to.
-    /// - Returns: Whether the model call ended.
-    private static func modelCallEnds(of prompt: String, observer: AnswerObserver) async -> Bool {
-        (try? await AwaitedCondition.wait(until: { await observer.exited.contains(prompt) })) != nil
-    }
-
-    /// The events one further answer on `session` produced, or `nil` when that
-    /// answer never reached the model.
-    ///
-    /// ``followUpAnswerCompletes(on:observer:prompt:)`` for a test that has to *see*
-    /// what the next answer did — its own ``SessionEvent/compaction(_:)``, say — and
-    /// with the same wait for the same reason: a regression that stranded
-    /// the pump would hang the suite rather than fail the test that caught it.
-    ///
-    /// Unlike that method, this one *does* await the task on its give-up path, and
-    /// the difference is deliberate — do not "fix" the two to match. This task
-    /// consumes an `AsyncThrowingStream`, whose `next()` is cancellation-aware and
-    /// ends, so cancelling it always completes it. ``followUpAnswerCompletes(on:observer:prompt:)``
-    /// wraps a bare `respond(to:)` whose answer a stranded pump never gives, so
-    /// awaiting it there would hang exactly when the helper exists to avoid
-    /// hanging.
-    ///
-    /// - Parameters:
-    ///   - session: The session to run one more answer on.
-    ///   - observer: The observer that the model call of that answer reports to.
-    ///   - prompt: The prompt of that answer.
-    /// - Returns: The events of the answer in order, or `nil` when it never ran or failed.
-    static func followUpAnswerEvents(
-        on session: any RoutedSession,
-        observer: AnswerObserver,
-        prompt: String = "after"
-    ) async -> [SessionEvent]? {
-        let delivered = DeliveredEvents()
-        let task = Task {
-            for try await event in await session.streamEvents(to: prompt) {
-                await delivered.append(event)
-            }
-        }
-        guard await modelCallEnds(of: prompt, observer: observer) else {
-            task.cancel()
-            _ = try? await task.value
-            return nil
-        }
-        guard (try? await task.value) != nil else { return nil }
-        return await delivered.events
+        guard (try? await session.respond(to: prompt)) != nil else { return false }
+        return await observer.exited.contains(prompt)
     }
 
     /// The one live model handle every session in a test is vended from, plus the

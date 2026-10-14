@@ -133,13 +133,20 @@ struct PerCallMountSessionTests {
         /// Waits until the backend got `count` prompts and the pump of the
         /// session stopped, and returns the prompts.
         ///
+        /// The backend records each prompt inside a pass of the pump, and
+        /// the end of each pass of the pump signals
+        /// ``RoutedSession/idleChanges``. So the wait reads both states again
+        /// after each end of the pump.
+        ///
         /// - Parameter count: The count of prompts to wait for.
         /// - Returns: Every prompt the backend got, in order.
         /// - Throws: ``ConditionNeverHeld`` when the waiting task was
         ///   cancelled before the state held.
         func promptsAfterThePumpStops(atLeast count: Int) async throws -> [String] {
-            try await AwaitedCondition.wait(until: { backend.receivedPrompts.count >= count })
-            try await AwaitedCondition.wait(until: { await !session.isPumpRunning })
+            try await session.idleChanges.wait(until: {
+                let pumpRunning = await session.isPumpRunning
+                return !pumpRunning && backend.receivedPrompts.count >= count
+            })
             return backend.receivedPrompts
         }
     }
@@ -181,22 +188,26 @@ struct PerCallMountSessionTests {
         ScriptedMountCall(toolName: PerCallMountTool.toolName, argumentsJSON: #"{"value":"\#(value)"}"#)
     }
 
-    /// Waits for the run of `token` to settle, with no deadline, and returns
-    /// its terminal.
+    /// Waits until one settle period of ``inlineSettleGrace`` ended, through
+    /// the event of the product and with no clock in the test.
     ///
-    /// - Parameters:
-    ///   - token: The completion token of the run.
-    ///   - session: The session whose run plane tracks the run.
-    /// - Returns: The terminal event of the run.
-    /// - Throws: ``SignalNeverArrived`` when the wait ended and the run did
-    ///   not settle.
-    private static func settledTerminal(of token: String, on session: any RoutedSession) async throws -> OperationEvent {
-        let outcome = await session.runPlane.wait(completionToken: token, seconds: nil)
-        guard case .settled(let terminal) = outcome else {
-            Issue.record("expected run \(token) to settle, got \(outcome)")
-            throw SignalNeverArrived()
-        }
-        return terminal
+    /// A background call of a held tool, on a site with the settle period
+    /// ``inlineSettleGrace``, waits that time for its run. When the time
+    /// ends, the call answers with its pending envelope. This function then
+    /// lets the held run end, and waits for its settlement, so it leaves no
+    /// run behind.
+    ///
+    /// - Throws: What the call throws, or ``MountFixtures/FixtureError``
+    ///   when the run does not settle.
+    private static func waitForTheEndOfOneGrace() async throws {
+        let held = RunLatch()
+        let probe = MountFixtures.backgroundHarness(
+            wrapping: MountFixtures.GatedTool(gate: held), inlineSettleGrace: inlineSettleGrace)
+        let rendered = try await probe.mounted.call(arguments: MountArguments(value: synchronousValue))
+        #expect(PendingRunEnvelope.isRendered(text: rendered))
+        await held.open()
+        _ = try await MountFixtures.settledTerminal(
+            of: MountFixtures.decodeEnvelope(rendered).completionToken, in: probe.runPlane)
     }
 
     /// Checks that `terminal` reached the model one time, in the one
@@ -247,9 +258,11 @@ struct PerCallMountSessionTests {
         // The body is held, and the run plane has no run: a background call
         // starts its run before its body runs, so this call runs in band.
         #expect(await harness.session.runPlane.backgroundRuns().isEmpty)
-        // This sleep only makes the call longer than the grace. No assertion
-        // waits on a clock.
-        try await Task.sleep(for: .seconds(Self.inlineSettleGrace))
+        // The held call now lasts longer than the grace. The event that shows
+        // it is a product event: a background call with the same grace, made
+        // after the body started, answers with its pending envelope only when
+        // the grace ended.
+        try await Self.waitForTheEndOfOneGrace()
         await gate.open()
 
         let answer = try await answering.value
@@ -277,7 +290,8 @@ struct PerCallMountSessionTests {
         let envelope = try MountFixtures.decodeEnvelope(answer)
         #expect(envelope.pending)
 
-        let terminal = try await Self.settledTerminal(of: envelope.completionToken, on: harness.session)
+        let terminal = try await MountFixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.session.runPlane)
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == PerCallMountTool.output(for: Self.backgroundValue))
         try await Self.expectDeliveredOneTime(terminal, in: harness)
@@ -317,7 +331,8 @@ struct PerCallMountSessionTests {
         #expect(answer == outputs[3])
 
         await startGate.open()
-        let terminal = try await Self.settledTerminal(of: envelope.completionToken, on: harness.session)
+        let terminal = try await MountFixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.session.runPlane)
         #expect(terminal.detail == (try AgentOperationFixtures.encodedOutput("started \(agent)")))
         try await Self.expectDeliveredOneTime(terminal, in: harness)
     }
@@ -342,7 +357,8 @@ struct PerCallMountSessionTests {
         #expect(await harness.session.runPlane.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
 
         await gate.open()
-        let terminal = try await Self.settledTerminal(of: envelope.completionToken, on: harness.session)
+        let terminal = try await MountFixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.session.runPlane)
         #expect(terminal.correlationID == envelope.completionToken)
         #expect(terminal.detail == "gated: \(Self.nestedValue)")
         try await Self.expectDeliveredOneTime(terminal, in: harness)

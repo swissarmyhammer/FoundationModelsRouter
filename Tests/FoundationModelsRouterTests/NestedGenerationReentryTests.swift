@@ -50,16 +50,20 @@ struct NestedGenerationReentryTests {
     /// target cannot be an `init` argument, and the test writes it before any
     /// answer starts. A ``HandedBackRecord`` holds what a backgrounded tool
     /// call handed back to the submission that made it: the backend writes it
-    /// from inside its model call, and the test polls it while that submission
-    /// is still open.
+    /// from inside its model call, and the test waits for it on ``changes``
+    /// while that submission is still open.
     private final class ThreadSafeBox<Value: Sendable>: Sendable {
         private let storage: Mutex<Value?> = Mutex(nil)
 
-        /// Stores the one value a later reader sees.
+        /// The signal that ``set(_:)`` sends after it stores a value.
+        let changes = ChangeSignal()
+
+        /// Stores the one value a later reader sees, and signals ``changes``.
         ///
         /// - Parameter value: The value to store.
         func set(_ value: Value) {
             storage.withLock { $0 = value }
+            changes.signal()
         }
 
         /// The stored value, or `nil` while nothing was stored.
@@ -132,6 +136,56 @@ struct NestedGenerationReentryTests {
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
             return try session.send(arguments.value).description
+        }
+    }
+
+    /// A tool whose body sends a message to a routed session, and then waits
+    /// for that message: for its terminal event, or for its answer — the
+    /// shape a host has whenever a tool asks the conversation it runs inside
+    /// for a result.
+    ///
+    /// It declares no mount, so the session mounts it run-to-completion: the
+    /// body runs in band, inside the submission that called it.
+    private struct MailWaitingTool: Tool {
+        /// The wait the body makes for the message it sent.
+        enum Wait: Sendable, CustomStringConvertible {
+            /// ``RoutedSession/awaitTerminal(of:)-(MailID)``.
+            case terminal
+
+            /// ``RoutedSession/awaitAnswer(of:)``.
+            case answer
+
+            /// The name of the wait in a report.
+            var description: String {
+                switch self {
+                case .terminal: "awaitTerminal(of:)"
+                case .answer: "awaitAnswer(of:)"
+                }
+            }
+        }
+
+        let name = "mail-wait-probe"
+        let description = "test-only tool that sends a message to a routed session and waits for it"
+
+        /// The session this body sends to and waits on.
+        let target: NestedTarget
+
+        /// The wait the body makes.
+        let wait: Wait
+
+        /// The output a call produces when no target session was named, so a
+        /// misbuilt fixture reads as a wrong answer rather than as a pass.
+        static let noTargetOutput = "no target session"
+
+        func call(arguments: ReentryToolArguments) async throws -> String {
+            guard let session = target.value else { return Self.noTargetOutput }
+            let id = try session.send(arguments.value)
+            switch wait {
+            case .terminal:
+                return String(describing: try await session.awaitTerminal(of: id))
+            case .answer:
+                return try await session.awaitAnswer(of: id).reply
+            }
         }
     }
 
@@ -330,19 +384,6 @@ struct NestedGenerationReentryTests {
     /// transcript.
     private static let entriesAtTheLastSettledPoint = 0
 
-    /// The upper bound one stubbed answer is allowed.
-    ///
-    /// The answer loads no weights, downloads nothing, and comes from a stub,
-    /// so it finishes far inside one second on any host. Thirty seconds is well
-    /// past any scheduling delay, so only a real suspension reaches it. The bound
-    /// exists so this suite FAILS instead of hanging: ``AsyncSemaphore/wait()``
-    /// ignores cancellation, so a suspended answer can never be unwound.
-    private static let answerTimeout = Duration.seconds(30)
-
-    /// The upper bound one background run is allowed before it settles — the
-    /// same bound as ``answerTimeout``, in the unit the wait of the run plane takes.
-    private static let runSettlementTimeoutSeconds = TimeInterval(answerTimeout.components.seconds)
-
     /// The mount a fixture declares to be a background tool: every call hands
     /// back a handle at once, and the body runs behind the submission that
     /// made it.
@@ -375,47 +416,25 @@ struct NestedGenerationReentryTests {
         try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: dir).profile
     }
 
-    /// Runs `answer` in a task of its own and reports its outcome, or `nil`
-    /// when `timeout` wins.
+    /// Waits for `answer`, and reports its outcome.
     ///
-    /// The answer runs unstructured and reports through a stream rather than
-    /// being awaited: an answer suspended on a semaphore cannot be cancelled,
-    /// and a task group implicitly awaits every child, so awaiting the answer
-    /// directly would hang the whole suite instead of failing this one test.
+    /// The end of the answer is the event: its text, or its error (a refusal
+    /// comes at once). No clock ends the wait. An answer that suspends for
+    /// ever keeps the test waiting, and a stack of the test process then shows
+    /// the open wait.
     ///
     /// - Parameters:
+    ///   - isolation: The isolation of the caller. `answer` runs there.
     ///   - answer: The work that waits for the answer.
-    ///   - timeout: How long the answer is allowed.
-    /// - Returns: The outcome of the answer, or `nil` when the timeout won.
+    /// - Returns: The outcome of the answer.
     private static func outcome(
-        of answer: @escaping @Sendable () async throws -> String,
-        within timeout: Duration
-    ) async -> AnswerOutcome? {
-        let (outcomes, report) = AsyncStream<AnswerOutcome>.makeStream()
-        let answerTask = Task {
-            do {
-                report.yield(.finished(try await answer()))
-            } catch {
-                report.yield(
-                    .failed(
-                        refusal: error as? GenerationQueueError,
-                        description: String(describing: error)))
-            }
-            report.finish()
-        }
-        defer { answerTask.cancel() }
-        return await withTaskGroup(of: AnswerOutcome?.self) { group in
-            group.addTask {
-                for await outcome in outcomes { return outcome }
-                return nil
-            }
-            group.addTask {
-                try? await Task.sleep(for: timeout)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        isolation: isolated (any Actor)? = #isolation,
+        of answer: () async throws -> String
+    ) async -> AnswerOutcome {
+        do {
+            return .finished(try await answer())
+        } catch {
+            return .failed(refusal: error as? GenerationQueueError, description: String(describing: error))
         }
     }
 
@@ -435,22 +454,14 @@ struct NestedGenerationReentryTests {
     }
 
     /// The answer `outcome` finished with, or `nil` after recording the defect
-    /// this suite covers when the answer suspended or failed instead.
+    /// this suite covers when the answer failed instead.
     ///
     /// - Parameters:
-    ///   - outcome: The outcome of the answer, or `nil` when the bound won.
+    ///   - outcome: The outcome of the answer.
     ///   - name: What the answer is called in the report.
     /// - Returns: The text of the answer, or `nil` when it produced none.
-    private static func finishedAnswer(_ outcome: AnswerOutcome?, describing name: String) -> String? {
+    private static func finishedAnswer(_ outcome: AnswerOutcome, describing name: String) -> String? {
         switch outcome {
-        case nil:
-            Issue.record(
-                """
-                \(name) did not finish within \(answerTimeout). Work a tool body asks of a \
-                routed session has to settle or be refused at once: a wait that could \
-                never end must not suspend the submission it is part of.
-                """)
-            return nil
         case .failed(_, let description):
             Issue.record("\(name) failed instead of finishing: \(description)")
             return nil
@@ -460,35 +471,32 @@ struct NestedGenerationReentryTests {
     }
 
     /// Asserts that `outcome` finished with `expected`, naming the defect this
-    /// suite covers when the answer suspended instead.
+    /// suite covers when the answer failed instead.
     ///
     /// - Parameters:
-    ///   - outcome: The outcome of the answer, or `nil` when the bound won.
+    ///   - outcome: The outcome of the answer.
     ///   - expected: The text the answer has to produce.
     ///   - name: What the answer is called in the report.
     private static func expectFinished(
-        _ outcome: AnswerOutcome?, is expected: String, describing name: String
+        _ outcome: AnswerOutcome, is expected: String, describing name: String
     ) {
-        guard let answer = finishedAnswer(outcome, describing: name) else { return }
-        #expect(answer == expected)
+        #expect(finishedAnswer(outcome, describing: name) == expected)
     }
 
     /// The completion token a backgrounded tool call handed back through
     /// `record`, once the call has returned — or `nil`, with an issue
-    /// recorded, when no call returned a pending envelope inside the bound.
+    /// recorded, when the call returned no pending envelope.
     ///
-    /// The submission that made the call is still open when this returns: the
+    /// The wait ends when the backend records what the call handed back. The
+    /// submission that made the call is still open when this returns: the
     /// backend records the handle before it waits on its answer hold.
     ///
     /// - Parameter record: Where the backend records what the call handed back.
     /// - Returns: The token the pending envelope names, or `nil`.
-    private static func handedBackToken(from record: HandedBackRecord) async -> String? {
-        let returned = await BoundedWait.conditionReached(
-            "the backgrounded call handing back its handle"
-        ) {
-            record.value != nil
-        }
-        guard returned, let text = record.value else { return nil }
+    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func handedBackToken(from record: HandedBackRecord) async throws -> String? {
+        try await record.changes.wait(until: { record.value != nil })
+        let text = try #require(record.value)
         guard
             let envelope = try? JSONDecoder().decode(PendingRunEnvelope.self, from: Data(text.utf8))
         else {
@@ -499,7 +507,10 @@ struct NestedGenerationReentryTests {
     }
 
     /// The terminal event `session`'s run `completionToken` settled with, or
-    /// `nil`, with an issue recorded, when it did not settle inside the bound.
+    /// `nil`, with an issue recorded, when the run plane reports no
+    /// settlement.
+    ///
+    /// The wait has no deadline: the settlement of the run is the event.
     ///
     /// - Parameters:
     ///   - completionToken: The background run's completion token.
@@ -509,38 +520,34 @@ struct NestedGenerationReentryTests {
     private static func settledTerminal(
         of completionToken: String, on session: any RoutedSession, describing run: String
     ) async -> OperationEvent? {
-        let outcome = await session.runPlane.wait(
-            completionToken: completionToken, seconds: runSettlementTimeoutSeconds)
+        let outcome = await session.runPlane.wait(completionToken: completionToken, seconds: nil)
         switch outcome {
         case .settled(let terminal):
             return terminal
-        case .deadlineElapsed, .cancelled, .unknownToken:
+        case .deadlineElapsed:
+            Issue.record("\(run) reported an elapsed deadline, but the wait had no deadline.")
+            return nil
+        case .cancelled, .unknownToken:
             Issue.record(
                 """
-                \(run) did not settle within \(runSettlementTimeoutSeconds) seconds (\(outcome)). A \
-                background body has to make progress while the submission that started it is still open.
+                \(run) did not settle (\(outcome)). A background body has to make progress while \
+                the submission that started it is still open.
                 """)
             return nil
         }
     }
 
     /// Asserts that `outcome` failed with `expected`, naming the defect this
-    /// suite covers when the call suspended or was served instead.
+    /// suite covers when the call was served instead.
     ///
     /// - Parameters:
-    ///   - outcome: The outcome of the answer, or `nil` when the bound won.
+    ///   - outcome: The outcome of the answer.
     ///   - expected: The refusal the call has to raise.
     ///   - call: What the refused call is called in the report.
     private static func expectRefused(
-        _ outcome: AnswerOutcome?, with expected: GenerationQueueError, describing call: String
+        _ outcome: AnswerOutcome, with expected: GenerationQueueError, describing call: String
     ) {
         switch outcome {
-        case nil:
-            Issue.record(
-                """
-                The answer did not finish within \(answerTimeout). \(call) has to be refused, \
-                never suspended behind the submission that waits for it.
-                """)
         case .finished(let answer):
             Issue.record("The answer was \"\(answer)\" instead of a refusal of \(call).")
         case .failed(let refusal, let description):
@@ -568,7 +575,7 @@ struct NestedGenerationReentryTests {
         target.set(nested)
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+            of: { try await caller.respond(to: Self.outerPrompt) })
 
         Self.expectFinished(
             outcome, is: Self.chainedAnswer(through: ["caller"]), describing: "The outer answer")
@@ -594,7 +601,7 @@ struct NestedGenerationReentryTests {
         middleTarget.set(innermost)
 
         let outcome = await Self.outcome(
-            of: { try await outer.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+            of: { try await outer.respond(to: Self.outerPrompt) })
 
         // Reading the labels outermost-first proves all three answers ran: the
         // middle answer, itself started from a tool body, holds nothing the
@@ -625,13 +632,54 @@ struct NestedGenerationReentryTests {
         target.set(caller)
         let model = try #require(caller as? RoutedSessionActor).model
 
-        let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        // The refusal is the event: the answer ends with it, with no clock.
+        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
 
         Self.expectRefused(
             outcome, with: .waitInsideOpenSubmission(model: model),
             describing: "a tool body that generates on its own session")
 
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test("an in-band tool body that waits for the terminal event of a mail of its own session gets the wait-cycle error at once")
+    @MainActor
+    func aToolBodyThatAwaitsATerminalOfItsOwnSessionIsRefused() async throws {
+        try await Self.expectOwnMailWaitRefused(.terminal)
+    }
+
+    @Test("an in-band tool body that waits for the answer of a mail of its own session gets the wait-cycle error at once")
+    @MainActor
+    func aToolBodyThatAwaitsAnAnswerOfItsOwnSessionIsRefused() async throws {
+        try await Self.expectOwnMailWaitRefused(.answer)
+    }
+
+    /// Runs one answer whose in-band tool body sends a mail to its own
+    /// session, and then waits for that mail with `wait`. Asserts that the
+    /// wait fails at once with the wait-cycle error that names the model.
+    ///
+    /// The mail could be delivered only by a submission after the one that
+    /// waits for the tool body, so the wait could never end.
+    ///
+    /// - Parameter wait: The wait the tool body makes for its mail.
+    /// - Throws: What the setup of the profile throws.
+    private static func expectOwnMailWaitRefused(_ wait: MailWaitingTool.Wait) async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let target = NestedTarget()
+        let profile = try await makeProfile(container: ToolCallingLLMContainer(), dir: dir)
+
+        let caller = profile.standard.makeSession(tools: [MailWaitingTool(target: target, wait: wait)])
+        target.set(caller)
+        let model = try #require(caller as? RoutedSessionActor).model
+
+        // The refusal is the event: the answer ends with it, with no clock.
+        let answer = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
+
+        Self.expectRefused(
+            answer, with: .waitInsideOpenSubmission(model: model),
+            describing: "a tool body that waits for a mail of its own session (\(wait))")
         withExtendedLifetime(profile) {}
     }
 
@@ -652,8 +700,7 @@ struct NestedGenerationReentryTests {
         target.set(caller)
         let events = await caller.streamSessionEvents().events
 
-        let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
         let sentID = try #require(Self.finishedAnswer(outcome, describing: "The outer answer"))
 
         // No caller asks again: the pump delivers the sent message in the
@@ -693,8 +740,7 @@ struct NestedGenerationReentryTests {
         // nothing the submission holds (task ^dpn2ytt).
         target.set(caller)
 
-        let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
 
         // The child names the session it came off.
         Self.expectFinished(
@@ -715,8 +761,7 @@ struct NestedGenerationReentryTests {
         let forked = profile.standard.makeSession()
         target.set(forked)
 
-        let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
 
         // The child names the session it came off, so the refusal above reaches
         // the caller's own session and no other.
@@ -741,8 +786,7 @@ struct NestedGenerationReentryTests {
         // nothing the submission holds (task ^dpn2ytt).
         target.set(caller)
 
-        let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
 
         // The count is the settled transcript, not the live one: the live
         // backend already holds the prompt of the submission and its answer.
@@ -787,16 +831,15 @@ struct NestedGenerationReentryTests {
         }
 
         /// Starts the tool-calling answer of `session` in a task of its own,
-        /// bounded by ``answerTimeout``, so the test can look at the run it
-        /// starts while the submission is still open.
+        /// so the test can look at the run it starts while the submission is
+        /// still open.
         ///
         /// - Parameter session: The session whose answer runs.
         /// - Returns: The task that carries the outcome of the answer.
-        func startAnswer(on session: any RoutedSession) -> Task<AnswerOutcome?, Never> {
+        func startAnswer(on session: any RoutedSession) -> Task<AnswerOutcome, Never> {
             Task {
                 await NestedGenerationReentryTests.outcome(
-                    of: { try await session.respond(to: NestedGenerationReentryTests.outerPrompt) },
-                    within: NestedGenerationReentryTests.answerTimeout)
+                    of: { try await session.respond(to: NestedGenerationReentryTests.outerPrompt) })
             }
         }
 
@@ -817,8 +860,8 @@ struct NestedGenerationReentryTests {
         /// Lets the held submission end, and reports what its answer produced.
         ///
         /// - Parameter answer: The task ``startAnswer(on:)`` returned.
-        /// - Returns: The outcome of the answer, or `nil` when the bound won.
-        func endAnswer(_ answer: Task<AnswerOutcome?, Never>) async -> AnswerOutcome? {
+        /// - Returns: The outcome of the answer.
+        func endAnswer(_ answer: Task<AnswerOutcome, Never>) async -> AnswerOutcome {
             await answerHold.open()
             return await answer.value
         }
@@ -837,16 +880,14 @@ struct NestedGenerationReentryTests {
         harness.target.set(nested)
 
         let answer = harness.startAnswer(on: caller)
-        let token = await Self.handedBackToken(from: harness.handedBack)
+        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
 
         // The submission is still open, and the run it started settles all the
         // same: the submission holds nothing that the answer of the run on the
         // other session needs.
-        if let token {
-            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The background run")
-            #expect(terminal?.outcome == .succeeded)
-            #expect(terminal?.detail == Self.chainedAnswer(through: ["caller"]))
-        }
+        let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The background run")
+        #expect(terminal?.outcome == .succeeded)
+        #expect(terminal?.detail == Self.chainedAnswer(through: ["caller"]))
 
         // The run settled before its submission ended, so the answer is the
         // handle the submission was handed.
@@ -870,7 +911,7 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
 
         // The submission that started the run ends with the handle it was
         // handed. The pump then submits the message of the run, and the run
@@ -899,7 +940,7 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
         // The submission that started the run is still open. The fork reads
         // the settled transcript, so the run settles all the same, and its
         // child names the session it forked (task ^dpn2ytt).
@@ -923,7 +964,7 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
         // The submission that started the run is still open. The read takes
         // the settled transcript, so the run settles all the same, with the
         // entries of the last settled point (task ^dpn2ytt).
@@ -956,50 +997,45 @@ struct NestedGenerationReentryTests {
         let waiter = profile.standard.makeSession()
         let next = profile.standard.makeSession()
         let waiterFeed = await waiter.streamSessionEvents()
+        // Second subscriptions, for the waits on `submissionQueued`. The
+        // ledger below reads `waiterFeed` whole.
+        let waiterQueue = await SessionEventLog.watch(waiter)
+        let nextQueue = await SessionEventLog.watch(next)
+        defer {
+            waiterQueue.drain.cancel()
+            nextQueue.drain.cancel()
+        }
 
         // The holder's submission runs on the worker, and its pass stays
         // inside the model until the latch opens.
         let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
-        #expect(
-            await BoundedWait.conditionReached("the holder's pass in the model") {
-                await fixture.observer.enteredCount == 1
-            })
+        await fixture.observer.waitUntil { $0.entered == 1 }
 
         // The pump of the waiter runs its answer, which has an identity; only
         // its submission waits, in the queue of the model.
-        let waiterFinished = AsyncSemaphore(value: 0)
-        let waiterAnswer = Task {
-            defer { waiterFinished.signal() }
-            return try await waiter.respond(to: Self.nestedPrompt)
-        }
-        #expect(
-            await BoundedWait.conditionReached("the waiter's submission waiting in the queue") {
-                await queue.waitingCount == 1
-            })
+        let waiterAnswer = Task { try await waiter.respond(to: Self.nestedPrompt) }
+        try await waiterQueue.log.waitForQueuedSubmissions(1)
         // A third submission joins the queue behind the waiter's.
         let nextAnswer = Task { try await next.respond(to: Self.nextPrompt) }
-        #expect(
-            await BoundedWait.conditionReached("the next submission waiting behind the waiter's") {
-                await queue.waitingCount == 2
-            })
+        try await nextQueue.log.waitForQueuedSubmissions(1)
+        #expect(await queue.waitingCount == 2)
 
         // The cancelAll() signal stops the running answer of the waiter. So
         // the request reaches the waiting item, and the answer ends at once,
-        // while the holder still runs on the worker. The signal does not wait
-        // for the pump, so the test waits for the end of the pump of the
-        // waiter. That pump ends before the holder ends, because the cancel
-        // removes the waiting item from the queue of the model.
+        // while the holder still runs on the worker: the latch is still
+        // closed, so the end of the cancelled answer comes before the holder
+        // can end. The signal does not wait for the pump, so the test waits
+        // for the end of the pump of the waiter. That pump ends before the
+        // holder ends, because the cancel removes the waiting item from the
+        // queue of the model.
         let stop = waiter.cancelAll()
         #expect(try await waiter.awaitTerminal(of: stop) == .signalDone(stop))
-        #expect(
-            await BoundedWait.signalArrived(
-                waiterFinished, named: "the end of the cancelled answer, while the holder still runs"))
+        await #expect(throws: CancellationError.self) { try await waiterAnswer.value }
         #expect(await waiter.isIdleOnceThePumpEnds())
         #expect(await queue.waitingCount == 1)
 
         await fixture.latch.open()
         #expect(try await holderAnswer.value == PassObservingModel.answer(to: Self.outerPrompt))
-        await #expect(throws: CancellationError.self) { try await waiterAnswer.value }
         // The worker ran the next item after the holder, and never the
         // cancelled one.
         #expect(try await nextAnswer.value == PassObservingModel.answer(to: Self.nextPrompt))
@@ -1009,8 +1045,7 @@ struct NestedGenerationReentryTests {
 
         // The cancelled session still generates: its pump and the queue are
         // both free.
-        let followUp = await Self.outcome(
-            of: { try await waiter.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        let followUp = await Self.outcome(of: { try await waiter.respond(to: Self.outerPrompt) })
         Self.expectFinished(
             followUp, is: PassObservingModel.answer(to: Self.outerPrompt), describing: "The follow-up answer")
 

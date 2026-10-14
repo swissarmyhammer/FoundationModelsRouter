@@ -7,13 +7,10 @@ struct EventNeverArrived: Error {}
 
 /// A one-shot event a test waits *on*, rather than polls a proxy of.
 ///
-/// ``BoundedWait`` answers a different question. It asks a non-suspending
-/// question again and again until a wall-clock ceiling says no. That ceiling is
-/// then the measure of progress, so a machine busy enough to delay the work
-/// under measurement past the ceiling turns a correct test red for want of CPU
-/// (task ^q8cnmb2). Here the wait ends on the event and on nothing else: the
-/// producer resumes the waiter, so a loaded machine makes the wait longer and
-/// never wrong.
+/// The wait ends on the event and on nothing else: the producer resumes the
+/// waiter, so a loaded machine makes the wait longer and never wrong. For a
+/// state that changes more than one time, a test waits on the
+/// ``ChangeSignal`` of the owner of the state (``ChangeSignal/wait(until:)``).
 ///
 /// Nothing bounds that wait, and nothing should: the wait ends on the event.
 /// The suspension also obeys cancellation, so a task that is cancelled while

@@ -1,33 +1,69 @@
 import Foundation
+import Synchronization
 
 @testable import FoundationModelsRouter
+
+/// Counts the elicitation requests that the run plane of a session posted.
+///
+/// `RunPlane.awaitAnswer(to:posting:)` makes the elicitation pending before it
+/// runs `posting`. Thus each post that this type counts comes after the
+/// registration of one pending elicitation. A test waits for the post with
+/// ``waitForPosts(_:)`` and then answers the elicitation, with no race.
+///
+/// Bind it as the sink of a ``ToolContext`` (each `elicit(_:)` posts one
+/// event), or call ``record()`` from the `posting` closure of
+/// `awaitAnswer(to:posting:)`.
+final class ElicitationPostings: OperationEventSink {
+    /// The number of posts so far.
+    private let count = Mutex(0)
+
+    /// The sink that gets each posted event before the count goes up, or
+    /// `nil` when the events go nowhere.
+    private let downstream: (any OperationEventSink)?
+
+    /// Signalled after each post.
+    let changes = ChangeSignal()
+
+    /// Makes a counter with no post.
+    ///
+    /// - Parameter downstream: The sink that gets each posted event before
+    ///   the count goes up. Pass `session.outbox` to reach the journal of the
+    ///   session. The default is `nil`: the events go nowhere.
+    init(forwardingTo downstream: (any OperationEventSink)? = nil) {
+        self.downstream = downstream
+    }
+
+    /// The number of posts so far.
+    var postCount: Int { count.withLock { $0 } }
+
+    /// Records one post, and signals ``changes``.
+    func record() {
+        count.withLock { $0 += 1 }
+        changes.signal()
+    }
+
+    /// Sends `event` to the downstream sink, then records one post.
+    ///
+    /// - Parameter event: The posted event.
+    func post(event: OperationEvent) async {
+        await downstream?.post(event: event)
+        record()
+    }
+
+    /// Waits until at least `expected` posts came.
+    ///
+    /// - Parameter expected: The number of posts to wait for.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   first.
+    func waitForPosts(_ expected: Int) async throws {
+        try await changes.wait(until: { postCount >= expected })
+    }
+}
 
 /// The helpers that the suites share when a test holds an elicitation
 /// pending on the run plane of a session: `ElicitationRoutingTests` and
 /// `SessionRunPlaneTests`. Each helper is in one place only.
 enum PendingElicitationFixtures {
-    /// The number of checks that ``eventually(_:)`` makes before its last
-    /// check.
-    private static let pollAttempts = 1_000
-
-    /// The pause between two checks of ``eventually(_:)``, in nanoseconds.
-    private static let pollIntervalNanoseconds: UInt64 = 1_000_000
-
-    /// Checks `condition` again and again, with a pause between the checks,
-    /// until it is true. A test uses it to wait until an `elicit(_:)` or
-    /// `awaitAnswer(to:)` task has registered its continuation, with no race.
-    ///
-    /// - Parameter condition: The condition to check.
-    /// - Returns: `true` when the condition became true, else the result of
-    ///   the last check.
-    static func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
-        for _ in 0..<pollAttempts {
-            if await condition() { return true }
-            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-        }
-        return await condition()
-    }
-
     /// Makes a form-mode request that asks for one string, the name.
     ///
     /// - Parameter elicitationId: The id of the request.

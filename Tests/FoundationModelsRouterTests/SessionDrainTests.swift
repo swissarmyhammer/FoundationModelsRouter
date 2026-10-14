@@ -18,9 +18,9 @@ import Testing
 /// of a run that settled started no answer.
 ///
 /// The stubs of ``AnswerCancellationTests`` stand in for the model. A model
-/// call that takes some turns to unwind after its cancel stands in for a
-/// generation that stops at its next token. The tests read the order of the
-/// steps, not a clock.
+/// call that holds after its cancel until the test opens a gate stands in
+/// for a generation that stops at its next token. The tests read the order
+/// of the steps, not a clock.
 @Suite("The stop of all work of a session: cancelAll() does not wait, and close() returns only when no work runs")
 struct SessionDrainTests {
     /// The ways to stop all work of a session.
@@ -55,9 +55,26 @@ struct SessionDrainTests {
         }
     }
 
-    /// The turns that a stopped model call or a stopped run body takes to
-    /// unwind after it saw its cancel.
-    private static let unwindTurns = 100
+    /// A model call or a run body that waits for its cancel, and then holds
+    /// until the test lets it unwind. The test opens ``unwind`` at the point
+    /// that it chooses, so the end of the work has a fixed place in the
+    /// order of the steps.
+    private final class CancelledHold: Sendable {
+        /// Sent when the work saw its cancel.
+        let sawCancel = AwaitedEvent()
+
+        /// The gate that the work waits on after its cancel. A cancel does
+        /// not end this wait.
+        let unwind = RunLatch()
+
+        /// Waits until the calling task is cancelled, sends ``sawCancel``,
+        /// and then waits until ``unwind`` opens.
+        func waitForCancelAndUnwind() async {
+            await SessionDrainTests.waitForCancel()
+            sawCancel.signal()
+            await unwind.waitUntilOpen()
+        }
+    }
 
     /// The steps of a test, in the order they occurred.
     private final class Steps: Sendable {
@@ -75,17 +92,14 @@ struct SessionDrainTests {
         }
     }
 
-    /// Waits until the calling task is cancelled, and then takes
-    /// ``unwindTurns`` turns.
-    private static func waitForCancelAndUnwind() async {
+    /// Waits until the calling task is cancelled. Only a cancel ends the
+    /// wait.
+    static func waitForCancel() async {
         let cancelled = AsyncSemaphore(value: 0)
         await withTaskCancellationHandler {
             await cancelled.wait()
         } onCancel: {
             cancelled.signal()
-        }
-        for _ in 0..<unwindTurns {
-            await Task.yield()
         }
     }
 
@@ -100,9 +114,10 @@ struct SessionDrainTests {
         let session = fixture.model.makeSession()
         let steps = Steps()
         let insideModelCall = AsyncSemaphore(value: 0)
+        let hold = CancelledHold()
         fixture.hook.midAnswer = { _ in
             insideModelCall.signal()
-            await Self.waitForCancelAndUnwind()
+            await hold.waitForCancelAndUnwind()
             steps.append("model call ended")
             throw CancellationError()
         }
@@ -110,8 +125,15 @@ struct SessionDrainTests {
         let answer = Task { try await session.respond(to: "long work") }
         await insideModelCall.wait()
 
-        await session.close()
-        steps.append("closed")
+        // The close cancels the model call, and then waits for its end. The
+        // model call ends only after the test opens the gate.
+        let closing = Task {
+            await session.close()
+            steps.append("closed")
+        }
+        try await hold.sawCancel.wait()
+        await hold.unwind.open()
+        await closing.value
 
         #expect(steps.values == ["model call ended", "closed"])
         await #expect(throws: CancellationError.self) {
@@ -182,11 +204,12 @@ struct SessionDrainTests {
         let steps = Steps()
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
+        let hold = CancelledHold()
         await session.runPlane.start(
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
             bodyStarted.signal()
-            await Self.waitForCancelAndUnwind()
+            await hold.waitForCancelAndUnwind()
             steps.append("run body ended")
             return OperationEvent(
                 tool: "fake", op: "run task", correlationID: token, kind: .completed, detail: "",
@@ -194,8 +217,15 @@ struct SessionDrainTests {
         }
         await bodyStarted.wait()
 
-        await session.close()
-        steps.append("closed")
+        // The close cancels the run, and then waits for the end of its body.
+        // The body ends only after the test opens the gate.
+        let closing = Task {
+            await session.close()
+            steps.append("closed")
+        }
+        try await hold.sawCancel.wait()
+        await hold.unwind.open()
+        await closing.value
 
         #expect(steps.values == ["run body ended", "closed"])
         #expect(await session.runPlane.backgroundRuns().isEmpty)
@@ -215,7 +245,7 @@ struct SessionDrainTests {
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
             bodyStarted.signal()
-            await Self.waitForCancelAndUnwind()
+            await Self.waitForCancel()
             steps.append("run body ended")
             return OperationEvent(
                 tool: "fake", op: "run task", correlationID: token, kind: .completed, detail: "",
@@ -253,9 +283,10 @@ struct SessionDrainTests {
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
             bodyStarted.signal()
-            await Self.waitForCancelAndUnwind()
+            await Self.waitForCancel()
             // The run posts its own terminal after the sweep, as a run that
-            // finishes its work after a cancel does.
+            // finishes its work after a cancel does. The stop marks the run
+            // as one that makes no mail before the sweep cancels the run.
             await outbox.post(event: terminal)
             terminalPosted.signal()
             return terminal

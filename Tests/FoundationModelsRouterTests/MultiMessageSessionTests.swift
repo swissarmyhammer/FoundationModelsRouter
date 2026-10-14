@@ -120,8 +120,9 @@ struct MultiMessageSessionTests {
 
     // MARK: - Suspendable stub backend (a fork during a submission)
 
-    /// A synchronized event log a test polls without sleeping, recording the
-    /// order generation and fork work actually ran in.
+    /// A synchronized event log that records the order generation and fork
+    /// work actually ran in. Each record signals ``changes``, so a test waits
+    /// for an entry with no clock.
     ///
     /// A plain lock-guarded class rather than an actor: ``SuspendableSessionBackend/makeFork()``
     /// is a synchronous, non-async protocol requirement, so it must record
@@ -131,8 +132,25 @@ struct MultiMessageSessionTests {
         private let lock = NSLock()
         private var storage: [String] = []
 
+        /// The signal that ``record(_:)`` sends after each entry. It is a
+        /// constant of a `Sendable` type, so it adds nothing to the lock.
+        let changes = ChangeSignal()
+
+        /// Appends one entry, then signals ``changes`` after the lock.
+        ///
+        /// - Parameter event: The entry.
         func record(_ event: String) {
             lock.withLock { storage.append(event) }
+            changes.signal()
+        }
+
+        /// Waits until the log holds `event`.
+        ///
+        /// - Parameter event: The entry to wait for.
+        /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+        ///   first.
+        func waitFor(_ event: String) async throws {
+            try await changes.wait(until: { self.events.contains(event) })
         }
 
         var events: [String] {
@@ -424,29 +442,24 @@ struct MultiMessageSessionTests {
 
         // Start a respond() call; it suspends inside the backend body. The
         // pump of the session reaches the backend on a task of its own, so the
-        // wait is bounded by the wall clock, never by a count of yields.
+        // test waits for the entry that the backend records.
         let respondTask = Task { try await session.respond(to: "message") }
-        #expect(
-            await BoundedWait.conditionReached("the respond call entering the backend") {
-                log.events.contains("respond-enter")
-            })
+        try await log.waitFor("respond-enter")
 
         // A fork reads the settled transcript of the session, so it does not
         // wait for the submission above (task ^dpn2ytt). It makes the child's
-        // backend while that submission is still suspended. The fork runs in a
-        // task of its own, so a fork that waited fails this test and does not
-        // hang the suite.
+        // backend while that submission is still suspended. Only the test
+        // opens the gate of the submission, and it does so after this wait.
+        // Thus a fork that waited for the submission never records its entry,
+        // and the test stops here: a stack of the test process shows it.
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        let forkedDuringTheSubmission = await BoundedWait.conditionReached("the fork making the child's backend") {
-            log.events.contains("makeFork")
-        }
+        try await log.waitFor("makeFork")
         let eventsWhileTheSubmissionIsSuspended = log.events
 
         releaseGate.signal()
         _ = try await respondTask.value
         let child = try await forkTask.value
 
-        #expect(forkedDuringTheSubmission)
         #expect(eventsWhileTheSubmissionIsSuspended == ["respond-enter", "makeFork"])
         #expect(child.parentId == session.id)
         #expect(log.events == ["respond-enter", "makeFork", "respond-exit"])

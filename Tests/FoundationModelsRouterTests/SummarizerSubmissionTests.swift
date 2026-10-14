@@ -16,9 +16,11 @@ import Testing
 /// slot is the stub warm-up of ``AutoCompactionFixtures``, whose last warm-up
 /// answer leaves the session over the trigger of its budget.
 ///
-/// No wait here is a bare `await` on an answer that can stay suspended: a test
-/// opens the latch, or sees the end of the answer inside a bound, before it
-/// awaits that answer. So a regression fails the test and does not hang the run.
+/// Each wait here waits for an event: the entry of a pass into the flash
+/// model, the job that the flash queue makes for the summarizer call (its
+/// queue depth metric, through a ``QueueDepthProbe`` that the session gets as
+/// its metrics factory), or an event of the answer. No wait has a clock or a
+/// limit.
 @Suite("A summarizer call is one submission on the queue of its model (task ^1psqdm9)")
 struct SummarizerSubmissionTests {
     /// The suite's temp-directory prefix, handed to
@@ -62,14 +64,6 @@ struct SummarizerSubmissionTests {
         /// The task that drains the compacting answer. It throws what the
         /// answer throws.
         let compactingAnswer: Task<Void, any Error>
-
-        /// Whether the pass of the flash session was inside the model inside
-        /// the bound.
-        let flashInside: Bool
-
-        /// Whether the flash summarizer call waited for the flash worker
-        /// inside the bound.
-        let summarizerWaits: Bool
     }
 
     /// Starts a submission of another session on the flash slot, and then an
@@ -89,20 +83,21 @@ struct SummarizerSubmissionTests {
         // The flash session's submission runs on the flash worker, and its
         // pass stays inside the model until the latch opens.
         let flashAnswer = Task { try await flashSession.respond(to: flashPrompt) }
-        let flashInside = await BoundedWait.conditionReached("the pass of the flash session") {
-            await flash.observer.enteredCount == 1
-        }
+        await flash.observer.waitUntil { $0.entered == 1 }
 
         // The next answer of the session over the trigger compacts first, and
-        // its flash summarizer call waits behind the flash submission.
+        // its flash summarizer call waits behind the flash submission. The
+        // summarizer call sends no event of the session. The task of the
+        // compaction inherits the metrics factory of the session, so the
+        // flash queue records the depth meter of the job of the call through
+        // the probe.
+        let probe = QueueDepthProbe(model: session.profile.flash.chosen)
+        await session.useCaptureMetrics(for: probe)
         let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: triggeringPrompt))
-        let summarizerWaits = await BoundedWait.conditionReached("the flash summarizer call waiting for the worker") {
-            await flashQueue.waitingCount == 1
-        }
+        await probe.enqueued.wait()
         return WaitingSummarizer(
             flash: flash, flashQueue: flashQueue, session: session, standard: standard,
-            flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer, flashInside: flashInside,
-            summarizerWaits: summarizerWaits)
+            flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
     }
 
     @Test("a flash summarizer call and a flash submission of another session never overlap")
@@ -115,15 +110,13 @@ struct SummarizerSubmissionTests {
         _ = try await waiting.flashAnswer.value
         try await waiting.compactingAnswer.value
 
-        #expect(waiting.flashInside)
-        #expect(waiting.summarizerWaits)
         #expect(peakWhileTheSummarizerWaits == 1)
         #expect(await flash.observer.maximumActive == 1)
         #expect(await flash.observer.enteredCount == Self.flashPassCount)
         #expect(flash.passes.recorded.first?.prompt == Self.flashPrompt)
         // The summarizer call is not a submission of the session, so its wait
         // sends no submissionQueued. Only the queue of the flash model
-        // shows the wait (`summarizerWaits` above).
+        // shows the wait (the depth meter that the probe counted).
         #expect(await !waiting.log.events.contains(where: Self.isSubmissionQueued))
         #expect(await waiting.flashQueue.isRunning == false)
     }
@@ -145,9 +138,7 @@ struct SummarizerSubmissionTests {
         let closing = Task { await waiting.session.close() }
         // The answer ends while the flash submission still holds the worker:
         // the waiting summarizer item left the queue and never ran.
-        let answerEnded = await BoundedWait.conditionReached("the end of the answer of the closed session") {
-            await !waiting.log.events.answerFailures.isEmpty
-        }
+        try await waiting.log.wait(until: { !$0.answerFailures.isEmpty })
         let waitingAfterTheClose = await waiting.flashQueue.waitingCount
         let passesAfterTheClose = await flash.observer.enteredCount
 
@@ -155,9 +146,6 @@ struct SummarizerSubmissionTests {
         _ = try await waiting.flashAnswer.value
         await closing.value
 
-        #expect(waiting.flashInside)
-        #expect(waiting.summarizerWaits)
-        #expect(answerEnded)
         #expect(waitingAfterTheClose == 0)
         #expect(passesAfterTheClose == 1)
         let events = await waiting.log.events

@@ -132,8 +132,7 @@ struct ToolTracingTests {
     /// - Parameter session: The session whose run plane tracked the runs.
     private static func settleBackgroundRuns(of session: any RoutedSession) async {
         for run in await session.runPlane.backgroundRuns() {
-            _ = await session.runPlane.wait(
-                completionToken: run.completionToken, seconds: MountFixtures.settlementDeadline)
+            _ = await session.runPlane.wait(completionToken: run.completionToken, seconds: nil)
         }
     }
 

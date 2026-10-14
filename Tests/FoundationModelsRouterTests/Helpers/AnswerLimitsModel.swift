@@ -137,16 +137,11 @@ struct AnswerLimitsModel: LanguageModel {
     /// far more than one window of the detection of the tests.
     private static let cycleCount = 40
 
-    /// The hold of a ``AnswerLimitsStep/repeating`` call, in seconds.
-    private static let repeatingHoldSeconds = 5
-
-    /// The hold of a ``AnswerLimitsStep/repeating`` call. It ends only when
-    /// the session stops the call, or the test fails on what follows.
-    private static let repeatingHold = Duration.seconds(repeatingHoldSeconds)
-
-    /// The reasoning of a ``AnswerLimitsStep/repeating`` call.
+    /// The reasoning of a ``AnswerLimitsStep/repeating`` call. The call then
+    /// waits until the repetition watch of the session stops it: only that
+    /// cancel ends the call.
     static let repeatingScript = RepeatingReasoningScript.repeating(
-        newLines: newLines, cycle: cycle, cycleCount: cycleCount, hold: repeatingHold)
+        newLines: newLines, cycle: cycle, cycleCount: cycleCount, hold: .untilStopped)
 
     /// The script the calls play.
     let script: AnswerLimitsScript
@@ -219,9 +214,10 @@ struct AnswerLimitsModel: LanguageModel {
             case .ceilingStopWithNothingToCompact:
                 await Self.send(AnswerLimitsModel.shortCutText, usage: AnswerLimitsModel.ceilingStopUsage, into: channel)
             case .repeating:
+                // The hold of the script waits until the watch stops the
+                // call, so this call always throws and writes no answer.
                 try await RepeatingReasoningModel.Executor.writeReasoning(
                     AnswerLimitsModel.repeatingScript, into: channel)
-                await Self.send(AnswerLimitsModel.answerText, usage: AnswerLimitsModel.smallUsage, into: channel)
             case .answer:
                 await Self.send(AnswerLimitsModel.answerText, usage: AnswerLimitsModel.smallUsage, into: channel)
             case nil:

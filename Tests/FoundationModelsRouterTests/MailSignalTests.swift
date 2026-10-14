@@ -57,11 +57,11 @@ struct MailSignalTests {
     ///   - session: The session.
     ///   - backend: The backend of the session.
     /// - Returns: The id of the held message.
-    /// - Throws: When the submission does not reach the backend inside the
-    ///   bound.
+    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
+    ///   submission reaches the backend.
     private static func startHeldAnswer(on session: any RoutedSession, backend: Backend) async throws -> MailID {
         let held = try session.send(heldPrompt)
-        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        try await backend.waitForPrompts(1)
         return held
     }
 

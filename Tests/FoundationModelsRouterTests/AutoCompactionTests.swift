@@ -431,12 +431,9 @@ struct AutoCompactionTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         _ = try await session.respond(to: "keep going")
-        let answered = await BoundedWait.conditionReached("the answered event on the session feed") {
-            await !log.events.answers.isEmpty
-        }
+        try await log.wait(until: { !$0.answers.isEmpty })
         drain.cancel()
 
-        #expect(answered)
         let events = await log.events
         _ = eventsInsideAnswerFrame(events)
         let starts = events.submissionStarts
