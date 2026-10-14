@@ -8,8 +8,8 @@ comments:
   timestamp: 2026-10-14T11:54:55.294760+00:00
 depends_on:
 - 01M4X2JQH4PY1MWZEPHDFQ2YG8
-position_column: todo
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffffe080
 title: Replace the other polls, sleeps and yield loops in the tests with event waits
 ---
 Found in the first analysis of the wall-clock task. These waits are not in its file list:
