@@ -11,7 +11,7 @@ import Synchronization
 /// - A mail subscription (``subscribe(to:)``) gets each output that belongs
 ///   to one mail (``emit(_:failure:audience:)``), up to and including the
 ///   terminal event of that id. Then it finishes. ``RoutedSession/mail(_:)`` gives one.
-/// - A waiter (``awaitTerminal(of:)``) waits for the terminal event of one
+/// - A waiter (``awaitTerminal(of:orThrow:)``) waits for the terminal event of one
 ///   mail or one signal. The terminal events of a signal are
 ///   ``SessionEvent/signalDone(_:)``, and for a compaction
 ///   ``SessionEvent/compaction(_:)`` and ``SessionEvent/compactionFailed(_:)``.
@@ -22,10 +22,20 @@ import Synchronization
 /// A caller can ask for a terminal event after it came, for example for the
 /// id that a signal returns at once. Thus the hub keeps a ledger of the
 /// terminal events of the most recent ids: at most ``ledgerCapacity`` ids,
-/// and the oldest id leaves first. A wait for an id that left the ledger
-/// waits until ``close()``. The ledger also keeps the error of a failed
-/// answer next to its ``SessionEvent/answerFailed(_:)``: the helpers on top
-/// of the core throw that error, and the public event does not carry it.
+/// and the oldest id leaves first. The ledger also keeps the error of a
+/// failed answer next to its ``SessionEvent/answerFailed(_:)``: the helpers
+/// on top of the core throw that error, and the public event does not carry
+/// it.
+///
+/// The hub also keeps the pending ids: each id that waits for its terminal
+/// event (``beginPending(_:)``). The session makes an id pending before any
+/// caller can get it, and the terminal event of the id ends its pending
+/// record under the same lock as the record of the ledger. Thus each id that
+/// the session knows is pending, or in the ledger, or it left the ledger. A
+/// wait for an id in neither set throws at once
+/// (``awaitTerminal(of:orThrow:)``): no terminal event can come for it. The
+/// pending set holds only the ids of the work that waits or runs, so it is
+/// bounded by that work.
 ///
 /// Each operation holds one lock and does not suspend, so a call from any
 /// task, also a synchronous call that is not on the session actor, reaches
@@ -102,9 +112,13 @@ final class SessionOutputHub: Sendable {
         /// The ids of ``ledger``, oldest first.
         var ledgerOrder: [TerminalKey] = []
 
-        /// The waiters of ``SessionOutputHub/awaitTerminal(of:)``, by their
-        /// key, with the id that each one waits for.
-        var waiters: [ULID: (key: TerminalKey, continuation: CheckedContinuation<Terminal, any Error>)] = [:]
+        /// The ids that wait for their terminal event
+        /// (``SessionOutputHub/beginPending(_:)``).
+        var pending: Set<TerminalKey> = []
+
+        /// The waiters of ``SessionOutputHub/awaitTerminal(of:orThrow:)``, by
+        /// their key.
+        var waiters: [ULID: Waiter] = [:]
 
         /// Whether ``SessionOutputHub/close()`` ran.
         var isClosed = false
@@ -125,13 +139,17 @@ final class SessionOutputHub: Sendable {
             return !ids.isDisjoint(with: silenced)
         }
 
-        /// Records `terminal` for `key` in the ledger, and removes the oldest
-        /// id when the ledger is full.
+        /// Records `terminal` for `key` in the ledger, ends the pending record
+        /// of `key`, and removes the oldest id when the ledger is full.
+        ///
+        /// The two changes come under one lock, so a wait never finds `key`
+        /// in neither set while its terminal event goes in.
         ///
         /// - Parameters:
         ///   - terminal: The terminal event.
         ///   - key: The id that it ends.
         mutating func record(_ terminal: Terminal, for key: TerminalKey) {
+            pending.remove(key)
             if ledger.updateValue(terminal, forKey: key) == nil {
                 ledgerOrder.append(key)
             }
@@ -143,10 +161,58 @@ final class SessionOutputHub: Sendable {
         ///
         /// - Parameter key: The id.
         /// - Returns: The waiters for `key`.
-        mutating func takeWaiters(for key: TerminalKey) -> [CheckedContinuation<Terminal, any Error>] {
+        mutating func takeWaiters(for key: TerminalKey) -> [Waiter] {
             let keys = waiters.filter { $0.value.key == key }.map(\.key)
-            return keys.compactMap { waiters.removeValue(forKey: $0)?.continuation }
+            return keys.compactMap { waiters.removeValue(forKey: $0) }
         }
+
+        /// Registers `waiter` under `waiterKey`, or gives the result of a
+        /// wait that ends at once.
+        ///
+        /// The checks come in this order: the ledger, the close, the pending
+        /// ids, and the cancel of the task. Thus an id that is in no set gets
+        /// the error of the waiter also from a cancelled task.
+        ///
+        /// - Parameters:
+        ///   - waiter: The wait.
+        ///   - waiterKey: The key of the wait.
+        /// - Returns: The terminal event from the ledger,
+        ///   ``MailRefusal/closed``, the error of an id that is not pending
+        ///   (``SessionOutputHub/Waiter/unknown``), `CancellationError`, or `nil` when the
+        ///   waiter now waits.
+        mutating func register(_ waiter: Waiter, as waiterKey: ULID) -> Result<Terminal, any Error>? {
+            if let terminal = ledger[waiter.key] {
+                return .success(terminal)
+            }
+            if isClosed {
+                return .failure(MailRefusal.closed)
+            }
+            // An id that is not pending gets no terminal event: it left the
+            // ledger, or the session never knew it.
+            guard pending.contains(waiter.key) else {
+                return .failure(waiter.unknown)
+            }
+            // A cancel that came before this registration found no waiter
+            // to end, so the registration reads it here.
+            if Task.isCancelled {
+                return .failure(CancellationError())
+            }
+            waiters[waiterKey] = waiter
+            return nil
+        }
+    }
+
+    /// One wait of ``awaitTerminal(of:orThrow:)``.
+    private struct Waiter {
+        /// The id that the wait waits for.
+        let key: TerminalKey
+
+        /// The error that ends the wait when the id leaves the pending ids
+        /// with no terminal event (``endPending(_:)``).
+        let unknown: any Error
+
+        /// The continuation of the wait.
+        let continuation: CheckedContinuation<Terminal, any Error>
     }
 
     /// The state of the hub.
@@ -205,8 +271,8 @@ final class SessionOutputHub: Sendable {
 
     /// Gives `output` to each feed, and to each mail subscription whose mail
     /// it belongs to. A terminal event also finishes the subscriptions of the
-    /// ids that it ends, records each id in the ledger, and ends the wait of
-    /// each waiter for those ids.
+    /// ids that it ends, records each id in the ledger, ends the pending
+    /// record of each id, and ends the wait of each waiter for those ids.
     ///
     /// An output belongs to a mail when its origin holds the id of the mail,
     /// or when `audience` holds that id. The audience is the mail of the
@@ -253,7 +319,7 @@ final class SessionOutputHub: Sendable {
             var resumed: [CheckedContinuation<Terminal, any Error>] = []
             for key in ended {
                 state.record(terminal, for: key)
-                resumed += state.takeWaiters(for: key)
+                resumed += state.takeWaiters(for: key).map(\.continuation)
             }
             return (finished, resumed, true)
         }
@@ -308,33 +374,71 @@ final class SessionOutputHub: Sendable {
         state.withLock { $0.ledger[key] }
     }
 
-    /// Waits for the terminal event of `key`. Returns at once when the
-    /// ledger has it.
+    /// Records that `key` waits for its terminal event: a wait for `key`
+    /// waits, and does not throw the error of an unknown id. The terminal
+    /// event of `key` ends the record (``emit(_:failure:audience:)``), and
+    /// so does ``endPending(_:)``.
+    ///
+    /// The session calls it before any caller can get the id: before the put
+    /// of mail into the queue, and before a signal call returns its id.
+    /// After ``close()`` the hub records nothing, because each wait then
+    /// throws ``MailRefusal/closed``.
     ///
     /// - Parameter key: The id.
+    /// - Returns: `true` when this call made `key` pending, and `false` when
+    ///   `key` was pending already or the hub is closed. Only the call that
+    ///   made `key` pending ends it with ``endPending(_:)``.
+    @discardableResult
+    func beginPending(_ key: TerminalKey) -> Bool {
+        state.withLock { state in
+            guard !state.isClosed else { return false }
+            return state.pending.insert(key).inserted
+        }
+    }
+
+    /// Ends the pending record of `key` with no terminal event: the session
+    /// refused the mail, or the work of the signal ended and sent no terminal
+    /// event. No terminal event comes for `key` any more, so each wait for it
+    /// ends with the error that the wait gave (``Waiter/unknown``), and a
+    /// later wait throws that error at once.
+    ///
+    /// A `key` that is not pending, or whose terminal event is in the
+    /// ledger, does not change.
+    ///
+    /// - Parameter key: The id.
+    func endPending(_ key: TerminalKey) {
+        let ended = state.withLock { state -> [Waiter] in
+            guard state.pending.remove(key) != nil, state.ledger[key] == nil else { return [] }
+            return state.takeWaiters(for: key)
+        }
+        for waiter in ended {
+            waiter.continuation.resume(throwing: waiter.unknown)
+        }
+    }
+
+    /// Waits for the terminal event of `key`. Returns at once when the
+    /// ledger has it. Throws `unknown` at once when `key` is not pending
+    /// (``beginPending(_:)``) and the ledger does not have it: `key` left the
+    /// ledger, or the session never knew it, so no terminal event can come.
+    ///
+    /// The check and the registration of the wait hold the lock of the hub,
+    /// and so does the terminal event that ends the pending record of `key`
+    /// and records it in the ledger. Thus the wait never finds `key` in
+    /// neither set while its terminal event goes in.
+    ///
+    /// - Parameters:
+    ///   - key: The id.
+    ///   - unknown: The error for a `key` that is not pending and not in the
+    ///     ledger.
     /// - Returns: The terminal event and its error.
-    /// - Throws: `CancellationError` when the task is cancelled first, or
-    ///   ``MailRefusal/closed`` when the hub closes first.
-    func awaitTerminal(of key: TerminalKey) async throws -> Terminal {
+    /// - Throws: `unknown`, `CancellationError` when the task is cancelled
+    ///   first, or ``MailRefusal/closed`` when the hub closes first.
+    func awaitTerminal(of key: TerminalKey, orThrow unknown: any Error) async throws -> Terminal {
         let waiterKey = ULID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let immediate = state.withLock { state -> Result<Terminal, any Error>? in
-                    if let terminal = state.ledger[key] {
-                        return .success(terminal)
-                    }
-                    if state.isClosed {
-                        return .failure(MailRefusal.closed)
-                    }
-                    // A cancel that came before this registration found no
-                    // waiter to end, so the registration reads it here.
-                    if Task.isCancelled {
-                        return .failure(CancellationError())
-                    }
-                    state.waiters[waiterKey] = (key, continuation)
-                    return nil
-                }
-                if let immediate {
+                let waiter = Waiter(key: key, unknown: unknown, continuation: continuation)
+                if let immediate = state.withLock({ $0.register(waiter, as: waiterKey) }) {
                     continuation.resume(with: immediate)
                 }
             }
@@ -346,13 +450,15 @@ final class SessionOutputHub: Sendable {
 
     /// Closes the hub: each mail subscription finishes, and each waiter gets
     /// ``MailRefusal/closed``. A later wait for an id that the ledger does
-    /// not have throws ``MailRefusal/closed`` at once.
+    /// not have throws ``MailRefusal/closed`` at once, so the hub also
+    /// forgets the pending ids.
     func close() {
         let (subscriptions, waiters) = state.withLock { state in
             state.isClosed = true
             defer {
                 state.subscriptions = [:]
                 state.waiters = [:]
+                state.pending = []
             }
             return (state.subscriptions.values.map(\.continuation), state.waiters.values.map(\.continuation))
         }

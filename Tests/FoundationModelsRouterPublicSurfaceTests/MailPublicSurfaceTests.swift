@@ -10,7 +10,9 @@ import FoundationModelsRouter
 /// ``RoutedSession/cancelAll()`` and ``RoutedSession/replace(_:with:)``, which
 /// each return a ``SignalID``, the waits ``RoutedSession/awaitTerminal(of:)-(MailID)``,
 /// ``RoutedSession/awaitAnswer(of:)`` and
-/// ``RoutedSession/awaitTerminal(of:)-(SignalID)``, and the refusal types.
+/// ``RoutedSession/awaitTerminal(of:)-(SignalID)``, the refusal types, and
+/// the error of a wait that found no record of its id
+/// (``TerminalLookupError``).
 ///
 /// The import is plain, with no `@testable`, so a member or a case that loses
 /// `public` stops this file from compiling before a single test runs.
@@ -129,11 +131,26 @@ struct MailPublicSurfaceTests {
         }
     }
 
-    @Test("a consumer names each refusal of a mail and of a prompt")
+    /// The label a consumer shows for a wait that found no record of its id.
+    ///
+    /// - Parameter error: The error of the wait.
+    /// - Returns: The label.
+    static func label(for error: TerminalLookupError) -> String {
+        switch error {
+        case .unknownMail:
+            "message not known"
+        case .unknownSignal:
+            "signal not known"
+        }
+    }
+
+    @Test("a consumer names each refusal of a mail and of a prompt, and each wait that found no record of its id")
     func aConsumerNamesEachRefusal() {
         #expect(Self.label(for: MailRefusal.duplicateID(MailID())) == "already sent")
         #expect(Self.label(for: MailRefusal.closed) == "session closed")
         #expect(Self.label(for: PromptRefusal.noTextSegment) == "no text")
+        #expect(Self.label(for: TerminalLookupError.unknownMail(MailID())) == "message not known")
+        #expect(Self.label(for: TerminalLookupError.unknownSignal(SignalID())) == "signal not known")
     }
 
     @Test(

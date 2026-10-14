@@ -126,6 +126,12 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// The ids of the held mail (``PendingEvent/isHeld``).
     private nonisolated let heldMail = Mutex<Set<MailID>>([])
 
+    /// The output of the session that owns this outbox, or `nil` before
+    /// the session binds it (``bind(outputHub:)``). The stage of new run
+    /// mail makes the id of the mail pending in it before the put
+    /// (``stage(event:as:)``).
+    private nonisolated let outputHub = Mutex<SessionOutputHub?>(nil)
+
     /// The tracing context of the caller of each queued user-type mail that
     /// had one, so the span of the submission that delivers the mail is a
     /// child of the span of the caller. The pump task inherits no task-local
@@ -363,14 +369,39 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         {
             return older.id
         }
+        // The id is pending before the put: from the put on, a reader of the
+        // queue can get the id, and the pump can take the mail and end it.
+        let hub = outputHub.withLock { $0 }
+        let madePending = hub?.beginPending(.mail(id)) ?? false
         do {
             try queue.put(Mail(id: id, sender: .run(correlationID: event.correlationID), body: .runEvent(event)))
             return id
         } catch {
             // The queue refuses mail only after the session closed. Then no
             // submission reads the mail anymore, and the journal still
-            // records the event, so the refusal needs no other action.
+            // records the event, so the refusal needs only the end of the
+            // pending record.
+            if madePending {
+                hub?.endPending(.mail(id))
+            }
             return nil
+        }
+    }
+
+    /// Binds this outbox to the output of the session that owns it. From
+    /// now on, the stage of each new run mail makes the id of the mail
+    /// pending in `hub` before the put (``SessionOutputHub/beginPending(_:)``),
+    /// so a wait for the id waits while the mail waits or runs. Each mail
+    /// that the queue already holds becomes pending too.
+    ///
+    /// The session calls it one time, when it is made, before any pump or
+    /// signal of the session runs.
+    ///
+    /// - Parameter hub: The output of the session.
+    nonisolated func bind(outputHub hub: SessionOutputHub) {
+        outputHub.withLock { $0 = hub }
+        for mail in queue.pending {
+            hub.beginPending(.mail(mail.id))
         }
     }
 

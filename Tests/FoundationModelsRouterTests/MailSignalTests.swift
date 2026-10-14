@@ -193,6 +193,38 @@ struct MailSignalTests {
         withExtendedLifetime(profile) {}
     }
 
+    // MARK: - A wait for run mail
+
+    /// The production change that makes this test fail: a stage of run mail
+    /// that does not make the id of the mail pending in the output of the
+    /// session (``SessionOutbox/bind(outputHub:)``). The wait then throws
+    /// ``TerminalLookupError/unknownMail(_:)`` for mail that waits in the
+    /// queue.
+    @Test("a cancelled wait for queued run mail ends with CancellationError, because the session knows the id of its run mail")
+    func aWaitForQueuedRunMailKnowsItsID() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let backend = Backend(script: [:])
+        let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+
+        let runMail = try await MailQueueFixtures.post(
+            MailQueueFixtures.progressEvent(detail: "a queued step"), to: session)
+        // A progress event starts no submission, so the run mail waits in
+        // the queue until the cancel of the wait cancels it. The cancel
+        // comes before or after the start of the wait; both orders end the
+        // wait with CancellationError.
+        let wait = Task { try await session.awaitAnswer(of: runMail) }
+        wait.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await wait.value
+        }
+        #expect(try await session.awaitTerminal(of: runMail) == .cancelled(runMail))
+        #expect(backend.prompts.isEmpty)
+        await session.close()
+        withExtendedLifetime(profile) {}
+    }
+
     // MARK: - cancel(_:) and cancelAll()
 
     @Test("cancel(_:) of a queued mail sends one cancelled with the origin of the signal; a cancel of a delivered mail sends nothing and the answer goes on")

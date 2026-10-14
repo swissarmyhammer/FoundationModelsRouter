@@ -784,6 +784,9 @@ actor RoutedSessionActor: RoutedSession {
         // first backend gets this session's pass observer and prompt-cache
         // key here.
         adopt(backend)
+        // Before any pump or signal runs: from here on, each run mail of the
+        // outbox is pending in the output of this session before its put.
+        outbox.bind(outputHub: outputHub)
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into

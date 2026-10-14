@@ -313,16 +313,21 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``SessionEvent/lost(_:)``.
     ///
     /// The call returns at once when the terminal event already came. The
-    /// session keeps the terminal events of the 4096 most recent ids; a wait
-    /// for an older id waits until ``close()``. A cancel of the calling task
-    /// cancels the mail while it is queued (``cancel(_:)``), does not wait
-    /// for the end of that signal, and ends the wait; it never stops an
-    /// answer that runs.
+    /// session keeps the terminal events of the 4096 most recent ids. A call
+    /// for an id that left that record, or for an id that the session never
+    /// knew, throws ``TerminalLookupError/unknownMail(_:)`` at once: no
+    /// terminal event can come for it. A call for mail that waits in the
+    /// queue or in the answer that runs waits for its terminal event. A
+    /// cancel of the calling task cancels the mail while it is queued
+    /// (``cancel(_:)``), does not wait for the end of that signal, and ends
+    /// the wait; it never stops an answer that runs.
     ///
     /// - Parameter id: The id of the mail.
     /// - Returns: The terminal event of the mail.
-    /// - Throws: `CancellationError` when the calling task is cancelled
-    ///   first, ``MailRefusal/closed`` when the session closes first, or
+    /// - Throws: ``TerminalLookupError/unknownMail(_:)`` at once when the
+    ///   session has no record of the id, `CancellationError` when the
+    ///   calling task is cancelled first, ``MailRefusal/closed`` when the
+    ///   session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
     ///   called in band from a tool of a submission of this session, or of a
     ///   submission on the same model.
@@ -357,9 +362,13 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// after ``close()``. The session keeps the terminal events, and the
     /// error of each failed answer, of the 4096 most recent ids. Mail ids and
     /// signal ids count together, and the oldest id leaves first. A call for
-    /// an id that left that record does not get the answer or the error: it
-    /// waits until ``close()`` and then throws ``MailRefusal/closed``. After
-    /// ``close()``, it throws ``MailRefusal/closed`` at once.
+    /// an id that left that record, or for an id that the session never knew,
+    /// does not get the answer or the error: it throws
+    /// ``TerminalLookupError/unknownMail(_:)`` at once. The session cannot
+    /// tell these two cases apart. A call for mail that waits in the queue or
+    /// in the answer that runs waits for its terminal event. After
+    /// ``close()``, a call for an id with no terminal event throws
+    /// ``MailRefusal/closed`` at once.
     ///
     /// A cancel of the calling task cancels the mail while it is queued
     /// (``cancel(_:)``), does not wait for the end of that signal, and ends
@@ -369,8 +378,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// - Returns: The ``SessionAnswer`` of the answer that delivered the mail.
     /// - Throws: The original error of a failed answer (see the table),
     ///   `CancellationError` for a cancelled or lost mail and when the calling
-    ///   task is cancelled first, ``MailRefusal/closed`` when the session
-    ///   closes first, or
+    ///   task is cancelled first, ``TerminalLookupError/unknownMail(_:)`` at
+    ///   once when the session has no record of the id,
+    ///   ``MailRefusal/closed`` when the session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
     ///   called in band from a tool of a submission of this session, or of a
     ///   submission on the same model.
@@ -382,13 +392,19 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// whose id is the signal id.
     ///
     /// The call returns at once when the terminal event already came. The
-    /// session keeps the terminal events of the 4096 most recent ids; a wait
-    /// for an older id waits until ``close()``.
+    /// session keeps the terminal events of the 4096 most recent ids. A call
+    /// for an id that left that record, or for an id that the session never
+    /// knew, throws ``TerminalLookupError/unknownSignal(_:)`` at once. A call
+    /// for a signal whose work waits or runs waits for its terminal event. A
+    /// signal that ``close()`` skips sends no terminal event, so a wait for
+    /// it ends with ``MailRefusal/closed``.
     ///
     /// - Parameter id: The id of the signal.
     /// - Returns: The terminal event of the signal.
-    /// - Throws: `CancellationError` when the calling task is cancelled
-    ///   first, ``MailRefusal/closed`` when the session closes first, or
+    /// - Throws: ``TerminalLookupError/unknownSignal(_:)`` at once when the
+    ///   session has no record of the id, `CancellationError` when the
+    ///   calling task is cancelled first, ``MailRefusal/closed`` when the
+    ///   session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func awaitTerminal(of id: SignalID) async throws -> SessionEvent
 

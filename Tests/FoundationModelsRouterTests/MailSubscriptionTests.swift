@@ -264,7 +264,10 @@ struct MailSubscriptionTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let actor = session as! RoutedSessionActor
 
+        // The id of a compaction signal that the session runs: it waits for
+        // its terminal event.
         let signal = SignalID()
+        actor.outputHub.beginPending(.signal(signal.description))
         let waiting = Task { try await session.awaitTerminal(of: signal) }
         // The end of another signal does not end the wait.
         actor.emitSessionScopedEvent(.compactionFailed(Self.compactionFailure(of: SignalID())))
@@ -380,18 +383,122 @@ struct MailSubscriptionTests {
     func hubWaitsForASignalAndEndsOnClose() async throws {
         let hub = SessionOutputHub()
         let signal = SignalID()
+        let signalKey = SessionOutputHub.TerminalKey.signal(signal.description)
+        let mail = MailID()
         let failure = Self.compactionFailure(of: signal)
+        hub.beginPending(signalKey)
+        hub.beginPending(.mail(mail))
 
-        let signalWait = Task { try await hub.awaitTerminal(of: .signal(signal.description)).event }
+        let signalWait = Task {
+            try await hub.awaitTerminal(of: signalKey, orThrow: TerminalLookupError.unknownSignal(signal)).event
+        }
         hub.emit(SessionOutput(origin: .signal(signal), event: .compactionFailed(failure)))
         #expect(try await signalWait.value == .compactionFailed(failure))
 
-        let mailWait = Task { try await hub.awaitTerminal(of: .mail(MailID())).event }
+        let mailWait = Task { try await hub.awaitTerminal(of: .mail(mail), orThrow: TerminalLookupError.unknownMail(mail)).event }
         hub.close()
         await #expect(throws: MailRefusal.closed) {
             _ = try await mailWait.value
         }
         // The ledger keeps the terminal of the signal after the close.
-        #expect(try await hub.awaitTerminal(of: .signal(signal.description)).event == .compactionFailed(failure))
+        #expect(
+            try await hub.awaitTerminal(of: signalKey, orThrow: TerminalLookupError.unknownSignal(signal)).event
+                == .compactionFailed(failure))
+    }
+
+    @Test("a hub wait for a key that is not pending and not in the ledger throws the given error at once")
+    func aHubWaitForAnUnknownKeyThrowsAtOnce() async {
+        let hub = SessionOutputHub()
+        let mail = MailID()
+
+        await #expect(throws: TerminalLookupError.unknownMail(mail)) {
+            _ = try await hub.awaitTerminal(of: .mail(mail), orThrow: TerminalLookupError.unknownMail(mail))
+        }
+    }
+
+    /// The production change that makes this test fail: a wait that does not
+    /// read the pending keys, and throws the error of an unknown key for a
+    /// key that waits for its terminal event. The cancel comes before or
+    /// after the start of the wait; a pending key ends the wait with
+    /// `CancellationError` in both orders, and an unknown key never does.
+    @Test("a hub wait for a pending key waits: a cancel of its task ends it with CancellationError")
+    func aHubWaitForAPendingKeyWaits() async {
+        let hub = SessionOutputHub()
+        let mail = MailID()
+        hub.beginPending(.mail(mail))
+
+        let wait = Task { try await hub.awaitTerminal(of: .mail(mail), orThrow: TerminalLookupError.unknownMail(mail)) }
+        wait.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await wait.value
+        }
+    }
+
+    @Test("the terminal event ends the pending record of a key: the ledger gives it, and after the ledger dropped it, a wait throws at once")
+    func theTerminalEventEndsThePendingRecord() async throws {
+        let hub = SessionOutputHub()
+        let mail = MailID()
+        hub.beginPending(.mail(mail))
+
+        hub.emit(SessionOutput(origin: .mail([mail]), event: .cancelled(mail)))
+        #expect(try await hub.awaitTerminal(of: .mail(mail), orThrow: TerminalLookupError.unknownMail(mail)).event == .cancelled(mail))
+        for later in (0..<SessionOutputHub.ledgerCapacity).map({ _ in MailID() }) {
+            hub.emit(SessionOutput(origin: .mail([later]), event: .cancelled(later)))
+        }
+
+        await #expect(throws: TerminalLookupError.unknownMail(mail)) {
+            _ = try await hub.awaitTerminal(of: .mail(mail), orThrow: TerminalLookupError.unknownMail(mail))
+        }
+    }
+
+    @Test("the end of a pending key with no terminal event ends each wait for it with the given error")
+    func theEndOfAPendingKeyEndsItsWaits() async {
+        let hub = SessionOutputHub()
+        let signal = SignalID()
+        let signalKey = SessionOutputHub.TerminalKey.signal(signal.description)
+        hub.beginPending(signalKey)
+
+        // The wait starts before or after the end; both orders end it with
+        // the error of an unknown key.
+        let wait = Task { try await hub.awaitTerminal(of: signalKey, orThrow: TerminalLookupError.unknownSignal(signal)) }
+        hub.endPending(signalKey)
+
+        await #expect(throws: TerminalLookupError.unknownSignal(signal)) {
+            _ = try await wait.value
+        }
+    }
+
+    @Test("a closed hub records no pending key: a later wait for it throws MailRefusal.closed")
+    func aClosedHubRecordsNoPendingKey() async {
+        let hub = SessionOutputHub()
+        let mail = MailID()
+        hub.close()
+
+        #expect(!hub.beginPending(.mail(mail)))
+        await #expect(throws: MailRefusal.closed) {
+            _ = try await hub.awaitTerminal(of: .mail(mail), orThrow: TerminalLookupError.unknownMail(mail))
+        }
+    }
+
+    @Test("an outbox bound to a hub makes the id of each run mail pending, also of the run mail it held before the bind")
+    func aBoundOutboxMakesItsRunMailPending() async throws {
+        let outbox = SessionOutbox()
+        let hub = SessionOutputHub()
+        await outbox.post(event: MailQueueFixtures.progressEvent(detail: "a step before the bind"))
+        outbox.bind(outputHub: hub)
+        await outbox.post(event: MailQueueFixtures.progressEvent(detail: "a step after the bind", correlationID: "other"))
+        let ids = outbox.pendingRunMail.map(\.id)
+        #expect(ids.count == 2)
+
+        for id in ids {
+            // The cancel comes before or after the start of the wait; a
+            // pending key ends the wait with CancellationError in both orders.
+            let wait = Task { try await hub.awaitTerminal(of: .mail(id), orThrow: TerminalLookupError.unknownMail(id)) }
+            wait.cancel()
+            await #expect(throws: CancellationError.self) {
+                _ = try await wait.value
+            }
+        }
     }
 }

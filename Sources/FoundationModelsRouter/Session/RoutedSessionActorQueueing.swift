@@ -12,6 +12,10 @@ extension RoutedSessionActor {
     /// first, then puts the mail in the queue, so the caller loses no event
     /// of it. Then it wakes the pump.
     ///
+    /// The id is pending in the output (``SessionOutputHub/beginPending(_:)``)
+    /// before the put. From the put on, the pump can take the mail and end
+    /// it, so a wait for the id always finds it pending or in the ledger.
+    ///
     /// The id must be new to the session: not in the queue, and not in the
     /// open answer. The open answer is read before the put and again after
     /// it, because the pump can take a mail with the same id between the
@@ -26,14 +30,15 @@ extension RoutedSessionActor {
     nonisolated func mail(_ mail: Mail) throws -> MailSubscription<SessionOutput> {
         guard !openAnswerMail.contains(mail.id) else { throw MailRefusal.duplicateID(mail.id) }
         let (subscription, key) = outputHub.subscribe(to: mail.id)
+        let madePending = outputHub.beginPending(.mail(mail.id))
         do {
             try outbox.queue.put(mail)
         } catch {
-            outputHub.unsubscribe(key)
+            withdrawRefusedMail(mail.id, subscription: key, madePending: madePending)
             throw error
         }
         if openAnswerMail.contains(mail.id), outbox.queue.cancel(mail.id) != nil {
-            outputHub.unsubscribe(key)
+            withdrawRefusedMail(mail.id, subscription: key, madePending: madePending)
             throw MailRefusal.duplicateID(mail.id)
         }
         outbox.noteCallerContext(ServiceContext.current, for: mail.id)
@@ -42,6 +47,21 @@ extension RoutedSessionActor {
         recordMail([.mailQueued(mail)])
         Task { await self.mailDidArrive() }
         return subscription
+    }
+
+    /// Undoes what ``mail(_:)`` did for mail that the session refused: the
+    /// subscription finishes, and the pending record of the id ends when this
+    /// call made it. A record that other mail with the same id made stays,
+    /// because that mail still waits for its terminal event.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the refused mail.
+    ///   - key: The key of the subscription of the refused mail.
+    ///   - madePending: Whether ``mail(_:)`` made the id pending.
+    private nonisolated func withdrawRefusedMail(_ id: MailID, subscription key: ULID, madePending: Bool) {
+        outputHub.unsubscribe(key)
+        guard madePending else { return }
+        outputHub.endPending(.mail(id))
     }
 
     /// Records the new depth of the queue and wakes the pump, after

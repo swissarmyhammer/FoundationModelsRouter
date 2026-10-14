@@ -210,28 +210,41 @@ struct AwaitAnswerTests {
 
     // MARK: - close() and the bound of the ledger
 
-    @Test("close() ends a wait for a mail with no terminal event with MailRefusal.closed, and a later call throws it at once")
-    func theCloseEndsAWaitWithClosed() async throws {
+    /// Sends ``SessionOutputHub/ledgerCapacity`` cancel signals for ids that
+    /// the session never knew, and waits for the end of the last one.
+    ///
+    /// Each signal ends with one terminal event, and the ledger keeps the
+    /// terminal ids of mail and of signals together. The signals run in
+    /// order, so the end of the last one comes after each other end. Thus
+    /// each id that ended before the call left the ledger when the call
+    /// returns.
+    ///
+    /// - Parameter session: The session whose ledger to fill.
+    private static func fillTheLedger(of session: any RoutedSession) async throws {
+        let signals = (0..<SessionOutputHub.ledgerCapacity).map { _ in session.cancel(MailID()) }
+        let last = try #require(signals.last)
+        #expect(try await session.awaitTerminal(of: last) == .signalDone(last))
+    }
+
+    @Test("after close(), a call for an id with no terminal event throws MailRefusal.closed at once")
+    func aCallAfterTheCloseThrowsClosed() async throws {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
         let unknown = MailID()
 
-        // The wait starts before or after the close; both orders end with
-        // the same refusal.
-        let wait = Task { try await session.awaitAnswer(of: unknown) }
         await session.close()
 
         await #expect(throws: MailRefusal.closed) {
-            _ = try await wait.value
+            _ = try await session.awaitAnswer(of: unknown)
         }
         await #expect(throws: MailRefusal.closed) {
-            _ = try await session.awaitAnswer(of: unknown)
+            _ = try await session.awaitTerminal(of: unknown)
         }
     }
 
-    @Test("a call after ledgerCapacity later terminal ids waits until close() and then throws MailRefusal.closed")
-    func aCallAfterTheLedgerBoundWaitsUntilClose() async throws {
+    @Test("a mail id that left the ledger makes awaitAnswer(of:) and awaitTerminal(of:) throw TerminalLookupError.unknownMail at once")
+    func aMailThatLeftTheLedgerThrowsAtOnce() async throws {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
@@ -239,18 +252,116 @@ struct AwaitAnswerTests {
 
         let id = try session.send(Self.overflowPrompt)
         _ = try await session.awaitTerminal(of: id)
-        // Each signal ends with one terminal event, and the ledger keeps the
-        // terminal ids of mail and of signals together. The signals run in
-        // order, so the end of the last one comes after each other end.
-        let signals = (0..<SessionOutputHub.ledgerCapacity).map { _ in session.cancel(MailID()) }
-        let last = try #require(signals.last)
-        #expect(try await session.awaitTerminal(of: last) == .signalDone(last))
+        try await Self.fillTheLedger(of: session)
 
-        let wait = Task { try await session.awaitAnswer(of: id) }
-        await session.close()
-
-        await #expect(throws: MailRefusal.closed) {
-            _ = try await wait.value
+        await #expect(throws: TerminalLookupError.unknownMail(id)) {
+            _ = try await session.awaitAnswer(of: id)
         }
+        await #expect(throws: TerminalLookupError.unknownMail(id)) {
+            _ = try await session.awaitTerminal(of: id)
+        }
+        await session.close()
+    }
+
+    @Test("a signal id that left the ledger makes awaitTerminal(of:) throw TerminalLookupError.unknownSignal at once")
+    func aSignalThatLeftTheLedgerThrowsAtOnce() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (_, session) = try await Self.makeSession(dir: dir)
+
+        let first = session.cancel(MailID())
+        #expect(try await session.awaitTerminal(of: first) == .signalDone(first))
+        try await Self.fillTheLedger(of: session)
+
+        await #expect(throws: TerminalLookupError.unknownSignal(first)) {
+            _ = try await session.awaitTerminal(of: first)
+        }
+        await session.close()
+    }
+
+    @Test("an id that the session never knew makes each wait throw TerminalLookupError at once")
+    func anIdThatTheSessionNeverKnewThrowsAtOnce() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (_, session) = try await Self.makeSession(dir: dir)
+        let unknownMail = MailID()
+        let unknownSignal = SignalID()
+
+        await #expect(throws: TerminalLookupError.unknownMail(unknownMail)) {
+            _ = try await session.awaitAnswer(of: unknownMail)
+        }
+        await #expect(throws: TerminalLookupError.unknownMail(unknownMail)) {
+            _ = try await session.awaitTerminal(of: unknownMail)
+        }
+        await #expect(throws: TerminalLookupError.unknownSignal(unknownSignal)) {
+            _ = try await session.awaitTerminal(of: unknownSignal)
+        }
+        await session.close()
+    }
+
+    // MARK: - Waits for live ids
+
+    @Test("a wait for a mail that waits in the queue behind a held answer waits, and then gets the answer of that mail")
+    func aWaitForAQueuedMailGetsItsAnswer() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (fixture, session) = try await Self.makeSession(dir: dir)
+        let insideModelCall = AsyncSemaphore(value: 0)
+        let release = AsyncSemaphore(value: 0)
+        Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
+
+        let held = try session.send(Self.heldPrompt)
+        await insideModelCall.wait()
+        // The held answer runs, so the message waits in the queue until the
+        // release. Each wait starts while the message waits or after its
+        // end; both orders give the answer of the message.
+        let queued = try session.send(Self.firstQueuedPrompt)
+        let answerWait = Task { try await session.awaitAnswer(of: queued) }
+        let terminalWait = Task { try await session.awaitTerminal(of: queued) }
+        release.signal()
+
+        let answer = try await answerWait.value
+        #expect(answer.mailIds == [queued])
+        #expect(try await terminalWait.value == .answered(answer))
+        #expect(try await session.awaitAnswer(of: held).mailIds == [held])
+        await session.close()
+    }
+
+    @Test("a wait for the mail of the answer that runs waits, and then gets that answer")
+    func aWaitForTheRunningAnswerGetsIt() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (fixture, session) = try await Self.makeSession(dir: dir)
+        let insideModelCall = AsyncSemaphore(value: 0)
+        let release = AsyncSemaphore(value: 0)
+        Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
+
+        let held = try session.send(Self.heldPrompt)
+        await insideModelCall.wait()
+        // The answer of the message runs and cannot end before the release.
+        // Each wait starts while it runs or after its end; both orders give
+        // the answer.
+        let answerWait = Task { try await session.awaitAnswer(of: held) }
+        let terminalWait = Task { try await session.awaitTerminal(of: held) }
+        release.signal()
+
+        let answer = try await answerWait.value
+        #expect(answer.mailIds == [held])
+        #expect(try await terminalWait.value == .answered(answer))
+        await session.close()
+    }
+
+    @Test("a wait for a signal that the session runs waits, and then gets its signalDone")
+    func aWaitForALiveSignalGetsItsEnd() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (_, session) = try await Self.makeSession(dir: dir)
+
+        // The wait starts before or after the end of the signal; both orders
+        // give its signalDone.
+        let signal = session.cancel(MailID())
+
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
+        await session.close()
     }
 }

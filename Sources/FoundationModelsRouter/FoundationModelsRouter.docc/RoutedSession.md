@@ -58,7 +58,8 @@ mail. All output is events. Control is signals.
   ``awaitTerminal(of:)-(MailID)`` and ``awaitTerminal(of:)-(SignalID)`` wait
   for it. ``awaitAnswer(of:)`` waits for the terminal event of a mail and
   gives its ``SessionAnswer``, or throws the original error of its failed
-  answer, the same error that ``respond(to:)`` throws.
+  answer, the same error that ``respond(to:)`` throws. A wait for an id
+  that the session has no record of throws ``TerminalLookupError`` at once.
 
 ### The context is a render of the transcript
 
@@ -220,8 +221,10 @@ methods are helpers: each sends one message, then reads its output to its
 terminal event. A caller that sends its own mail uses ``awaitAnswer(of:)`` to
 get the answer, or the typed error of a failed answer, for example
 `LanguageModelError.contextSizeExceeded`. The session keeps that error for the
-4096 most recent terminal ids; a later call waits until ``close()`` and then
-throws ``MailRefusal/closed``.
+4096 most recent terminal ids. A wait for mail that waits in the queue or in
+the answer that runs waits for its terminal event. A call for an id that left
+that record, or for an id that the session never knew, throws
+``TerminalLookupError`` at once, because no terminal event can come for it.
 
 - ``MailSink/mail(_:)``
 - ``send(_:)-(Transcript.Prompt)``
@@ -233,6 +236,7 @@ throws ``MailRefusal/closed``.
 - ``awaitAnswer(of:)``
 - ``awaitTerminal(of:)-(SignalID)``
 - ``PromptRefusal``
+- ``TerminalLookupError``
 
 ### Signals
 

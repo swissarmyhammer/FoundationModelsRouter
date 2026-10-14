@@ -98,6 +98,16 @@ extension RoutedSessionActor {
     /// answer) comes here, so its work comes to this actor only through
     /// ``runSignalWork(_:skipped:)``.
     ///
+    /// The id is pending in the output (``SessionOutputHub/beginPending(_:)``)
+    /// before the signal call returns it, so a wait for the id waits while
+    /// the work of the signal waits or runs. The terminal event that the work
+    /// sends ends the pending record. When the work ends, the record ends in
+    /// any case (``SessionOutputHub/endPending(_:)``): an automatic
+    /// compaction whose answer stopped before it started sends no event, and
+    /// its id must not stay pending. A signal that the close skips stays
+    /// pending until the output closes, so a wait for it ends with
+    /// ``MailRefusal/closed``.
+    ///
     /// - Parameters:
     ///   - id: The id of the signal.
     ///   - work: The work of the signal.
@@ -106,7 +116,13 @@ extension RoutedSessionActor {
     nonisolated func submitSignal(
         _ id: SignalID, _ work: @escaping SignalWork, skipped: @escaping @Sendable () -> Void = {}
     ) {
-        signals.run(id, { [self] in await runSignalWork(work, skipped: skipped) }, skipped: skipped)
+        let key = SessionOutputHub.TerminalKey.signal(id.description)
+        outputHub.beginPending(key)
+        let pendingWork: SignalWork = { session in
+            await work(session)
+            session.outputHub.endPending(key)
+        }
+        signals.run(id, { [self] in await runSignalWork(pendingWork, skipped: skipped) }, skipped: skipped)
     }
 
     /// The one entry of the work of each signal into this actor.

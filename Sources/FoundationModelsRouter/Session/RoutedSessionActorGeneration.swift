@@ -115,8 +115,10 @@ extension RoutedSessionActor {
     /// - Parameter id: The id of the mail.
     /// - Returns: ``SessionEvent/answered(_:)``, ``SessionEvent/answerFailed(_:)``,
     ///   ``SessionEvent/cancelled(_:)`` or ``SessionEvent/lost(_:)``.
-    /// - Throws: `CancellationError` when the calling task is cancelled first,
-    ///   ``MailRefusal/closed`` when the session closes first, or
+    /// - Throws: ``TerminalLookupError/unknownMail(_:)`` at once when the
+    ///   session has no record of the id, `CancellationError` when the
+    ///   calling task is cancelled first, ``MailRefusal/closed`` when the
+    ///   session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func awaitTerminal(of id: MailID) async throws -> SessionEvent {
         try await awaitMailTerminal(of: id).event
@@ -130,7 +132,9 @@ extension RoutedSessionActor {
     /// - Returns: The ``SessionAnswer`` of the answer that delivered the mail.
     /// - Throws: The original error of a failed answer, `CancellationError`
     ///   for a cancelled or lost mail or a cancelled calling task,
-    ///   ``MailRefusal/closed`` when the session closes first, or
+    ///   ``TerminalLookupError/unknownMail(_:)`` at once when the session
+    ///   has no record of the id, ``MailRefusal/closed`` when the session
+    ///   closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func awaitAnswer(of id: MailID) async throws -> SessionAnswer {
         try await awaitMailTerminal(of: id).answer()
@@ -144,13 +148,15 @@ extension RoutedSessionActor {
     /// - Parameter id: The id of the mail.
     /// - Returns: The terminal event and its error, from the ledger of
     ///   ``outputHub``.
-    /// - Throws: `CancellationError` when the calling task is cancelled first,
-    ///   ``MailRefusal/closed`` when the session closes first, or
+    /// - Throws: ``TerminalLookupError/unknownMail(_:)`` at once when the
+    ///   id is not pending and not in the ledger, `CancellationError` when
+    ///   the calling task is cancelled first, ``MailRefusal/closed`` when the
+    ///   session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     private func awaitMailTerminal(of id: MailID) async throws -> SessionOutputHub.Terminal {
         try refuseWaitInsideOpenSubmission()
         return try await withTaskCancellationHandler {
-            try await outputHub.awaitTerminal(of: .mail(id))
+            try await outputHub.awaitTerminal(of: .mail(id), orThrow: TerminalLookupError.unknownMail(id))
         } onCancel: {
             cancel(id)
         }
@@ -164,12 +170,16 @@ extension RoutedSessionActor {
     ///
     /// - Parameter id: The id of the signal.
     /// - Returns: The terminal event of the signal.
-    /// - Throws: `CancellationError` when the calling task is cancelled first,
-    ///   ``MailRefusal/closed`` when the session closes first, or
+    /// - Throws: ``TerminalLookupError/unknownSignal(_:)`` at once when the
+    ///   session has no record of the id, `CancellationError` when the
+    ///   calling task is cancelled first, ``MailRefusal/closed`` when the
+    ///   session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func awaitTerminal(of id: SignalID) async throws -> SessionEvent {
         try refuseWaitInsideOpenSubmission()
-        return try await outputHub.awaitTerminal(of: .signal(id.description)).event
+        return try await outputHub.awaitTerminal(
+            of: .signal(id.description), orThrow: TerminalLookupError.unknownSignal(id)
+        ).event
     }
 
     /// A user message from the user of the session.
