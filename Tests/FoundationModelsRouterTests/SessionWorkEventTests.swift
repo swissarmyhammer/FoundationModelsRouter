@@ -111,7 +111,7 @@ struct SessionWorkEventTests {
     ///   - isLast: The test of the event of the last output to read.
     /// - Returns: Each output read, in order. The last output is the output
     ///   that `isLast` accepts, unless the feed finished first.
-    private static func outputs(
+    static func outputs(
         from feed: inout AsyncStream<SessionOutput>.Iterator, through isLast: (SessionEvent) -> Bool
     ) async -> [SessionOutput] {
         var read: [SessionOutput] = []
@@ -129,7 +129,7 @@ struct SessionWorkEventTests {
     /// - Parameter feed: The iterator of a feed of the session.
     /// - Returns: Each output read, in order. The last output is the work-end
     ///   event, unless the feed finished first.
-    private static func outputs(throughNextWorkEnd feed: inout AsyncStream<SessionOutput>.Iterator) async
+    static func outputs(throughNextWorkEnd feed: inout AsyncStream<SessionOutput>.Iterator) async
         -> [SessionOutput]
     {
         await outputs(from: &feed, through: { $0 == .workEnded })
@@ -139,7 +139,7 @@ struct SessionWorkEventTests {
     ///
     /// - Parameter feed: The iterator of a feed of the session.
     /// - Returns: Each output read, in order.
-    private static func remainingOutputs(of feed: inout AsyncStream<SessionOutput>.Iterator) async -> [SessionOutput] {
+    static func remainingOutputs(of feed: inout AsyncStream<SessionOutput>.Iterator) async -> [SessionOutput] {
         await outputs(from: &feed, through: { _ in false })
     }
 
@@ -160,11 +160,7 @@ struct SessionWorkEventTests {
     ///   ``RoutedSession/respond(elicitationId:response:)`` takes.
     /// - Throws: When `outputs` holds no question.
     private static func questionId(in outputs: [SessionOutput]) throws -> String {
-        let request = outputs.lazy.compactMap { output -> ElicitationRequest? in
-            guard case .elicitationRequested(let event) = output.event else { return nil }
-            return event.elicitation
-        }.first
-        return try #require(request).elicitationId.description
+        try #require(try firstQuestion(in: outputs).elicitation).elicitationId.description
     }
 
     /// Waits until the pump of `session` ended, and then runs one check of
@@ -201,7 +197,7 @@ struct SessionWorkEventTests {
     ///   - feed: The iterator of a feed of the session.
     /// - Returns: The outputs up to and including the work-end event.
     /// - Throws: What the respond throws, or ``ConditionNeverHeld``.
-    private static func outputsUpToTheQuestion(
+    static func outputsUpToTheQuestion(
         of fixture: BackgroundingSessionFixture, askGate: RunLatch, feed: inout AsyncStream<SessionOutput>.Iterator
     ) async throws -> [SessionOutput] {
         _ = try await fixture.session.respond(to: jobPrompt)

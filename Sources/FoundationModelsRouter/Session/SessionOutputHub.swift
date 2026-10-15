@@ -86,7 +86,8 @@ final class SessionOutputHub: Sendable {
                 .submissionStarted, .submissionEnded, .textDelta, .textReset, .reasoningDelta, .entryRecorded,
                 .discoveryPrimingFailed, .generationStalled, .runSettled, .runMessage, .runProgress, .toolCall,
                 .toolStatus, .toolInvocation, .toolCallReport, .toolDisplay, .elicitationRequested, .generationCall,
-                .repetitionStopped, .reasoningStopped, .mailDeliveryPaused, .mailDelivered, .workStarted, .workEnded:
+                .repetitionStopped, .reasoningStopped, .mailDeliveryPaused, .mailDelivered, .workStarted, .workEnded,
+                .elicitationEnded:
                 // The ledger keeps only a terminal event under the key of a
                 // mail (``SessionOutputHub/keys(endedBy:)``), so a call with
                 // another event is a defect of the caller.

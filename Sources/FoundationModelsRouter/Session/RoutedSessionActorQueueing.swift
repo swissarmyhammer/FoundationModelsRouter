@@ -204,29 +204,35 @@ extension RoutedSessionActor {
     }
 
     /// The steps that ``respond(elicitationId:response:)`` and
-    /// ``complete(elicitationId:)`` share. It parses the inbound id, notes the
-    /// start of work when `answer` resumes the run that asks the question
-    /// (``noteWorkStart(answering:with:)``), gives the parsed id to
-    /// `runPlaneCall`, and then records what the run plane did
-    /// (``noteAnswer(to:outcome:startedWork:)``).
+    /// ``complete(elicitationId:)`` share. It parses the inbound id, records
+    /// that the answer is on its way to the run plane
+    /// (``beginAnswer(to:)``), notes the start of work when `answer` resumes
+    /// the run that asks the question (``noteWorkStart(answering:with:)``),
+    /// gives the parsed id to `runPlaneCall`, and then records what the run
+    /// plane did (``noteAnswer(to:outcome:startedWork:)``).
+    ///
+    /// A question that ended with no answer of the client
+    /// (``SessionEvent/elicitationEnded(_:)``) takes no answer: the answer
+    /// does not go to the run plane, and the call gives `noQuestionResult`.
     ///
     /// - Parameters:
     ///   - elicitationId: The inbound id of the question.
     ///   - answer: The answer of the user.
-    ///   - unparseableResult: The result when the id is not a ``ULID``.
+    ///   - noQuestionResult: The result when the id is not a ``ULID``, or
+    ///     when the question ended with no answer of the client.
     ///   - outcome: What the result of `runPlaneCall` did with the run.
     ///   - runPlaneCall: The call to the run plane, and each step that comes
     ///     directly after it.
-    /// - Returns: The result of `runPlaneCall`, or `unparseableResult`.
+    /// - Returns: The result of `runPlaneCall`, or `noQuestionResult`.
     private nonisolated func deliverAnswer<Delivery>(
         toElicitation elicitationId: String,
         _ answer: QuestionAnswer,
-        orReturn unparseableResult: Delivery,
+        orReturn noQuestionResult: Delivery,
         outcome: (Delivery) -> QuestionAnswerOutcome,
         through runPlaneCall: (ULID) async -> Delivery
     ) async -> Delivery {
-        guard let id = ULID(elicitationId) else {
-            return unparseableResult
+        guard let id = ULID(elicitationId), await beginAnswer(to: id) else {
+            return noQuestionResult
         }
         let startedWork = await noteWorkStart(answering: id, with: answer)
         let delivery = await runPlaneCall(id)

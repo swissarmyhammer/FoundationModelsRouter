@@ -26,6 +26,9 @@ enum SessionEventCase: String, Sendable {
     /// ``SessionEvent/elicitationRequested(_:)``.
     case elicitationRequested
 
+    /// ``SessionEvent/elicitationEnded(_:)``.
+    case elicitationEnded
+
     /// ``SessionEvent/runSettled(_:)``.
     case runSettled
 
@@ -45,6 +48,25 @@ extension SessionEvent {
     var caseName: String {
         Mirror(reflecting: self).children.first?.label ?? String(describing: self)
     }
+}
+
+/// The `.elicitation` event of the first
+/// ``SessionEvent/elicitationRequested(_:)`` of `outputs`: the question of a
+/// run, with the `completionToken` of the run as its `correlationID`.
+///
+/// - Parameters:
+///   - outputs: Outputs of a session.
+///   - sourceLocation: The place of the call, for the failure.
+/// - Returns: The event of the question.
+/// - Throws: When `outputs` holds no question.
+func firstQuestion(
+    in outputs: [SessionOutput], sourceLocation: SourceLocation = #_sourceLocation
+) throws -> OperationEvent {
+    let question = outputs.lazy.compactMap { output -> OperationEvent? in
+        guard case .elicitationRequested(let event) = output.event else { return nil }
+        return event
+    }.first
+    return try #require(question, "the output has no question", sourceLocation: sourceLocation)
 }
 
 /// The position of the first output of `outputs` whose event `matches`.

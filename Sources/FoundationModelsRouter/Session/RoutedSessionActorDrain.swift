@@ -21,7 +21,13 @@ extension RoutedSessionActor {
     /// 3. Each open background run makes no more mail: its queued run mail
     ///    is cancelled, and a later run event of it makes no mail
     ///    (``SessionOutbox/ignoreRunMail(of:)``).
-    /// 4. The sweep starts (``startSweep()``): each background run gets a
+    /// 4. Each open question of a run ends now
+    ///    (``endOpenQuestions(at:)``): it gets its
+    ///    ``SessionEvent/elicitationEnded(_:)`` with the origin of the work
+    ///    that runs this call, and a later answer of the client to it goes no
+    ///    further. Thus the end comes before the ``SessionEvent/signalDone(_:)``
+    ///    of the signal, although the sweep comes later.
+    /// 5. The sweep starts (``startSweep()``): each background run gets a
     ///    cancel, and each open elicitation is rejected. The call does not
     ///    wait for the sweep, because the canceler of a run can be slow. Each
     ///    run gets its terminal event when its cancel ends.
@@ -47,6 +53,7 @@ extension RoutedSessionActor {
         stopRunningAnswer()
         let openTokens = await runPlane.backgroundRuns().map(\.completionToken)
         await ignoreRunMail(of: openTokens)
+        endOpenQuestions(at: OriginContext.current)
         startSweep()
     }
 

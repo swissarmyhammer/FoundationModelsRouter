@@ -385,6 +385,11 @@ extension RoutedSessionActor {
         // value and a restore uses the full transcript.
         await cancelActiveCompaction()
 
+        // Each open question of a run ends with the origin of the session,
+        // before the feeds finish. The work of ``cancelAll()`` below then
+        // finds no open question, and its sweep gives each run the cancel.
+        endOpenQuestions(at: .system)
+
         // The stop of all work: the running answer ends at once, and the
         // sweep of the runs starts. Close runs the work of ``cancelAll()``
         // directly: it does not wait in the order of the signals, and it

@@ -185,7 +185,7 @@ public final class SessionObserver {
         case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay,
             .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered, .signalDone, .workStarted,
-            .workEnded:
+            .workEnded, .elicitationEnded:
             // Handled explicitly, and deliberately changes nothing. The end
             // of a signal changes no entry: each mail that the signal removed
             // already has its own ``SessionEvent/cancelled(_:)``. The
@@ -213,8 +213,10 @@ public final class SessionObserver {
             // event of a tool is output for a client to show, and the phase of
             // the call is already mirrored from its records. An elicitation
             // request names a question that only a host can answer, and the
-            // call that asks still runs. The usage of one generation call is
-            // a part of the usage of the submission, and
+            // call that asks still runs. The end of a question with no answer
+            // of the client tells the host to remove the question, and the
+            // run that asked it gets the end as its answer. The usage of one
+            // generation call is a part of the usage of the submission, and
             // ``SessionEvent/submissionEnded(_:)`` carries the sum. A work
             // event tells the work state of the whole session, and the phase
             // of this projection tells the state of one submission. So the

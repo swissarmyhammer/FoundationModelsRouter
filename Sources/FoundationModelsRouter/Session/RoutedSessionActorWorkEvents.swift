@@ -53,7 +53,7 @@ enum QuestionAnswerOutcome: Sendable, Equatable {
 /// that are possibly open, with the state of each one
 /// (``RoutedSessionActor/askedQuestions``).
 ///
-/// The session needs these facts for two reasons:
+/// The session needs these facts for three reasons:
 ///
 /// - A run that waits only for the user is no work only after its question
 ///   is on the output (``SessionEvent/elicitationRequested(_:)``). So the
@@ -61,10 +61,26 @@ enum QuestionAnswerOutcome: Sendable, Equatable {
 /// - Before the run plane gets an answer, the session must know whether the
 ///   answer resumes the run: a URL-mode accept does not resume it, and only
 ///   the completion of an accepted URL-mode question resumes it.
+/// - The session sends ``SessionEvent/elicitationEnded(_:)`` for a question
+///   that ended with no answer of the client (task ^fqb5rjr). The record
+///   knows which questions an answer of the client resumed, and which
+///   answers of the client are on their way to the run plane.
 ///
 /// A question leaves the record when an answer resumes its run. A question
-/// that a sweep rejected stays, so the record is bounded by the count of
-/// the questions that the runs of the session asked.
+/// that ended with no answer of the client stays, marked as ended, so a later
+/// answer to it goes no further and it gets no second end. Thus the record
+/// is bounded by the count of the questions that the runs of the session
+/// asked.
+///
+/// An answer of the client and the end of a question by the run plane can
+/// come at the same time. The run plane decides which one comes first, and
+/// the session learns it only when the answer returns from the run plane.
+/// Thus an end check skips a question that has an answer on its way, and it
+/// keeps the origin of its end (``Question/deferredEnd``). When the answer
+/// returns and the run plane had no question for it, the question ended with
+/// no answer of the client, and ``noteAnswered(_:outcome:)`` gives that
+/// origin. When the answer resumed the run, the client answered, and no end
+/// comes.
 struct AskedQuestions: Sendable {
     /// The state of one recorded question.
     enum State: Sendable, Equatable {
@@ -77,16 +93,47 @@ struct AskedQuestions: Sendable {
         /// A URL-mode question that the user accepted. Its run resumes at
         /// the completion of the question.
         case acceptedURL
+
+        /// The question ended with no answer of the client, and the session
+        /// sent its end. An answer to it goes no further.
+        case ended
     }
 
-    /// The state of each recorded question, by its id.
-    private var states: [ULID: State] = [:]
+    /// One recorded question.
+    private struct Question: Sendable {
+        /// The state of the question.
+        var state: State
+
+        /// The completion token of the run that asks the question. For a
+        /// question of a mounted call, the token of the mounting run.
+        let runToken: String
+
+        /// The count of the answers of the client that are on their way to
+        /// the run plane (``beginAnswer(to:)``).
+        var answersOnTheirWay = 0
+
+        /// The origin of the end of the question, when an end check found
+        /// the question gone from the run plane while an answer was on its
+        /// way. `nil` when no end check found that.
+        var deferredEnd: Origin?
+
+        /// Whether the question is still open for the session: it did not
+        /// end with no answer of the client.
+        var isOpen: Bool {
+            state != .ended
+        }
+    }
+
+    /// Each recorded question, by its id.
+    private var questions: [ULID: Question] = [:]
 
     /// Records the question of `request`.
     ///
-    /// - Parameter request: The question that a run asked.
-    mutating func noteAsked(_ request: ElicitationRequest) {
-        states[request.elicitationId] = request.mode == .url ? .url : .form
+    /// - Parameters:
+    ///   - request: The question that a run asked.
+    ///   - runToken: The completion token of the run that asks it.
+    mutating func noteAsked(_ request: ElicitationRequest, runToken: String) {
+        questions[request.elicitationId] = Question(state: request.mode == .url ? .url : .form, runToken: runToken)
     }
 
     /// Whether the journal recorded the question `id`.
@@ -94,7 +141,30 @@ struct AskedQuestions: Sendable {
     /// - Parameter id: The id of a question.
     /// - Returns: `true` when the question is in the record.
     func wasAsked(_ id: ULID) -> Bool {
-        states[id] != nil
+        questions[id] != nil
+    }
+
+    /// Whether the record has an open question of the run of `runToken`.
+    /// An end check reads the run plane only when this is `true`.
+    ///
+    /// - Parameter runToken: The completion token of a run.
+    /// - Returns: `true` when a question of that run did not end yet.
+    func hasOpenQuestions(ofRun runToken: String) -> Bool {
+        questions.values.contains { $0.isOpen && $0.runToken == runToken }
+    }
+
+    /// Records that an answer of the client to the question `id` goes to the
+    /// run plane now.
+    ///
+    /// - Parameter id: The id of the question.
+    /// - Returns: `false` when the question ended with no answer of the
+    ///   client: the answer must not go to the run plane. `true` otherwise,
+    ///   also for a question that is not in the record.
+    mutating func beginAnswer(to id: ULID) -> Bool {
+        guard let question = questions[id] else { return true }
+        guard question.isOpen else { return false }
+        questions[id]?.answersOnTheirWay += 1
+        return true
     }
 
     /// Records what the run plane did with an answer to the question `id`.
@@ -103,15 +173,57 @@ struct AskedQuestions: Sendable {
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - outcome: What the run plane did with the answer.
-    mutating func noteAnswered(_ id: ULID, outcome: QuestionAnswerOutcome) {
+    /// - Returns: The origin of the end of the question, when an end check
+    ///   found the question gone while this answer was on its way, the
+    ///   answer did not resume the run, and no other answer is on its way.
+    ///   The caller sends the end with this origin. `nil` otherwise.
+    mutating func noteAnswered(_ id: ULID, outcome: QuestionAnswerOutcome) -> Origin? {
+        guard var question = questions[id] else { return nil }
+        question.answersOnTheirWay = max(question.answersOnTheirWay - 1, 0)
         switch outcome {
         case .resumedRun:
-            states[id] = nil
+            questions[id] = nil
+            return nil
         case .acceptedAwaitingCompletion:
-            states[id] = .acceptedURL
+            question.state = .acceptedURL
         case .noQuestion:
             break
         }
+        let end = question.answersOnTheirWay == 0 ? question.deferredEnd : nil
+        if end != nil {
+            question.state = .ended
+            question.deferredEnd = nil
+        }
+        questions[id] = question
+        return end
+    }
+
+    /// Ends each open question of the run of `runToken` that is not in
+    /// `openIds`, or of each run when `runToken` is `nil`. A question with an
+    /// answer on its way does not end now: it keeps `origin` as the origin of
+    /// its end (``noteAnswered(_:outcome:)``).
+    ///
+    /// - Parameters:
+    ///   - runToken: The completion token of the run, or `nil` for each run.
+    ///   - openIds: The ids of the questions that are still open on the run
+    ///     plane.
+    ///   - origin: The origin of the end of each question.
+    /// - Returns: The ids of the questions that ended now, in id order. The
+    ///   caller sends one end for each.
+    mutating func endQuestions(ofRun runToken: String?, notIn openIds: Set<ULID>, at origin: Origin) -> [ULID] {
+        let candidates = questions.filter { id, question in
+            question.isOpen && !openIds.contains(id) && (runToken == nil || question.runToken == runToken)
+        }
+        var ended: [ULID] = []
+        for (id, question) in candidates.sorted(by: { $0.key < $1.key }) {
+            if question.answersOnTheirWay > 0 {
+                questions[id]?.deferredEnd = origin
+            } else {
+                questions[id]?.state = .ended
+                ended.append(id)
+            }
+        }
+        return ended
     }
 
     /// Whether `answer` to the open question `id` resumes the run that asks
@@ -123,9 +235,10 @@ struct AskedQuestions: Sendable {
     /// - Returns: `true` for each answer to a form-mode question, also to a
     ///   question that is not in the record yet, for a decline or a cancel
     ///   of a URL-mode question that the user did not accept, and for the
-    ///   completion of an accepted URL-mode question.
+    ///   completion of an accepted URL-mode question. `false` for a question
+    ///   that ended.
     func resumesRun(answering id: ULID, with answer: QuestionAnswer) -> Bool {
-        let state = states[id] ?? .form
+        let state = questions[id]?.state ?? .form
         switch answer {
         case .response(let response):
             return state == .form || (state == .url && response.action != .accept)
@@ -226,12 +339,19 @@ extension RoutedSessionActor {
     /// not resume, for example because another answer came first, the work
     /// changed back (``workDidChange()``).
     ///
+    /// When an end check found the question gone while the answer was on its
+    /// way, and the answer did not resume the run, the run plane ended the
+    /// question first: the session sends its end now
+    /// (``AskedQuestions/noteAnswered(_:outcome:)``).
+    ///
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - outcome: What the run plane did with the answer.
     ///   - startedWork: What ``noteWorkStart(answering:with:)`` returned.
     func noteAnswer(to id: ULID, outcome: QuestionAnswerOutcome, startedWork: Bool) async {
-        askedQuestions.noteAnswered(id, outcome: outcome)
+        if let endOrigin = askedQuestions.noteAnswered(id, outcome: outcome) {
+            emitQuestionEnds([id], at: endOrigin)
+        }
         guard startedWork, outcome != .resumedRun else { return }
         await workDidChange()
     }
@@ -245,7 +365,7 @@ extension RoutedSessionActor {
     /// - Parameter event: The `.elicitation` event that the journal recorded.
     func noteQuestionAsked(_ event: OperationEvent) async {
         if let request = event.elicitation {
-            askedQuestions.noteAsked(request)
+            askedQuestions.noteAsked(request, runToken: event.correlationID)
         }
         await workDidChange()
     }

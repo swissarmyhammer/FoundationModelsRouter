@@ -712,7 +712,10 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// A form-mode `accept` resumes the run with its `content`; `decline` and
     /// `cancel` resume with those actions. A URL-mode `accept` keeps the run
     /// running until ``complete(elicitationId:)`` arrives. Unknown, malformed,
-    /// and already-answered ids are safe no-ops.
+    /// and already-answered ids are safe no-ops. So is the id of a question
+    /// that ended with no answer of the client
+    /// (``SessionEvent/elicitationEnded(_:)``): the answer goes no further,
+    /// and the result is ``ElicitationAnswerDelivery/noPendingElicitation``.
     ///
     /// When the answer reached the waiting run
     /// (``ElicitationAnswerDelivery/delivered``), it also goes to the session
@@ -726,7 +729,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
 
     /// Signals that an accepted URL-mode elicitation's out-of-band flow
     /// finished, and resumes the run. Unknown, malformed, not-yet-accepted, and
-    /// already-completed ids are safe no-ops.
+    /// already-completed ids are safe no-ops. So is the id of a question that
+    /// ended with no answer of the client (``SessionEvent/elicitationEnded(_:)``).
     @discardableResult
     func complete(elicitationId: String) async -> ElicitationCompletionDelivery
 }

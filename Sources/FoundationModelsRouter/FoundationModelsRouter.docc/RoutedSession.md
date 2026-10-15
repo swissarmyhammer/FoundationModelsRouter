@@ -268,8 +268,14 @@ running compaction: that compaction ends first, then ``cancelAll()`` runs.
 
 ### Elicitation answers
 
+A question of a run that ends with no answer of the client (a cancel of the
+run, ``cancelAll()`` or ``close()``) gets one ``SessionEvent/elicitationEnded(_:)``
+with the id of its ``SessionEvent/elicitationRequested(_:)``. A question that
+the client answered gets none.
+
 - ``respond(elicitationId:response:)``
 - ``complete(elicitationId:)``
+- ``ElicitationEnd``
 
 ### Context and compaction
 

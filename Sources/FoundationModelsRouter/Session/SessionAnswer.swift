@@ -181,7 +181,7 @@ struct SessionAnswerReducer {
             .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
             .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay, .elicitationRequested,
             .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone, .workStarted,
-            .workEnded:
+            .workEnded, .elicitationEnded:
             // Deliberately not carried by the answer. A mail delivery pause
             // comes when no answer runs, so no answer can carry it. The
             // delivery of a mail and the terminal events of other mail are
@@ -197,7 +197,8 @@ struct SessionAnswerReducer {
             // ids. The priming report, the stall report, a background run's
             // settlement, its messages and its progress, a call's
             // attachments, the display events of a tool, a pending
-            // elicitation, and one
+            // elicitation, the end of an elicitation with no answer of the
+            // client, and one
             // generation call's usage (``SessionEvent/submissionEnded(_:)``
             // sums them) are live-driver concerns. The `observing` callback of
             // ``RoutedSession/respond(to:maxTokens:observing:)`` still

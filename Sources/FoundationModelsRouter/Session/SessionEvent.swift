@@ -386,6 +386,34 @@ public enum SessionEvent: Sendable, Equatable {
     /// ``RoutedSession/streamSessionEvents()`` carries it. The session sends
     /// one for each change from work to no work.
     case workEnded
+
+    /// A question of a run that ``elicitationRequested(_:)`` announced ended
+    /// with no answer of the client. Its ``ElicitationEnd/elicitationId`` is
+    /// the `elicitationId` of that ``elicitationRequested(_:)``, and its
+    /// ``ElicitationEnd/response`` is the cancel or decline that the run got,
+    /// with the reason. The session sends one for each such question, and
+    /// none for a question that the client answered
+    /// (``RoutedSession/respond(elicitationId:response:)``, or
+    /// ``RoutedSession/complete(elicitationId:)`` of an accepted URL-mode
+    /// question).
+    ///
+    /// The origin (``SessionOutput/origin``) and the place of the event
+    /// follow the work that ended the question:
+    ///
+    /// - A cancel of the run (`ToolContext.cancel(completionToken:)`):
+    ///   ``Origin/mail(_:)`` with the ``MailID`` of the run mail that holds
+    ///   the terminal of the run, as the ``runSettled(_:)`` of the run. The
+    ///   event comes before that ``runSettled(_:)``, thus before the terminal
+    ///   event of that mail.
+    /// - ``RoutedSession/cancelAll()``: ``Origin/signal(_:)`` of the
+    ///   cancel-all signal. The event comes before the
+    ///   ``signalDone(_:)`` of that signal.
+    /// - ``RoutedSession/close()``: ``Origin/system``. The event comes
+    ///   before the end of ``RoutedSession/streamSessionEvents()``.
+    ///
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of
+    /// the answer when the question ends inside an answer.
+    case elicitationEnded(ElicitationEnd)
 }
 
 /// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)`` names.

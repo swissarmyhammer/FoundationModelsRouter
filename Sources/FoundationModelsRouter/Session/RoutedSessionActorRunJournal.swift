@@ -39,6 +39,11 @@ extension RoutedSessionActor: OperationEventJournal {
     /// session after its live event (``noteQuestionAsked(_:)``): the run can
     /// now wait only for the user.
     ///
+    /// Before the live event of a terminal (`.completed`), each open question
+    /// of the run that left the run plane with no answer of the client gets
+    /// its ``SessionEvent/elicitationEnded(_:)``, with the same origin
+    /// (``endQuestionsThatLeftTheRunPlane(ofRunOf:origin:)``).
+    ///
     /// - Parameters:
     ///   - event: The event the outbox has just accepted.
     ///   - origin: The run mail of `event` and the work that posted it.
@@ -52,6 +57,9 @@ extension RoutedSessionActor: OperationEventJournal {
             if event.kind == .progress {
                 openProgressRow = OpenProgressRow(after: event)
             }
+        }
+        if event.kind == .completed {
+            await endQuestionsThatLeftTheRunPlane(ofRunOf: event, origin: origin)
         }
         deliverLive(Self.liveEvent(for: event), origin: origin)
         if event.kind == .elicitation {
