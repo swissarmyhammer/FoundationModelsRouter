@@ -111,8 +111,15 @@ comments:
     - both reuse findings flipped to [x]. Not committed, not pushed. Card stays in doing.
     - next: /review.
   timestamp: 2026-10-15T23:40:58.371013+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m50z9sdb8b4k73d6jhryb1cg
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 1b6340e4, backend local). The engine reviewed 3 files. Counts: 0 findings, 0 confirmed, 1 refuted. The 2 `reuse/reuse` items of the 2026-10-15 18:26 review have fixes. `hasAnswerOnItsWay(toAnyOf:)`, `hasCompletionOnItsWay(toAnyOf:)` and `hasDeferredEnd(of:)` all call the private helper `hasQuestion(among:where:)`. `recordWithOneQuestion(_:)` takes the request as a parameter with a form-mode default, and `recordWithOneURLQuestion` is removed. All earlier finding items are checked.
+    - next: The card is in done. The orchestrator does the consumer step and the push item.
+  timestamp: 2026-10-15T23:45:31.051408+00:00
+position_column: done
+position_ordinal: ffffffec80
 title: Session event elicitationCompleted when the run plane completes an accepted URL flow
 ---
 Do not start this task until the Extras card is done that posts a run plane event when an accepted URL flow completes.
