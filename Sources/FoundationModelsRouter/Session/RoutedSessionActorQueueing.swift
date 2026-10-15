@@ -151,6 +151,14 @@ extension RoutedSessionActor {
     /// mail, as if the user made one more post (`mailbox.md`, section 5). It
     /// is user-type mail, so it starts an answer.
     ///
+    /// The mail carries the answer that the run gets
+    /// (``AskedQuestions/mailedResponse(answering:with:)``). The run plane
+    /// gets the answer of the user unchanged, and ``ToolContext/elicit(_:)``
+    /// declines an accepted form answer that does not agree with the
+    /// requested schema. For such an answer the mail carries the same
+    /// decline, not the content. Thus the model and the run see the same
+    /// answer.
+    ///
     /// An answer that resumes a run that waits only for the user starts work
     /// of the session. The start is noted before the run plane gets the
     /// answer (``noteWorkStart(answering:with:)``), so it comes before each
@@ -163,12 +171,26 @@ extension RoutedSessionActor {
             toElicitation: elicitationId, .response(response), orReturn: .noPendingElicitation,
             outcome: QuestionAnswerOutcome.init
         ) { id in
+            // Read before the run plane gets the answer: a question whose
+            // run resumes leaves the record after this call.
+            let mailed = await mailedResponse(answering: id, with: response)
             let delivery = await runPlane.respond(elicitationId: id, response)
             if delivery == .delivered {
-                postElicitationAnswer(id: id, response: response)
+                postElicitationAnswer(id: id, response: mailed)
             }
             return delivery
         }
+    }
+
+    /// The answer to the question `id` that the session mails to the model
+    /// (``AskedQuestions/mailedResponse(answering:with:)``).
+    ///
+    /// - Parameters:
+    ///   - id: The id of the question.
+    ///   - response: The answer of the user.
+    /// - Returns: `response`, or the decline that the run gets.
+    private func mailedResponse(answering id: ULID, with response: ElicitationResponse) -> ElicitationResponse {
+        askedQuestions.mailedResponse(answering: id, with: response)
     }
 
     /// Puts the answer to the elicitation `id` in the queue as

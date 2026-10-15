@@ -721,7 +721,12 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// (``ElicitationAnswerDelivery/delivered``), it also goes to the session
     /// as ``MailBody/elicitationAnswer(id:response:)`` mail, as if the user
     /// made one more post. That mail starts an answer, so the model also
-    /// sees the answer.
+    /// sees the answer. The mail carries the answer that the run gets: for
+    /// an accepted form answer whose content does not agree with the
+    /// requested schema (``ElicitationRequestedSchema/validationFailure(of:)``),
+    /// the run and the mail both get a decline whose reason is
+    /// ``ElicitationRequestedSchema/invalidAnswerReasonPrefix`` followed by
+    /// the failure.
     ///
     /// - Parameter elicitationId: The pending elicitation's id, the string form of ``ElicitationRequest/elicitationId``.
     @discardableResult

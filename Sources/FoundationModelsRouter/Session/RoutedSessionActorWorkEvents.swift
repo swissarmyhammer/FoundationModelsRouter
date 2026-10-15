@@ -143,6 +143,10 @@ struct AskedQuestions: Sendable {
         /// question of a mounted call, the token of the mounting run.
         let runToken: String
 
+        /// The requested schema of a form-mode question. `nil` for a
+        /// URL-mode question.
+        let requestedSchema: ElicitationRequestedSchema?
+
         /// The count of the answers of the client that are on their way to
         /// the run plane (``beginAnswer(to:)``).
         var answersOnTheirWay = 0
@@ -163,13 +167,41 @@ struct AskedQuestions: Sendable {
     /// Each recorded question, by its id.
     private var questions: [ULID: Question] = [:]
 
-    /// Records the question of `request`.
+    /// Records the question of `request`, with the requested schema of a
+    /// form-mode question.
     ///
     /// - Parameters:
     ///   - request: The question that a run asked.
     ///   - runToken: The completion token of the run that asks it.
     mutating func noteAsked(_ request: ElicitationRequest, runToken: String) {
-        questions[request.elicitationId] = Question(state: request.mode == .url ? .url : .form, runToken: runToken)
+        let isForm = request.mode == .form
+        questions[request.elicitationId] = Question(
+            state: isForm ? .form : .url, runToken: runToken, requestedSchema: isForm ? request.requestedSchema : nil)
+    }
+
+    /// The answer to the question `id` that the session mails to the model
+    /// (``MailBody/elicitationAnswer(id:response:)``). It is the answer that
+    /// the run gets from ``ToolContext/elicit(_:)``.
+    ///
+    /// An accepted answer to a form-mode question whose content does not
+    /// agree with the requested schema
+    /// (``ElicitationRequestedSchema/validationFailure(of:)``) becomes a
+    /// decline. Its reason is
+    /// ``ElicitationRequestedSchema/invalidAnswerReasonPrefix`` followed by
+    /// the failure. Each other answer does not change. An answer to a
+    /// question with no recorded schema, for example a question that a run
+    /// asked before a restore, does not change.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the question.
+    ///   - response: The answer of the user.
+    /// - Returns: `response`, or the decline that the run gets.
+    func mailedResponse(answering id: ULID, with response: ElicitationResponse) -> ElicitationResponse {
+        guard response.action == .accept,
+            let schema = questions[id]?.requestedSchema,
+            let failure = schema.validationFailure(of: response.content)
+        else { return response }
+        return .decline(reason: ElicitationRequestedSchema.invalidAnswerReasonPrefix + failure)
     }
 
     /// Whether the journal recorded the question `id`.
