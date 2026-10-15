@@ -71,7 +71,7 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// downloads too) — the same manual-harness technique
 /// ``SessionTreeRestorationIntegrationTests`` uses — so this suite reaches the
 /// real public ``RoutedSession/compact(prompt:budget:)`` /
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
 /// surface without paying for two extra downloads.
 ///
 /// Every fixture dimension this loop drives — the working context, the reply

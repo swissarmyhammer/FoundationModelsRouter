@@ -3,7 +3,7 @@ import FoundationModels
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -88,7 +88,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionSidecar`` against this call's owning profile, and a mismatch
     /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -126,6 +126,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     mark no call. The recording does not hold the check, because it
     ///     is a closure, so a host gives it again here, as it gives the
     ///     tools. See ``SessionConfiguration/isNoOpToolCall``.
+    ///   - userPresence: The user presence of the restored session, or `nil`
+    ///     (the default) to keep the recorded value. A sidecar with no
+    ///     recorded value restores ``UserPresence/interactive``. The user
+    ///     presence belongs to the current client, not to the recording. A
+    ///     host that resumes an interactive session with no user gives
+    ///     ``UserPresence/headless`` here, and the reverse. The supplied value
+    ///     also replaces the recorded value on each recorded fork. The
+    ///     recorded sidecar on disk does not change. A fork that the restored
+    ///     session makes later records the supplied value. See
+    ///     ``SessionConfiguration/userPresence``.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -138,11 +148,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         instructions: String? = nil,
         tools: [any Tool] = [],
         toolOutputProtection: ToolOutputProtection? = nil,
-        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
+        userPresence: UserPresence? = nil
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
-            toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall)
+            toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
+            userPresence: userPresence)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

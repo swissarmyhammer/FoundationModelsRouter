@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task zcxnbst: restoring a whole session tree from disk by root
 /// session id —
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
 /// — the final piece of plan.md's "Transcript fidelity" section,
 /// "Reconstruction end-to-end".
 ///
@@ -540,7 +540,7 @@ struct SessionTreeRestorationTests {
     }
 
     /// Documents and locks in a known, deliberate restoration limitation (see
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``'s
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``'s
     /// doc comment, "Known limitation: the `.ebnf` grammar case"):
     /// `SessionSidecar.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case
@@ -1048,6 +1048,157 @@ struct SessionTreeRestorationTests {
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.runPlane.userPresence == .interactive)
+    }
+
+    // MARK: - User presence given to a restore (task ^58gn0mt)
+
+    /// The user presence of the run plane of a restored root and of its
+    /// restored fork.
+    private struct RestoredUserPresences: Equatable {
+        /// The user presence of the restored root.
+        let root: UserPresence
+
+        /// The user presence of the restored fork of the root.
+        let fork: UserPresence
+    }
+
+    /// Makes a root session with `recorded` as its user presence, forks it,
+    /// and restores the tree on a second router with the same id. The
+    /// restore gives `override` as its user presence.
+    ///
+    /// - Parameters:
+    ///   - recorded: The user presence that the sidecars record.
+    ///   - override: The user presence that the restore gets, or `nil`.
+    /// - Returns: The user presence of the restored root and of the restored
+    ///   fork.
+    /// - Throws: What the resolve, the answer, the fork or the restore throws,
+    ///   or a failed `#require` when a session is not a ``RoutedSessionActor``.
+    @MainActor
+    private static func restoredUserPresences(
+        recorded: UserPresence, override: UserPresence?
+    ) async throws -> RestoredUserPresences {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession(configuration: SessionConfiguration(userPresence: recorded))
+        _ = try await root.respond(to: "hello")
+        let fork = try await root.fork(workingDirectory: nil)
+
+        let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: override)
+
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
+        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
+        return RestoredUserPresences(
+            root: restoredRoot.runPlane.userPresence, fork: restoredFork.runPlane.userPresence)
+    }
+
+    /// The production change that makes this test fail: a restore that does
+    /// not give its user presence to the run plane of each node. The restored
+    /// sessions are then interactive, as the sidecars record.
+    @Test("a restore with a headless user presence makes a recorded interactive root and fork headless")
+    @MainActor
+    func restoreWithHeadlessOverridesRecordedInteractive() async throws {
+        let presences = try await Self.restoredUserPresences(recorded: .interactive, override: .headless)
+
+        #expect(presences == RestoredUserPresences(root: .headless, fork: .headless))
+    }
+
+    /// The production change that makes this test fail: a restore that does
+    /// not give its user presence to the run plane of each node. The restored
+    /// sessions are then headless, as the sidecars record.
+    @Test("a restore with an interactive user presence makes a recorded headless root and fork interactive")
+    @MainActor
+    func restoreWithInteractiveOverridesRecordedHeadless() async throws {
+        let presences = try await Self.restoredUserPresences(recorded: .headless, override: .interactive)
+
+        #expect(presences == RestoredUserPresences(root: .interactive, fork: .interactive))
+    }
+
+    /// The production change that makes this test fail: a restore that reads
+    /// `nil` as interactive. The recorded headless sessions then restore
+    /// interactive.
+    @Test("a restore with no user presence keeps the recorded user presence of the root and the fork")
+    @MainActor
+    func restoreWithNoUserPresenceKeepsRecordedValue() async throws {
+        let presences = try await Self.restoredUserPresences(recorded: .headless, override: nil)
+
+        #expect(presences == RestoredUserPresences(root: .headless, fork: .headless))
+    }
+
+    /// The production change that makes this test fail: a public restore that
+    /// does not send its user presence to the tree restore.
+    @Test("restoreSession gives its user presence to the restored session")
+    @MainActor
+    func restoreSessionGivesItsUserPresence() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSession(id: root.id, userPresence: .headless)
+
+        let restoredRoot = try #require(restored.session as? RoutedSessionActor)
+        #expect(restoredRoot.runPlane.userPresence == .headless)
+    }
+
+    /// A restored session never writes its sidecar again, so a later restore
+    /// with no user presence gives the root the value that its sidecar
+    /// recorded first. A fork that the restored root makes writes a new
+    /// sidecar with the user presence of the run plane, which is the
+    /// override.
+    ///
+    /// The production change that makes this test fail: a restore that does
+    /// not give its user presence to the run plane, or a fork that does not
+    /// record the user presence of the run plane.
+    @Test("a fork of a session restored with a user presence records that user presence")
+    @MainActor
+    func forkOfOverriddenRestoreRecordsTheOverride() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let overridden = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: .headless)
+        let laterFork = try await overridden.root.fork(workingDirectory: nil)
+
+        let router3 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile3 = try await router3.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restoredAgain = try await profile3.standard.restoreSessionTree(root: root.id)
+
+        let tree = try TranscriptTree.load(
+            under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
+        let forkSidecar = try #require(tree.session(laterFork.id)?.sidecar)
+        #expect(forkSidecar.configuration?.restoredUserPresence == .headless)
+        let rootAgain = try #require(restoredAgain.root as? RoutedSessionActor)
+        #expect(rootAgain.runPlane.userPresence == .interactive)
+        let forkAgain = try #require(restoredAgain.session(laterFork.id) as? RoutedSessionActor)
+        #expect(forkAgain.runPlane.userPresence == .headless)
     }
 
     /// The key of the user presence in the configuration envelope of a

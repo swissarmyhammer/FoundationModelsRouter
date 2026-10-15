@@ -2,8 +2,8 @@ import Foundation
 import FoundationModels
 
 /// A failure to restore recorded sessions from disk, through
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -82,7 +82,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 ///
 /// This type stays internal. A caller resumes a session by an id it holds,
 /// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` is the
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` is the
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
@@ -207,6 +207,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``SessionConfiguration/defaultIsNoOpToolCall`` (the default) to
     ///     mark no call. No recording holds it, because it is a closure; the
     ///     host gives it here, as it gives the tools.
+    ///   - userPresence: The user presence of every restored node, or `nil`
+    ///     (the default) to give each node its recorded value. A node with
+    ///     no recorded value restores ``UserPresence/interactive``. The user
+    ///     presence belongs to the current client, not to the recording, and
+    ///     one client owns the whole restored tree. Thus a supplied value
+    ///     replaces the recorded value on the root and on each recorded
+    ///     fork. The recorded sidecars on disk do not change. A fork that a
+    ///     restored node makes later records the supplied value.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -218,7 +226,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         instructions: String? = nil,
         tools: [any Tool] = [],
         toolOutputProtection: ToolOutputProtection? = nil,
-        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
+        userPresence: UserPresence? = nil
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -376,17 +385,20 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // site is fork → mount → cap (task ^k4nygqa; see
             // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
-            // The run plane gets the recorded user presence (task ^0hps8jg),
-            // so a restored headless session stays headless. A sidecar with
-            // no envelope, with no presence, or with a presence that this
-            // version does not know restores interactive, the default.
+            // The run plane gets the user presence that this call supplies
+            // (task ^58gn0mt), on each node, because one client owns the
+            // whole restored tree. With no supplied value, the run plane
+            // gets the recorded user presence (task ^0hps8jg), so a restored
+            // headless session stays headless. A sidecar with no envelope,
+            // with no presence, or with a presence that this version does
+            // not know restores interactive, the default.
             let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
                 tokenCounter: routedLLM.container.tokenCounter,
                 inlineSettleGrace: inlineSettleGrace,
-                userPresence: configuration?.restoredUserPresence ?? .interactive
+                userPresence: userPresence ?? configuration?.restoredUserPresence ?? .interactive
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
@@ -541,7 +553,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
         /// releases those forks anyway. A live fork taken later from the
         /// restored root does inherit the override, because it inherits both
         /// the backend transcript and ``RoutedSessionActor/instructions``.
