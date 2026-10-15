@@ -49,6 +49,36 @@ enum QuestionAnswerOutcome: Sendable, Equatable {
     case noQuestion
 }
 
+/// How the end of one question (``SessionEvent/elicitationEnded(_:)``) goes
+/// to the output. Each place that ends a question gives its own delivery,
+/// and an end that waits for an answer on its way keeps that delivery
+/// (``AskedQuestions``), so a late end goes out the same way as an end that
+/// goes out at once.
+enum QuestionEndDelivery: Sendable, Equatable {
+    /// As a live event of the terminal of the run
+    /// (``RoutedSessionActor/deliverLive(_:origin:)``): the output drops it
+    /// when it drops the poster, and a running answer gets it in its sink.
+    case runEvent(RunEventOrigin)
+
+    /// To the session-scoped output, with this origin
+    /// (``RoutedSessionActor/emitQuestionEnds(_:at:)``): the origin of the
+    /// cancel-all signal, or ``Origin/system`` for ``RoutedSession/close()``.
+    case session(Origin)
+}
+
+/// The result of one end check (``AskedQuestions/endQuestions(ofRun:notIn:via:)``).
+struct QuestionEndCheck: Sendable, Equatable {
+    /// The ids of the questions that ended now, in id order. The caller
+    /// sends one end for each.
+    var ended: [ULID] = []
+
+    /// The ids of the questions whose end waits for an answer on its way, in
+    /// id order. The caller waits until those answers returned
+    /// (``AskedQuestions/hasAnswerOnItsWay(toAnyOf:)``) before the terminal
+    /// event that the ends must come before.
+    var deferred: [ULID] = []
+}
+
 /// The questions of the runs of one session that the journal recorded and
 /// that are possibly open, with the state of each one
 /// (``RoutedSessionActor/askedQuestions``).
@@ -75,12 +105,17 @@ enum QuestionAnswerOutcome: Sendable, Equatable {
 /// An answer of the client and the end of a question by the run plane can
 /// come at the same time. The run plane decides which one comes first, and
 /// the session learns it only when the answer returns from the run plane.
-/// Thus an end check skips a question that has an answer on its way, and it
-/// keeps the origin of its end (``Question/deferredEnd``). When the answer
-/// returns and the run plane had no question for it, the question ended with
-/// no answer of the client, and ``noteAnswered(_:outcome:)`` gives that
-/// origin. When the answer resumed the run, the client answered, and no end
-/// comes.
+/// Thus an end check does not end a question that has an answer on its way:
+/// it keeps the delivery of its end (``Question/deferredEnd``), and the
+/// question is no longer open. A later end check and a later answer do not
+/// touch it, so the first end check owns its one end. When the answers
+/// returned and the run plane had no question for them, the question ended
+/// with no answer of the client, and ``noteAnswered(_:outcome:)`` gives that
+/// delivery. When an answer resumed the run, the client answered, and no end
+/// comes. The end check waits until the answers returned
+/// (``hasAnswerOnItsWay(toAnyOf:)``) before the terminal event that the end
+/// must come before. An answer returns with no wait for a terminal event, so
+/// this wait ends.
 struct AskedQuestions: Sendable {
     /// The state of one recorded question.
     enum State: Sendable, Equatable {
@@ -112,15 +147,16 @@ struct AskedQuestions: Sendable {
         /// the run plane (``beginAnswer(to:)``).
         var answersOnTheirWay = 0
 
-        /// The origin of the end of the question, when an end check found
+        /// The delivery of the end of the question, when an end check found
         /// the question gone from the run plane while an answer was on its
         /// way. `nil` when no end check found that.
-        var deferredEnd: Origin?
+        var deferredEnd: QuestionEndDelivery?
 
         /// Whether the question is still open for the session: it did not
-        /// end with no answer of the client.
+        /// end with no answer of the client, and its end does not wait for
+        /// an answer on its way.
         var isOpen: Bool {
-            state != .ended
+            state != .ended && deferredEnd == nil
         }
     }
 
@@ -144,13 +180,36 @@ struct AskedQuestions: Sendable {
         questions[id] != nil
     }
 
+    /// Whether an end check found the question `id` gone while an answer was
+    /// on its way, and its end now waits for that answer. Only the tests
+    /// read it, after a change of ``RoutedSessionActor/stateChanges``.
+    ///
+    /// - Parameter id: The id of a question.
+    /// - Returns: `true` when the end of the question waits for an answer.
+    func hasDeferredEnd(of id: ULID) -> Bool {
+        questions[id]?.deferredEnd != nil
+    }
+
     /// Whether the record has an open question of the run of `runToken`.
     /// An end check reads the run plane only when this is `true`.
     ///
     /// - Parameter runToken: The completion token of a run.
-    /// - Returns: `true` when a question of that run did not end yet.
+    /// - Returns: `true` when a question of that run did not end yet, and
+    ///   its end does not wait for an answer on its way.
     func hasOpenQuestions(ofRun runToken: String) -> Bool {
         questions.values.contains { $0.isOpen && $0.runToken == runToken }
+    }
+
+    /// Whether an answer of the client to one of the questions `ids` is still
+    /// on its way to the run plane. An end check that deferred the ends of
+    /// `ids` waits until this is `false`: then each of those ends went out,
+    /// or an answer resumed the run and no end comes.
+    ///
+    /// - Parameter ids: The ids of questions.
+    /// - Returns: `true` when a question of `ids` that is still in the record
+    ///   has an answer on its way.
+    func hasAnswerOnItsWay(toAnyOf ids: [ULID]) -> Bool {
+        ids.contains { (questions[$0]?.answersOnTheirWay ?? 0) > 0 }
     }
 
     /// Records that an answer of the client to the question `id` goes to the
@@ -158,8 +217,9 @@ struct AskedQuestions: Sendable {
     ///
     /// - Parameter id: The id of the question.
     /// - Returns: `false` when the question ended with no answer of the
-    ///   client: the answer must not go to the run plane. `true` otherwise,
-    ///   also for a question that is not in the record.
+    ///   client, or its end waits for an answer that is already on its way:
+    ///   the answer must not go to the run plane. `true` otherwise, also for
+    ///   a question that is not in the record.
     mutating func beginAnswer(to id: ULID) -> Bool {
         guard let question = questions[id] else { return true }
         guard question.isOpen else { return false }
@@ -173,11 +233,11 @@ struct AskedQuestions: Sendable {
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - outcome: What the run plane did with the answer.
-    /// - Returns: The origin of the end of the question, when an end check
+    /// - Returns: The delivery of the end of the question, when an end check
     ///   found the question gone while this answer was on its way, the
     ///   answer did not resume the run, and no other answer is on its way.
-    ///   The caller sends the end with this origin. `nil` otherwise.
-    mutating func noteAnswered(_ id: ULID, outcome: QuestionAnswerOutcome) -> Origin? {
+    ///   The caller sends the end through this delivery. `nil` otherwise.
+    mutating func noteAnswered(_ id: ULID, outcome: QuestionAnswerOutcome) -> QuestionEndDelivery? {
         guard var question = questions[id] else { return nil }
         question.answersOnTheirWay = max(question.answersOnTheirWay - 1, 0)
         switch outcome {
@@ -200,30 +260,33 @@ struct AskedQuestions: Sendable {
 
     /// Ends each open question of the run of `runToken` that is not in
     /// `openIds`, or of each run when `runToken` is `nil`. A question with an
-    /// answer on its way does not end now: it keeps `origin` as the origin of
-    /// its end (``noteAnswered(_:outcome:)``).
+    /// answer on its way does not end now: it keeps `delivery` for its end
+    /// (``noteAnswered(_:outcome:)``), and it is no longer open.
     ///
     /// - Parameters:
     ///   - runToken: The completion token of the run, or `nil` for each run.
     ///   - openIds: The ids of the questions that are still open on the run
     ///     plane.
-    ///   - origin: The origin of the end of each question.
-    /// - Returns: The ids of the questions that ended now, in id order. The
-    ///   caller sends one end for each.
-    mutating func endQuestions(ofRun runToken: String?, notIn openIds: Set<ULID>, at origin: Origin) -> [ULID] {
+    ///   - delivery: How the end of each question goes to the output.
+    /// - Returns: The questions that ended now, and the questions whose end
+    ///   waits for an answer on its way.
+    mutating func endQuestions(
+        ofRun runToken: String?, notIn openIds: Set<ULID>, via delivery: QuestionEndDelivery
+    ) -> QuestionEndCheck {
         let candidates = questions.filter { id, question in
             question.isOpen && !openIds.contains(id) && (runToken == nil || question.runToken == runToken)
         }
-        var ended: [ULID] = []
+        var check = QuestionEndCheck()
         for (id, question) in candidates.sorted(by: { $0.key < $1.key }) {
             if question.answersOnTheirWay > 0 {
-                questions[id]?.deferredEnd = origin
+                questions[id]?.deferredEnd = delivery
+                check.deferred.append(id)
             } else {
                 questions[id]?.state = .ended
-                ended.append(id)
+                check.ended.append(id)
             }
         }
-        return ended
+        return check
     }
 
     /// Whether `answer` to the open question `id` resumes the run that asks
@@ -341,17 +404,21 @@ extension RoutedSessionActor {
     ///
     /// When an end check found the question gone while the answer was on its
     /// way, and the answer did not resume the run, the run plane ended the
-    /// question first: the session sends its end now
-    /// (``AskedQuestions/noteAnswered(_:outcome:)``).
+    /// question first: the session sends its end now, through the delivery
+    /// that the end check kept (``AskedQuestions/noteAnswered(_:outcome:)``,
+    /// ``sendQuestionEnds(_:via:)``). Then it reports the return of the
+    /// answer (``questionAnswerReturns``), so the end check that waits for it
+    /// sends its terminal event after the end.
     ///
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - outcome: What the run plane did with the answer.
     ///   - startedWork: What ``noteWorkStart(answering:with:)`` returned.
     func noteAnswer(to id: ULID, outcome: QuestionAnswerOutcome, startedWork: Bool) async {
-        if let endOrigin = askedQuestions.noteAnswered(id, outcome: outcome) {
-            emitQuestionEnds([id], at: endOrigin)
+        if let delivery = askedQuestions.noteAnswered(id, outcome: outcome) {
+            sendQuestionEnds([id], via: delivery)
         }
+        questionAnswerReturns.signal()
         guard startedWork, outcome != .resumedRun else { return }
         await workDidChange()
     }

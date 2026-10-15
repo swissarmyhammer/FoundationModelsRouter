@@ -18,14 +18,24 @@ import FoundationModelsExtras
 ///
 /// - The terminal of a run, in the journal (``record(event:origin:)``). A
 ///   cancel of the run ends its questions before the run settles, so the
-///   journal records the terminal after the end. The end goes out with the
-///   origin of the terminal, before its ``SessionEvent/runSettled(_:)``.
+///   journal records the terminal after the end. The end goes out as a live
+///   event of the terminal (``QuestionEndDelivery/runEvent(_:)``), before its
+///   ``SessionEvent/runSettled(_:)``.
 /// - ``performCancelAll()``, before the sweep starts. The signal does not
 ///   wait for the sweep, so the session ends each open question itself, with
 ///   the origin of the signal, before the ``SessionEvent/signalDone(_:)``.
 ///   The sweep then gives the run the cancel. A later answer of the client
 ///   to such a question goes no further (``beginAnswer(to:)``).
 /// - ``close()``, before the feeds end, with the origin ``Origin/system``.
+///
+/// An answer of the client can be on its way to the run plane when a place
+/// ends its question. Then the end waits for that answer
+/// (``AskedQuestions``): the answer sends the end when the run plane had no
+/// question for it (``noteAnswer(to:outcome:startedWork:)``), through the
+/// same delivery. The place waits until the answer returned
+/// (``awaitAnswersOnTheirWay(to:)``), and only then sends its terminal event:
+/// the ``SessionEvent/runSettled(_:)`` of the run, the
+/// ``SessionEvent/signalDone(_:)`` of the signal, or the end of the feeds.
 extension RoutedSessionActor {
     /// The response that the run plane gives to each question of a stopped
     /// run, and that the end of the question carries.
@@ -42,7 +52,9 @@ extension RoutedSessionActor {
 
     /// Sends the end of each open question of the run of `terminal` that
     /// left the run plane. The journal calls it for the terminal of a run,
-    /// before the live ``SessionEvent/runSettled(_:)`` of that terminal.
+    /// before the live ``SessionEvent/runSettled(_:)`` of that terminal, and
+    /// this call returns only when each end of the run went out
+    /// (``settle(_:via:)``).
     ///
     /// The run plane is read only when the run has an open question in the
     /// record. The record ends the questions with no suspension point after
@@ -56,19 +68,98 @@ extension RoutedSessionActor {
         let runToken = terminal.correlationID
         guard askedQuestions.hasOpenQuestions(ofRun: runToken) else { return }
         let openIds = Set(await runPlane.openElicitations().map(\.elicitationId))
-        for id in askedQuestions.endQuestions(ofRun: runToken, notIn: openIds, at: origin.output) {
-            deliverLive(Self.endEvent(ofQuestion: id), origin: origin)
-        }
+        let delivery = QuestionEndDelivery.runEvent(origin)
+        await settle(askedQuestions.endQuestions(ofRun: runToken, notIn: openIds, via: delivery), via: delivery)
     }
 
     /// Ends each open question of each run now, and sends its end with the
     /// origin `origin`. ``performCancelAll()`` and ``close()`` call it before
     /// the sweep, which then gives each run the cancel.
     ///
+    /// The end of a question with an answer on its way waits for that answer.
+    /// The caller starts the sweep, and then waits for those answers
+    /// (``awaitAnswersOnTheirWay(to:)``) before its terminal event. The sweep
+    /// comes first, so an answer that comes to the run plane after the sweep
+    /// finds no question, and the end goes out.
+    ///
     /// - Parameter origin: The origin of the ends: the origin of the
     ///   cancel-all signal, or ``Origin/system`` for ``close()``.
-    func endOpenQuestions(at origin: Origin) {
-        emitQuestionEnds(askedQuestions.endQuestions(ofRun: nil, notIn: [], at: origin), at: origin)
+    /// - Returns: The ids of the questions whose end waits for an answer on
+    ///   its way.
+    func endOpenQuestions(at origin: Origin) -> [ULID] {
+        let delivery = QuestionEndDelivery.session(origin)
+        let check = askedQuestions.endQuestions(ofRun: nil, notIn: [], via: delivery)
+        sendNow(check, via: delivery)
+        return check.deferred
+    }
+
+    /// Sends the ends of `check` that go out now, and then waits until the
+    /// answers on their way to the questions whose end waits returned. Each
+    /// of those answers sends its end when it returns.
+    ///
+    /// - Parameters:
+    ///   - check: The result of one end check.
+    ///   - delivery: How the ends go to the output.
+    private func settle(_ check: QuestionEndCheck, via delivery: QuestionEndDelivery) async {
+        sendNow(check, via: delivery)
+        await awaitAnswersOnTheirWay(to: check.deferred)
+    }
+
+    /// Sends the ends of `check` that go out now, and reports an end that
+    /// waits for an answer on its way to ``stateChanges``.
+    ///
+    /// - Parameters:
+    ///   - check: The result of one end check.
+    ///   - delivery: How the ends go to the output.
+    private func sendNow(_ check: QuestionEndCheck, via delivery: QuestionEndDelivery) {
+        sendQuestionEnds(check.ended, via: delivery)
+        if !check.deferred.isEmpty {
+            stateChanges.signal()
+        }
+    }
+
+    /// Waits until no answer of the client to a question of `ids` is on its
+    /// way to the run plane any more: each end of `ids` went out, or an
+    /// answer resumed the run and no end comes.
+    ///
+    /// The wait runs in a task of its own, so a cancel of the caller does not
+    /// end it: a cancel of the caller of ``close()`` must not let the feeds
+    /// end before the ends. The wait ends, because an answer returns from the
+    /// run plane with no wait for a terminal event.
+    ///
+    /// - Parameter ids: The ids of the questions whose end waits.
+    func awaitAnswersOnTheirWay(to ids: [ULID]) async {
+        guard !ids.isEmpty else { return }
+        await Task { await self.waitUntilNoAnswerOnItsWay(to: ids) }.value
+    }
+
+    /// Waits on ``questionAnswerReturns`` until no answer to a question of
+    /// `ids` is on its way. The task of the wait is not cancelled, so the
+    /// wait ends only when the state holds.
+    ///
+    /// - Parameter ids: The ids of the questions whose end waits.
+    private func waitUntilNoAnswerOnItsWay(to ids: [ULID]) async {
+        _ = await questionAnswerReturns.waitUntil { !askedQuestions.hasAnswerOnItsWay(toAnyOf: ids) }
+    }
+
+    /// Sends one end for each question of `ids` through `delivery`: the live
+    /// event of a run terminal (``deliverLive(_:origin:)``), or the
+    /// session-scoped output (``emitQuestionEnds(_:at:)``). An end that waited
+    /// for an answer goes out through the same delivery as an end that goes
+    /// out at once.
+    ///
+    /// - Parameters:
+    ///   - ids: The ids of the questions that ended.
+    ///   - delivery: How the ends go to the output.
+    func sendQuestionEnds(_ ids: [ULID], via delivery: QuestionEndDelivery) {
+        switch delivery {
+        case .runEvent(let origin):
+            for id in ids {
+                deliverLive(Self.endEvent(ofQuestion: id), origin: origin)
+            }
+        case .session(let origin):
+            emitQuestionEnds(ids, at: origin)
+        }
     }
 
     /// Sends one end for each question of `ids`, with the origin `origin`, to
@@ -93,7 +184,8 @@ extension RoutedSessionActor {
     ///
     /// - Parameter id: The id of the question.
     /// - Returns: `false` when the question ended with no answer of the
-    ///   client: the answer must not go to the run plane.
+    ///   client, or its end waits for an answer already on its way: the
+    ///   answer must not go to the run plane.
     func beginAnswer(to id: ULID) -> Bool {
         askedQuestions.beginAnswer(to: id)
     }

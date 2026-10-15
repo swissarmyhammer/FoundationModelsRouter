@@ -111,6 +111,134 @@ struct ElicitationEndedEventTests {
         return ids
     }
 
+    /// The position of the ``SessionEvent/answered(_:)`` of the run mail of
+    /// `origin`.
+    ///
+    /// - Parameters:
+    ///   - origin: The origin of a run event: the run mail that holds it.
+    ///   - outputs: Outputs of a session.
+    /// - Returns: The position.
+    /// - Throws: When `origin` is not a run mail, or when `outputs` holds no
+    ///   answer of that mail.
+    private static func answeredPosition(ofMailOf origin: Origin, in outputs: [SessionOutput]) throws -> Int {
+        let ids = try #require(mailIds(of: origin), "the origin \(origin) is not the run mail")
+        return try #require(
+            firstPosition(in: outputs) { event in
+                guard case .answered(let answer) = event else { return false }
+                return !ids.isDisjoint(with: answer.mailIds)
+            })
+    }
+
+    /// Checks that the session takes no answer and no completion to the
+    /// question any more: each gives `.noPendingElicitation`.
+    ///
+    /// - Parameter asked: The question, after it ended with no answer of the
+    ///   client.
+    /// - Throws: When the question has no id.
+    private static func expectNoPendingQuestion(_ asked: AskedQuestion) async throws {
+        let id = try asked.questionId.description
+        #expect(await asked.fixture.session.respond(elicitationId: id, response: .decline) == .noPendingElicitation)
+        #expect(await asked.fixture.session.complete(elicitationId: id) == .noPendingElicitation)
+    }
+
+    /// The step of an answer of the client where the answer waits at its
+    /// gate.
+    private enum AnswerHold: Equatable {
+        /// Before the run plane gets the answer.
+        case beforeTheRunPlane
+
+        /// After the run plane gave its result, before the session records it.
+        case afterTheRunPlane
+
+        /// Opens `reached` and waits until `gate` opens, when `step` is this
+        /// hold. Else it does nothing.
+        ///
+        /// - Parameters:
+        ///   - step: The step that the answer is at.
+        ///   - reached: The latch that tells the test that the answer waits.
+        ///   - gate: The gate that holds the answer.
+        func hold(at step: Self, reached: RunLatch, gate: RunLatch) async {
+            guard step == self else { return }
+            await reached.open()
+            await gate.waitUntilOpen()
+        }
+    }
+
+    /// One answer of the client that is on its way to the run plane, held at
+    /// a gate.
+    private struct AnswerOnItsWay {
+        /// The task of the answer. It gives what the run plane did.
+        let task: Task<ElicitationAnswerDelivery, Never>
+
+        /// The gate that holds the answer.
+        let gate: RunLatch
+    }
+
+    /// Starts a decline of the question through the steps of
+    /// ``RoutedSession/respond(elicitationId:response:)``, and returns when
+    /// the answer waits at `hold`.
+    ///
+    /// - Parameters:
+    ///   - asked: The question.
+    ///   - hold: The step where the answer waits.
+    /// - Returns: The answer on its way.
+    /// - Throws: When the session is not a ``RoutedSessionActor`` or the
+    ///   question has no id.
+    private static func startAnswer(to asked: AskedQuestion, holdingAt hold: AnswerHold) async throws
+        -> AnswerOnItsWay
+    {
+        let session = try asked.fixture.sessionActor()
+        let id = try asked.questionId.description
+        let reached = RunLatch()
+        let gate = RunLatch()
+        let task = Task {
+            await session.deliverAnswer(
+                toElicitation: id, .response(.decline), orReturn: .noPendingElicitation,
+                outcome: QuestionAnswerOutcome.init
+            ) { id in
+                await hold.hold(at: .beforeTheRunPlane, reached: reached, gate: gate)
+                let delivery = await session.runPlane.respond(elicitationId: id, .decline)
+                await hold.hold(at: .afterTheRunPlane, reached: reached, gate: gate)
+                return delivery
+            }
+        }
+        await reached.waitUntilOpen()
+        return AnswerOnItsWay(task: task, gate: gate)
+    }
+
+    /// Waits until an end check found the question gone while the answer was
+    /// on its way, so the end of the question waits for that answer.
+    ///
+    /// - Parameter asked: The question.
+    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    private static func awaitDeferredEnd(of asked: AskedQuestion) async throws {
+        let session = try asked.fixture.sessionActor()
+        let id = try asked.questionId
+        try await session.stateChanges.wait(until: { await session.askedQuestions.hasDeferredEnd(of: id) })
+    }
+
+    /// Reads the feed through the next ``SessionEvent/runSettled(_:)``, waits
+    /// for the terminal event of its run mail, closes the session, and reads
+    /// the rest of the feed.
+    ///
+    /// - Parameter asked: The question. Its feed is read to the end.
+    /// - Returns: Each output read, in order.
+    /// - Throws: When the feed ends before a `runSettled` with a run mail, or
+    ///   what the wait for the terminal event throws.
+    private static func outputsThroughTheAnswerOfTheRunMail(of asked: inout AskedQuestion) async throws
+        -> [SessionOutput]
+    {
+        let settled = await SessionWorkEventTests.outputs(
+            from: &asked.feed, through: { SessionEventCase.runSettled.matches($0) })
+        let last = try #require(settled.last)
+        #expect(SessionEventCase.runSettled.matches(last.event))
+        for id in try #require(mailIds(of: last.origin)) {
+            _ = try await asked.fixture.session.awaitTerminal(of: id)
+        }
+        await asked.fixture.session.close()
+        return settled + (await SessionWorkEventTests.remainingOutputs(of: &asked.feed))
+    }
+
     // MARK: - Tests
 
     /// The production change that makes this test fail: a run journal that
@@ -126,13 +254,52 @@ struct ElicitationEndedEventTests {
         let settled = try position(ofFirst: .runSettled, in: outputs)
         #expect(outputs[settled].origin == end.origin)
         #expect(end.position < settled)
-        let ids = try #require(Self.mailIds(of: end.origin), "the end has the origin \(end.origin), not the run mail")
-        let answered = try #require(
-            firstPosition(in: outputs) { event in
-                guard case .answered(let answer) = event else { return false }
-                return !ids.isDisjoint(with: answer.mailIds)
-            })
-        #expect(end.position < answered)
+        #expect(end.position < (try Self.answeredPosition(ofMailOf: end.origin, in: outputs)))
+        try await Self.expectNoPendingQuestion(asked)
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: a journal that sends
+    /// the `runSettled` of the run before the answer on its way returns, so
+    /// the end of the question comes after it.
+    @Test("a cancel of the run while an answer is on its way gives the end when that answer returns, before the runSettled and the answer of the run mail")
+    func aRunCancelWithAnAnswerOnItsWayGivesTheEndBeforeTheTerminal() async throws {
+        var asked = try await Self.askQuestion()
+        let session = try asked.fixture.sessionActor()
+        let answer = try await Self.startAnswer(to: asked, holdingAt: .beforeTheRunPlane)
+
+        let token = asked.question.correlationID
+        let cancel = Task { await session.runPlane.cancel(completionToken: token) }
+        try await Self.awaitDeferredEnd(of: asked)
+        await answer.gate.open()
+        let delivery = await answer.task.value
+        _ = await cancel.value
+        try await Self.expectNoPendingQuestion(asked)
+        let outputs = try await Self.outputsThroughTheAnswerOfTheRunMail(of: &asked)
+
+        #expect(delivery == .noPendingElicitation)
+        let end = try Self.soleEnd(in: outputs, of: asked)
+        let settled = try position(ofFirst: .runSettled, in: outputs)
+        #expect(outputs[settled].origin == end.origin)
+        #expect(end.position < settled)
+        #expect(end.position < (try Self.answeredPosition(ofMailOf: end.origin, in: outputs)))
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: an end check that
+    /// sends the end of a question whose answer on its way resumed the run.
+    @Test("an answer on its way that resumed the run gives no end")
+    func anAnswerOnItsWayThatResumedTheRunGivesNoEnd() async throws {
+        var asked = try await Self.askQuestion()
+        let answer = try await Self.startAnswer(to: asked, holdingAt: .afterTheRunPlane)
+
+        try await Self.awaitDeferredEnd(of: asked)
+        await answer.gate.open()
+        let delivery = await answer.task.value
+        let outputs = try await Self.outputsThroughTheAnswerOfTheRunMail(of: &asked)
+
+        #expect(delivery == .delivered)
+        #expect(Self.ends(in: outputs).isEmpty)
         await asked.end()
     }
 
@@ -146,6 +313,35 @@ struct ElicitationEndedEventTests {
         let signal = asked.fixture.session.cancelAll()
         let outputs = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
 
+        let end = try Self.soleEnd(in: outputs, of: asked)
+        #expect(end.origin == .signal(signal))
+        #expect(end.position < (try position(of: .signalDone(signal), in: outputs)))
+        try await Self.expectNoPendingQuestion(asked)
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: a `cancelAll()`
+    /// whose `signalDone` does not wait for the answer on its way, so the
+    /// end of the question comes after it.
+    @Test("cancelAll() while an answer is on its way gives the end when that answer returns, before the signalDone")
+    func cancelAllWithAnAnswerOnItsWayGivesTheEndBeforeItsSignalDone() async throws {
+        var asked = try await Self.askQuestion()
+        let session = try asked.fixture.sessionActor()
+        let answer = try await Self.startAnswer(to: asked, holdingAt: .beforeTheRunPlane)
+
+        let signal = asked.fixture.session.cancelAll()
+        try await Self.awaitDeferredEnd(of: asked)
+        // The body of the run ends only after the sweep took the question
+        // from the run plane. Thus the answer then finds no question.
+        await session.runPlane.joinRunBodies()
+        await answer.gate.open()
+        let delivery = await answer.task.value
+        _ = try await asked.fixture.session.awaitTerminal(of: signal)
+        try await Self.expectNoPendingQuestion(asked)
+        await asked.fixture.session.close()
+        let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+
+        #expect(delivery == .noPendingElicitation)
         let end = try Self.soleEnd(in: outputs, of: asked)
         #expect(end.origin == .signal(signal))
         #expect(end.position < (try position(of: .signalDone(signal), in: outputs)))
@@ -164,6 +360,33 @@ struct ElicitationEndedEventTests {
 
         let end = try Self.soleEnd(in: outputs, of: asked)
         #expect(end.origin == .system)
+        try await Self.expectNoPendingQuestion(asked)
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: a `close()` that
+    /// ends the feeds before the answer on its way returns, so nobody gets
+    /// the end of the question.
+    @Test("close() while an answer is on its way gives exactly one end before the feed ends")
+    func closeWithAnAnswerOnItsWayGivesTheEndBeforeTheFeedEnds() async throws {
+        var asked = try await Self.askQuestion()
+        let session = try asked.fixture.sessionActor()
+        let answer = try await Self.startAnswer(to: asked, holdingAt: .beforeTheRunPlane)
+
+        let close = Task { await session.close() }
+        try await Self.awaitDeferredEnd(of: asked)
+        // The body of the run ends only after the sweep took the question
+        // from the run plane. Thus the answer then finds no question.
+        await session.runPlane.joinRunBodies()
+        await answer.gate.open()
+        let delivery = await answer.task.value
+        await close.value
+        let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+
+        #expect(delivery == .noPendingElicitation)
+        let end = try Self.soleEnd(in: outputs, of: asked)
+        #expect(end.origin == .system)
+        try await Self.expectNoPendingQuestion(asked)
         await asked.end()
     }
 
@@ -207,21 +430,24 @@ struct AskedQuestionsEndTests {
         return (questions, request.elicitationId)
     }
 
+    /// The delivery of the ends of close.
+    private static let closeDelivery = QuestionEndDelivery.session(.system)
+
     @Test("a question that left the run plane ends one time, and only for its own run")
     func aQuestionThatLeftEndsOneTime() {
         let (record, id) = Self.recordWithOneQuestion()
         var questions = record
 
-        let otherRun = questions.endQuestions(ofRun: Self.otherRunToken, notIn: [], at: .system)
-        let stillOpen = questions.endQuestions(ofRun: Self.runToken, notIn: [id], at: .system)
-        let left = questions.endQuestions(ofRun: Self.runToken, notIn: [], at: .system)
-        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], at: .system)
+        let otherRun = questions.endQuestions(ofRun: Self.otherRunToken, notIn: [], via: Self.closeDelivery)
+        let stillOpen = questions.endQuestions(ofRun: Self.runToken, notIn: [id], via: Self.closeDelivery)
+        let left = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
         let lateAnswer = questions.beginAnswer(to: id)
 
-        #expect(otherRun.isEmpty)
-        #expect(stillOpen.isEmpty)
-        #expect(left == [id])
-        #expect(again.isEmpty)
+        #expect(otherRun == QuestionEndCheck())
+        #expect(stillOpen == QuestionEndCheck())
+        #expect(left == QuestionEndCheck(ended: [id]))
+        #expect(again == QuestionEndCheck())
         #expect(lateAnswer == false)
     }
 
@@ -229,17 +455,42 @@ struct AskedQuestionsEndTests {
     func anAnswerOnItsWayDefersTheEnd() {
         let (record, id) = Self.recordWithOneQuestion()
         var questions = record
-        let origin = Origin.signal(SignalID())
+        let delivery = QuestionEndDelivery.session(.signal(SignalID()))
 
         let answerBegan = questions.beginAnswer(to: id)
-        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], at: origin)
-        let endOrigin = questions.noteAnswered(id, outcome: .noQuestion)
-        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], at: .system)
+        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: delivery)
+        let waitsBefore = questions.hasAnswerOnItsWay(toAnyOf: [id])
+        let endDelivery = questions.noteAnswered(id, outcome: .noQuestion)
+        let waitsAfter = questions.hasAnswerOnItsWay(toAnyOf: [id])
+        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
 
         #expect(answerBegan)
-        #expect(deferred.isEmpty)
-        #expect(endOrigin == origin)
-        #expect(again.isEmpty)
+        #expect(deferred == QuestionEndCheck(deferred: [id]))
+        #expect(waitsBefore)
+        #expect(endDelivery == delivery)
+        #expect(waitsAfter == false)
+        #expect(again == QuestionEndCheck())
+    }
+
+    /// The production change that makes this test fail: a deferred end that
+    /// a later end check takes again, so it gets a second owner or a second
+    /// delivery.
+    @Test("the first end check owns a deferred end: a later check and a later answer do not touch it")
+    func theFirstEndCheckOwnsADeferredEnd() {
+        let (record, id) = Self.recordWithOneQuestion()
+        var questions = record
+        let delivery = QuestionEndDelivery.session(.signal(SignalID()))
+
+        _ = questions.beginAnswer(to: id)
+        _ = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: delivery)
+        let laterCheck = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let laterAnswer = questions.beginAnswer(to: id)
+        let endDelivery = questions.noteAnswered(id, outcome: .noQuestion)
+
+        #expect(laterCheck == QuestionEndCheck())
+        #expect(questions.hasOpenQuestions(ofRun: Self.runToken) == false)
+        #expect(laterAnswer == false)
+        #expect(endDelivery == delivery)
     }
 
     @Test("a question with an answer on its way gives no end when that answer resumed the run")
@@ -248,13 +499,15 @@ struct AskedQuestionsEndTests {
         var questions = record
 
         let answerBegan = questions.beginAnswer(to: id)
-        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], at: .system)
-        let endOrigin = questions.noteAnswered(id, outcome: .resumedRun)
-        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], at: .system)
+        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let endDelivery = questions.noteAnswered(id, outcome: .resumedRun)
+        let waitsAfter = questions.hasAnswerOnItsWay(toAnyOf: [id])
+        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
 
         #expect(answerBegan)
-        #expect(deferred.isEmpty)
-        #expect(endOrigin == nil)
-        #expect(again.isEmpty)
+        #expect(deferred == QuestionEndCheck(deferred: [id]))
+        #expect(endDelivery == nil)
+        #expect(waitsAfter == false)
+        #expect(again == QuestionEndCheck())
     }
 }

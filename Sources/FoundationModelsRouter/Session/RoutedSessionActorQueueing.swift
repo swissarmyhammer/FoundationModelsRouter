@@ -215,6 +215,10 @@ extension RoutedSessionActor {
     /// (``SessionEvent/elicitationEnded(_:)``) takes no answer: the answer
     /// does not go to the run plane, and the call gives `noQuestionResult`.
     ///
+    /// It is internal, not private, so a test can give a `runPlaneCall` that
+    /// waits at a gate: the answer is then on its way while the test ends
+    /// the question.
+    ///
     /// - Parameters:
     ///   - elicitationId: The inbound id of the question.
     ///   - answer: The answer of the user.
@@ -224,7 +228,7 @@ extension RoutedSessionActor {
     ///   - runPlaneCall: The call to the run plane, and each step that comes
     ///     directly after it.
     /// - Returns: The result of `runPlaneCall`, or `noQuestionResult`.
-    private nonisolated func deliverAnswer<Delivery>(
+    nonisolated func deliverAnswer<Delivery>(
         toElicitation elicitationId: String,
         _ answer: QuestionAnswer,
         orReturn noQuestionResult: Delivery,

@@ -42,7 +42,10 @@ extension RoutedSessionActor: OperationEventJournal {
     /// Before the live event of a terminal (`.completed`), each open question
     /// of the run that left the run plane with no answer of the client gets
     /// its ``SessionEvent/elicitationEnded(_:)``, with the same origin
-    /// (``endQuestionsThatLeftTheRunPlane(ofRunOf:origin:)``).
+    /// (``endQuestionsThatLeftTheRunPlane(ofRunOf:origin:)``). When an answer
+    /// of the client to such a question is on its way, the live event of the
+    /// terminal waits until that answer returned from the run plane, so the
+    /// end that the answer sends also comes first.
     ///
     /// - Parameters:
     ///   - event: The event the outbox has just accepted.
