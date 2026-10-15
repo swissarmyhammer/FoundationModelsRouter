@@ -135,12 +135,43 @@ extension RoutedSessionActor {
     /// ``cancelAll()`` started, sweeps the background runs
     /// (``sweepBackgroundRuns()``), waits for the body of each run
     /// (``RunPlane/joinRunBodies()``), waits for a compaction that runs
-    /// (``activeCompaction``), and waits for the pump. ``close()`` cancelled
-    /// the running compaction before (``cancelActiveCompaction()``), so that
-    /// wait is short. The work can start a background run before the cancel
+    /// (``activeCompaction``), waits for the pump, then waits until no
+    /// generation pass of the session is open
+    /// (``GenerationPassObserver/awaitNoOpenPass()``), then waits until the
+    /// task of each signal ended (``SignalExecutor/awaitNoTask()``), and then
+    /// waits until each helper task of the session ended
+    /// (``HelperTaskTracker/awaitNoLiveTask()``). ``close()`` cancelled the
+    /// running compaction before (``cancelActiveCompaction()``), so that wait
+    /// is short. The work can start a background run before the cancel
     /// reaches it, so the cycle runs again until no pump runs, no compaction
     /// runs, and no run is open. The end is a change of the work of the
     /// session (``signalWorkChange()``).
+    ///
+    /// The wait for the passes is necessary because the framework resumes a
+    /// cancelled model call before the pass of its generation ends. The pump
+    /// then ends, but the pass runs on, on a task of the framework, and keeps
+    /// the model handles of the session. A pass runs no tool body and waits
+    /// for no close, so this wait cannot wait for a close.
+    ///
+    /// The wait for the signal tasks is necessary because the task of a
+    /// signal keeps this session, and it runs on after the work that the
+    /// drain waits for: after a compaction, the task ends the count of the
+    /// requested compaction and runs the idle actions of the executor, and
+    /// the task of a signal that waits runs after the close of the executor.
+    /// The work of a signal does not call ``close()`` and does not wait for
+    /// the drain, and ``close()`` closed the executor, so no new work starts:
+    /// this wait cannot wait for a close.
+    ///
+    /// The wait for the helper tasks is necessary because the session does
+    /// not wait for them, and each of them keeps this session, and thus its
+    /// profile and the model handles of the profile. A model call cancels its
+    /// stall watchdog, its reader of the pass reports and its repetition
+    /// watch, and does not wait for them. A mail and the end of a compaction
+    /// wake the pump from a helper task. The wait comes after the wait for
+    /// the signal tasks, because the idle action of a compaction starts its
+    /// wake of the pump in the task of a signal. A helper task ends at its
+    /// cancel or by itself and waits for no close, so this wait cannot wait
+    /// for a close.
     private func runDrain() async {
         var workRuns = true
         while workRuns {
@@ -154,6 +185,9 @@ extension RoutedSessionActor {
             if let pumpTask {
                 await pumpTask.value
             }
+            await generationPassObserver.awaitNoOpenPass()
+            await signals.awaitNoTask()
+            await helperTasks.awaitNoLiveTask()
             let openRuns = await runPlane.backgroundRuns()
             workRuns = pumpTask != nil || activeCompaction != nil || !openRuns.isEmpty
         }

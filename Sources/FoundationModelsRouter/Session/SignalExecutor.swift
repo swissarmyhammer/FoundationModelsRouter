@@ -48,8 +48,26 @@ final class SignalExecutor: Sendable {
     /// The state of the executor.
     private let state = Mutex(State())
 
+    /// Starts the task of each signal, and tells when each of them ended.
+    ///
+    /// The task of a signal keeps the session of its work. After the work,
+    /// the task still runs the idle actions (``whenNoSignalWaits(_:)``), and
+    /// the task of a signal that waits runs after the close of the executor.
+    /// So the end of a session waits here (``awaitNoTask()``).
+    private let tasks = HelperTaskTracker()
+
     /// Makes an executor with no work.
     init() {}
+
+    /// Reports each end of the task of a signal. ``awaitNoTask()`` waits on
+    /// it.
+    ///
+    /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
+    /// so a test can wait until a close of the session waits for the task of
+    /// a signal.
+    var taskEnds: ChangeSignal {
+        tasks.taskEnds
+    }
 
     /// Runs `work` after the work of each earlier signal, with the origin of
     /// the signal `id`. Does not wait.
@@ -70,7 +88,7 @@ final class SignalExecutor: Sendable {
         state.withLock { state in
             state.unfinished += 1
             let earlier = state.last
-            state.last = Task { [self] in
+            state.last = tasks.start { [self] in
                 await earlier?.value
                 if self.state.withLock({ $0.isClosed }) {
                     skipped()
@@ -118,5 +136,18 @@ final class SignalExecutor: Sendable {
     /// (``RoutedSessionActor/runSignalWork(_:skipped:)``).
     func close() {
         state.withLock { $0.isClosed = true }
+    }
+
+    /// Waits until the task of each signal ended, or until the calling task
+    /// is cancelled.
+    ///
+    /// The end of a session (``RoutedSessionActor/close()``) waits here after
+    /// ``close()``: the work of the signal that runs goes on to its end, and
+    /// the task of each signal that waits runs only its `skipped` closure.
+    /// Each task then runs the idle actions that are due, and ends. The work
+    /// of a signal does not wait for the end of a session, so this wait
+    /// ends.
+    func awaitNoTask() async {
+        await tasks.awaitNoLiveTask()
     }
 }

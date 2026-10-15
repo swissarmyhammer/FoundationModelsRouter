@@ -6,17 +6,19 @@ import Synchronization
 extension RoutedSessionActor {
     /// See ``RoutedSession/awaitIdle()``.
     ///
-    /// Each cycle reads ``ChangeSignal/changeCount`` of ``idleChanges``,
-    /// checks the session (``isIdle()``), and waits for the next change when
-    /// the session is not idle. A change that comes during the check is not
-    /// lost: the wait then returns at once, and the next cycle checks again.
+    /// The wait is ``ChangeSignal/waitUntil(isolation:_:)`` on
+    /// ``idleChanges``: each cycle checks the session (``isIdle()``), and
+    /// waits for the next change when the session is not idle. A change that
+    /// comes during the check is not lost: the wait then returns at once, and
+    /// the next cycle checks again.
     ///
     /// A session that is closed, or that closes, has no idle state to wait
     /// for: ``close()`` (``endIdleWaits()``) sets ``isClosed``. The call then
     /// returns `false` at its start, after each check, and after each wait.
     /// The check after the last read of a cycle has no suspension point
     /// before the result, so a close that starts during the reads of a
-    /// check also gives `false`.
+    /// check also gives `false`. A cancel of the calling task gives `false`
+    /// at the start of each cycle and during each wait.
     ///
     /// The call first installs the settlement observer of ``runPlane``
     /// (``attachOutboxJournalIfNeeded()``), so the settlement of each run
@@ -28,16 +30,13 @@ extension RoutedSessionActor {
     func awaitIdle() async -> Bool {
         guard !isClosed else { return false }
         await attachOutboxJournalIfNeeded()
-        while !Task.isCancelled, !isClosed {
-            let seen = idleChanges.changeCount
-            if await isIdle() {
-                return !isClosed
-            }
-            guard await idleChanges.waitForChange(after: seen) else {
-                return false
-            }
+        var foundIdle = false
+        let waitEnded = await idleChanges.waitUntil {
+            guard !Task.isCancelled, !isClosed else { return true }
+            foundIdle = await isIdle()
+            return foundIdle
         }
-        return false
+        return waitEnded && foundIdle && !isClosed
     }
 
     /// Reports one change of the work of this session to each

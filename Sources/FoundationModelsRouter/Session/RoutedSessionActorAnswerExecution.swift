@@ -841,10 +841,13 @@ extension RoutedSessionActor {
         // it counts only the time inside a pass of the running submission, and
         // they tell the consumer about the wait and the start of the
         // submission. They close first, so the last reports reach the watch
-        // and the answer before the watch ends.
+        // and the answer before the watch ends. The watchdog and the reader
+        // of the reports are helper tasks (``helperTasks``): the call cancels
+        // them and does not wait, and the drain of ``close()`` waits until
+        // they ended.
         let stallWatchId = beginGenerationStallWatch(submitsToQueue: target != nil)
         let passReports = openGenerationPassReports(callID: stallWatchId)
-        let stallWatchdog = Task { await self.watchGenerationForStalls(id: stallWatchId) }
+        let stallWatchdog = helperTasks.start { await self.watchGenerationForStalls(id: stallWatchId) }
         defer {
             closeGenerationPassReports(callID: stallWatchId, reader: passReports)
             stallWatchdog.cancel()

@@ -24,6 +24,13 @@ extension RoutedSessionActor {
     ///
     /// A mail that stays in the queue is a change of ``stateChanges``.
     ///
+    /// The wake of the pump is a helper task (``helperTasks``), and the
+    /// session reserves it before the put (``HelperTaskTracker/reserve()``).
+    /// A put that comes before ``close()`` closes the queue thus comes after
+    /// the reserve, so the drain of close waits until the wake ended, also
+    /// when the wake starts after the drain began. After close began, the
+    /// wake starts no pump (``wakePump()``).
+    ///
     /// - Parameter mail: The mail to put in the queue.
     /// - Returns: The output of the mail, up to and including its terminal
     ///   event.
@@ -33,38 +40,56 @@ extension RoutedSessionActor {
         guard !openAnswerMail.contains(mail.id) else { throw MailRefusal.duplicateID(mail.id) }
         let (subscription, key) = outputHub.subscribe(to: mail.id)
         let madePending = outputHub.beginPending(.mail(mail.id))
+        let arrival = helperTasks.reserve()
         do {
             try outbox.queue.put(mail)
         } catch {
-            withdrawRefusedMail(mail.id, subscription: key, madePending: madePending)
-            throw error
+            throw withdrawRefusedMail(
+                mail.id, refusal: error, arrival: arrival, subscription: key, madePending: madePending)
         }
         if openAnswerMail.contains(mail.id), outbox.queue.cancel(mail.id) != nil {
-            withdrawRefusedMail(mail.id, subscription: key, madePending: madePending)
-            throw MailRefusal.duplicateID(mail.id)
+            throw withdrawRefusedMail(
+                mail.id, refusal: MailRefusal.duplicateID(mail.id), arrival: arrival, subscription: key,
+                madePending: madePending)
         }
         outbox.noteCallerContext(ServiceContext.current, for: mail.id)
         // The record comes before the wake of the pump, so the transcript
         // holds the arrival of the mail before its delivery.
         recordMail([.mailQueued(mail)])
         stateChanges.signal()
-        Task { await self.mailDidArrive() }
+        _ = arrival.start { await self.mailDidArrive() }
         return subscription
     }
 
     /// Undoes what ``mail(_:)`` did for mail that the session refused: the
-    /// subscription finishes, and the pending record of the id ends when this
-    /// call made it. A record that other mail with the same id made stays,
-    /// because that mail still waits for its terminal event.
+    /// reserved wake of the pump ends with no task, the subscription
+    /// finishes, and the pending record of the id ends when this call made
+    /// it. A record that other mail with the same id made stays, because that
+    /// mail still waits for its terminal event.
+    ///
+    /// Each refusal path of ``mail(_:)`` throws the result, so all the paths
+    /// do the same cleanup.
     ///
     /// - Parameters:
     ///   - id: The id of the refused mail.
+    ///   - refusal: The error that refused the mail.
+    ///   - arrival: The reserved wake of the pump. This call ends it.
     ///   - key: The key of the subscription of the refused mail.
     ///   - madePending: Whether ``mail(_:)`` made the id pending.
-    private nonisolated func withdrawRefusedMail(_ id: MailID, subscription key: ULID, madePending: Bool) {
+    /// - Returns: `refusal`, for the caller to throw.
+    private nonisolated func withdrawRefusedMail(
+        _ id: MailID,
+        refusal: any Error,
+        arrival: consuming HelperTaskTracker.Reservation,
+        subscription key: ULID,
+        madePending: Bool
+    ) -> any Error {
+        arrival.cancel()
         outputHub.unsubscribe(key)
-        guard madePending else { return }
-        outputHub.endPending(.mail(id))
+        if madePending {
+            outputHub.endPending(.mail(id))
+        }
+        return refusal
     }
 
     /// Records the new depth of the queue and wakes the pump, after

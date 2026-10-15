@@ -283,8 +283,12 @@ extension RoutedSessionActor {
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
     /// background run, no orphans, no holes. The end of all work then waits
-    /// until the pump and the body of each run ended, so when this method returns, no
-    /// work of the session runs. Each queued mail gets its terminal event
+    /// until the pump, the body of each run, each generation pass of the
+    /// session (``GenerationPassObserver/awaitNoOpenPass()``), the task of
+    /// each signal (``SignalExecutor/awaitNoTask()``) and each helper task of
+    /// the session (``HelperTaskTracker/awaitNoLiveTask()``) ended, so when
+    /// this method returns, no work of the session runs and no task of the
+    /// session keeps the profile. Each queued mail gets its terminal event
     /// ``SessionEvent/cancelled(_:)``, and later mail is refused with
     /// ``MailRefusal/closed``.
     ///
@@ -342,8 +346,10 @@ extension RoutedSessionActor {
     /// fork has its own ULID, so the key of its open parent stays. A session
     /// that is dropped with no close keeps its entry in the cache of the
     /// model until the byte LRU and the disk budget of the cache remove it,
-    /// so the cache stays in its limits. A pass that ends after the close
-    /// can write the entry again, and the same limits remove it.
+    /// so the cache stays in its limits. The release comes after the end of
+    /// all work, so no pass of this session writes the entry again after the
+    /// close. A pass that the session does not observe (a backend with no
+    /// pass report) can write the entry again, and the same limits remove it.
     ///
     /// **A running compaction.** No signal affects a running compaction, and
     /// close is the one exception to that rule. Close cancels its summarizer
@@ -393,8 +399,11 @@ extension RoutedSessionActor {
         finishSessionEventSubscriptions()
 
         // The drain sweeps and journals the background runs, and waits until
-        // no work of the session runs. A cancel of the caller does not end
-        // this wait: when close returns, the session holds no work.
+        // no work of the session runs, also until the generation pass of a
+        // stopped model call, the task of each signal and each helper task
+        // of the session ended. A cancel of the caller does not end this
+        // wait: when close returns, the session holds no work, and no task of
+        // the session keeps the profile.
         await startDrainIfNeeded().value
         // ``performCancelAll()`` and the end of all work ended the open answer, so each delivered mail has its
         // terminal event. The output closes: each mail subscription that is

@@ -105,8 +105,13 @@ extension RoutedSessionActor: SessionMailObserver {
     /// that woke it. So a ``ModelCallMark`` of a tool body that sent mail
     /// never reaches a submission of the pump.
     ///
-    /// While a drain runs (``drainTask``), no pump starts.
+    /// While a drain runs (``drainTask``), no pump starts. After ``close()``
+    /// began (``isClosed``), the wake does nothing: no pump starts, and a
+    /// pump that runs takes no more cycle for it. A wake can come after the
+    /// drain ended, for example from a signal call after close, and close
+    /// waits for no pump that starts then.
     func wakePump() {
+        guard !isClosed else { return }
         pumpWakeRequested = true
         guard pumpTask == nil, drainTask == nil else { return }
         pumpTask = Task.detached { await self.runPump() }

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Synchronization
 import Testing
 
@@ -317,10 +318,13 @@ extension AnswerCancellationTests {
     ///     hook — the switch between a cancelled submission that durably
     ///     delivered its drained outbox events and one that delivered nothing.
     ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
+    ///   - runClock: The clock of the run plane and of the stall watch of
+    ///     each session, or `nil` (the default) for the real time.
     static func makeFixture(
         cacheDir: URL,
         appendsPromptBeforeToolCall: Bool = true,
-        pool: ModelPool = ModelPool()
+        pool: ModelPool = ModelPool(),
+        runClock: (any RunClock)? = nil
     ) async throws -> Fixture {
         let hook = AnswerHook()
         let observer = AnswerObserver()
@@ -335,6 +339,9 @@ extension AnswerCancellationTests {
             loader: StubModelLoader(container: container, dimension: stubDimension),
             pool: pool
         )
+        if let runClock {
+            await router.useRunClock(runClock)
+        }
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return Fixture(observer: observer, hook: hook, recorder: recorder, container: container, profile: profile)
     }

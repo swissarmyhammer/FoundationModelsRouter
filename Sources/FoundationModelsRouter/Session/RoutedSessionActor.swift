@@ -305,6 +305,14 @@ actor RoutedSessionActor: RoutedSession {
     /// watch of this session and the timers of its runs.
     nonisolated let generationPassObserver: GenerationPassObserver
 
+    /// The helper tasks of this session: the stall watchdog, the reader of
+    /// the pass reports and the repetition watch of each model call, and the
+    /// wake of the pump after a mail (``mail(_:)``) and after a compaction
+    /// (``performCompaction(_:_:)``). The drain of ``close()`` waits until
+    /// each of them ended, so no helper task keeps the profile of this
+    /// session when close returns.
+    nonisolated let helperTasks = HelperTaskTracker()
+
     /// See ``RoutedSession/transcript``. Gives ``settledTranscript`` at once,
     /// from any task: it waits for nothing and reads nothing of ``backend``.
     var transcript: Transcript {

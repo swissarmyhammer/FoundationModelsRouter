@@ -69,6 +69,9 @@ final class GenerationPassObserver: Sendable {
         /// The wake of the model call in flight: the id of that call and the
         /// continuation of its wake stream. `nil` between model calls.
         var wake: (callID: UInt64, continuation: AsyncStream<Void>.Continuation)?
+
+        /// The number of passes that started and did not end yet.
+        var openPasses = 0
     }
 
     /// The state, under one lock.
@@ -101,6 +104,17 @@ final class GenerationPassObserver: Sendable {
     /// itself reads the phases through ``takePhases()``.
     let phaseChanges = ChangeSignal()
 
+    /// Reports each end of a pass. ``awaitNoOpenPass()`` waits on it.
+    ///
+    /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
+    /// so a test can wait until a close of the session waits for an open pass.
+    let passEnds = ChangeSignal(observingWaiters: true)
+
+    /// The number of passes that started and did not end yet.
+    var openPassCount: Int {
+        state.withLock { $0.openPasses }
+    }
+
     /// Records that the submission of the call waits behind another item.
     ///
     /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
@@ -129,15 +143,34 @@ final class GenerationPassObserver: Sendable {
     /// The caller is ``SessionLanguageModel/Executor/respond(to:model:streamingInto:)``,
     /// before the wrapped executor runs the pass.
     func passStarted() {
+        state.withLock { $0.openPasses += 1 }
         record(.passStarted(at: clock.now))
     }
 
-    /// Records that the pass ended.
+    /// Records that the pass ended, and signals ``passEnds``.
     ///
     /// The caller is ``SessionLanguageModel/Executor/respond(to:model:streamingInto:)``,
-    /// in a `defer`, so every exit of the pass calls it.
+    /// in a `defer`, so every exit of the pass calls it. The pass watches of
+    /// the pass ended before this call.
     func passEnded() {
+        state.withLock { $0.openPasses -= 1 }
         record(.passEnded)
+        passEnds.signal()
+    }
+
+    /// Waits until no pass is open, or until the calling task is cancelled.
+    ///
+    /// The framework resumes a cancelled model call before its pass ends, and
+    /// the pass runs on a task of the framework. While that pass runs, it
+    /// keeps the model of the session. ``RoutedSessionActor/close()`` waits
+    /// here, after the pump ended, so no pass of a stopped model call runs
+    /// when close returns.
+    ///
+    /// The wait is ``ChangeSignal/waitUntil(isolation:_:)`` on ``passEnds``,
+    /// so a pass end that comes between the read of the count and the wait
+    /// is not lost.
+    func awaitNoOpenPass() async {
+        _ = await passEnds.waitUntil { openPassCount == 0 }
     }
 
     /// Appends `phase`, wakes the reader of the model call in flight, and

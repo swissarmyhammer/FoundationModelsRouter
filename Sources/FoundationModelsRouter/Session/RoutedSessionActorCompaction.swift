@@ -314,11 +314,13 @@ extension RoutedSessionActor {
         compactionEnds.signal()
         // The queue resumes only after each signal that came while the
         // compaction ran, so that mail never overtakes such a signal (for
-        // example a cancelAll() that must cancel the mail that waits).
+        // example a cancelAll() that must cancel the mail that waits). The
+        // wake of the pump is a helper task, so the drain of close() waits
+        // until it ended.
         signals.whenNoSignalWaits { [self] in
             outbox.queue.resume()
             sessionMetrics.recordMailQueuePause(ContinuousClock.now - pausedAt)
-            Task { await wakePump() }
+            _ = helperTasks.start { await self.wakePump() }
         }
         return result
     }
@@ -391,10 +393,7 @@ extension RoutedSessionActor {
     ///
     /// The wait ends early when the waiting task is cancelled.
     func awaitActiveCompaction() async {
-        while activeCompaction != nil {
-            let seen = compactionEnds.changeCount
-            guard await compactionEnds.waitForChange(after: seen) else { return }
-        }
+        _ = await compactionEnds.waitUntil { activeCompaction == nil }
     }
 
     /// The summarizer tiers of a compaction, in the order of preference: the
@@ -654,10 +653,7 @@ extension RoutedSessionActor {
     /// - Throws: `CancellationError` when the task of the compaction is
     ///   cancelled first.
     private func awaitNoOpenSubmission() async throws {
-        while runningSubmission != nil {
-            let seen = submissionCloses.changeCount
-            guard await submissionCloses.waitForChange(after: seen) else { throw CancellationError() }
-        }
+        guard await submissionCloses.waitUntil({ runningSubmission == nil }) else { throw CancellationError() }
     }
 
     /// Puts the new snapshot into a new ``backend``, with no suspension

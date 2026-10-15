@@ -196,19 +196,18 @@ extension RoutedSessionActor {
     /// A cancel of the model call ends the wait, so a stop for another
     /// reason never leaves the body of the no-op call waiting.
     ///
+    /// The wait is ``ChangeSignal/waitUntil(isolation:_:)`` on
+    /// ``noOpRoundChanges``. It ends when a stop is set or when the round is
+    /// complete. Only a complete round with no stop stops the model call.
+    ///
     /// - Parameter toolName: The name of the tool of the no-op call.
     private func waitForTheRealCallsOfTheRound(ofNoOpCallOf toolName: String) async {
         noteNoOpCallOfTheRound()
-        while noOpToolCallStop == nil {
-            let seen = noOpRoundChanges.changeCount
-            if noOpToolCallRound.isComplete {
-                if mayStopForNoOpToolCall {
-                    stopModelCall(forNoOpToolCallOf: toolName)
-                }
-                return
-            }
-            guard await noOpRoundChanges.waitForChange(after: seen) else { return }
+        let roundEnded = await noOpRoundChanges.waitUntil {
+            noOpToolCallStop != nil || noOpToolCallRound.isComplete
         }
+        guard roundEnded, noOpToolCallStop == nil, mayStopForNoOpToolCall else { return }
+        stopModelCall(forNoOpToolCallOf: toolName)
     }
 
     /// Reads the round of the no-op call in flight, and records the count of

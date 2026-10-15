@@ -261,6 +261,9 @@ extension RoutedSessionActor {
     /// that a test knows what the watch read. The watch reads only the values
     /// of the stream, and the stream reads the transcript only inside a pass.
     ///
+    /// The task is a helper task (``helperTasks``): the caller cancels it and
+    /// does not wait, and the drain of ``close()`` waits until it ended.
+    ///
     /// - Returns: The task of the watch, which the caller cancels, or `nil`.
     private func startRepetitionWatch() -> Task<Void, Never>? {
         guard repetitionDetection.isEnabled else { return nil }
@@ -271,7 +274,7 @@ extension RoutedSessionActor {
         let entryIdsBeforeAttempt = toolResultWatch.entryIdsBeforeAttempt
         let detection = repetitionDetection
         let tokenCounter = tokenCounter
-        return Task { [weak self] in
+        return helperTasks.start { [weak self] in
             var detector = RepetitionDetector(detection: detection, tokenCounter: tokenCounter)
             for await entries in updates {
                 let texts = WatchedText.attemptTexts(in: entries, excluding: entryIdsBeforeAttempt)

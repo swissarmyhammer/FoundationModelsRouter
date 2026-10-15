@@ -14,8 +14,10 @@ import Testing
 /// the stopped answer ends at once for its readers, and the model call and
 /// the run bodies unwind later. ``RoutedSession/close()`` runs the same stop,
 /// and returns only when no work of the session runs: the model call of the
-/// running answer ended, the body of each background run ended, and the mail
-/// of a run that settled started no answer.
+/// running answer ended, the generation pass of that model call ended, each
+/// helper task of that model call ended and keeps the profile no more, the
+/// body of each background run ended, and the mail of a run that settled
+/// started no answer.
 ///
 /// The stubs of ``AnswerCancellationTests`` stand in for the model. A model
 /// call that holds after its cancel until the test opens a gate stands in
@@ -92,6 +94,156 @@ struct SessionDrainTests {
         }
     }
 
+    /// One use of a model handle. The generation of a model call keeps it
+    /// while its pass runs. A weak reference to it tells the test when the
+    /// generation let the handle go.
+    private final class ModelHandleLease: Sendable {
+        /// The model handle. It keeps the holds of its profile in the pool.
+        let handle: RoutedLLM
+
+        /// Makes a lease of `handle`.
+        ///
+        /// - Parameter handle: The model handle.
+        init(handle: RoutedLLM) {
+            self.handle = handle
+        }
+    }
+
+    /// A generation that runs on a task of its own, as the framework runs the
+    /// pass of a model call. The framework resumes a cancelled model call
+    /// before that pass ends.
+    ///
+    /// The generation reports its pass to the pass observer of the session,
+    /// keeps a model handle while the pass runs, and waits on ``gate``. A
+    /// cancel does not end that wait. When the gate opens, the generation lets
+    /// the handle go, records the step "generation ended", and ends its pass.
+    private final class DetachedGeneration: Sendable {
+        /// Sent when the pass started and the generation keeps the handle.
+        let started = AwaitedEvent()
+
+        /// The gate that the generation waits on. A cancel does not end the
+        /// wait.
+        let gate = RunLatch()
+
+        /// The handle that the generation keeps while its pass runs, or `nil`
+        /// after the generation let it go.
+        private let lease: Mutex<ModelHandleLease?>
+
+        /// The steps of the test.
+        private let steps: Steps
+
+        /// The task of the generation, after ``start(reportingTo:)``.
+        private let task = Mutex<Task<Void, Never>?>(nil)
+
+        /// Makes a generation that keeps `lease` while its pass runs.
+        ///
+        /// - Parameters:
+        ///   - lease: The model handle that the pass keeps.
+        ///   - steps: The steps of the test.
+        init(keeping lease: ModelHandleLease, steps: Steps) {
+            self.lease = Mutex(lease)
+            self.steps = steps
+        }
+
+        /// The handle that the generation keeps now, or `nil`.
+        var keptLease: ModelHandleLease? {
+            lease.withLock { $0 }
+        }
+
+        /// Starts the generation on a detached task, as the framework starts
+        /// the pass of a model call.
+        ///
+        /// - Parameter observer: The pass observer of the session.
+        func start(reportingTo observer: GenerationPassObserver) {
+            let generation = Task.detached {
+                observer.passStarted()
+                self.started.signal()
+                await self.gate.waitUntilOpen()
+                self.lease.withLock { $0 = nil }
+                self.steps.append("generation ended")
+                observer.passEnded()
+            }
+            task.withLock { $0 = generation }
+        }
+
+        /// Waits until the task of the generation ended.
+        func ended() async {
+            await task.withLock { $0 }?.value
+        }
+    }
+
+    /// A run clock that never reaches a deadline by itself. Each sleep waits
+    /// for its cancel, and then holds until the test opens ``release``. It
+    /// stands in for a stall watchdog that ends late after its cancel.
+    private final class HeldSleepClock: RunClock {
+        /// The one instant of the clock. The clock does not move.
+        private let start = ContinuousClock.now
+
+        /// The gate that each cancelled sleep waits on. A cancel does not
+        /// end this wait.
+        let release = RunLatch()
+
+        var now: ContinuousClock.Instant {
+            start
+        }
+
+        /// Waits until the calling task is cancelled, then waits until
+        /// ``release`` opens, and then throws `CancellationError`.
+        ///
+        /// - Parameter deadline: Not read: the clock never reaches it.
+        /// - Throws: `CancellationError`, always.
+        func sleep(until deadline: ContinuousClock.Instant) async throws {
+            await SessionDrainTests.waitForCancel()
+            await release.waitUntilOpen()
+            throw CancellationError()
+        }
+    }
+
+    /// The work of a signal of a test. It reports its start, and then holds
+    /// until the test opens ``gate``. A cancel does not end the hold.
+    private final class HeldSignalWork: Sendable {
+        /// Sent when the work started.
+        let started = AwaitedEvent()
+
+        /// The gate that the work waits on. A cancel does not end this wait.
+        let gate = RunLatch()
+
+        /// Sends ``started``, and then waits until ``gate`` opens.
+        func hold() async {
+            started.signal()
+            await gate.waitUntilOpen()
+        }
+    }
+
+    /// The prompt of the mail that a test sends just before close.
+    private static let mailBeforeClosePrompt = "a message that close cancels"
+
+    /// The stall report interval of the session of a test that holds the
+    /// stall watchdog. A ``HeldSleepClock`` never reaches it, so the watchdog
+    /// sleeps until its cancel.
+    private static let heldWatchdogInterval: Duration = .seconds(1)
+
+    /// Makes a session over the hooked stub model whose profile no other
+    /// reference keeps: the fixture, its router and its profile are gone when
+    /// this function returns. Only the session, its work and its tasks keep
+    /// the profile then. The hook keeps no reference to the profile.
+    ///
+    /// - Parameters:
+    ///   - cacheDir: The cache and recording root of the router.
+    ///   - runClock: The clock of the run plane and of the stall watch, or
+    ///     `nil` for the real time.
+    /// - Returns: The session, and the hook whose closure each model call of
+    ///   the session runs.
+    /// - Throws: When the fixture cannot resolve its profile.
+    private static func makeSessionThatAloneKeepsItsProfile(
+        cacheDir: URL,
+        runClock: (any RunClock)? = nil
+    ) async throws -> (session: RoutedSessionActor, hook: AnswerHook) {
+        let fixture = try await AnswerCancellationTests.makeFixture(cacheDir: cacheDir, runClock: runClock)
+        let session = try #require(fixture.model.makeSession() as? RoutedSessionActor)
+        return (session, fixture.hook)
+    }
+
     /// Waits until the calling task is cancelled. Only a cancel ends the
     /// wait.
     static func waitForCancel() async {
@@ -139,6 +291,224 @@ struct SessionDrainTests {
         await #expect(throws: CancellationError.self) {
             try await answer.value
         }
+    }
+
+    /// The framework resumes a cancelled model call before the pass of its
+    /// generation ends, and that pass keeps the model handles of the profile.
+    /// The model call of this test returns at its cancel, as the framework
+    /// does, and its generation runs on until the test opens the gate.
+    ///
+    /// The test opens the gate only when close waits for the open pass. When
+    /// close does not wait, it returns first, and the steps show "closed"
+    /// alone.
+    ///
+    /// After close returned and the test dropped the session, no reference
+    /// keeps the profile: the fixture is gone, and the lease of the generation
+    /// keeps the model handle only, which keeps its profile weakly.
+    @Test("close() returns only after the generation of the stopped model call ended and let its model handle go")
+    @MainActor
+    func closeWaitsForTheGenerationOfTheStoppedModelCall() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var session: RoutedSessionActor?
+        let hook: AnswerHook
+        (session, hook) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir)
+        weak let profile = session?.profile
+        let observer = try #require(session?.generationPassObserver)
+        let steps = Steps()
+        let generation = DetachedGeneration(
+            keeping: ModelHandleLease(handle: try #require(session?.profile.standard)), steps: steps)
+        weak let lease = generation.keptLease
+        hook.midAnswer = { _ in
+            generation.start(reportingTo: observer)
+            await Self.waitForCancel()
+            throw CancellationError()
+        }
+
+        let answer = Task { [session] in try await session?.respond(to: "long work") }
+        try await generation.started.wait()
+
+        let closing = Task { [session] in
+            await session?.close()
+            steps.append("closed")
+        }
+        let passEndWaiters = try #require(observer.passEnds.waiterChanges)
+        let gateOpener = Task {
+            try await passEndWaiters.wait(until: { observer.passEnds.waiterCount > 0 })
+            await generation.gate.open()
+        }
+        await closing.value
+
+        #expect(steps.values == ["generation ended", "closed"])
+        #expect(lease == nil)
+        #expect(observer.openPassCount == 0)
+        await #expect(throws: CancellationError.self) {
+            try await answer.value
+        }
+        session = nil
+        #expect(profile == nil)
+
+        gateOpener.cancel()
+        await generation.gate.open()
+        await generation.ended()
+    }
+
+    /// Each model call starts helper tasks: the stall watchdog and the reader
+    /// of the pass reports. Each of them keeps the session, and thus its
+    /// profile. The call cancels them and does not wait. The stall watchdog
+    /// of this test sleeps on a ``HeldSleepClock``, so after its cancel it
+    /// holds until the test opens the gate of the clock.
+    ///
+    /// The test opens the gate only when close waits for a helper task. When
+    /// close does not wait, it returns while the watchdog holds, and the
+    /// watchdog still keeps the profile after the test dropped the session.
+    @Test("after close() returns, no task of the session keeps its profile")
+    @MainActor
+    func closeLeavesNoTaskThatKeepsTheProfile() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let clock = HeldSleepClock()
+        var session: RoutedSessionActor?
+        let hook: AnswerHook
+        (session, hook) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir, runClock: clock)
+        weak let profile = session?.profile
+        let helperTasks = try #require(session?.helperTasks)
+        let insideModelCall = AsyncSemaphore(value: 0)
+        hook.midAnswer = { _ in
+            insideModelCall.signal()
+            await Self.waitForCancel()
+            throw CancellationError()
+        }
+        await session?.setGenerationStallReportInterval(Self.heldWatchdogInterval)
+
+        let answer = Task { [session] in try await session?.respond(to: "long work") }
+        await insideModelCall.wait()
+
+        let taskEndWaiters = try #require(helperTasks.taskEnds.waiterChanges)
+        let releaseOpener = Task {
+            try await taskEndWaiters.wait(until: { helperTasks.taskEnds.waiterCount > 0 })
+            await clock.release.open()
+        }
+        await session?.close()
+        await #expect(throws: CancellationError.self) {
+            try await answer.value
+        }
+        session = nil
+
+        #expect(profile == nil)
+        #expect(helperTasks.liveTaskCount == 0)
+
+        releaseOpener.cancel()
+        await clock.release.open()
+    }
+
+    /// A compaction resumes the mail queue and wakes the pump only when no
+    /// signal waits or runs. In this test a held signal comes before the
+    /// requested compaction, and a second held signal comes after it. So the
+    /// compaction runs after the first signal, and its wake of the pump waits
+    /// for the end of the second signal. The task of each signal keeps the
+    /// session, and thus its profile.
+    ///
+    /// The test opens the gate of the second signal only when close waits for
+    /// the signal tasks. When close does not wait, it returns while that
+    /// signal holds, and its task still keeps the profile after the test
+    /// dropped the session.
+    @Test("close() returns only after the task of each signal and the wake of the pump after a compaction ended")
+    @MainActor
+    func closeWaitsForTheSignalTasksAndTheWakeAfterACompaction() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var session: RoutedSessionActor?
+        (session, _) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir)
+        weak let profile = session?.profile
+        let signals = try #require(session?.signals)
+        let before = HeldSignalWork()
+        let after = HeldSignalWork()
+        session?.submitSignal(SignalID(), { _ in await before.hold() })
+        session?.compact()
+        session?.submitSignal(SignalID(), { _ in await after.hold() })
+
+        try await before.started.wait()
+        await before.gate.open()
+        try await after.started.wait()
+
+        let taskEndWaiters = try #require(signals.taskEnds.waiterChanges)
+        let gateOpener = Task {
+            try await taskEndWaiters.wait(until: { signals.taskEnds.waiterCount > 0 })
+            await after.gate.open()
+        }
+        await session?.close()
+        #expect(await session?.isPumpRunning == false)
+        session = nil
+
+        #expect(profile == nil)
+
+        gateOpener.cancel()
+        await after.gate.open()
+    }
+
+    /// A mail wakes the pump from a task of its own after its put, and that
+    /// task keeps the session until it ran. The test sends the mail and
+    /// starts close in the isolation of the session, with no suspension point
+    /// between them. So that task can run only after close began, and it
+    /// cannot end before close began.
+    @Test("close() returns only after the task that wakes the pump for a mail ended, and that task starts no pump")
+    @MainActor
+    func closeWaitsForTheWakeOfAMail() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var session: RoutedSessionActor?
+        (session, _) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir)
+        weak let profile = session?.profile
+        let helperTasks = try #require(session?.helperTasks)
+
+        let liveTasksAfterTheMail = try await Self.sendAndClose(try #require(session))
+
+        #expect(liveTasksAfterTheMail == 1)
+        #expect(helperTasks.liveTaskCount == 0)
+        #expect(await session?.isPumpRunning == false)
+        session = nil
+        #expect(profile == nil)
+    }
+
+    /// After close began, no pump starts: a wake that comes from a task that
+    /// close did not stop in time, or from a signal call after close, finds
+    /// no work to do.
+    @Test("after close(), a wake of the pump starts no pump")
+    @MainActor
+    func wakeAfterCloseStartsNoPump() async throws {
+        let dir = AnswerCancellationTests.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await AnswerCancellationTests.makeFixture(cacheDir: dir)
+        let session = try #require(fixture.model.makeSession() as? RoutedSessionActor)
+        await session.close()
+
+        #expect(await Self.wakePumpAndReadIt(on: session) == false)
+    }
+
+    /// Sends one mail to `session`, and then closes it, in the isolation of
+    /// the session. No suspension point comes between the send and the start
+    /// of close, so no task that needs the session runs between them.
+    ///
+    /// - Parameter session: The session.
+    /// - Returns: The count of the live helper tasks of the session right
+    ///   after the send.
+    /// - Throws: The refusal of the mail.
+    private static func sendAndClose(_ session: isolated RoutedSessionActor) async throws -> Int {
+        try session.send(mailBeforeClosePrompt)
+        let liveTasks = session.helperTasks.liveTaskCount
+        await session.close()
+        return liveTasks
+    }
+
+    /// Wakes the pump of `session`, and reads at once whether a pump runs, in
+    /// the isolation of the session.
+    ///
+    /// - Parameter session: The session.
+    /// - Returns: `true` when the wake started a pump.
+    private static func wakePumpAndReadIt(on session: isolated RoutedSessionActor) -> Bool {
+        session.wakePump()
+        return session.isPumpRunning
     }
 
     @Test(

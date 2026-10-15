@@ -619,9 +619,19 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// cancelled. Each queued mail gets its terminal event
     /// ``SessionEvent/cancelled(_:)``, and ``MailSink/mail(_:)`` refuses later mail
     /// with ``MailRefusal/closed``. Close waits for the pump, for the sweep of
-    /// the background runs, and for the body of each run. So when this call
+    /// the background runs, for the body of each run, and for the end of each
+    /// generation pass of a stopped model call. The framework resumes a
+    /// cancelled model call before its pass ends, and that pass keeps the
+    /// model handles of the session until it ends. Close also waits for the
+    /// end of the task of each signal, and for the end of each helper task of
+    /// the session (the stall watch, the reader of the pass reports and the
+    /// repetition watch of a model call, and the wake of the pump after a
+    /// mail or after a compaction), because each of them keeps the session
+    /// and its profile. After close began, no pump starts. So when this call
     /// returns, no work of the session runs: no submission, no background
-    /// run, and no generation on the model. The sweep runs
+    /// run, no signal work, and no generation on the model, and no task of
+    /// the session keeps the profile.
+    /// The sweep runs
     /// `RunPlane.sweep()`, which cancels every background run and rejects
     /// every pending elicitation, and journals the resulting terminal events.
     /// Close also finishes every ``streamSessionEvents()`` subscription,

@@ -24,14 +24,17 @@ extension RoutedSessionActor {
     /// Starts to read the phase reports of the model call `callID`: each
     /// report wakes a task that applies the reported phases on this actor.
     ///
+    /// The task is a helper task (``helperTasks``), so the drain of
+    /// ``close()`` waits until it ended.
+    ///
     /// - Parameter callID: The id of the model call, the id of its stall watch.
     /// - Returns: The task that reads the reports. Give it to
     ///   ``closeGenerationPassReports(callID:reader:)`` when the call ends.
     func openGenerationPassReports(callID: UInt64) -> Task<Void, Never> {
         let wakes = generationPassObserver.openWakes(callID: callID)
-        return Task {
+        return helperTasks.start {
             for await _ in wakes {
-                self.drainGenerationPassPhases()
+                await self.drainGenerationPassPhases()
             }
         }
     }

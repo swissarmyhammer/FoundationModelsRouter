@@ -113,4 +113,39 @@ final class ChangeSignal: Sendable {
             waiterChanges?.signal()
         }
     }
+
+    /// Waits until `condition` holds, or until the calling task is cancelled.
+    ///
+    /// Each cycle reads ``changeCount``, then reads the state through
+    /// `condition`, and waits for the next change when the state does not
+    /// hold (``waitForChange(after:)``). A change that comes between the read
+    /// of the count and the wait is not lost: the wait then returns at once,
+    /// and the next cycle reads the state again. A change that comes while
+    /// `condition` suspends is not lost for the same reason. This is the one
+    /// wait loop over a change signal in the module, so each wait for a state
+    /// uses it.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `condition` can read the state of the caller, for example the
+    ///     state of an actor.
+    ///   - condition: Reads the state, and tells whether it is the state that
+    ///     the caller wants. It can suspend, for example to read the state of
+    ///     another actor.
+    /// - Returns: `true` when `condition` holds, also when it held before the
+    ///   first wait. `false` when the calling task was cancelled first.
+    func waitUntil(
+        isolation: isolated (any Actor)? = #isolation,
+        _ condition: () async -> Bool
+    ) async -> Bool {
+        while true {
+            let seen = changeCount
+            if await condition() {
+                return true
+            }
+            guard await waitForChange(after: seen) else {
+                return false
+            }
+        }
+    }
 }
