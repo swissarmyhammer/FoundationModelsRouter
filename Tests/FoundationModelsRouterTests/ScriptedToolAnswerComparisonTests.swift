@@ -126,7 +126,7 @@ struct ScriptedToolAnswerComparisonTests {
                 .submissionQueued, .submissionStarted, .submissionEnded, .answered, .answerFailed,
                 .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress, .elicitationRequested,
                 .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone, .workStarted,
-                .workEnded, .elicitationEnded:
+                .workEnded, .elicitationEnded, .elicitationCompleted:
                 break
             }
         }

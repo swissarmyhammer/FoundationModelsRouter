@@ -362,7 +362,7 @@ struct RealToolAnswerComparisonTests {
                 .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress,
                 .elicitationRequested, .generationCall, .submissionEnded, .answered, .answerFailed,
                 .mailDeliveryPaused, .toolDisplay, .mailDelivered, .cancelled, .signalDone, .lost, .workStarted,
-                .workEnded, .elicitationEnded:
+                .workEnded, .elicitationEnded, .elicitationCompleted:
                 break
             }
         }

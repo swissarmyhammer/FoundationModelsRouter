@@ -36,7 +36,7 @@ extension RoutedSessionActor: OperationEventJournal {
     /// the origin of the poster when `event` made no mail.
     ///
     /// A question of a run (`.elicitation`) is a change of the work of the
-    /// session after its live event (``noteQuestionAsked(_:)``): the run can
+    /// session after its live event (``noteQuestionAsked(_:mailID:)``): the run can
     /// now wait only for the user.
     ///
     /// Before the live event of a terminal (`.completed`), each open question
@@ -66,8 +66,36 @@ extension RoutedSessionActor: OperationEventJournal {
         }
         deliverLive(Self.liveEvent(for: event), origin: origin)
         if event.kind == .elicitation {
-            await noteQuestionAsked(event)
+            await noteQuestionAsked(event, mailID: origin.mailID)
         }
+    }
+
+    /// Sends ``SessionEvent/elicitationCompleted(_:)`` for the accepted
+    /// URL-mode question `elicitationId`, whose flow the run plane completed
+    /// (task ^rkh6k6m).
+    ///
+    /// The record of the questions decides (``AskedQuestions/complete(_:postedBy:)``):
+    /// the event goes out one time, only for a URL-mode question that the
+    /// journal recorded, with the origin of the run mail that holds the
+    /// question. The record takes the question out with no suspension point
+    /// before the live event, so a second completion finds no question.
+    ///
+    /// The completion resumes the run, so it is a start of work
+    /// (``noteWorkStarted()``) before the event: a session that had no work
+    /// sends ``SessionEvent/workStarted`` first. A completion through
+    /// ``RoutedSession/complete(elicitationId:)`` noted that start already.
+    /// The change of the work is reported after the event
+    /// (``workDidChange()``), so a run that settled before its completion
+    /// arrived still gives its work-end event.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The id of the question that completed.
+    ///   - poster: The origin of the work that posted the completion.
+    func record(elicitationCompleted elicitationId: ULID, poster: Origin) async {
+        guard let origin = askedQuestions.complete(elicitationId, postedBy: poster) else { return }
+        noteWorkStarted()
+        deliverLive(.elicitationCompleted(ElicitationCompletion(elicitationId: elicitationId)), origin: origin)
+        await workDidChange()
     }
 
     /// Hands the live event of one journaled run event to

@@ -56,6 +56,10 @@ import Tracing
 /// ``post(display:)``. A display event is for the client of the host only: it
 /// is never mail, never combined and never journaled, and a withdraw never
 /// removes it.
+///
+/// The outbox also hands the completion of an accepted URL-mode question
+/// (``post(elicitationCompleted:)``) to the attached journal, on the same
+/// ordered chain as the run events. The completion is never mail.
 
 /// The observer that a ``SessionOutbox`` tells about its run mail.
 ///
@@ -486,6 +490,24 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         await invocationObserver?.deliver(display: event)
     }
 
+    /// Posts the completion of the accepted URL-mode question
+    /// `elicitationId` to the attached journal.
+    ///
+    /// The run plane of Extras posts it when the flow of the question
+    /// completes, from each source: ``RoutedSession/complete(elicitationId:)``
+    /// or `ToolContext.complete(elicitationId:)`. The completion is not staged
+    /// and makes no mail. It joins the same ordered ``journalChain`` as the
+    /// run events, so it comes after each run event that was posted before
+    /// it. The journal sends ``SessionEvent/elicitationCompleted(_:)``
+    /// (``OperationEventJournal/record(elicitationCompleted:poster:)``).
+    /// Before a journal is attached, the completion is dropped.
+    ///
+    /// - Parameter elicitationId: The id of the question that completed.
+    func post(elicitationCompleted elicitationId: ULID) async {
+        let poster = OriginContext.current
+        await enqueueJournalWork { await $0.record(elicitationCompleted: elicitationId, poster: poster) }?.value
+    }
+
     /// Chains one journal write onto ``journalChain``.
     ///
     /// - Parameters:
@@ -493,8 +515,19 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///   - origin: The run mail of `event` and the work that posted it.
     /// - Returns: The chained write, or `nil` when no journal is attached.
     private func enqueueJournalWrite(event: OperationEvent, origin: RunEventOrigin) -> Task<Void, Never>? {
+        enqueueJournalWork { await $0.record(event: event, origin: origin) }
+    }
+
+    /// Chains one piece of work of the attached journal onto
+    /// ``journalChain``.
+    ///
+    /// - Parameter work: The work, given the attached journal.
+    /// - Returns: The chained work, or `nil` when no journal is attached.
+    private func enqueueJournalWork(
+        _ work: @escaping @Sendable (any OperationEventJournal) async -> Void
+    ) -> Task<Void, Never>? {
         guard let journal else { return nil }
-        return journalChain.enqueue { await journal.record(event: event, origin: origin) }
+        return journalChain.enqueue { await work(journal) }
     }
 
     /// A snapshot of the queued run mail.

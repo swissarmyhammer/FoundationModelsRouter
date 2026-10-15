@@ -735,6 +735,9 @@ struct SessionOutboxTests {
         func record(event: OperationEvent, origin: RunEventOrigin) {
             recorded.append(event)
         }
+
+        /// Records nothing: the tests of this suite post no completion.
+        func record(elicitationCompleted elicitationId: ULID, poster: Origin) {}
     }
 
     /// Builds a canned ``ToolCallReport`` for one call, so a test can focus on

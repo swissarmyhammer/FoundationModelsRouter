@@ -35,6 +35,20 @@ protocol OperationEventJournal: AnyObject, Sendable {
     ///   - event: The event the outbox has just accepted.
     ///   - origin: The run mail of `event` and the work that posted it.
     func record(event: OperationEvent, origin: RunEventOrigin) async
+
+    /// Sends ``SessionEvent/elicitationCompleted(_:)`` for the accepted
+    /// URL-mode question `elicitationId`, whose flow the run plane completed.
+    /// The write writes no transcript entry: the completion is no run event.
+    ///
+    /// The event goes out one time, and only for a URL-mode question that the
+    /// journal recorded. Its origin is the run mail that holds the question,
+    /// and `poster` decides whether the output drops it
+    /// (``RunEventOrigin/poster``).
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The id of the question that completed.
+    ///   - poster: The origin of the work that posted the completion.
+    func record(elicitationCompleted elicitationId: ULID, poster: Origin) async
 }
 
 /// The origin of the output event of one run event that a session's

@@ -414,6 +414,29 @@ public enum SessionEvent: Sendable, Equatable {
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of
     /// the answer when the question ends inside an answer.
     case elicitationEnded(ElicitationEnd)
+
+    /// The out-of-band flow of an accepted URL-mode question of a run that
+    /// ``elicitationRequested(_:)`` announced completed, and the run resumed.
+    /// Its ``ElicitationCompletion/elicitationId`` is the `elicitationId` of
+    /// that ``elicitationRequested(_:)``.
+    ///
+    /// The completion can come from each source: the client
+    /// (``RoutedSession/complete(elicitationId:)``), or the tool that asked
+    /// (`ToolContext.complete(elicitationId:)`). The session sends one for
+    /// each such question, and only for a question that its journal recorded.
+    /// A question that completed gets no ``elicitationEnded(_:)``. A form-mode
+    /// question, and a second completion of the same question, get none.
+    ///
+    /// The origin (``SessionOutput/origin``) is ``Origin/mail(_:)`` with the
+    /// ``MailID`` of the run mail that holds the question, as the
+    /// ``elicitationRequested(_:)`` of the question. When the session had no
+    /// work, ``workStarted`` comes before this event. The run resumes only
+    /// after the session got the completion, so this event comes before each
+    /// event of the resumed run.
+    ///
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of
+    /// the answer when the question completes inside an answer.
+    case elicitationCompleted(ElicitationCompletion)
 }
 
 /// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)`` names.

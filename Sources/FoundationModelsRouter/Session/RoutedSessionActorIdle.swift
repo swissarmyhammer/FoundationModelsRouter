@@ -123,7 +123,7 @@ extension RoutedSessionActor {
     /// of the questions gives those runs with no second read that can
     /// disagree. A run that asks its question after this read counts as
     /// work, and the journal of its question then reports a change of the
-    /// work (``noteQuestionAsked(_:)``), so a check that missed it runs
+    /// work (``noteQuestionAsked(_:mailID:)``), so a check that missed it runs
     /// again. A run whose question gets its answer after this read counts
     /// as no work, so an answer counts a start of work before it goes to the
     /// run plane (``noteWorkStart(answering:with:)``).

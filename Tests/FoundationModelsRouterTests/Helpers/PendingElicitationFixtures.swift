@@ -69,6 +69,37 @@ final class ElicitationPostings: OperationEventSink {
     func waitForPosts(_ expected: Int) async throws {
         try await changes.wait(until: { postCount >= expected })
     }
+
+    /// The ids of each completion that ``post(elicitationCompleted:)`` got,
+    /// in order.
+    private let completions = Mutex<[ULID]>([])
+
+    /// The number of completions so far. A completion is not a post, so
+    /// ``postCount`` does not count it.
+    var completionCount: Int { completions.withLock { $0.count } }
+
+    /// Sends the completion to the downstream sink, keeps its id, then
+    /// signals ``changes``.
+    ///
+    /// The downstream post ends after the journal of the session handled
+    /// the completion, so a test that waits for the count reads the output
+    /// of that completion.
+    ///
+    /// - Parameter elicitationId: The id of the question that completed.
+    func post(elicitationCompleted elicitationId: ULID) async {
+        await downstream?.post(elicitationCompleted: elicitationId)
+        completions.withLock { $0.append(elicitationId) }
+        changes.signal()
+    }
+
+    /// Waits until at least `expected` completions came.
+    ///
+    /// - Parameter expected: The number of completions to wait for.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   first.
+    func waitForCompletions(_ expected: Int) async throws {
+        try await changes.wait(until: { completionCount >= expected })
+    }
 }
 
 /// The helpers that the suites share when a test holds an elicitation

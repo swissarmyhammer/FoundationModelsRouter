@@ -514,7 +514,7 @@ struct AskedQuestionsEndTests {
     private static func recordWithOneQuestion() -> (questions: AskedQuestions, id: ULID) {
         var questions = AskedQuestions()
         let request = MountFixtures.proceedRequest()
-        questions.noteAsked(request, runToken: runToken)
+        questions.noteAsked(request, runToken: runToken, mailID: nil)
         return (questions, request.elicitationId)
     }
 

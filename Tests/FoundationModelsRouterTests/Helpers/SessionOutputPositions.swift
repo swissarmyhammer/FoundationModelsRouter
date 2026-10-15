@@ -29,6 +29,9 @@ enum SessionEventCase: String, Sendable {
     /// ``SessionEvent/elicitationEnded(_:)``.
     case elicitationEnded
 
+    /// ``SessionEvent/elicitationCompleted(_:)``.
+    case elicitationCompleted
+
     /// ``SessionEvent/runSettled(_:)``.
     case runSettled
 

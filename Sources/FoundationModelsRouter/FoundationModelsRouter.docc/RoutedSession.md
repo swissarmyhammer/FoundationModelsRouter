@@ -282,9 +282,16 @@ the reason `RunPlane.noUserPresentReason`. The session sends no
 cancel. The default is ``UserPresence/interactive``. The sidecar records the
 value, a restore applies it again, and a fork inherits it.
 
+An accepted URL-mode question whose flow completes gets one
+``SessionEvent/elicitationCompleted(_:)`` with the id of its
+``SessionEvent/elicitationRequested(_:)``. The completion can come from
+``complete(elicitationId:)`` or from the tool that asked
+(`ToolContext.complete(elicitationId:)`).
+
 - ``respond(elicitationId:response:)``
 - ``complete(elicitationId:)``
 - ``ElicitationEnd``
+- ``ElicitationCompletion``
 
 ### Context and compaction
 

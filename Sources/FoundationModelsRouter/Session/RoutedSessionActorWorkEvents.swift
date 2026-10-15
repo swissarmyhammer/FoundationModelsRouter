@@ -83,7 +83,7 @@ struct QuestionEndCheck: Sendable, Equatable {
 /// that are possibly open, with the state of each one
 /// (``RoutedSessionActor/askedQuestions``).
 ///
-/// The session needs these facts for three reasons:
+/// The session needs these facts for four reasons:
 ///
 /// - A run that waits only for the user is no work only after its question
 ///   is on the output (``SessionEvent/elicitationRequested(_:)``). So the
@@ -95,8 +95,17 @@ struct QuestionEndCheck: Sendable, Equatable {
 ///   that ended with no answer of the client (task ^fqb5rjr). The record
 ///   knows which questions an answer of the client resumed, and which
 ///   answers of the client are on their way to the run plane.
+/// - The session sends ``SessionEvent/elicitationCompleted(_:)`` one time
+///   for a URL-mode question whose flow completed (task ^rkh6k6m). The record
+///   knows the mode of the question and the run mail that holds it
+///   (``complete(_:postedBy:)``).
 ///
-/// A question leaves the record when an answer resumes its run. A question
+/// A question leaves the record when an answer resumes its run, with one
+/// exception: the completion of an accepted URL-mode question through
+/// ``RoutedSession/complete(elicitationId:)`` keeps it, marked as completed,
+/// until the run plane posts that completion to the journal. The two can
+/// come in each order, so the post takes the question out, and a later
+/// answer finds no question. A question
 /// that ended with no answer of the client stays, marked as ended, so a later
 /// answer to it goes no further and it gets no second end. Thus the record
 /// is bounded by the count of the questions that the runs of the session
@@ -132,6 +141,12 @@ struct AskedQuestions: Sendable {
         /// The question ended with no answer of the client, and the session
         /// sent its end. An answer to it goes no further.
         case ended
+
+        /// A URL-mode question whose flow the client completed. Its run
+        /// resumed, and the question waits only for the post of its
+        /// completion (``AskedQuestions/complete(_:postedBy:)``). An answer to
+        /// it goes no further, and no end check ends it.
+        case completed
     }
 
     /// One recorded question.
@@ -142,6 +157,10 @@ struct AskedQuestions: Sendable {
         /// The completion token of the run that asks the question. For a
         /// question of a mounted call, the token of the mounting run.
         let runToken: String
+
+        /// The id of the run mail that holds the question, or `nil` when the
+        /// question made no mail (``RunEventOrigin/mailID``).
+        let mailID: MailID?
 
         /// The requested schema of a form-mode question. `nil` for a
         /// URL-mode question.
@@ -157,10 +176,27 @@ struct AskedQuestions: Sendable {
         var deferredEnd: QuestionEndDelivery?
 
         /// Whether the question is still open for the session: it did not
-        /// end with no answer of the client, and its end does not wait for
-        /// an answer on its way.
+        /// end with no answer of the client, its flow did not complete, and
+        /// its end does not wait for an answer on its way.
         var isOpen: Bool {
-            state != .ended && deferredEnd == nil
+            switch state {
+            case .form, .url, .acceptedURL:
+                return deferredEnd == nil
+            case .ended, .completed:
+                return false
+            }
+        }
+
+        /// Whether the question is a URL-mode question that did not end with
+        /// no answer of the client: its completion gives
+        /// ``SessionEvent/elicitationCompleted(_:)``.
+        var takesCompletion: Bool {
+            switch state {
+            case .url, .acceptedURL, .completed:
+                return true
+            case .form, .ended:
+                return false
+            }
         }
     }
 
@@ -173,10 +209,32 @@ struct AskedQuestions: Sendable {
     /// - Parameters:
     ///   - request: The question that a run asked.
     ///   - runToken: The completion token of the run that asks it.
-    mutating func noteAsked(_ request: ElicitationRequest, runToken: String) {
+    ///   - mailID: The id of the run mail that holds the question, or `nil`.
+    mutating func noteAsked(_ request: ElicitationRequest, runToken: String, mailID: MailID?) {
         let isForm = request.mode == .form
         questions[request.elicitationId] = Question(
-            state: isForm ? .form : .url, runToken: runToken, requestedSchema: isForm ? request.requestedSchema : nil)
+            state: isForm ? .form : .url, runToken: runToken, mailID: mailID,
+            requestedSchema: isForm ? request.requestedSchema : nil)
+    }
+
+    /// Takes the URL-mode question `id` out of the record, because the run
+    /// plane posted the completion of its flow.
+    ///
+    /// The completion goes out only for a URL-mode question in the record
+    /// that did not end with no answer of the client. The question leaves the
+    /// record, so a second post of the same completion gives nothing, and a
+    /// later answer to it finds no question.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the question.
+    ///   - poster: The origin of the work that posted the completion.
+    /// - Returns: The origin of ``SessionEvent/elicitationCompleted(_:)``: the
+    ///   run mail that holds the question, and `poster`. `nil` when no event
+    ///   goes out.
+    mutating func complete(_ id: ULID, postedBy poster: Origin) -> RunEventOrigin? {
+        guard let question = questions[id], question.takesCompletion else { return nil }
+        questions[id] = nil
+        return RunEventOrigin(mailID: question.mailID, poster: poster)
     }
 
     /// The answer to the question `id` that the session mails to the model
@@ -269,7 +327,10 @@ struct AskedQuestions: Sendable {
     }
 
     /// Records what the run plane did with an answer to the question `id`.
-    /// A question whose run resumed is closed, so it leaves the record.
+    /// A question whose run resumed is closed, so it leaves the record. The
+    /// completion of an accepted URL-mode question is the exception: the
+    /// question stays as ``State/completed`` until the run plane posts the
+    /// completion (``complete(_:postedBy:)``), and it keeps no end.
     ///
     /// - Parameters:
     ///   - id: The id of the question.
@@ -283,7 +344,7 @@ struct AskedQuestions: Sendable {
         question.answersOnTheirWay = max(question.answersOnTheirWay - 1, 0)
         switch outcome {
         case .resumedRun:
-            questions[id] = nil
+            questions[id] = Self.questionAfterItsRunResumed(question)
             return nil
         case .acceptedAwaitingCompletion:
             question.state = .acceptedURL
@@ -297,6 +358,20 @@ struct AskedQuestions: Sendable {
         }
         questions[id] = question
         return end
+    }
+
+    /// The record of `question` after an answer resumed its run.
+    ///
+    /// - Parameter question: The question, with the answer counted out.
+    /// - Returns: `nil`: the question leaves the record. For an accepted
+    ///   URL-mode question, the question as ``State/completed`` with no end,
+    ///   until the run plane posts its completion.
+    private static func questionAfterItsRunResumed(_ question: Question) -> Question? {
+        guard question.state == .acceptedURL else { return nil }
+        var completed = question
+        completed.state = .completed
+        completed.deferredEnd = nil
+        return completed
     }
 
     /// Ends each open question of the run of `runToken` that is not in
@@ -470,10 +545,13 @@ extension RoutedSessionActor {
     /// ``askedQuestions``). The question mail starts no answer, so no end of
     /// the pump reports this change.
     ///
-    /// - Parameter event: The `.elicitation` event that the journal recorded.
-    func noteQuestionAsked(_ event: OperationEvent) async {
+    /// - Parameters:
+    ///   - event: The `.elicitation` event that the journal recorded.
+    ///   - mailID: The id of the run mail that holds the question, or `nil`
+    ///     when the question made no mail.
+    func noteQuestionAsked(_ event: OperationEvent, mailID: MailID?) async {
         if let request = event.elicitation {
-            askedQuestions.noteAsked(request, runToken: event.correlationID)
+            askedQuestions.noteAsked(request, runToken: event.correlationID, mailID: mailID)
         }
         await workDidChange()
     }
