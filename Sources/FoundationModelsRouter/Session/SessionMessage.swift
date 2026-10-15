@@ -99,7 +99,10 @@ extension Mail {
     /// - An agent message is one line that names the session id of the
     ///   sender, then its content.
     /// - An elicitation answer is one line that names the elicitation id,
-    ///   the action and the content.
+    ///   the action and the content. A decline or a cancel that gives a
+    ///   reason adds a line break, then `reason: ` and the reason, so that
+    ///   the model sees why the user gave no answer. An answer with no
+    ///   reason is only the first line.
     var promptText: String? {
         switch body {
         case .userMessage(let prompt, _):
@@ -109,9 +112,23 @@ extension Mail {
         case .elicitationAnswer(let elicitationID, let response):
             return
                 "[answer to elicitation \(elicitationID.ulidString)] \(response.action.rawValue): \(Self.contentText(of: response))"
+                + Self.reasonText(of: response)
         case .runEvent:
             return nil
         }
+    }
+
+    /// The reason of an elicitation answer as the text after its first
+    /// line: a line break, then `reason: ` and the reason as the user gave
+    /// it. The text is empty when the answer has no reason, so the prompt
+    /// text of that answer does not change. Only a decline or a cancel has
+    /// a reason (``ElicitationResponse/reason``).
+    ///
+    /// - Parameter response: The answer.
+    /// - Returns: The text of the reason, or an empty string.
+    private static func reasonText(of response: ElicitationResponse) -> String {
+        guard let reason = response.reason else { return "" }
+        return "\nreason: \(reason)"
     }
 
     /// The content of an elicitation answer as JSON text with sorted keys,
