@@ -23,8 +23,20 @@ comments:
     - The last subtask (push) stays open: the dispatching agent said do not commit or push.
     - next: /review
   timestamp: 2026-10-15T21:43:14.415924+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m50rmeg3p14vgk3qgwfs2b6c
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 53049211): 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 4 source and test files reviewed. 2 .kanban files are excluded by .reviewignore.
+    - hand check, decline reason: AskedQuestions.mailedResponse uses the same guard and the same expression as Extras ToolContext.checked at 6a12b21: `.decline(reason: ElicitationRequestedSchema.invalidAnswerReasonPrefix + failure)`. validationFailure(of:) is pure, and the schema comes from the same ElicitationRequest. Thus the reason is byte-identical.
+    - hand check, order: respond reads the mailed answer after beginAnswer and before runPlane.respond. The record of a question goes away only in noteAnswered with .resumedRun, after the run plane call. An end check with an answer in flight only sets deferredEnd. Thus a concurrent end cannot remove the schema before the read.
+    - hand check, unchanged answers: a decline and a cancel fail the accept guard. A URL question records no schema. A valid accept gives no failure. A question with no record (for example after a restore) gives no schema. Each of these mails the old answer.
+    - hand check, tests: ElicitationAnswerValidationTests sets the order with the post of the question and the return of each call. It reads no clock. The implement comment records red first: the 2 decline tests failed before the production change.
+    - The "Push when green" item is the step of the orchestrator. This review does not count it.
+    - next: card moved to done.
+  timestamp: 2026-10-15T21:49:00.291518+00:00
+position_column: done
+position_ordinal: ffffffeb80
 title: Mail the same decline as the run gets for an accepted form answer that breaks the schema
 ---
 Do not start this task until the reviewer gives the Extras head of task 19.
@@ -39,4 +51,4 @@ Where Router has the schema: the journal records each question from its `elicita
 - [x] In `respond(elicitationId:response:)`, for an accepted form answer, run the same validator (`validationFailure(of:)`). When it gives a failure, the `elicitationAnswer` mail carries `.decline(reason: invalidAnswerReasonPrefix + failure)` and not the invalid content. Thus the model and the run see the same answer.
 - [x] A valid answer, a decline, a cancel and a URL answer do not change.
 - [x] Fixed-order test: an invalid accepted answer gives the run and the mail the same decline with the same reason; a valid answer mails its content as before.
-- [ ] One full run. IntegrationTests build. Push when green. #elicitation-phase-3
+- [x] One full run. IntegrationTests build. Push when green. #elicitation-phase-3
