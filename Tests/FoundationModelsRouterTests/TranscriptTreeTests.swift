@@ -503,7 +503,7 @@ struct TranscriptTreeTests {
         let rootDirectory = try #require(TranscriptTree.load(under: routerDir).session(root.id))
             .directory
         try FileManager.default.removeItem(
-            at: rootDirectory.appendingPathComponent("session.json", isDirectory: false)
+            at: RouterTestFixtures.sidecarURL(inSessionDirectory: rootDirectory)
         )
 
         // Loud, and specific about which directory is unreadable: silently
@@ -582,8 +582,9 @@ struct TranscriptTreeTests {
         _ = try await root.respond(to: "root-message-1")
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
-        let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
-        let sidecarURL = rootDirectory.appendingPathComponent("session.json", isDirectory: false)
+        let rootDirectory = RouterTestFixtures.sessionDirectory(
+            of: root.id, routerId: router.id, recordingsDir: recordingsDir)
+        let sidecarURL = RouterTestFixtures.sidecarURL(inSessionDirectory: rootDirectory)
         try FileManager.default.removeItem(at: sidecarURL)
         try Data("{ truncated".utf8).write(to: sidecarURL)
 
@@ -616,8 +617,9 @@ struct TranscriptTreeTests {
         // Restamp the recorded sidecar with a version this reader does not
         // know, the way a recording written by a newer router would carry it.
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
-        let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
-        let sidecarURL = rootDirectory.appendingPathComponent("session.json", isDirectory: false)
+        let rootDirectory = RouterTestFixtures.sessionDirectory(
+            of: root.id, routerId: router.id, recordingsDir: recordingsDir)
+        let sidecarURL = RouterTestFixtures.sidecarURL(inSessionDirectory: rootDirectory)
         let futureVersion = RecordingSchemaVersion.current + 1
         var json = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])

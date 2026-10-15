@@ -119,7 +119,7 @@ struct RealModelHarnessTests {
                 to: sessionDirectory
             )
 
-            let sidecarURL = sessionDirectory.appendingPathComponent("session.json", isDirectory: false)
+            let sidecarURL = RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDirectory)
             let sidecar = try JSONDecoder().decode(SessionSidecar.self, from: Data(contentsOf: sidecarURL))
             #expect(sidecar.slot == .standard)
             #expect(sidecar.model == Self.model)

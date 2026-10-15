@@ -157,8 +157,7 @@ struct MergedAndRedactionTests {
                 "schemaVersion": \(futureVersion)
             }
             """.utf8)
-        try futureJSON.write(
-            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+        try futureJSON.write(to: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir))
 
         #expect(
             throws: RecordingSchemaVersionError.recordingFromNewerRouter(

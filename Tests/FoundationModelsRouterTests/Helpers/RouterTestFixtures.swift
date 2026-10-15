@@ -219,4 +219,62 @@ enum RouterTestFixtures {
     static func routerDirectory(routerId: ULID, recordingsDir: URL) -> URL {
         recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
     }
+
+    /// The directory of a recorded session under the recording root of a
+    /// router.
+    ///
+    /// A root session has its directory directly under the recording root.
+    /// A fork has its directory under the directory of its parent, so a
+    /// fork path starts at the root session and ends at the fork.
+    ///
+    /// - Parameters:
+    ///   - sessionPath: The ids from the root session to the session, in
+    ///     order. A root session is a path of one id.
+    ///   - routerId: The id of the router that owns the recording root.
+    ///   - recordingsDir: The durable transcripts root.
+    /// - Returns: The session directory.
+    static func sessionDirectory(of sessionPath: ULID..., routerId: ULID, recordingsDir: URL) -> URL {
+        sessionDirectory(alongPath: sessionPath, routerId: routerId, recordingsDir: recordingsDir)
+    }
+
+    /// The sidecar file (`session.json`) of a recorded session under the
+    /// recording root of a router.
+    ///
+    /// The one shared implementation of this path rule for every suite that
+    /// reads or rewrites a recorded sidecar.
+    ///
+    /// - Parameters:
+    ///   - sessionPath: The ids from the root session to the session, in
+    ///     order. A root session is a path of one id.
+    ///   - routerId: The id of the router that owns the recording root.
+    ///   - recordingsDir: The durable transcripts root.
+    /// - Returns: The sidecar file URL.
+    static func sidecarURL(of sessionPath: ULID..., routerId: ULID, recordingsDir: URL) -> URL {
+        sidecarURL(
+            inSessionDirectory: sessionDirectory(
+                alongPath: sessionPath, routerId: routerId, recordingsDir: recordingsDir))
+    }
+
+    /// The directory at the end of a session path under the recording root
+    /// of a router. The variadic helpers share this one implementation.
+    ///
+    /// - Parameters:
+    ///   - sessionPath: The ids from the root session to the session, in
+    ///     order.
+    ///   - routerId: The id of the router that owns the recording root.
+    ///   - recordingsDir: The durable transcripts root.
+    /// - Returns: The session directory.
+    private static func sessionDirectory(alongPath sessionPath: [ULID], routerId: ULID, recordingsDir: URL) -> URL {
+        sessionPath.reduce(routerDirectory(routerId: routerId, recordingsDir: recordingsDir)) { directory, id in
+            directory.appendingPathComponent(id.description, isDirectory: true)
+        }
+    }
+
+    /// The sidecar file (`session.json`) in a session directory.
+    ///
+    /// - Parameter sessionDirectory: The directory of the session.
+    /// - Returns: The sidecar file URL.
+    static func sidecarURL(inSessionDirectory sessionDirectory: URL) -> URL {
+        sessionDirectory.appendingPathComponent(sessionSidecarFileName, isDirectory: false)
+    }
 }

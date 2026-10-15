@@ -17,6 +17,23 @@ comments:
     - evidence: 15 files — Sources/FoundationModelsRouter/Session/SessionConfiguration.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift, Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Sources/FoundationModelsRouter/Hosting/OperationVocabulary.swift, Sources/FoundationModelsRouter/Tracing/RouterTelemetry.swift, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift (doc link), Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md, Tests/FoundationModelsRouterTests/SessionUserPresenceTests.swift (new), Tests/FoundationModelsRouterPublicSurfaceTests/UserPresencePublicSurfaceTests.swift (new), Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift, Tests/FoundationModelsRouterTests/SessionConfigurationTests.swift, Tests/FoundationModelsRouterTests/SessionWorkEventTests.swift, Tests/FoundationModelsRouterTests/Helpers/BackgroundingSessionFixture.swift. Full suite: 1735 tests in 210 suites passed (1 existing known issue), 26/14 and 19/3 passed. IntegrationTests build complete.
     - next: /review
   timestamp: 2026-10-15T18:01:36.885990+00:00
+- actor: claude-code
+  id: 01m50c3v7ettm7x4b4feeqnm0c
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (5409c852); 1 finding confirmed, 2 refuted. Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:1073 (reuse/reuse).
+    - hand checks: each path that makes a RunPlane gives the presence. These are the root (RoutedLLM makeSessionToolWiring), the fork (RoutedSessionActorForking reads runPlane.userPresence), and the restore and restored fork (SessionTreeRestoration, restoredUserPresence per node). The sidecar records runPlane.userPresence. The API changes are additive only (defaulted parameters). The new tests use no sleep, time limit or clock deadline. The red-first order cannot be seen in one commit.
+    - next: implement the finding (one RouterTestFixtures helper for the sidecar path), then review again.
+  timestamp: 2026-10-15T18:10:13.358017+00:00
+- actor: claude-code
+  id: 01m50cj6pqvc31rma6q1qeks47
+  text: |-
+    Finding reuse/reuse (SessionTreeRestorationTests rewriteRecordedSidecar) is done. RouterTestFixtures has three new helpers: `sessionDirectory(of: ULID..., routerId:recordingsDir:)`, `sidecarURL(of: ULID..., routerId:recordingsDir:)` and `sidecarURL(inSessionDirectory:)`. The ids are a session path from the root to the session, so a fork is `of: root.id, fork.id`. The file name comes from the production constant `sessionSidecarFileName`. All sites in Tests/ that built a sidecar path by hand now call the helpers: SessionTreeRestorationTests (4 sites), ForkAfterCompactionRestorationTests (private forkSidecarURL removed), TranscriptTreeTests (3), StoredRecoveriesKeyTests (2), SessionSidecarTests (8), MergedAndRedactionTests, RealModelHarnessTests, PerSessionRecordingRootTests (2). Not changed: the "session.json" literals in file-name list assertions (SessionSidecarTests) and RecordingRedactionScanTests data, because they are not path construction. Discovery: many tests also build a session directory by hand to reach transcript.jsonl (SessionSidecarTests, TranscriptNestingTests, SessionTreeRestorationTests, RepetitionStopRestoreTests, MergedTranscriptPublicSurfaceTests). That is outside this finding; `sessionDirectory(of:...)` can serve them later. Note: the files tool `replace_all` made only one replacement each time, so each site was edited one by one.
+
+    ### implement — changed
+    - evidence: 9 files under Tests/FoundationModelsRouterTests. `swift build --build-tests`: Build complete, zero Router warnings. Touched suites: "Test run with 101 tests in 8 suites passed after 0.566 seconds with 1 known issue." Full suite `swift test --skip-build`: "Test run with 1735 tests in 210 suites passed after 7.378 seconds with 1 known issue." plus 26 tests in 14 suites and 19 tests in 3 suites passed. `cd IntegrationTests && swift build --build-tests`: Build complete.
+    - next: review
+  timestamp: 2026-10-15T18:18:03.863583+00:00
 position_column: doing
 position_ordinal: '80'
 title: Set the user presence of a session (interactive or headless) on its run plane
@@ -29,3 +46,15 @@ Elicitation phase 2, the Router part. Needs Extras task 18 (Extras main dbd91de)
 - [ ] Fixed-order tests. One full run. Push when the reviewer accepts the design and the run is green.
 
 Send the design to the reviewer before code. #elicitation-phase-2
+
+## Review Findings (2026-10-15 13:02)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 14 file(s) reviewed, 5 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+
+- [x] `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:1073` `reuse/reuse` — rewriteRecordedSidecar rebuilds the sidecar path from the router directory and the session id by hand. Other tests already build this same path for recorded sessions, so the path logic is repeated. Move the sidecar path construction (routerDirectory plus session directory plus session.json) into one RouterTestFixtures helper, and call it from rewriteRecordedSidecar and from the sibling tests that already build this path.

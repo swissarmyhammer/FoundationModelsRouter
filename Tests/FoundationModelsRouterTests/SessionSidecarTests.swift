@@ -257,8 +257,7 @@ struct SessionSidecarTests {
                 "recordingLevel": "full"
             }
             """.utf8)
-        try oldFormatJSON.write(
-            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+        try oldFormatJSON.write(to: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir))
 
         let decoded = try #require(try SessionSidecar.read(in: sessionDir))
         #expect(decoded.workingDirectory == sessionDir)
@@ -280,8 +279,7 @@ struct SessionSidecarTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try Data("not json".utf8).write(
-            to: dir.appendingPathComponent("session.json", isDirectory: false))
+        try Data("not json".utf8).write(to: RouterTestFixtures.sidecarURL(inSessionDirectory: dir))
         #expect(throws: (any Error).self) { try SessionSidecar.read(in: dir) }
     }
 
@@ -297,8 +295,7 @@ struct SessionSidecarTests {
 
         // The stamp is real bytes on disk, not only an in-memory default: a
         // future reader learns the version from the file alone.
-        let onDisk = try Data(
-            contentsOf: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+        let onDisk = try Data(contentsOf: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir))
         let json = try #require(try JSONSerialization.jsonObject(with: onDisk) as? [String: Any])
         #expect(json["schemaVersion"] as? Int == RecordingSchemaVersion.current)
 
@@ -325,8 +322,7 @@ struct SessionSidecarTests {
                 "recordingLevel": "full"
             }
             """.utf8)
-        try unstampedJSON.write(
-            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+        try unstampedJSON.write(to: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir))
 
         let decoded = try #require(try SessionSidecar.read(in: sessionDir))
         #expect(decoded.schemaVersion == RecordingSchemaVersion.implicit)
@@ -352,8 +348,7 @@ struct SessionSidecarTests {
                 "schemaVersion": \(futureVersion)
             }
             """.utf8)
-        try futureJSON.write(
-            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+        try futureJSON.write(to: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir))
 
         #expect(
             throws: RecordingSchemaVersionError.recordingFromNewerRouter(
@@ -386,7 +381,7 @@ struct SessionSidecarTests {
         #expect(isDirectory.boolValue)
         #expect(
             FileManager.default.fileExists(
-                atPath: sessionDir.appendingPathComponent("session.json", isDirectory: false).path
+                atPath: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir).path
             )
         )
     }
@@ -398,7 +393,7 @@ struct SessionSidecarTests {
 
         let sessionDir = dir.appendingPathComponent(ULID.generate().description, isDirectory: true)
         try SessionSidecar.write(Self.sampleSidecar(forkedAtEntryCount: nil), to: sessionDir)
-        let fileURL = sessionDir.appendingPathComponent("session.json", isDirectory: false)
+        let fileURL = RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir)
         let firstBytes = try Data(contentsOf: fileURL)
 
         #expect(throws: (any Error).self) {
@@ -578,7 +573,7 @@ struct SessionSidecarTests {
             if let directory, seenDirectories.insert(directory).inserted {
                 sidecarPresentAtFirstAppend.append(
                     FileManager.default.fileExists(
-                        atPath: directory.appendingPathComponent("session.json", isDirectory: false).path
+                        atPath: RouterTestFixtures.sidecarURL(inSessionDirectory: directory).path
                     )
                 )
             }

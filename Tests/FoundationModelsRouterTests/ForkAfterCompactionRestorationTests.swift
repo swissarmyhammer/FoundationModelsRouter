@@ -97,14 +97,6 @@ struct ForkAfterCompactionRestorationTests {
             try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
     }
 
-    /// The `session.json` URL of `forkId`, nested under its `rootId` parent.
-    private static func forkSidecarURL(routerDirectory: URL, rootId: ULID, forkId: ULID) -> URL {
-        routerDirectory
-            .appendingPathComponent(rootId.description, isDirectory: true)
-            .appendingPathComponent(forkId.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
-    }
-
     /// The entry ids of `sessionId`'s own recorded entry events, in order —
     /// what the session itself appended after its fork cut.
     private static func ownRecordedEntryIds(in tree: TranscriptTree, sessionId: ULID) throws -> [String] {
@@ -177,7 +169,8 @@ struct ForkAfterCompactionRestorationTests {
         // the legacy positional baseline (which stays the post-compaction backend
         // count, for readers that predate the new field).
         let sidecar = try Self.sidecarJSON(
-            at: Self.forkSidecarURL(routerDirectory: routerDirectory, rootId: root.id, forkId: fork.id))
+            at: RouterTestFixtures.sidecarURL(
+                of: root.id, fork.id, routerId: router1.id, recordingsDir: recordingsDir))
         #expect(sidecar["forkedAtHistoryOrdinal"] as? Int == entryEventCountAtFork)
         #expect(sidecar["forkedAtEntryCount"] as? Int == checkpoint.content.liveWindowEntryIds.count)
 
@@ -287,8 +280,8 @@ struct ForkAfterCompactionRestorationTests {
         // Rewrite the fork's sidecar without the new key, simulating a
         // recording written before the field existed.
         let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-        let sidecarURL = Self.forkSidecarURL(
-            routerDirectory: routerDirectory, rootId: root.id, forkId: fork.id)
+        let sidecarURL = RouterTestFixtures.sidecarURL(
+            of: root.id, fork.id, routerId: router1.id, recordingsDir: recordingsDir)
         var json = try Self.sidecarJSON(at: sidecarURL)
         json.removeValue(forKey: "forkedAtHistoryOrdinal")
         try FileManager.default.removeItem(at: sidecarURL)

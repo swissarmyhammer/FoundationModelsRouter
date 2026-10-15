@@ -329,9 +329,8 @@ struct SessionTreeRestorationTests {
 
         // A sidecar is write-once, so restoring a session must not touch the
         // one already sitting in its directory — byte-for-byte.
-        let rootSidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-            .appendingPathComponent(root.id.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
+        let rootSidecarURL = RouterTestFixtures.sidecarURL(
+            of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
         let bytesBeforeRestore = try Data(contentsOf: rootSidecarURL)
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
@@ -404,9 +403,7 @@ struct SessionTreeRestorationTests {
         // Restamp the recorded root sidecar with a version this reader does
         // not know — the fabricated future-version recording of the
         // acceptance criteria.
-        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-            .appendingPathComponent(root.id.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
+        let sidecarURL = RouterTestFixtures.sidecarURL(of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
         let futureVersion = RecordingSchemaVersion.current + 1
         var json = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
@@ -1070,9 +1067,7 @@ struct SessionTreeRestorationTests {
     private static func rewriteRecordedSidecar(
         of session: ULID, routerId: ULID, recordingsDir: URL, edit: (inout [String: Any]) -> Void
     ) throws {
-        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: routerId, recordingsDir: recordingsDir)
-            .appendingPathComponent(session.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
+        let sidecarURL = RouterTestFixtures.sidecarURL(of: session, routerId: routerId, recordingsDir: recordingsDir)
         var json = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
         edit(&json)
@@ -1146,9 +1141,7 @@ struct SessionTreeRestorationTests {
         // Rewrite the recorded context to a figure the live resolution does
         // not match — the on-disk stand-in for a recording made on a machine
         // whose window search settled on a different window.
-        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-            .appendingPathComponent(root.id.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
+        let sidecarURL = RouterTestFixtures.sidecarURL(of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
         var json = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
         let resolvedContext = try #require(json["context"] as? Int)

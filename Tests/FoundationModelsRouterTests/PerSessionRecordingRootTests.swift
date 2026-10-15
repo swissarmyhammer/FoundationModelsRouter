@@ -180,7 +180,7 @@ struct PerSessionRecordingRootTests {
         #expect(session.recordingDirectory == expectedDirectory)
         #expect(
             FileManager.default.fileExists(
-                atPath: expectedDirectory.appendingPathComponent("session.json").path))
+                atPath: RouterTestFixtures.sidecarURL(inSessionDirectory: expectedDirectory).path))
         // No routerId directory anywhere under the custom root.
         #expect(
             !FileManager.default.fileExists(
@@ -214,7 +214,7 @@ struct PerSessionRecordingRootTests {
         #expect(fork.recordingDirectory == expectedForkDirectory)
         #expect(
             FileManager.default.fileExists(
-                atPath: expectedForkDirectory.appendingPathComponent("session.json").path))
+                atPath: RouterTestFixtures.sidecarURL(inSessionDirectory: expectedForkDirectory).path))
 
         // The whole tree is still reachable by loading the custom root
         // directly (the flat, no-routerId-segment layout).

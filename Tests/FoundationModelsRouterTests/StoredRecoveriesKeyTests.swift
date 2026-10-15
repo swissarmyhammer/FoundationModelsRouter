@@ -115,7 +115,7 @@ struct StoredRecoveriesKeyTests {
     ///   - sessionDirectory: The directory of the session.
     /// - Throws: What the read, the parse or the write throws.
     private static func writeStoredRecoveries(_ recoveries: Int, in sessionDirectory: URL) throws {
-        let url = sessionDirectory.appendingPathComponent("session.json", isDirectory: false)
+        let url = RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDirectory)
         var sidecar = try readSidecarObject(at: url)
         var configuration = try #require(sidecar["configuration"] as? [String: Any])
         var detection = try #require(storedDetection(in: sidecar))
@@ -166,9 +166,7 @@ struct StoredRecoveriesKeyTests {
             configuration: SessionConfiguration(repetitionDetection: RepetitionDetection(recoveriesPerAnswer: recoveries)))
         _ = try await session.respond(to: Self.newSessionPrompt)
 
-        let url = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
-            .appendingPathComponent(session.id.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
+        let url = RouterTestFixtures.sidecarURL(of: session.id, routerId: router.id, recordingsDir: recordingsDir)
         let detection = try #require(Self.storedDetection(in: try Self.readSidecarObject(at: url)))
         #expect(detection[Self.storedKey] as? Int == recoveries)
         #expect(detection[Self.swiftName] == nil)
