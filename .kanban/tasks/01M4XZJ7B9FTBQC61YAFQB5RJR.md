@@ -103,6 +103,13 @@ comments:
     - evidence: `review sha HEAD~1..HEAD` (16d276ed): 0 findings, 0 confirmed, 0 refuted; 7 attempted, 0 failed. All items of the 20:06 and 20:34 sections are checked. Hand checks: (1) No unbounded wait in `awaitDeferredEnds()`. An end check sets `deferredEnd` only when `answersOnTheirWay > 0`. Each `beginAnswer` in `deliverAnswer` has a `noteAnswer` after it, with no throw between them. `noteAnswered` clears `deferredEnd` (or removes the question) when the last answer returns, and `questionAnswerReturns.signal()` wakes the wait. A new held end needs `beginAnswer` on an open question, and the check of close ended or held each open question. No suspension comes between the wait and `finishSessionEventSubscriptions()`. (2) `awaitAnswerReturns` awaits the `.value` of its wait task, so the task ends before close() continues. (3) `noteAnswered` gives the end one time only (it clears `deferredEnd` and sets `.ended`), and gives no end after `.resumedRun`. Thus each unanswered question gets exactly one end. (4) The tests have a fixed order (gate plus `waiterCount >= 2`) and have no time limits. Without the fix, close keeps an empty `waitingEnds` and adds no waiter, so the gate stays shut until the feed ends, and `soleEnd` fails. `swift test --filter "ElicitationEndedEventTests|AskedQuestionsEndTests"`: 15 tests in 2 suites passed.
     - next: none. Card moved to done.
   timestamp: 2026-10-15T01:54:16.405033+00:00
+- actor: claude-code
+  id: 01m4ymrfebd88emsf41cajd5r0
+  text: |-
+    ### finish iterations 2 and 3 — clean
+    - iteration 2: implement changed; full suite 1722 tests in 208 suites passed; commit af6f8b3b; review findings — RoutedSessionActorForking.swift:409
+    - iteration 3: implement changed; full suite 1725 tests in 208 suites passed; IntegrationTests build clean; commit 16d276ed; review clean; card in done
+  timestamp: 2026-10-15T02:02:49.163804+00:00
 position_column: done
 position_ordinal: ffffffe580
 title: Session event elicitationEnded for a question that ends without a client answer

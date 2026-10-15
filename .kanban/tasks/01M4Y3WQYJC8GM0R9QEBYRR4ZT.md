@@ -18,8 +18,29 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Session/SessionMessage.swift (new private `reasonText(of:)`, appended to the elicitation answer text), Tests/FoundationModelsRouterTests/ElicitationAnswerPromptTextTests.swift (new, 4 tests). Red: 2 of 4 failed by assertion before the change. `swift build --build-tests`: Build complete, only the mlx "missing creator" line. Suite once: "Test run with 4 tests in 1 suite passed". Full suite once (`swift test --skip-build`): "Test run with 1729 tests in 209 suites passed after 6.149 seconds with 1 known issue" (the RealModelHarness embedding slot known issue, as before), "Test run with 25 tests in 13 suites passed", "Test run with 19 tests in 3 suites passed". `cd IntegrationTests && swift build --build-tests`: Build complete, only the mlx line. Not committed.
     - next: /review. The card stays in doing.
   timestamp: 2026-10-15T01:59:52.060701+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4ymqv4k9eedsyt6mcms34aw
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 8ede7176). 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 2 files reviewed: Sources/FoundationModelsRouter/Session/SessionMessage.swift, Tests/FoundationModelsRouterTests/ElicitationAnswerPromptTextTests.swift. The 4 .kanban files are excluded by .reviewignore.
+    - hand checks:
+      - No reason: `reasonText(of:)` returns "" when `reason == nil`. Thus the text is byte-identical to the text before the change. The two no-reason tests compare against the old one-line format.
+      - Recordings and restore: `ContextRenderer.promptText(delivering:followedBy:)` has two callers only, and both are live submission paths (RoutedSessionActorAnswerExecution: the first attempt and the retry prompt). `ContextRenderer.context(of:)` rebuilds the recorded `.prompt` entry text and removes the mail records. It does not call `Mail.promptText`. Extras decodes `reason` with `decodeIfPresent`, so an old recording gives `reason == nil`.
+      - Reason line: the first line cannot contain a line break (ULID, action raw value, JSON with sorted keys, or `none`). Thus the first "\nreason: " always starts the reason, and the reason is all text after it. A line break or the text "reason:" in the reason cannot move that point. The cancel test uses a reason with a line break. The card format says that a line break in the reason stays.
+      - Red first: the implement comment records 2 of 4 tests failed by assertion before the change (the decline and the cancel with a reason), and the 2 no-reason tests passed.
+    - next: none. The card moves to done.
+  timestamp: 2026-10-15T02:02:28.371060+00:00
+- actor: claude-code
+  id: 01m4ymrhst1a74c73mzf7qbdm1
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — reason line in the prompt text of a mailed decline or cancel
+    - test: green — full suite 1729 tests in 209 suites passed; IntegrationTests build clean
+    - commit: 8ede7176
+    - review: clean; card in done
+  timestamp: 2026-10-15T02:02:51.578349+00:00
+position_column: done
+position_ordinal: ffffffe680
 title: Put the decline or cancel reason in the prompt text of a mailed elicitation answer
 ---
 Do not start this task until the reviewer says so.
