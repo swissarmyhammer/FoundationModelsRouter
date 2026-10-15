@@ -34,16 +34,23 @@ comments:
     - evidence: 9 files under Tests/FoundationModelsRouterTests. `swift build --build-tests`: Build complete, zero Router warnings. Touched suites: "Test run with 101 tests in 8 suites passed after 0.566 seconds with 1 known issue." Full suite `swift test --skip-build`: "Test run with 1735 tests in 210 suites passed after 7.378 seconds with 1 known issue." plus 26 tests in 14 suites and 19 tests in 3 suites passed. `cd IntegrationTests && swift build --build-tests`: Build complete.
     - next: review
   timestamp: 2026-10-15T18:18:03.863583+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m50cw3pwrmvx1dcwe3spb35a
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (0b3a1ac7). 0 findings, 0 confirmed, 0 refuted. 14 attempts, 0 failed. 9 files reviewed. The 2 .kanban files are excluded by .reviewignore. The prior finding SessionTreeRestorationTests.swift:1073 reuse/reuse is checked. RouterTestFixtures now has sessionDirectory(of:routerId:recordingsDir:) and sidecarURL(of:routerId:recordingsDir:).
+    - next: The card moved to done. The orchestrator does the push.
+  timestamp: 2026-10-15T18:23:28.476686+00:00
+position_column: done
+position_ordinal: ffffffe980
 title: Set the user presence of a session (interactive or headless) on its run plane
 ---
 Elicitation phase 2, the Router part. Needs Extras task 18 (Extras main dbd91de): `UserPresence { interactive, headless }`, `RunPlane.init(clock:userPresence: = .interactive)`, `RunPlane.userPresence`, `RunPlane.noUserPresentReason`. A headless RunPlane answers each question at once with `.cancel(reason: noUserPresentReason)`, posts no event and stores no question.
 
-- [ ] A public Router value sets the user presence of a session. The session passes it to its `RunPlane(clock:userPresence:)`. The default is `.interactive`, so no current caller changes. Additive API only.
-- [ ] A fork and a restored session keep the presence of their source.
-- [ ] A headless session sends `workEnded` normally.
-- [ ] Fixed-order tests. One full run. Push when the reviewer accepts the design and the run is green.
+- [x] A public Router value sets the user presence of a session. The session passes it to its `RunPlane(clock:userPresence:)`. The default is `.interactive`, so no current caller changes. Additive API only.
+- [x] A fork and a restored session keep the presence of their source.
+- [x] A headless session sends `workEnded` normally.
+- [x] Fixed-order tests. One full run. Push when the reviewer accepts the design and the run is green.
 
 Send the design to the reviewer before code. #elicitation-phase-2
 
