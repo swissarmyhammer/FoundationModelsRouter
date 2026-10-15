@@ -40,6 +40,21 @@ import FoundationModelsExtras
 /// way (``awaitDeferredEnds()``), whichever check owns that end: an end that
 /// a cancel of a run or a cancel-all signal held before the close also comes
 /// before the feeds end.
+///
+/// A question that left the run plane through a completion gets no end. The
+/// run plane takes an accepted URL question off at its completion, and the
+/// post of the completion comes later (`ToolContext.complete(elicitationId:)`
+/// of the tool that asked, or ``RoutedSession/complete(elicitationId:)``).
+/// While that post is on its way, the run plane gives the id in
+/// `RunPlane.completingElicitations()`. Each end check reads that list, and
+/// marks such a question as completed (``AskedQuestions/State/completed``):
+/// the post then sends its ``SessionEvent/elicitationCompleted(_:)``. A
+/// question that left the run plane with no completion, for example through a
+/// cancel of its run, is in neither list, and it ends as usual.
+/// ``performCancelAll()`` waits for the completions that its check found
+/// before the ``SessionEvent/signalDone(_:)``, and ``close()`` waits for each
+/// completion on its way before the feeds end (``awaitDeferredEnds()``). The
+/// run plane always posts a completion that it started, so these waits end.
 extension RoutedSessionActor {
     /// The response that the run plane gives to each question of a stopped
     /// run, and that the end of the question carries.
@@ -65,6 +80,14 @@ extension RoutedSessionActor {
     /// that read, so an answer of the client that starts during the read is
     /// on its way when the record decides (``AskedQuestions``).
     ///
+    /// The read takes the open questions first, and then the questions whose
+    /// completion post is on its way. A question that the run plane completes
+    /// between the two reads is then in the second list, so it gets no end.
+    /// This check marks such a question as completed, but does not wait for
+    /// its post: the check runs on the journal chain, and the post is queued
+    /// on the same chain after it. ``close()`` waits for that post before the
+    /// feeds end.
+    ///
     /// - Parameters:
     ///   - terminal: The terminal event of the run.
     ///   - origin: The run mail of the terminal and the work that posted it.
@@ -72,8 +95,11 @@ extension RoutedSessionActor {
         let runToken = terminal.correlationID
         guard askedQuestions.hasOpenQuestions(ofRun: runToken) else { return }
         let openIds = Set(await runPlane.openElicitations().map(\.elicitationId))
+        let completingIds = Set(await runPlane.completingElicitations())
         let delivery = QuestionEndDelivery.runEvent(origin)
-        await settle(askedQuestions.endQuestions(ofRun: runToken, notIn: openIds, via: delivery), via: delivery)
+        let check = askedQuestions.endQuestions(
+            ofRun: runToken, notIn: openIds, completing: completingIds, via: delivery)
+        await settle(check, via: delivery)
     }
 
     /// Ends each open question of each run now, and sends its end with the
@@ -81,22 +107,29 @@ extension RoutedSessionActor {
     /// the sweep, which then gives each run the cancel.
     ///
     /// The end of a question with an answer on its way waits for that answer.
-    /// The caller starts the sweep, and then waits for those answers before
-    /// its terminal event: ``performCancelAll()`` waits for the answers to
-    /// the returned ids (``awaitAnswersOnTheirWay(to:)``), and ``close()``
-    /// waits for the answers to each held end (``awaitDeferredEnds()``). The sweep
-    /// comes first, so an answer that comes to the run plane after the sweep
-    /// finds no question, and the end goes out.
+    /// A question whose completion post is on its way
+    /// (`RunPlane.completingElicitations()`) gets no end: it becomes
+    /// completed, and the post sends its completion. The record decides with
+    /// no suspension point after the read of the run plane. The caller starts
+    /// the sweep, and then waits for those answers and posts before its
+    /// terminal event: ``performCancelAll()`` waits for the returned ids
+    /// (``awaitAnswersAndCompletionsOnTheirWay(to:)``), and ``close()`` waits
+    /// for each held end and each completion on its way
+    /// (``awaitDeferredEnds()``). The sweep comes first, so an answer that
+    /// comes to the run plane after the sweep finds no question, and the end
+    /// goes out. The sweep does not find a question whose completion post is
+    /// on its way, so that post always comes.
     ///
     /// - Parameter origin: The origin of the ends: the origin of the
     ///   cancel-all signal, or ``Origin/system`` for ``close()``.
     /// - Returns: The ids of the questions whose end waits for an answer on
-    ///   its way.
-    func endOpenQuestions(at origin: Origin) -> [ULID] {
+    ///   its way, and of the questions whose completion post is on its way.
+    func endOpenQuestions(at origin: Origin) async -> [ULID] {
+        let completingIds = Set(await runPlane.completingElicitations())
         let delivery = QuestionEndDelivery.session(origin)
-        let check = askedQuestions.endQuestions(ofRun: nil, notIn: [], via: delivery)
+        let check = askedQuestions.endQuestions(ofRun: nil, notIn: [], completing: completingIds, via: delivery)
         sendNow(check, via: delivery)
-        return check.deferred
+        return check.deferred + check.completing
     }
 
     /// Sends the ends of `check` that go out now, and then waits until the
@@ -138,17 +171,42 @@ extension RoutedSessionActor {
         await awaitAnswerReturns(until: { !$0.hasAnswerOnItsWay(toAnyOf: ids) })
     }
 
+    /// Waits until no answer of the client to a question of `ids` is on its
+    /// way to the run plane, and no completion post of a question of `ids` is
+    /// on its way to the journal: each end of `ids` went out, an answer
+    /// resumed the run and no end comes, or the completion went out.
+    /// ``performCancelAll()`` calls it before its
+    /// ``SessionEvent/signalDone(_:)``.
+    ///
+    /// The journal chain must not call it: a completion post is queued on
+    /// that chain, so a wait on the chain for it never ends. A cancel of the
+    /// caller does not end the wait, for the reason that
+    /// ``awaitAnswersOnTheirWay(to:)`` gives. The wait ends, because an answer
+    /// returns with no wait for a terminal event, and the run plane always
+    /// posts a completion that it started.
+    ///
+    /// - Parameter ids: The ids of the questions whose end waits, or whose
+    ///   completion post is on its way.
+    func awaitAnswersAndCompletionsOnTheirWay(to ids: [ULID]) async {
+        await awaitAnswerReturns(until: {
+            !$0.hasAnswerOnItsWay(toAnyOf: ids) && !$0.hasCompletionOnItsWay(toAnyOf: ids)
+        })
+    }
+
     /// Waits until no end check holds the end of a question for an answer on
     /// its way, whichever check owns that end
-    /// (``AskedQuestions/hasDeferredEnds``): each such end went out, or an
-    /// answer resumed the run and no end comes. ``close()`` calls it before
-    /// the feeds end, so an end that a cancel of a run or a cancel-all signal
-    /// held before the close also comes before the end of the feeds.
+    /// (``AskedQuestions/hasDeferredEnds``), and no completion post of a
+    /// question is on its way (``AskedQuestions/hasCompletionsOnTheirWay``):
+    /// each such end went out, an answer resumed the run and no end comes,
+    /// or the completion went out. ``close()`` calls it before the feeds end,
+    /// so an end that a cancel of a run or a cancel-all signal held before
+    /// the close, and a completion on its way, also come before the end of
+    /// the feeds.
     ///
     /// A cancel of the caller does not end the wait, for the reason that
     /// ``awaitAnswersOnTheirWay(to:)`` gives.
     func awaitDeferredEnds() async {
-        await awaitAnswerReturns(until: { !$0.hasDeferredEnds })
+        await awaitAnswerReturns(until: { !$0.hasDeferredEnds && !$0.hasCompletionsOnTheirWay })
     }
 
     /// Waits on ``questionAnswerReturns`` until `isSettled` holds for

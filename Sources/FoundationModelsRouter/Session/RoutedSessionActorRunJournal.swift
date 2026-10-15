@@ -88,6 +88,11 @@ extension RoutedSessionActor: OperationEventJournal {
     /// (``workDidChange()``), so a run that settled before its completion
     /// arrived still gives its work-end event.
     ///
+    /// After the event, the session reports the arrival of the completion
+    /// (``questionAnswerReturns``). A cancel-all signal or ``close()`` that
+    /// found this completion on its way waits for it, and sends its terminal
+    /// event only after the completion.
+    ///
     /// - Parameters:
     ///   - elicitationId: The id of the question that completed.
     ///   - poster: The origin of the work that posted the completion.
@@ -95,6 +100,7 @@ extension RoutedSessionActor: OperationEventJournal {
         guard let origin = askedQuestions.complete(elicitationId, postedBy: poster) else { return }
         noteWorkStarted()
         deliverLive(.elicitationCompleted(ElicitationCompletion(elicitationId: elicitationId)), origin: origin)
+        questionAnswerReturns.signal()
         await workDidChange()
     }
 

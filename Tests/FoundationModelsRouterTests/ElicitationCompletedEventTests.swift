@@ -39,6 +39,9 @@ struct ElicitationCompletedEventTests {
     /// The completions after one more completion post of the same question.
     private static let twoCompletions = 2
 
+    /// The ends of one question that ended with no answer of the client.
+    private static let oneEnd = 1
+
     // MARK: - Helpers
 
     /// One session whose fake background run waits on an open question, and
@@ -66,6 +69,9 @@ struct ElicitationCompletedEventTests {
         /// The gate that holds the fake run open.
         let runGate: RunLatch
 
+        /// The completion token of the fake run that asks the question.
+        let runToken: String
+
         /// Accepts the question through the session.
         ///
         /// - Returns: What the run plane did with the accept.
@@ -87,17 +93,28 @@ struct ElicitationCompletedEventTests {
     /// question, and returns when the journal of the session recorded the
     /// question.
     ///
-    /// - Parameter makeRequest: Makes the question from its id.
+    /// - Parameters:
+    ///   - runKind: The kind of the fake run. A ``RunKind/process`` run does
+    ///     not end at the cancel of the run: its body ends only when the test
+    ///     opens its gate.
+    ///   - completionGate: The gate that holds each completion post of the
+    ///     context before it goes to the session, or `nil` for no gate.
+    ///   - makeRequest: Makes the question from its id.
     /// - Returns: The question and its session.
     /// - Throws: What the fixture throws, or ``ConditionNeverHeld``.
-    private static func ask(_ makeRequest: (ULID) -> ElicitationRequest) async throws -> AskedQuestion {
+    private static func ask(
+        runKind: RunKind = .swiftTask,
+        holdingCompletionsAt completionGate: RunLatch? = nil,
+        _ makeRequest: (ULID) -> ElicitationRequest
+    ) async throws -> AskedQuestion {
         let fixture = try await BackgroundingSessionFixture.make(prefix: prefix, tools: [])
         let session = try fixture.sessionActor()
         await session.attachOutboxJournalIfNeeded()
         let feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         let runGate = RunLatch()
-        let token = await trackFakeRun(on: session.runPlane, latch: runGate)
-        let postings = ElicitationPostings(forwardingTo: fixture.session.outbox)
+        let token = await trackFakeRun(on: session.runPlane, latch: runGate, kind: runKind)
+        let postings = ElicitationPostings(
+            forwardingTo: fixture.session.outbox, holdingCompletionsAt: completionGate)
         let context = PendingElicitationFixtures.makeContext(
             for: fixture.session, postingTo: postings, completionToken: token)
         let id = ULID.generate()
@@ -106,7 +123,113 @@ struct ElicitationCompletedEventTests {
         try await postings.waitForPosts(questionPosts)
         return AskedQuestion(
             fixture: fixture, feed: feed, context: context, postings: postings, id: id, answer: answer,
-            runGate: runGate)
+            runGate: runGate, runToken: token)
+    }
+
+    /// The count of the waits on ``RoutedSessionActor/questionAnswerReturns``
+    /// when the stop of the session waits for the held completion.
+    private static let theStopWaits = 1
+
+    /// Opens `gate` when the session waits on
+    /// ``RoutedSessionActor/questionAnswerReturns``: the stop of the session
+    /// (``RoutedSession/cancelAll()`` or ``RoutedSession/close()``) waits for
+    /// the completion that `gate` holds.
+    ///
+    /// A stop that does not wait for the completion leaves the gate shut. The
+    /// test then cancels the returned task and opens the gate itself, after
+    /// it read the outputs of the stop.
+    ///
+    /// - Parameters:
+    ///   - gate: The gate that holds the completion post.
+    ///   - asked: The question.
+    /// - Returns: The task that opens the gate.
+    /// - Throws: When the session is not a ``RoutedSessionActor``, or its
+    ///   signal does not report its waiters.
+    private static func openWhenTheStopWaits(_ gate: RunLatch, for asked: AskedQuestion) throws -> Task<Void, any Error> {
+        let returns = try asked.fixture.sessionActor().questionAnswerReturns
+        let waiters = try #require(returns.waiterChanges)
+        return Task {
+            try await waiters.wait(until: { returns.waiterCount >= Self.theStopWaits })
+            await gate.open()
+        }
+    }
+
+    /// Accepts the URL question, and completes its flow through the tool
+    /// that asked, while `gate` holds the completion post. The run plane
+    /// then keeps the id in `RunPlane.completingElicitations()`, and the
+    /// journal of the session has no completion yet.
+    ///
+    /// - Parameters:
+    ///   - asked: The question.
+    ///   - gate: The gate that holds the completion post.
+    /// - Returns: The task that opens `gate` when the stop of the session
+    ///   waits (``openWhenTheStopWaits(_:for:)``).
+    /// - Throws: When the session is not a ``RoutedSessionActor``.
+    private static func completeThroughTheTool(_ asked: AskedQuestion, holdingAt gate: RunLatch) async throws
+        -> Task<Void, any Error>
+    {
+        #expect(await asked.accept() == .acceptedAwaitingCompletion)
+        #expect(await asked.context.complete(elicitationId: asked.id) == .completed)
+        let completing = try await asked.fixture.sessionActor().runPlane.completingElicitations()
+        #expect(completing == [asked.id])
+        return try openWhenTheStopWaits(gate, for: asked)
+    }
+
+    /// Opens `gate`, waits for the completion post that it held and for the
+    /// accept of the run, and then reads the feed to its end.
+    ///
+    /// - Parameters:
+    ///   - gate: The gate that holds the completion post.
+    ///   - opener: The task that opens `gate` when the stop waits.
+    ///   - asked: The question. Its feed is read to the end.
+    /// - Returns: The rest of the feed.
+    /// - Throws: What the wait for the completion or the run throws.
+    private static func releaseTheCompletion(
+        _ gate: RunLatch, openedBy opener: Task<Void, any Error>, of asked: inout AskedQuestion
+    ) async throws -> [SessionOutput] {
+        opener.cancel()
+        await gate.open()
+        try await asked.postings.waitForCompletions(oneCompletion)
+        #expect(try await asked.answer.value.action == .accept)
+        return await asked.outputsToTheEnd()
+    }
+
+    /// Cancels the run of the accepted URL question through the tool
+    /// (`ToolContext.cancel(completionToken:)`), with no completion. The run
+    /// plane takes the question off and gives the run its cancel, and no
+    /// completion post comes. The body of the ``RunKind/process`` run waits
+    /// for its gate, so the journal of the session has no terminal of the
+    /// run yet: the record keeps the question open.
+    ///
+    /// - Parameter asked: The question, asked by a ``RunKind/process`` run.
+    /// - Throws: What the wait of the run throws.
+    private static func cancelTheRunAfterTheAccept(of asked: AskedQuestion) async throws {
+        #expect(await asked.accept() == .acceptedAwaitingCompletion)
+        _ = await asked.context.cancel(completionToken: asked.runToken)
+        let response = try await asked.answer.value
+        #expect(response == .cancel(reason: RunPlane.runCancelledReason))
+        #expect(try await asked.fixture.sessionActor().runPlane.completingElicitations().isEmpty)
+    }
+
+    /// Checks that `outputs` hold exactly one
+    /// ``SessionEvent/elicitationEnded(_:)`` of the question, with the
+    /// cancel of a stopped run, and no completion.
+    ///
+    /// - Parameters:
+    ///   - outputs: Outputs of a session.
+    ///   - asked: The question.
+    /// - Returns: The position of the end.
+    /// - Throws: When `outputs` hold no end.
+    private static func soleEndAndNoCompletion(in outputs: [SessionOutput], of asked: AskedQuestion) throws -> Int {
+        let ends: [(position: Int, end: ElicitationEnd)] = outputs.enumerated().compactMap { position, output in
+            guard case .elicitationEnded(let end) = output.event else { return nil }
+            return (position, end)
+        }
+        #expect(ends.count == oneEnd, "expected one end of the question, got \(ends.count)")
+        let found = try #require(ends.first)
+        #expect(found.end == ElicitationEnd(elicitationId: asked.id, response: .cancel(reason: RunPlane.runCancelledReason)))
+        #expect(completions(in: outputs).isEmpty)
+        return found.position
     }
 
     /// A URL-mode question.
@@ -284,5 +407,87 @@ struct ElicitationCompletedEventTests {
         let outputs = await asked.outputsToTheEnd()
 
         #expect(Self.completions(in: outputs).isEmpty)
+    }
+
+    /// The production change that makes this test fail: a `cancelAll()` whose
+    /// end check ends a question whose completion post is on its way
+    /// (`RunPlane.completingElicitations()`), or whose `signalDone` does not
+    /// wait for that post.
+    @Test("cancelAll() while the completion of the tool is on its way gives that completion before the signalDone, and no end")
+    func cancelAllWhileAToolCompletionIsOnItsWayGivesTheCompletion() async throws {
+        let gate = RunLatch()
+        var asked = try await Self.ask(holdingCompletionsAt: gate, Self.urlRequest)
+        let opener = try await Self.completeThroughTheTool(asked, holdingAt: gate)
+
+        let signal = asked.fixture.session.cancelAll()
+        let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
+        let outputs = stopped + (try await Self.releaseTheCompletion(gate, openedBy: opener, of: &asked))
+
+        let completion = try Self.soleCompletion(in: outputs, of: asked)
+        Self.expectNoEnd(in: outputs)
+        #expect(completion < (try position(of: .signalDone(signal), in: outputs)))
+    }
+
+    /// The production change that makes this test fail: a `close()` whose
+    /// end check ends a question whose completion post is on its way, or
+    /// that ends the feeds before that post.
+    @Test("close() while the completion of the tool is on its way gives that completion before the feed ends, and no end")
+    func closeWhileAToolCompletionIsOnItsWayGivesTheCompletion() async throws {
+        let gate = RunLatch()
+        var asked = try await Self.ask(holdingCompletionsAt: gate, Self.urlRequest)
+        let opener = try await Self.completeThroughTheTool(asked, holdingAt: gate)
+        let session = asked.fixture.session
+
+        let close = Task { await session.close() }
+        let closed = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+        await close.value
+        let rest = try await Self.releaseTheCompletion(gate, openedBy: opener, of: &asked)
+
+        #expect(rest.isEmpty)
+        _ = try Self.soleCompletion(in: closed, of: asked)
+        Self.expectNoEnd(in: closed + rest)
+    }
+
+    /// The production change that makes this test fail: a `cancelAll()` that
+    /// holds the end of each question that left the run plane for a
+    /// completion. A run cancel posts no completion, so the `signalDone`
+    /// then never comes.
+    @Test("cancelAll() after a run cancel took an accepted URL question gives one end before the signalDone, and no completion")
+    func cancelAllAfterARunCancelGivesOneEnd() async throws {
+        var asked = try await Self.ask(runKind: .process, Self.urlRequest)
+        try await Self.cancelTheRunAfterTheAccept(of: asked)
+
+        let signal = asked.fixture.session.cancelAll()
+        let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
+        let outputs = stopped + (await asked.outputsToTheEnd())
+
+        let end = try Self.soleEndAndNoCompletion(in: outputs, of: asked)
+        #expect(outputs[end].origin == .signal(signal))
+        #expect(end < (try position(of: .signalDone(signal), in: outputs)))
+    }
+
+    /// The production change that makes this test fail: a `close()` that
+    /// holds the end of each question that left the run plane for a
+    /// completion. A run cancel posts no completion, so the feed then never
+    /// ends.
+    ///
+    /// The body of the ``RunKind/process`` run ends only when its gate
+    /// opens, and the drain of close waits for it. The feed ends before the
+    /// drain, so the test opens the gate after it read the feed.
+    @Test("close() after a run cancel took an accepted URL question gives one end before the feed ends, and no completion")
+    func closeAfterARunCancelGivesOneEnd() async throws {
+        var asked = try await Self.ask(runKind: .process, Self.urlRequest)
+        try await Self.cancelTheRunAfterTheAccept(of: asked)
+        let session = asked.fixture.session
+
+        let close = Task { await session.close() }
+        let closed = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+        await asked.runGate.open()
+        await close.value
+        let rest = await asked.outputsToTheEnd()
+
+        #expect(rest.isEmpty)
+        let end = try Self.soleEndAndNoCompletion(in: closed, of: asked)
+        #expect(closed[end].origin == .system)
     }
 }

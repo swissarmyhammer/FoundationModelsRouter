@@ -66,7 +66,7 @@ enum QuestionEndDelivery: Sendable, Equatable {
     case session(Origin)
 }
 
-/// The result of one end check (``AskedQuestions/endQuestions(ofRun:notIn:via:)``).
+/// The result of one end check (``AskedQuestions/endQuestions(ofRun:notIn:completing:via:)``).
 struct QuestionEndCheck: Sendable, Equatable {
     /// The ids of the questions that ended now, in id order. The caller
     /// sends one end for each.
@@ -77,6 +77,16 @@ struct QuestionEndCheck: Sendable, Equatable {
     /// (``AskedQuestions/hasAnswerOnItsWay(toAnyOf:)``) before the terminal
     /// event that the ends must come before.
     var deferred: [ULID] = []
+
+    /// The ids of the questions whose completion post is on its way, in id
+    /// order: the run plane completed the accepted URL flow, and its post
+    /// did not reach the journal yet (`RunPlane.completingElicitations()`).
+    /// Each of them is now ``AskedQuestions/State/completed``: it gets no end,
+    /// and the post sends its ``SessionEvent/elicitationCompleted(_:)``. A
+    /// caller that is not on the journal chain waits for those posts
+    /// (``AskedQuestions/hasCompletionOnItsWay(toAnyOf:)``) before its
+    /// terminal event.
+    var completing: [ULID] = []
 }
 
 /// The questions of the runs of one session that the journal recorded and
@@ -101,9 +111,12 @@ struct QuestionEndCheck: Sendable, Equatable {
 ///   (``complete(_:postedBy:)``).
 ///
 /// A question leaves the record when an answer resumes its run, with one
-/// exception: the completion of an accepted URL-mode question through
-/// ``RoutedSession/complete(elicitationId:)`` keeps it, marked as completed,
-/// until the run plane posts that completion to the journal. The two can
+/// exception: the completion of an accepted URL-mode question keeps it,
+/// marked as completed, until the run plane posts that completion to the
+/// journal. The completion comes from ``RoutedSession/complete(elicitationId:)``,
+/// or from the tool that asked (`ToolContext.complete(elicitationId:)`).
+/// An end check finds the second kind in `RunPlane.completingElicitations()`
+/// and marks it as completed with no end. The completion and the post can
 /// come in each order, so the post takes the question out, and a later
 /// answer finds no question. A question
 /// that ended with no answer of the client stays, marked as ended, so a later
@@ -142,10 +155,11 @@ struct AskedQuestions: Sendable {
         /// sent its end. An answer to it goes no further.
         case ended
 
-        /// A URL-mode question whose flow the client completed. Its run
-        /// resumed, and the question waits only for the post of its
-        /// completion (``AskedQuestions/complete(_:postedBy:)``). An answer to
-        /// it goes no further, and no end check ends it.
+        /// A URL-mode question whose flow completed: the client completed it,
+        /// or an end check found its completion post on its way. The
+        /// question waits only for the post of its completion
+        /// (``AskedQuestions/complete(_:postedBy:)``), and that post always
+        /// comes. An answer to it goes no further, and no end check ends it.
         case completed
     }
 
@@ -311,6 +325,28 @@ struct AskedQuestions: Sendable {
         questions.values.contains { $0.deferredEnd != nil }
     }
 
+    /// Whether the completion post of one of the questions `ids` is still on
+    /// its way to the journal: the question is ``State/completed``, and the
+    /// post did not take it out yet (``complete(_:postedBy:)``). A cancel-all
+    /// signal that found the completion post of `ids` on its way waits until
+    /// this is `false`: then each of those completions went out.
+    ///
+    /// - Parameter ids: The ids of questions.
+    /// - Returns: `true` when a question of `ids` is still completed in the
+    ///   record.
+    func hasCompletionOnItsWay(toAnyOf ids: [ULID]) -> Bool {
+        ids.contains { questions[$0]?.state == .completed }
+    }
+
+    /// Whether the completion post of a question is still on its way to the
+    /// journal, whichever source completed the question: the client, or the
+    /// tool that asked. Close waits until this is `false` before the feeds
+    /// end: then each such completion went out. The run plane always posts
+    /// the completion of a flow that it completed, so this wait ends.
+    var hasCompletionsOnTheirWay: Bool {
+        questions.values.contains { $0.state == .completed }
+    }
+
     /// Records that an answer of the client to the question `id` goes to the
     /// run plane now.
     ///
@@ -332,6 +368,12 @@ struct AskedQuestions: Sendable {
     /// question stays as ``State/completed`` until the run plane posts the
     /// completion (``complete(_:postedBy:)``), and it keeps no end.
     ///
+    /// An end check can mark the question as completed while the answer is
+    /// on its way: the run plane completed the flow, and the post of that
+    /// completion is on its way. The question then stays completed, so it
+    /// does not open again, and it does not leave the record before its
+    /// post.
+    ///
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - outcome: What the run plane did with the answer.
@@ -346,9 +388,9 @@ struct AskedQuestions: Sendable {
         case .resumedRun:
             questions[id] = Self.questionAfterItsRunResumed(question)
             return nil
-        case .acceptedAwaitingCompletion:
+        case .acceptedAwaitingCompletion where question.state == .url:
             question.state = .acceptedURL
-        case .noQuestion:
+        case .acceptedAwaitingCompletion, .noQuestion:
             break
         }
         let end = question.answersOnTheirWay == 0 ? question.deferredEnd : nil
@@ -364,10 +406,11 @@ struct AskedQuestions: Sendable {
     ///
     /// - Parameter question: The question, with the answer counted out.
     /// - Returns: `nil`: the question leaves the record. For an accepted
-    ///   URL-mode question, the question as ``State/completed`` with no end,
-    ///   until the run plane posts its completion.
+    ///   URL-mode question, and for a question that an end check already
+    ///   marked as completed, the question as ``State/completed`` with no
+    ///   end, until the run plane posts its completion.
     private static func questionAfterItsRunResumed(_ question: Question) -> Question? {
-        guard question.state == .acceptedURL else { return nil }
+        guard question.state == .acceptedURL || question.state == .completed else { return nil }
         var completed = question
         completed.state = .completed
         completed.deferredEnd = nil
@@ -379,22 +422,35 @@ struct AskedQuestions: Sendable {
     /// answer on its way does not end now: it keeps `delivery` for its end
     /// (``noteAnswered(_:outcome:)``), and it is no longer open.
     ///
+    /// A question in `completingIds` does not end: the run plane completed
+    /// its flow, and the post of that completion is on its way. The
+    /// question becomes ``State/completed``, and the post sends its
+    /// completion (``complete(_:postedBy:)``). This holds also when an answer
+    /// is on its way: the run plane has no question for that answer.
+    ///
     /// - Parameters:
     ///   - runToken: The completion token of the run, or `nil` for each run.
     ///   - openIds: The ids of the questions that are still open on the run
     ///     plane.
+    ///   - completingIds: The ids of the questions whose completion post is
+    ///     on its way (`RunPlane.completingElicitations()`).
     ///   - delivery: How the end of each question goes to the output.
-    /// - Returns: The questions that ended now, and the questions whose end
-    ///   waits for an answer on its way.
+    /// - Returns: The questions that ended now, the questions whose end
+    ///   waits for an answer on its way, and the questions whose completion
+    ///   post is on its way.
     mutating func endQuestions(
-        ofRun runToken: String?, notIn openIds: Set<ULID>, via delivery: QuestionEndDelivery
+        ofRun runToken: String?, notIn openIds: Set<ULID>, completing completingIds: Set<ULID>,
+        via delivery: QuestionEndDelivery
     ) -> QuestionEndCheck {
         let candidates = questions.filter { id, question in
             question.isOpen && !openIds.contains(id) && (runToken == nil || question.runToken == runToken)
         }
         var check = QuestionEndCheck()
         for (id, question) in candidates.sorted(by: { $0.key < $1.key }) {
-            if question.answersOnTheirWay > 0 {
+            if completingIds.contains(id) {
+                questions[id]?.state = .completed
+                check.completing.append(id)
+            } else if question.answersOnTheirWay > 0 {
                 questions[id]?.deferredEnd = delivery
                 check.deferred.append(id)
             } else {

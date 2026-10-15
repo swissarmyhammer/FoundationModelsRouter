@@ -26,18 +26,23 @@ extension RoutedSessionActor {
     ///    ``SessionEvent/elicitationEnded(_:)`` with the origin of the work
     ///    that runs this call, and a later answer of the client to it goes no
     ///    further. Thus the end comes before the ``SessionEvent/signalDone(_:)``
-    ///    of the signal, although the sweep comes later.
+    ///    of the signal, although the sweep comes later. A question whose
+    ///    completion post is on its way (`RunPlane.completingElicitations()`)
+    ///    gets no end: it becomes completed, and the post sends its
+    ///    ``SessionEvent/elicitationCompleted(_:)``.
     /// 5. The sweep starts (``startSweep()``): each background run gets a
     ///    cancel, and each open elicitation is rejected. The call does not
     ///    wait for the sweep, because the canceler of a run can be slow. Each
     ///    run gets its terminal event when its cancel ends.
     /// 6. The call waits until each answer of the client that was on its way
-    ///    to a question of step 4 returned from the run plane
-    ///    (``awaitAnswersOnTheirWay(to:)``). Such an answer sends the end of
-    ///    its question when the run plane had no question for it. Thus that
-    ///    end also comes before the ``SessionEvent/signalDone(_:)``. The
-    ///    answer does not wait for the sweep or for the signal, so this wait
-    ///    ends.
+    ///    to a question of step 4 returned from the run plane, and until each
+    ///    completion post of step 4 reached the journal
+    ///    (``awaitAnswersAndCompletionsOnTheirWay(to:)``). Such an answer
+    ///    sends the end of its question when the run plane had no question
+    ///    for it, and such a post sends its completion. Thus that end and that
+    ///    completion also come before the ``SessionEvent/signalDone(_:)``.
+    ///    The answer and the post do not wait for the sweep or for the
+    ///    signal, so this wait ends.
     ///
     /// The call never interferes with signal work:
     ///
@@ -60,9 +65,9 @@ extension RoutedSessionActor {
         stopRunningAnswer()
         let openTokens = await runPlane.backgroundRuns().map(\.completionToken)
         await ignoreRunMail(of: openTokens)
-        let waitingEnds = endOpenQuestions(at: OriginContext.current)
+        let waitingQuestions = await endOpenQuestions(at: OriginContext.current)
         startSweep()
-        await awaitAnswersOnTheirWay(to: waitingEnds)
+        await awaitAnswersAndCompletionsOnTheirWay(to: waitingQuestions)
     }
 
     /// Stops the answer that runs now, or the take of the next batch, and

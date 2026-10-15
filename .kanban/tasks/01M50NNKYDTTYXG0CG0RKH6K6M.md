@@ -24,6 +24,74 @@ comments:
     - not committed, not pushed. Card stays in doing.
     - next: /review.
   timestamp: 2026-10-15T22:32:41.349805+00:00
+- actor: claude-code
+  id: 01m50vw6vps1hta4x53ag6mzy7
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (27879148): engine 0 findings (21 attempted, 0 failed). Hand check: 1 finding at Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:197 (a cancel-all or a close in the gap between ToolContext.complete and the journal of its post sends elicitationEnded and drops elicitationCompleted).
+    - next: implement the finding and its fixed-order test. The card stays in review.
+  timestamp: 2026-10-15T22:45:40.342173+00:00
+- actor: claude-code
+  id: 01m50w4508kekbqywd19vkgfch
+  text: |-
+    ### Blocker: the suggested design can wait forever (finding hand-check/completion-gap)
+
+    Research (no code change):
+    - Extras `RunPlaneActor.completeAccepted` removes the question from `elicitations`, then a new Task awaits `completing()` (the post) and only then `finish(accept)`. So in case A (completion through the tool) the post always arrives.
+    - Case B also exists. Extras `RunPlane.cancel(completionToken:)` (called by `ToolContext.cancel(completionToken:)`) calls `cancelQuestions(ofRun:)`. That removes an ACCEPTED URL question too (accepted questions stay in `elicitations` until completion) and gives the run `.cancel(runCancelledReason)`. No completion post comes. The Router record keeps the question as `.acceptedURL`, open, with no answer on its way, until the journal records the terminal of the run.
+    - In the gap of case B, a `cancelAll()` or `close()` end check sees exactly the same state as in case A: `.acceptedURL`, `answersOnTheirWay == 0`, not in `runPlane.openElicitations()`. The Router has no Extras API that tells A from B (`openElicitations`, `runsWaitingOnlyForUser`, `backgroundRuns`, `settledRunTokens` all give the same result).
+    - If the end check holds such a question for a completion (the suggested design), case B never resolves: no post comes, `performCancelAll` never sends `signalDone`, and `close()` never returns (`awaitDeferredEnds`). That breaks "nothing can wait forever".
+    - A fallback that resolves the hold at the terminal of the run is also wrong for case A: the sweep that `cancelAll()`/`close()` start (`RunPlane.sweep`) calls the canceler, finds the run not settled (its body waits in `elicit`, which a task cancel does not resume), makes a synthetic terminal and the Router journals it (`journalWithoutStaging`) BEFORE the held completion post. The fallback then sends `elicitationEnded` for a completed question again (the defect of the finding). A fallback on the end of the run body is wrong when the asking task is not the run body (the test fixture `trackFakeRun` is such a case), and `joinRunBodies` runs only in the drain, after the feeds end.
+
+    Conflict: the finding requires no end for a question that left the run plane through a completion, and a wait for that completion before `signalDone`/feed end. The brief requires that nothing waits forever. With the Extras API at HEAD the Router cannot tell case A from case B in the gap, and "no other packages" forbids an Extras change. One of the two requirements must give way, or Extras must give the information.
+
+    Possible ways for a person to decide:
+    1. Extras change (separate card): keep a completing question visible to the host until its post returns (for example `RunPlane.completingElicitations()` or a `completing` flag on `OpenElicitation`). Then the end check holds only questions with a completion on its way, and the existing deferred-end wait ends because the post always arrives.
+    2. Accept the hang risk of case B (not recommended).
+    3. Accept a wrong end in case A for the narrow gap (status quo).
+
+    No files changed. Card stays in `doing`. The finding stays `- [ ]`.
+  timestamp: 2026-10-15T22:50:00.584964+00:00
+- actor: claude-code
+  id: 01m50w4av7kvs3t2dt2ct4v5yv
+  text: |-
+    ### implement — stuck
+    - evidence: no files changed. Extras RunPlaneActor.cancel(completionToken:) ends an accepted URL question with no completion post (case B). In the gap, the Router end check cannot tell case B from a tool completion in flight (case A). A hold for the completion then never ends in case B, and a terminal fallback is wrong in case A because the sweep journals a synthetic terminal before the held post.
+    - next: a person decides: an Extras card that shows completing questions to the host, or accept one of the two failure modes. See the blocker comment above.
+  timestamp: 2026-10-15T22:50:06.567451+00:00
+- actor: claude-code
+  id: 01m50xf5990yqrdss112mavxsz
+  text: |-
+    Research (implement step, Extras e65287a in the root and in IntegrationTests; only this repo's sourcekit-lsp was stopped, by pid):
+    - RunPlane.completingElicitations() holds an id from the complete until its post returns. SessionOutbox.post(elicitationCompleted:) awaits its journal work, so an id in that list means the journal did not record the completion yet.
+    - The journal chain is serial (SerialAsyncChain). The terminal end check runs ON that chain, so it must NOT wait for a completion post: the post is queued behind it (deadlock). Plan: the terminal check marks a completing question as completed with no wait; cancelAll() waits for the ids it held; close() waits for each completed question through awaitDeferredEnds().
+    - Read order in the terminal check: openElicitations() first, then completingElicitations(). A question that moves between the two reads is then in the second list.
+    - Two races of the record: noteAnswered(.acceptedAwaitingCompletion) and noteAnswered(.resumedRun) can come after an end check marked the question completed. They must keep .completed, or the question opens again or leaves the record before its post.
+    - Not in scope (new task): cancelAll()/close() end a question that is still OPEN on the run plane at the end check. A tool completion before the sweep's cancelQuestions then sends a wrong elicitationEnded and no elicitationCompleted.
+  timestamp: 2026-10-15T23:13:29.897936+00:00
+- actor: claude-code
+  id: 01m50y68db7yxsw13mc9v8yw0p
+  text: |-
+    Implementation (finding hand-check/completion-gap, Extras e65287a):
+    - AskedQuestions.endQuestions(ofRun:notIn:completing:via:) takes the ids of RunPlane.completingElicitations(). A recorded open question in that list becomes .completed (no end, no deferred end) and goes into the new QuestionEndCheck.completing. The arriving post takes it out (complete(_:postedBy:)) and sends elicitationCompleted. A question that left the run plane and is not completing (a run cancel in the gap) ends as before.
+    - endOpenQuestions(at:) is now async: it reads completingElicitations() and decides with no suspension after the read. It returns deferred + completing. performCancelAll() waits for both through awaitAnswersAndCompletionsOnTheirWay(to:) before signalDone. close() waits through awaitDeferredEnds(), which now also waits while any question is .completed (hasCompletionsOnTheirWay). This also covers a session.complete completion whose post is still on its way at close.
+    - The terminal end check (endQuestionsThatLeftTheRunPlane) reads openElicitations() first and then completingElicitations(), and marks a completing question .completed, but does NOT wait for its post: it runs on the serial journal chain, and the post is queued after it on the same chain (a wait there is a deadlock). close() waits for it.
+    - record(elicitationCompleted:) signals questionAnswerReturns after the live event, so the waits wake.
+    - Two record races closed: noteAnswered(.acceptedAwaitingCompletion) sets .acceptedURL only from .url (it no longer opens a .completed question again), and noteAnswered(.resumedRun) keeps a .completed question until its post (it no longer takes it out before the post).
+    - Nothing waits forever: a hold exists only for an id in completingElicitations(), and the run plane always finishes that post (production sinks ToolContext/RunEventFunnel/SessionOutbox forward it; SessionOutbox.post awaits its journal work).
+    - Not fixed here (new task ^pjycptw): a tool completion that starts AFTER the end check of cancelAll()/close() and before the sweep cancels the question still gets a wrong end.
+    - Test helper: ElicitationPostings(forwardingTo:holdingCompletionsAt:) holds post(elicitationCompleted:) on a RunLatch. The (a) tests open the latch when the stop waits on questionAnswerReturns (waiterCount), so a stop that does not wait reads its outputs first and the test asserts instead of hanging.
+  timestamp: 2026-10-15T23:26:06.763193+00:00
+- actor: claude-code
+  id: 01m50y6e9g5atcx91ek1btjc8y
+  text: |-
+    ### implement — changed
+    - evidence: Extras e65287a in the root and in IntegrationTests (only this repo's sourcekit-lsp stopped, by pid). Changed: Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift, RoutedSessionActorQuestionEnds.swift, RoutedSessionActorDrain.swift, RoutedSessionActorForking.swift, RoutedSessionActorRunJournal.swift, SessionEvent.swift (doc); Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift (4 new tests), ElicitationEndedEventTests.swift (3 new AskedQuestionsEndTests, call sites take completing:), Helpers/PendingElicitationFixtures.swift (completion gate).
+    - red (before production code): ElicitationCompletedEventTests "Test run with 10 tests in 1 suite failed after 0.035 seconds with 4 issues": the cancelAll() and close() tool-completion tests failed by assertion "expected one completion of the question, got 0", no hang. The two run-cancel tests passed at HEAD (they guard against a hold that waits forever). The 3 record tests were written after the record code and were not run red.
+    - green: touched suites "Test run with 28 tests in 3 suites passed after 0.059 seconds". Full suite (one run): "Test run with 1757 tests in 212 suites passed after 5.858 seconds with 1 known issue" (the RealModelHarness tripwire), "Test run with 26 tests in 14 suites passed", "Test run with 19 tests in 3 suites passed". swift build --build-tests and IntegrationTests swift build --build-tests: Build complete, zero Router warnings (only the mlx-swift "missing creator for mutated node" note).
+    - finding hand-check/completion-gap flipped to [x]. New task ^pjycptw for the race after the end check. Not committed, not pushed. Card stays in doing.
+    - next: /review.
+  timestamp: 2026-10-15T23:26:12.784024+00:00
 position_column: doing
 position_ordinal: '80'
 title: Session event elicitationCompleted when the run plane completes an accepted URL flow
@@ -35,3 +103,9 @@ Do not start this task until the Extras card is done that posts a run plane even
 - [ ] The session sends the event when the run plane completes an accepted URL flow, from any source (the `complete(elicitationId:)` call of the client or another path that the Extras event reports). It comes before the events of the resumed run.
 - [ ] Fixed-order test: the event comes one time, with the correct id and origin, before the first event of the resumed run.
 - [ ] This is a new public case. The consumer switches (Agents demo, ACPAgent translator, Multitool ScenarioRunner) change in one step. Do not push before the reviewer is told and gives the word. #elicitation-phase-3
+
+## Review Findings (2026-10-15 17:34)
+
+> Scope: `review sha HEAD~1..HEAD` (commit 27879148). The engine reviewed 18 files and found 0 findings. The finding below comes from the hand checks of the orchestrator.
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:197` `hand-check/completion-gap` — A cancel-all or a close in the gap between `ToolContext.complete(elicitationId:)` and the journal of its post sends a wrong `elicitationEnded`, and then no `elicitationCompleted`. Extras `completeAccepted` takes the question off the run plane at once and posts the completion in a new task. Until that post gets to the journal, the record keeps the question as `.acceptedURL` with no answer on its way, so it is open. `performCancelAll()` (RoutedSessionActorDrain.swift) and `close()` (RoutedSessionActorForking.swift) call `endOpenQuestions(at:)`, which ends each open question with no read of the run plane. The question becomes `.ended` and the session sends `elicitationEnded` with `RunPlane.runCancelledReason`. The sweep does not find the question, so the run gets the accept. When the post then arrives, `takesCompletion` is `false` for `.ended` (`complete(_:postedBy:)`, line 235), so no `elicitationCompleted` goes out. This breaks the contract of the `SessionEvent.elicitationCompleted` doc: one completion for each source, and no `elicitationEnded` for a question that completed. The `session.complete` path does not have this defect, because its answer on its way defers the end and `noteAnswered(.resumedRun)` sets `.completed` with no end. Make the tool path safe in the same way: a question that left the run plane through a completion must not get an end from a cancel-all or a close. Add a fixed-order test that holds the completion post of the tool (for example, a sink that waits on a latch before it forwards the post), runs `cancelAll()` or `close()` in the gap, and then expects one `elicitationCompleted` and no `elicitationEnded`.

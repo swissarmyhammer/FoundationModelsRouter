@@ -26,16 +26,27 @@ final class ElicitationPostings: OperationEventSink {
     /// `nil` when the events go nowhere.
     private let downstream: (any OperationEventSink)?
 
+    /// The gate that holds each completion post before it goes to the
+    /// downstream sink, or `nil` when no gate holds it.
+    private let completionGate: RunLatch?
+
     /// Signalled after each post.
     let changes = ChangeSignal()
 
     /// Makes a counter with no post.
     ///
-    /// - Parameter downstream: The sink that gets each posted event before
-    ///   the count goes up. Pass `session.outbox` to reach the journal of the
-    ///   session. The default is `nil`: the events go nowhere.
-    init(forwardingTo downstream: (any OperationEventSink)? = nil) {
+    /// - Parameters:
+    ///   - downstream: The sink that gets each posted event before the count
+    ///     goes up. Pass `session.outbox` to reach the journal of the
+    ///     session. The default is `nil`: the events go nowhere.
+    ///   - completionGate: The gate that holds each completion post
+    ///     (``post(elicitationCompleted:)``) until it opens. While the post
+    ///     waits, the run plane keeps the id of the question in
+    ///     `RunPlane.completingElicitations()`. The default is `nil`: no gate
+    ///     holds the post.
+    init(forwardingTo downstream: (any OperationEventSink)? = nil, holdingCompletionsAt completionGate: RunLatch? = nil) {
         self.downstream = downstream
+        self.completionGate = completionGate
     }
 
     /// The number of posts so far.
@@ -78,8 +89,9 @@ final class ElicitationPostings: OperationEventSink {
     /// ``postCount`` does not count it.
     var completionCount: Int { completions.withLock { $0.count } }
 
-    /// Sends the completion to the downstream sink, keeps its id, then
-    /// signals ``changes``.
+    /// Waits until the completion gate opens, when there is one. Then sends
+    /// the completion to the downstream sink, keeps its id, and signals
+    /// ``changes``.
     ///
     /// The downstream post ends after the journal of the session handled
     /// the completion, so a test that waits for the count reads the output
@@ -87,6 +99,7 @@ final class ElicitationPostings: OperationEventSink {
     ///
     /// - Parameter elicitationId: The id of the question that completed.
     func post(elicitationCompleted elicitationId: ULID) async {
+        await completionGate?.waitUntilOpen()
         await downstream?.post(elicitationCompleted: elicitationId)
         completions.withLock { $0.append(elicitationId) }
         changes.signal()

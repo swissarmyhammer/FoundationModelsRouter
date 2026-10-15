@@ -427,6 +427,12 @@ public enum SessionEvent: Sendable, Equatable {
     /// A question that completed gets no ``elicitationEnded(_:)``. A form-mode
     /// question, and a second completion of the same question, get none.
     ///
+    /// A completion that is on its way when ``RoutedSession/cancelAll()`` or
+    /// ``RoutedSession/close()`` runs still comes: before the
+    /// ``signalDone(_:)`` of that signal, and before the end of
+    /// ``RoutedSession/streamSessionEvents()``. The question then gets no
+    /// ``elicitationEnded(_:)``.
+    ///
     /// The origin (``SessionOutput/origin``) is ``Origin/mail(_:)`` with the
     /// ``MailID`` of the run mail that holds the question, as the
     /// ``elicitationRequested(_:)`` of the question. When the session had no

@@ -526,10 +526,10 @@ struct AskedQuestionsEndTests {
         let (record, id) = Self.recordWithOneQuestion()
         var questions = record
 
-        let otherRun = questions.endQuestions(ofRun: Self.otherRunToken, notIn: [], via: Self.closeDelivery)
-        let stillOpen = questions.endQuestions(ofRun: Self.runToken, notIn: [id], via: Self.closeDelivery)
-        let left = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
-        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let otherRun = questions.endQuestions(ofRun: Self.otherRunToken, notIn: [], completing: [], via: Self.closeDelivery)
+        let stillOpen = questions.endQuestions(ofRun: Self.runToken, notIn: [id], completing: [], via: Self.closeDelivery)
+        let left = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: Self.closeDelivery)
+        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: Self.closeDelivery)
         let lateAnswer = questions.beginAnswer(to: id)
 
         #expect(otherRun == QuestionEndCheck())
@@ -546,11 +546,11 @@ struct AskedQuestionsEndTests {
         let delivery = QuestionEndDelivery.session(.signal(SignalID()))
 
         let answerBegan = questions.beginAnswer(to: id)
-        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: delivery)
+        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: delivery)
         let waitsBefore = questions.hasAnswerOnItsWay(toAnyOf: [id])
         let endDelivery = questions.noteAnswered(id, outcome: .noQuestion)
         let waitsAfter = questions.hasAnswerOnItsWay(toAnyOf: [id])
-        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: Self.closeDelivery)
 
         #expect(answerBegan)
         #expect(deferred == QuestionEndCheck(deferred: [id]))
@@ -570,8 +570,8 @@ struct AskedQuestionsEndTests {
         let delivery = QuestionEndDelivery.session(.signal(SignalID()))
 
         _ = questions.beginAnswer(to: id)
-        _ = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: delivery)
-        let laterCheck = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        _ = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: delivery)
+        let laterCheck = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: Self.closeDelivery)
         let laterAnswer = questions.beginAnswer(to: id)
         let endDelivery = questions.noteAnswered(id, outcome: .noQuestion)
 
@@ -592,7 +592,7 @@ struct AskedQuestionsEndTests {
 
         let before = questions.hasDeferredEnds
         _ = questions.beginAnswer(to: id)
-        _ = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: signalDelivery)
+        _ = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: signalDelivery)
         let held = questions.hasDeferredEnds
         _ = questions.noteAnswered(id, outcome: .noQuestion)
         let after = questions.hasDeferredEnds
@@ -608,15 +608,88 @@ struct AskedQuestionsEndTests {
         var questions = record
 
         let answerBegan = questions.beginAnswer(to: id)
-        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let deferred = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: Self.closeDelivery)
         let endDelivery = questions.noteAnswered(id, outcome: .resumedRun)
         let waitsAfter = questions.hasAnswerOnItsWay(toAnyOf: [id])
-        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: Self.closeDelivery)
+        let again = questions.endQuestions(ofRun: Self.runToken, notIn: [], completing: [], via: Self.closeDelivery)
 
         #expect(answerBegan)
         #expect(deferred == QuestionEndCheck(deferred: [id]))
         #expect(endDelivery == nil)
         #expect(waitsAfter == false)
         #expect(again == QuestionEndCheck())
+    }
+
+    /// A record with one URL-mode question of ``runToken``.
+    ///
+    /// - Returns: The record and the id of the question.
+    private static func recordWithOneURLQuestion() -> (questions: AskedQuestions, id: ULID) {
+        var questions = AskedQuestions()
+        let id = ULID.generate()
+        let request = ElicitationRequest(message: "Open the page", elicitationId: id, url: SessionWorkEventTests.approvalURL)
+        questions.noteAsked(request, runToken: runToken, mailID: nil)
+        return (questions, id)
+    }
+
+    /// The production change that makes this test fail: an end check that
+    /// ends a question whose completion post is on its way, or a record that
+    /// does not report that post, so a stop of the session does not wait
+    /// for it.
+    @Test("a question whose completion post is on its way gets no end, and the record reports it until the post")
+    func aCompletingQuestionGetsNoEnd() {
+        let (record, id) = Self.recordWithOneURLQuestion()
+        var questions = record
+
+        let check = questions.endQuestions(ofRun: nil, notIn: [], completing: [id], via: Self.closeDelivery)
+        let onItsWay = questions.hasCompletionOnItsWay(toAnyOf: [id])
+        let anyOnItsWay = questions.hasCompletionsOnTheirWay
+        let lateAnswer = questions.beginAnswer(to: id)
+        let laterCheck = questions.endQuestions(ofRun: nil, notIn: [], completing: [], via: Self.closeDelivery)
+        let posted = questions.complete(id, postedBy: .system)
+
+        #expect(check == QuestionEndCheck(completing: [id]))
+        #expect(onItsWay)
+        #expect(anyOnItsWay)
+        #expect(lateAnswer == false)
+        #expect(laterCheck == QuestionEndCheck())
+        #expect(posted != nil)
+        #expect(questions.hasCompletionsOnTheirWay == false)
+    }
+
+    /// The production change that makes this test fail: a record that takes
+    /// a question out when the completion of the client returns after an end
+    /// check marked the question completed, so the post finds no question.
+    @Test("a completion of the client that returns after an end check marked the question completed keeps it until the post")
+    func aLateCompletionKeepsTheCompletedQuestion() {
+        let (record, id) = Self.recordWithOneURLQuestion()
+        var questions = record
+
+        _ = questions.beginAnswer(to: id)
+        _ = questions.noteAnswered(id, outcome: .acceptedAwaitingCompletion)
+        _ = questions.beginAnswer(to: id)
+        _ = questions.endQuestions(ofRun: nil, notIn: [], completing: [id], via: Self.closeDelivery)
+        let endDelivery = questions.noteAnswered(id, outcome: .resumedRun)
+
+        #expect(endDelivery == nil)
+        #expect(questions.hasCompletionOnItsWay(toAnyOf: [id]))
+        #expect(questions.complete(id, postedBy: .system) != nil)
+    }
+
+    /// The production change that makes this test fail: a record that opens
+    /// the question again when an accept returns after an end check marked
+    /// the question completed, so a later end check ends it.
+    @Test("an accept that returns after an end check marked the question completed does not open it again")
+    func aLateAcceptKeepsTheCompletedQuestion() {
+        let (record, id) = Self.recordWithOneURLQuestion()
+        var questions = record
+
+        _ = questions.beginAnswer(to: id)
+        _ = questions.endQuestions(ofRun: nil, notIn: [], completing: [id], via: Self.closeDelivery)
+        let endDelivery = questions.noteAnswered(id, outcome: .acceptedAwaitingCompletion)
+        let laterCheck = questions.endQuestions(ofRun: nil, notIn: [], completing: [], via: Self.closeDelivery)
+
+        #expect(endDelivery == nil)
+        #expect(laterCheck == QuestionEndCheck())
+        #expect(questions.hasCompletionOnItsWay(toAnyOf: [id]))
     }
 }
