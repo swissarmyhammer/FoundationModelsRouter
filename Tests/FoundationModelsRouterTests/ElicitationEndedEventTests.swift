@@ -217,6 +217,49 @@ struct ElicitationEndedEventTests {
         try await session.stateChanges.wait(until: { await session.askedQuestions.hasDeferredEnd(of: id) })
     }
 
+    /// The count of the waits for an answer on its way when ``RoutedSession/close()``
+    /// waits for the answer too: the wait of the end check that held the end
+    /// of the question first, and the wait of close.
+    private static let closeAndTheOwnerOfTheEndWait = 2
+
+    /// Closes the session while an earlier end check (a cancel of the run or
+    /// a ``RoutedSession/cancelAll()`` signal) holds the end of the question
+    /// for `answer`, and reads the feed to its end.
+    ///
+    /// The gate of `answer` opens only when close waits for the answer too
+    /// (``RoutedSessionActor/questionAnswerReturns``). Thus a close that ends
+    /// the feed with no wait for the answer ends it before the answer
+    /// returns, and the feed has no end of the question.
+    ///
+    /// - Parameters:
+    ///   - asked: The question. Its feed is read to the end.
+    ///   - answer: The answer on its way, held before the run plane.
+    /// - Returns: The rest of the feed, and what the run plane did with the
+    ///   answer.
+    /// - Throws: When the session is not a ``RoutedSessionActor``, or its
+    ///   signal does not report its waiters.
+    private static func closeWhileAnEarlierEndWaits(
+        for answer: AnswerOnItsWay, of asked: inout AskedQuestion
+    ) async throws -> (outputs: [SessionOutput], delivery: ElicitationAnswerDelivery) {
+        let session = try asked.fixture.sessionActor()
+        let returns = session.questionAnswerReturns
+        let waiters = try #require(returns.waiterChanges)
+        let gate = answer.gate
+        let opener = Task {
+            try await waiters.wait(until: { returns.waiterCount >= Self.closeAndTheOwnerOfTheEndWait })
+            await gate.open()
+        }
+        let close = Task { await session.close() }
+        let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+        // A close that ended the feed with no wait for the answer leaves the
+        // gate shut. Open it here, so the answer and the close end.
+        opener.cancel()
+        await gate.open()
+        let delivery = await answer.task.value
+        await close.value
+        return (outputs, delivery)
+    }
+
     /// Reads the feed through the next ``SessionEvent/runSettled(_:)``, waits
     /// for the terminal event of its run mail, closes the session, and reads
     /// the rest of the feed.
@@ -390,6 +433,51 @@ struct ElicitationEndedEventTests {
         await asked.end()
     }
 
+    /// The production change that makes this test fail: a `close()` that
+    /// waits only for the answers to the questions whose end its own end
+    /// check held, so it ends the feed before the answer to a question whose
+    /// end a cancel of the run held.
+    @Test("close() while a cancel of the run holds the end for an answer on its way gives exactly one end before the feed ends")
+    func closeWhileARunCancelHoldsTheEndGivesTheEndBeforeTheFeedEnds() async throws {
+        var asked = try await Self.askQuestion()
+        let session = try asked.fixture.sessionActor()
+        let answer = try await Self.startAnswer(to: asked, holdingAt: .beforeTheRunPlane)
+        let token = asked.question.correlationID
+        let cancel = Task { await session.runPlane.cancel(completionToken: token) }
+        try await Self.awaitDeferredEnd(of: asked)
+
+        let (outputs, delivery) = try await Self.closeWhileAnEarlierEndWaits(for: answer, of: &asked)
+        _ = await cancel.value
+
+        #expect(delivery == .noPendingElicitation)
+        let end = try Self.soleEnd(in: outputs, of: asked)
+        #expect(Self.mailIds(of: end.origin) != nil, "the origin \(end.origin) is not the run mail")
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: a `close()` that
+    /// waits only for the answers to the questions whose end its own end
+    /// check held, so it ends the feed before the answer to a question whose
+    /// end a `cancelAll()` signal held.
+    @Test("close() while a cancelAll() signal holds the end for an answer on its way gives exactly one end before the feed ends")
+    func closeWhileACancelAllHoldsTheEndGivesTheEndBeforeTheFeedEnds() async throws {
+        var asked = try await Self.askQuestion()
+        let session = try asked.fixture.sessionActor()
+        let answer = try await Self.startAnswer(to: asked, holdingAt: .beforeTheRunPlane)
+        let signal = asked.fixture.session.cancelAll()
+        try await Self.awaitDeferredEnd(of: asked)
+        // The body of the run ends only after the sweep took the question
+        // from the run plane. Thus the answer then finds no question.
+        await session.runPlane.joinRunBodies()
+
+        let (outputs, delivery) = try await Self.closeWhileAnEarlierEndWaits(for: answer, of: &asked)
+
+        #expect(delivery == .noPendingElicitation)
+        let end = try Self.soleEnd(in: outputs, of: asked)
+        #expect(end.origin == .signal(signal))
+        await asked.end()
+    }
+
     /// The production change that makes this test fail: an end check that
     /// does not know which questions the client answered.
     @Test("a question that the client answered gives no end, also when the session closes later")
@@ -491,6 +579,27 @@ struct AskedQuestionsEndTests {
         #expect(questions.hasOpenQuestions(ofRun: Self.runToken) == false)
         #expect(laterAnswer == false)
         #expect(endDelivery == delivery)
+    }
+
+    /// The production change that makes this test fail: a record that
+    /// reports only the ends that the check of close held, so close does not
+    /// wait for an end that a cancel-all signal held.
+    @Test("the record reports a held end of any end check until the answer returns")
+    func theRecordReportsAHeldEndOfAnyCheck() {
+        let (record, id) = Self.recordWithOneQuestion()
+        var questions = record
+        let signalDelivery = QuestionEndDelivery.session(.signal(SignalID()))
+
+        let before = questions.hasDeferredEnds
+        _ = questions.beginAnswer(to: id)
+        _ = questions.endQuestions(ofRun: Self.runToken, notIn: [], via: signalDelivery)
+        let held = questions.hasDeferredEnds
+        _ = questions.noteAnswered(id, outcome: .noQuestion)
+        let after = questions.hasDeferredEnds
+
+        #expect(before == false)
+        #expect(held)
+        #expect(after == false)
     }
 
     @Test("a question with an answer on its way gives no end when that answer resumed the run")

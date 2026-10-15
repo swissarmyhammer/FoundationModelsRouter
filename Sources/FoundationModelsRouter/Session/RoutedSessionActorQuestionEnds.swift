@@ -34,8 +34,12 @@ import FoundationModelsExtras
 /// question for it (``noteAnswer(to:outcome:startedWork:)``), through the
 /// same delivery. The place waits until the answer returned
 /// (``awaitAnswersOnTheirWay(to:)``), and only then sends its terminal event:
-/// the ``SessionEvent/runSettled(_:)`` of the run, the
-/// ``SessionEvent/signalDone(_:)`` of the signal, or the end of the feeds.
+/// the ``SessionEvent/runSettled(_:)`` of the run, or the
+/// ``SessionEvent/signalDone(_:)`` of the signal. Before the end of the feeds,
+/// ``close()`` waits until no end check holds an end for an answer on its
+/// way (``awaitDeferredEnds()``), whichever check owns that end: an end that
+/// a cancel of a run or a cancel-all signal held before the close also comes
+/// before the feeds end.
 extension RoutedSessionActor {
     /// The response that the run plane gives to each question of a stopped
     /// run, and that the end of the question carries.
@@ -77,8 +81,10 @@ extension RoutedSessionActor {
     /// the sweep, which then gives each run the cancel.
     ///
     /// The end of a question with an answer on its way waits for that answer.
-    /// The caller starts the sweep, and then waits for those answers
-    /// (``awaitAnswersOnTheirWay(to:)``) before its terminal event. The sweep
+    /// The caller starts the sweep, and then waits for those answers before
+    /// its terminal event: ``performCancelAll()`` waits for the answers to
+    /// the returned ids (``awaitAnswersOnTheirWay(to:)``), and ``close()``
+    /// waits for the answers to each held end (``awaitDeferredEnds()``). The sweep
     /// comes first, so an answer that comes to the run plane after the sweep
     /// finds no question, and the end goes out.
     ///
@@ -129,17 +135,40 @@ extension RoutedSessionActor {
     ///
     /// - Parameter ids: The ids of the questions whose end waits.
     func awaitAnswersOnTheirWay(to ids: [ULID]) async {
-        guard !ids.isEmpty else { return }
-        await Task { await self.waitUntilNoAnswerOnItsWay(to: ids) }.value
+        await awaitAnswerReturns(until: { !$0.hasAnswerOnItsWay(toAnyOf: ids) })
     }
 
-    /// Waits on ``questionAnswerReturns`` until no answer to a question of
-    /// `ids` is on its way. The task of the wait is not cancelled, so the
-    /// wait ends only when the state holds.
+    /// Waits until no end check holds the end of a question for an answer on
+    /// its way, whichever check owns that end
+    /// (``AskedQuestions/hasDeferredEnds``): each such end went out, or an
+    /// answer resumed the run and no end comes. ``close()`` calls it before
+    /// the feeds end, so an end that a cancel of a run or a cancel-all signal
+    /// held before the close also comes before the end of the feeds.
     ///
-    /// - Parameter ids: The ids of the questions whose end waits.
-    private func waitUntilNoAnswerOnItsWay(to ids: [ULID]) async {
-        _ = await questionAnswerReturns.waitUntil { !askedQuestions.hasAnswerOnItsWay(toAnyOf: ids) }
+    /// A cancel of the caller does not end the wait, for the reason that
+    /// ``awaitAnswersOnTheirWay(to:)`` gives.
+    func awaitDeferredEnds() async {
+        await awaitAnswerReturns(until: { !$0.hasDeferredEnds })
+    }
+
+    /// Waits on ``questionAnswerReturns`` until `isSettled` holds for
+    /// ``askedQuestions``. The wait runs in a task of its own that is not
+    /// cancelled, so the wait ends only when the state holds.
+    ///
+    /// - Parameter isSettled: Tells whether the record is in the state that
+    ///   the caller waits for.
+    private func awaitAnswerReturns(until isSettled: @escaping @Sendable (AskedQuestions) -> Bool) async {
+        guard !isSettled(askedQuestions) else { return }
+        await Task { await self.waitUntilAnswersReturned(isSettled) }.value
+    }
+
+    /// Waits on ``questionAnswerReturns`` until `isSettled` holds for
+    /// ``askedQuestions``.
+    ///
+    /// - Parameter isSettled: Tells whether the record is in the state that
+    ///   the caller waits for.
+    private func waitUntilAnswersReturned(_ isSettled: @Sendable (AskedQuestions) -> Bool) async {
+        _ = await questionAnswerReturns.waitUntil { isSettled(askedQuestions) }
     }
 
     /// Sends one end for each question of `ids` through `delivery`: the live

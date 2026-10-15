@@ -212,6 +212,15 @@ struct AskedQuestions: Sendable {
         ids.contains { (questions[$0]?.answersOnTheirWay ?? 0) > 0 }
     }
 
+    /// Whether an end check holds the end of a question for an answer on its
+    /// way, whichever check owns that end: the journal at the terminal of a
+    /// run, a cancel-all signal, or ``RoutedSession/close()``. Close waits
+    /// until this is `false` before the feeds end: then each such end went
+    /// out, or an answer resumed the run and no end comes.
+    var hasDeferredEnds: Bool {
+        questions.values.contains { $0.deferredEnd != nil }
+    }
+
     /// Records that an answer of the client to the question `id` goes to the
     /// run plane now.
     ///

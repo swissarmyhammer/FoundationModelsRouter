@@ -73,6 +73,29 @@ comments:
     - Files: Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift, RoutedSessionActorQuestionEnds.swift, RoutedSessionActorDrain.swift, RoutedSessionActorForking.swift, RoutedSessionActorRunJournal.swift, RoutedSessionActorQueueing.swift, RoutedSessionActor.swift; Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift.
     - next: review.
   timestamp: 2026-10-15T01:34:10.779178+00:00
+- actor: claude-code
+  id: 01m4ykhra5jqj55qg59w7w8s39
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (af6f8b3b). The engine gave 0 findings (7 attempted, 0 failed). The 3 items of 20:06 are fixed: the tests check .noPendingElicitation after each end; runSettled and signalDone wait for the answers on their way, and a deferred end keeps its delivery; close() waits for its own deferred ends. The 12 tests of ElicitationEndedEventTests and AskedQuestionsEndTests pass. The hand check gave 1 new finding: Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:409 (close() does not wait for a deferred end that a run cancel or a cancelAll() signal owns, so the end can come after the feeds end).
+    - next: implement the 20:34 item, then review again.
+  timestamp: 2026-10-15T01:41:40.293548+00:00
+- actor: claude-code
+  id: 01m4ym07q7evkn4fmkk7hvcrs3
+  text: |-
+    Fix for the 20:34 finding (RoutedSessionActorForking.swift:409). close() no longer keeps the ids that its own end check held. It calls `awaitDeferredEnds()` before `finishSessionEventSubscriptions()`. That wait reads `AskedQuestions.hasDeferredEnds` (any question with a held end, whichever check owns it: journal at a run terminal, cancel-all signal, or close), so one wait covers each held end. `awaitAnswersOnTheirWay(to:)` and `awaitDeferredEnds()` share one private helper (`awaitAnswerReturns(until:)`, uncancelled task, as before). `performCancelAll` keeps its per-id wait, because its signalDone must wait only for its own ends.
+
+    Test hook: `questionAnswerReturns` is now `ChangeSignal(observingWaiters: true)`. The new test helper `closeWhileAnEarlierEndWaits(for:of:)` opens the answer gate only when 2 tasks wait on that signal (the owner of the held end and close). A close that does not wait ends the feed first, then the helper opens the gate itself. Thus the red is an assertion (0 ends), not a hang, and no clock is used.
+
+    Red evidence (before the fix): both new tests failed at ElicitationEndedEventTests.swift:99 "expected one end of the question, got 0" (ends → []).
+  timestamp: 2026-10-15T01:49:34.823805+00:00
+- actor: claude-code
+  id: 01m4ym0bfb7zxaqn2tstw5dnv5
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift, RoutedSessionActorQuestionEnds.swift, RoutedSessionActorWorkEvents.swift, RoutedSessionActor.swift, Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift. Red: 2 new tests failed with "got 0" ends. `swift build --build-tests`: Build complete, only the mlx "missing creator" line. Touched suites: "Test run with 15 tests in 2 suites passed". Full suite: "Test run with 1725 tests in 208 suites passed after 4.893 seconds with 1 known issue" (the existing withKnownIssue in RealModelHarnessTests), plus "25 tests in 13 suites passed" and "19 tests in 3 suites passed". IntegrationTests `swift build --build-tests`: Build complete, only the mlx line. Finding 20:34 flipped to [x]. Not committed.
+    - next: /review
+  timestamp: 2026-10-15T01:49:38.667242+00:00
 position_column: doing
 position_ordinal: '80'
 title: Session event elicitationEnded for a question that ends without a client answer
@@ -107,3 +130,14 @@ Tests: one fixed-order test for each way to end; no event for an answered questi
 - [x] `Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift:159` `completeness/invariant-propagation` — The change states that after cancelAll() or close() ends a question, respond(elicitationId:response:) and complete(elicitationId:) return .noPendingElicitation. No test in this diff checks that. closeGivesTheEndBeforeTheFeedEnds only checks the end event, and the cancelAll test (line 143) checks only the end event and its position. A regression that leaves the question open after close() or cancelAll() would pass these tests. After `close()` in closeGivesTheEndBeforeTheFeedEnds, assert that `respond(elicitationId:response:)` and `complete(elicitationId:)` for the question id both return `.noPendingElicitation`. Add the same check for the cancelAll test after `signalDone`.
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:353` `hand-check/order-and-origin` — A deferred end (an end check found the question gone while a client answer was on its way, `deferredEnd`) goes out only when that answer returns from the run plane. Nothing holds it before the terminal event of its work. Run cancel: `endQuestionsThatLeftTheRunPlane` sends the `runSettled` of the run at once, and the deferred end comes after it, and possibly after the answer of the run mail. cancelAll(): the `signalDone` of the signal does not wait for the answer on its way, so the deferred end with `.signal(id)` can come after `signalDone`. The card requires the end before the terminal event of that mail or signal in each case. Also, this path sends the end through `emitSessionScopedEvent` and does not apply `outputHub.drops(origin.poster)` or the sink of the running answer, as `deliverLive(_:origin:)` does for the other end path. Make the deferred end obey the order of the card (for example, the terminal event of the work waits for the answers on their way to the questions it ends), and send it through the same delivery as the non-deferred end.
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:404` `hand-check/exactly-one-end` — close() calls `endOpenQuestions(at: .system)`. A question with a client answer on its way only gets `deferredEnd = .system` (`RoutedSessionActorWorkEvents.swift:220`). The sweep of close can then remove the question on the run plane before that answer arrives, so the answer returns `.noPendingElicitation` and `noteAnswer` sends the end. By then `finishSessionEventSubscriptions()` ended the feeds, so the end is lost: the question ended with no client answer and the client gets zero `elicitationEnded`. Make close() send the end of each such question before the feeds end (for example, wait for the answers on their way before `finishSessionEventSubscriptions()`), and add a test for this case.
+
+## Review Findings (2026-10-14 20:34)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> The engine gave 0 findings. The item below comes from the hand check of the exactly-one-end rule.
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:409` `hand-check/exactly-one-end` — close() waits only for the answers on their way to the questions that its own end check deferred (`waitingEnds`). The first end check owns a deferred end, and a deferred question is no longer open, so `endOpenQuestions(at: .system)` skips a question whose end an earlier check deferred. Race 1: a run cancel defers the end of a question (the journal waits in `endQuestionsThatLeftTheRunPlane` for the answer on its way), then close() starts. Race 2: a cancelAll() signal defers the end (`performCancelAll` waits for the answer), then close() starts. In both races `waitingEnds` of close is empty, close() calls `finishSessionEventSubscriptions()` at once, and the answer then returns `.noPendingElicitation` and sends the end after the feeds ended. The question ended with no client answer, and a `streamSessionEvents()` consumer gets zero `elicitationEnded`. This is the cause of the 20:06 finding at `RoutedSessionActorForking.swift:404` in a different place. Make close() wait, before `finishSessionEventSubscriptions()`, until no question with a deferred end (each owner: run event, signal, or close) has an answer on its way. Add a fixed-order test for each race: hold the answer at its gate before the run plane, let the run cancel or the cancelAll() signal defer the end (`hasDeferredEnd(of:)`), start close() in a task, open the gate, and check that the feed has exactly one end before it ends.

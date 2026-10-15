@@ -389,8 +389,9 @@ extension RoutedSessionActor {
         // before the feeds finish. The work of ``cancelAll()`` below then
         // finds no open question, and its sweep gives each run the cancel.
         // The end of a question with an answer of the client on its way
-        // waits for that answer.
-        let waitingEnds = endOpenQuestions(at: .system)
+        // waits for that answer. The wait below covers each held end, so
+        // close does not keep the ids that this check held.
+        _ = endOpenQuestions(at: .system)
 
         // The stop of all work: the running answer ends at once, and the
         // sweep of the runs starts. Close runs the work of ``cancelAll()``
@@ -400,13 +401,15 @@ extension RoutedSessionActor {
         // stopped answer.
         await performCancelAll()
 
-        // Each answer that was on its way to a question that ended above
-        // returns from the run plane: the sweep took the question, so the
-        // answer finds no question and sends the end of the question, or it
-        // came first and resumed the run. Thus each such end comes before the
+        // Each answer that is on its way to a question whose end an end
+        // check holds returns from the run plane, whichever check holds the
+        // end: the check of close above, a cancel of a run, or a cancel-all
+        // signal that came before close. The run plane no longer has the
+        // question, so the answer sends the end of the question, or it came
+        // first and resumed the run. Thus each such end comes before the
         // feeds finish. The answer does not wait for close, so this wait
         // ends, also when the caller of close is cancelled.
-        await awaitAnswersOnTheirWay(to: waitingEnds)
+        await awaitDeferredEnds()
 
         // Before anything that can return early: a consumer looping over
         // ``streamSessionEvents()`` must end when the session does, whether or

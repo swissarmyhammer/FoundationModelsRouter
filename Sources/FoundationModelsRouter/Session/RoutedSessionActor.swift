@@ -411,7 +411,12 @@ actor RoutedSessionActor: RoutedSession {
     /// question gone while an answer was on its way waits on it until the
     /// answer returned (``awaitAnswersOnTheirWay(to:)``), and only then sends
     /// the terminal event that the end of the question must come before.
-    nonisolated let questionAnswerReturns = ChangeSignal()
+    /// ``close()`` waits on it until no end check holds an end
+    /// (``awaitDeferredEnds()``) before the feeds end.
+    ///
+    /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
+    /// so a test can wait until ``close()`` waits for such an answer.
+    nonisolated let questionAnswerReturns = ChangeSignal(observingWaiters: true)
 
     /// Reports each read of the repetition watch that found no stop
     /// (``startRepetitionWatch()``). The watch first stores the texts of
