@@ -508,12 +508,15 @@ struct AskedQuestionsEndTests {
     /// The token of another run.
     private static let otherRunToken = "other-run-token"
 
-    /// A record with one form-mode question of ``runToken``.
+    /// A record with one question of ``runToken``.
     ///
+    /// - Parameter request: The question. The default is a form-mode
+    ///   question.
     /// - Returns: The record and the id of the question.
-    private static func recordWithOneQuestion() -> (questions: AskedQuestions, id: ULID) {
+    private static func recordWithOneQuestion(
+        _ request: ElicitationRequest = MountFixtures.proceedRequest()
+    ) -> (questions: AskedQuestions, id: ULID) {
         var questions = AskedQuestions()
-        let request = MountFixtures.proceedRequest()
         questions.noteAsked(request, runToken: runToken, mailID: nil)
         return (questions, request.elicitationId)
     }
@@ -620,24 +623,13 @@ struct AskedQuestionsEndTests {
         #expect(again == QuestionEndCheck())
     }
 
-    /// A record with one URL-mode question of ``runToken``.
-    ///
-    /// - Returns: The record and the id of the question.
-    private static func recordWithOneURLQuestion() -> (questions: AskedQuestions, id: ULID) {
-        var questions = AskedQuestions()
-        let id = ULID.generate()
-        let request = ElicitationRequest(message: "Open the page", elicitationId: id, url: SessionWorkEventTests.approvalURL)
-        questions.noteAsked(request, runToken: runToken, mailID: nil)
-        return (questions, id)
-    }
-
     /// The production change that makes this test fail: an end check that
     /// ends a question whose completion post is on its way, or a record that
     /// does not report that post, so a stop of the session does not wait
     /// for it.
     @Test("a question whose completion post is on its way gets no end, and the record reports it until the post")
     func aCompletingQuestionGetsNoEnd() {
-        let (record, id) = Self.recordWithOneURLQuestion()
+        let (record, id) = Self.recordWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
         var questions = record
 
         let check = questions.endQuestions(ofRun: nil, notIn: [], completing: [id], via: Self.closeDelivery)
@@ -661,7 +653,7 @@ struct AskedQuestionsEndTests {
     /// check marked the question completed, so the post finds no question.
     @Test("a completion of the client that returns after an end check marked the question completed keeps it until the post")
     func aLateCompletionKeepsTheCompletedQuestion() {
-        let (record, id) = Self.recordWithOneURLQuestion()
+        let (record, id) = Self.recordWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
         var questions = record
 
         _ = questions.beginAnswer(to: id)
@@ -680,7 +672,7 @@ struct AskedQuestionsEndTests {
     /// the question completed, so a later end check ends it.
     @Test("an accept that returns after an end check marked the question completed does not open it again")
     func aLateAcceptKeepsTheCompletedQuestion() {
-        let (record, id) = Self.recordWithOneURLQuestion()
+        let (record, id) = Self.recordWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
         var questions = record
 
         _ = questions.beginAnswer(to: id)

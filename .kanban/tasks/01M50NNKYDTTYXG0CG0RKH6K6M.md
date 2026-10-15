@@ -92,6 +92,25 @@ comments:
     - finding hand-check/completion-gap flipped to [x]. New task ^pjycptw for the race after the end check. Not committed, not pushed. Card stays in doing.
     - next: /review.
   timestamp: 2026-10-15T23:26:12.784024+00:00
+- actor: claude-code
+  id: 01m50yps0528ystvc5chtxewrw
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit 4af82fdb). 2 findings (2 confirmed, 2 refuted). Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:337, Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift:626.
+    - prior item: the completion-gap finding at RoutedSessionActorWorkEvents.swift:197 is fixed. cancelAll() and close() read `RunPlane.completingElicitations()` and mark such a question as completed with no end.
+    - hand checks: all pass. Each wait ends: Extras `completeAccepted` posts in an unstructured task, the outbox journal is never detached, and the post removes the question and signals `questionAnswerReturns`. The run-terminal end check marks only and does not wait on the journal chain. A run cancel in the gap ends the question with `elicitationEnded` and no wait. One `elicitationCompleted` for each completion. A late accept or a late client completion keeps the completed mark. The new tests use latches, a fixed order, and no time. Red-first is not visible from one commit.
+    - next: fix the 2 reuse findings. The consumer-step and push item is the step of the orchestrator.
+  timestamp: 2026-10-15T23:35:08.037029+00:00
+- actor: claude-code
+  id: 01m50z1f43zj5y5fhg7wgtsgmt
+  text: |-
+    ### implement — changed
+    - evidence: 3 files. Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift: new private helper AskedQuestions.hasQuestion(among:where:). hasAnswerOnItsWay(toAnyOf:), hasCompletionOnItsWay(toAnyOf:) and hasDeferredEnd(of:) call it. Question has new predicates hasAnswerOnItsWay, hasDeferredEnd and hasCompletionOnItsWay. hasDeferredEnds, hasCompletionsOnTheirWay, endQuestions and noteAnswered use these predicates, so the file has no other copy of the same check. Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift: recordWithOneQuestion(_ request: = MountFixtures.proceedRequest()), recordWithOneURLQuestion removed, the 3 URL tests call recordWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate())). Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift: urlRequest(_:) is now internal (was private), so the URL request has one builder.
+    - refactor with no change of behavior: the existing record tests are the guard. No new test.
+    - green: swift build --build-tests Build complete, zero Router warnings (only the mlx-swift "missing creator for mutated node" note). Touched suites (ElicitationEndedEventTests, AskedQuestionsEndTests, ElicitationCompletedEventTests) "Test run with 28 tests in 3 suites passed after 0.056 seconds". Full suite one run: "Test run with 1757 tests in 212 suites passed after 7.082 seconds with 1 known issue", "Test run with 26 tests in 14 suites passed", "Test run with 19 tests in 3 suites passed". IntegrationTests swift build --build-tests: Build complete.
+    - both reuse findings flipped to [x]. Not committed, not pushed. Card stays in doing.
+    - next: /review.
+  timestamp: 2026-10-15T23:40:58.371013+00:00
 position_column: doing
 position_ordinal: '80'
 title: Session event elicitationCompleted when the run plane completes an accepted URL flow
@@ -109,3 +128,13 @@ Do not start this task until the Extras card is done that posts a run plane even
 > Scope: `review sha HEAD~1..HEAD` (commit 27879148). The engine reviewed 18 files and found 0 findings. The finding below comes from the hand checks of the orchestrator.
 
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:197` `hand-check/completion-gap` — A cancel-all or a close in the gap between `ToolContext.complete(elicitationId:)` and the journal of its post sends a wrong `elicitationEnded`, and then no `elicitationCompleted`. Extras `completeAccepted` takes the question off the run plane at once and posts the completion in a new task. Until that post gets to the journal, the record keeps the question as `.acceptedURL` with no answer on its way, so it is open. `performCancelAll()` (RoutedSessionActorDrain.swift) and `close()` (RoutedSessionActorForking.swift) call `endOpenQuestions(at:)`, which ends each open question with no read of the run plane. The question becomes `.ended` and the session sends `elicitationEnded` with `RunPlane.runCancelledReason`. The sweep does not find the question, so the run gets the accept. When the post then arrives, `takesCompletion` is `false` for `.ended` (`complete(_:postedBy:)`, line 235), so no `elicitationCompleted` goes out. This breaks the contract of the `SessionEvent.elicitationCompleted` doc: one completion for each source, and no `elicitationEnded` for a question that completed. The `session.complete` path does not have this defect, because its answer on its way defers the end and `noteAnswered(.resumedRun)` sets `.completed` with no end. Make the tool path safe in the same way: a question that left the run plane through a completion must not get an end from a cancel-all or a close. Add a fixed-order test that holds the completion post of the tool (for example, a sink that waits on a latch before it forwards the post), runs `cancelAll()` or `close()` in the gap, and then expects one `elicitationCompleted` and no `elicitationEnded`.
+
+## Review Findings (2026-10-15 18:26)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 9 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:337` `reuse/reuse` — New func hasCompletionOnItsWay(toAnyOf:) has the same shape as the existing hasAnswerOnItsWay(toAnyOf:). Both are `ids.contains { questions[$0]... }` checks over the same record. Only the per-question predicate differs. A parallel copy now has to stay in step with the existing one. Add one helper that takes a predicate on Question, for example `hasQuestion(toAnyOf ids: [ULID], where: (Question) -> Bool) -> Bool`. Have hasAnswerOnItsWay and hasCompletionOnItsWay both call it. This keeps one traversal of the record.
+- [x] `Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift:626` `reuse/reuse` — recordWithOneURLQuestion repeats the body of recordWithOneQuestion (line 514). Both create an AskedQuestions, call noteAsked(_:runToken:mailID: nil) with one request, and return the record and the id. Only the request differs. A second helper for the same setup can drift from the first. The near-match was not extended. Generalize recordWithOneQuestion to take the request as a parameter, for example recordWithOneQuestion(_ request: ElicitationRequest = MountFixtures.proceedRequest()). Then the URL tests call it with an ElicitationRequest built from SessionWorkEventTests.approvalURL, and recordWithOneURLQuestion is removed. Keep the default so existing callers do not change.

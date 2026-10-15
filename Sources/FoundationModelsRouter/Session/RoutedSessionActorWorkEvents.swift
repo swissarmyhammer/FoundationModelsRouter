@@ -189,6 +189,24 @@ struct AskedQuestions: Sendable {
         /// way. `nil` when no end check found that.
         var deferredEnd: QuestionEndDelivery?
 
+        /// Whether an answer of the client to the question is on its way to
+        /// the run plane.
+        var hasAnswerOnItsWay: Bool {
+            answersOnTheirWay > 0
+        }
+
+        /// Whether an end check holds the end of the question for an answer
+        /// on its way.
+        var hasDeferredEnd: Bool {
+            deferredEnd != nil
+        }
+
+        /// Whether the completion post of the question is on its way to the
+        /// journal: the question is ``State/completed``.
+        var hasCompletionOnItsWay: Bool {
+            state == .completed
+        }
+
         /// Whether the question is still open for the session: it did not
         /// end with no answer of the client, its flow did not complete, and
         /// its end does not wait for an answer on its way.
@@ -291,7 +309,19 @@ struct AskedQuestions: Sendable {
     /// - Parameter id: The id of a question.
     /// - Returns: `true` when the end of the question waits for an answer.
     func hasDeferredEnd(of id: ULID) -> Bool {
-        questions[id]?.deferredEnd != nil
+        hasQuestion(among: [id], where: \.hasDeferredEnd)
+    }
+
+    /// Whether a question of `ids` that is still in the record agrees with
+    /// `predicate`.
+    ///
+    /// - Parameters:
+    ///   - ids: The ids of questions.
+    ///   - predicate: The check of one recorded question.
+    /// - Returns: `true` when `predicate` is `true` for a question of `ids`
+    ///   in the record. A question that is not in the record does not count.
+    private func hasQuestion(among ids: [ULID], where predicate: (Question) -> Bool) -> Bool {
+        ids.contains { questions[$0].map(predicate) ?? false }
     }
 
     /// Whether the record has an open question of the run of `runToken`.
@@ -313,7 +343,7 @@ struct AskedQuestions: Sendable {
     /// - Returns: `true` when a question of `ids` that is still in the record
     ///   has an answer on its way.
     func hasAnswerOnItsWay(toAnyOf ids: [ULID]) -> Bool {
-        ids.contains { (questions[$0]?.answersOnTheirWay ?? 0) > 0 }
+        hasQuestion(among: ids, where: \.hasAnswerOnItsWay)
     }
 
     /// Whether an end check holds the end of a question for an answer on its
@@ -322,7 +352,7 @@ struct AskedQuestions: Sendable {
     /// until this is `false` before the feeds end: then each such end went
     /// out, or an answer resumed the run and no end comes.
     var hasDeferredEnds: Bool {
-        questions.values.contains { $0.deferredEnd != nil }
+        questions.values.contains(where: \.hasDeferredEnd)
     }
 
     /// Whether the completion post of one of the questions `ids` is still on
@@ -335,7 +365,7 @@ struct AskedQuestions: Sendable {
     /// - Returns: `true` when a question of `ids` is still completed in the
     ///   record.
     func hasCompletionOnItsWay(toAnyOf ids: [ULID]) -> Bool {
-        ids.contains { questions[$0]?.state == .completed }
+        hasQuestion(among: ids, where: \.hasCompletionOnItsWay)
     }
 
     /// Whether the completion post of a question is still on its way to the
@@ -344,7 +374,7 @@ struct AskedQuestions: Sendable {
     /// end: then each such completion went out. The run plane always posts
     /// the completion of a flow that it completed, so this wait ends.
     var hasCompletionsOnTheirWay: Bool {
-        questions.values.contains { $0.state == .completed }
+        questions.values.contains(where: \.hasCompletionOnItsWay)
     }
 
     /// Records that an answer of the client to the question `id` goes to the
@@ -393,7 +423,7 @@ struct AskedQuestions: Sendable {
         case .acceptedAwaitingCompletion, .noQuestion:
             break
         }
-        let end = question.answersOnTheirWay == 0 ? question.deferredEnd : nil
+        let end = question.hasAnswerOnItsWay ? nil : question.deferredEnd
         if end != nil {
             question.state = .ended
             question.deferredEnd = nil
@@ -450,7 +480,7 @@ struct AskedQuestions: Sendable {
             if completingIds.contains(id) {
                 questions[id]?.state = .completed
                 check.completing.append(id)
-            } else if question.answersOnTheirWay > 0 {
+            } else if question.hasAnswerOnItsWay {
                 questions[id]?.deferredEnd = delivery
                 check.deferred.append(id)
             } else {

@@ -236,7 +236,7 @@ struct ElicitationCompletedEventTests {
     ///
     /// - Parameter id: The id of the question.
     /// - Returns: The question.
-    private static func urlRequest(_ id: ULID) -> ElicitationRequest {
+    static func urlRequest(_ id: ULID) -> ElicitationRequest {
         ElicitationRequest(message: "Open the page", elicitationId: id, url: SessionWorkEventTests.approvalURL)
     }
 
