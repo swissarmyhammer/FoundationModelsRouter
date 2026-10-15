@@ -1,5 +1,7 @@
 # Plan: a generation queue for each model, and a prompt cache limited by bytes
 
+> **Note (2026-10-15).** The mail design in `/Users/wballard/github/swissarmyhammer/mailbox.md` replaces the message queue design of this document. `MessageID` is now `MailID`. `cancel(message:)` and `MessageCancellationResult` are now the signals `cancel(_ id: MailID) -> SignalID` and `cancelAll() -> SignalID`, and a cancelled mail gets the terminal event `cancelled(MailID)`. Extras step 8 removes `MessageID`, `MessageCancellationResult` and the other old Mailbox types. The lines below that name the old types are history, or show the current names.
+
 This file is the design that the `generation-queue` and `prompt-cache` tasks on the Router board refer to. It records the decisions of 2026-09-24 and 2026-09-25. Two peer sessions wrote the first proposals: FoundationModelsAgents (the queue, and the prompt-cache plan) and mlx-swift-lm (the fork side of the prompt cache). This file keeps the parts that the Router tasks need, in their final form. Code references name symbols, not line numbers, because line numbers change.
 
 **Read section 5 first.** On 2026-09-25 the user replaced the lock design with a work-queue design, and made one submission to Foundation (one whole SDK call) the item of the queue. Section 5 is the current design. Sections 1 to 4 are the history that led to it. Each decision of section 2 that section 5 replaces is marked **Superseded**.
@@ -95,7 +97,7 @@ Measurements of ^mre55m3 (2026-09-24). A disk write and a read of a prompt cache
 | ^1psqdm9 | One submission to Foundation is the item of the generation queue | ^a0ze9af |
 | ^dpn2ytt | Read and fork a session from its settled transcript, with no wait on `turnLock` | ^1psqdm9 |
 | ^3qx0mpt | A per-session message queue and one pump task replace `turnLock` | ^1psqdm9, ^dpn2ytt |
-| ^cbhpdjy | Public message API: `send`, `MessageID`, `cancel()` | ^3qx0mpt |
+| ^cbhpdjy | Public message API: `send`, `MessageID` (now `MailID`), `cancel()` (history: see the note at the top) | ^3qx0mpt |
 | ^x7cxsg3 | Submission and answer events; `SessionAnswer` replaces `TurnOutcome` | ^cbhpdjy |
 | ^5d0qx1b | Limits for each answer; keep the stored key `recoveriesPerTurn` | ^3qx0mpt |
 | ^f33q8gw | Rewritten: remove the last "turn" names (boundary tool, `awaitingUser`, tracing, docs) | ^x7cxsg3, ^5d0qx1b |
@@ -252,7 +254,7 @@ Code and tests that assume an in-band wait, and what each becomes:
 
 **The event set (^x7cxsg3):**
 
-- Of the item: `submissionQueued(SubmissionID)`, `submissionStarted(SubmissionStart)` (the id, the delivered `MessageID`s, the cause: caller message, mail or continuation), `submissionEnded(SubmissionEnd)` (the id, the `TokenUsage` of that SDK call, the `FinishReason`). `submissionEnded` replaces `turnEnded`, which already came one time for each SDK call.
+- Of the item: `submissionQueued(SubmissionID)`, `submissionStarted(SubmissionStart)` (the id, the delivered `MailID`s, the cause: caller message, mail or continuation), `submissionEnded(SubmissionEnd)` (the id, the `TokenUsage` of that SDK call, the `FinishReason`). `submissionEnded` replaces `turnEnded`, which already came one time for each SDK call.
 - Of the answer: `answered(SessionAnswer)` one time for each final answer; `answerFailed(AnswerFailure)` when the chain ends with no answer (cancelled, or an error).
 - Of the steps: `toolCall`, `toolStatus`, `toolInvocation`, `toolCallReport`, `toolDisplay` (task ^twha0gz), `textDelta`, `textReset`, `reasoningDelta`, `generationCall`, `generationStalled`, `repetitionStopped`, `reasoningStopped` (task ^hm9trt5), `entryRecorded` stay.
 - Of the session: `compaction`, `runSettled`, `elicitationRequested`, `discoveryPrimingFailed` stay.
@@ -264,12 +266,12 @@ Decided in ^x7cxsg3: a summarizer call of a compaction is not a submission of th
 
 | Now | Becomes | Task |
 |---|---|---|
-| `TurnOutcome` | `SessionAnswer` (reply, answered `MessageID`s, summed usage, compactions, tool calls, tool invocation records) | ^x7cxsg3 |
+| `TurnOutcome` | `SessionAnswer` (reply, answered `MailID`s in `mailIds`, summed usage, compactions, tool calls, tool invocation records) | ^x7cxsg3 |
 | `TurnID`, `TurnStart` | `SubmissionID`, `SubmissionStart` | ^x7cxsg3 |
-| `PromptID` | `MessageID` | ^cbhpdjy |
+| `PromptID` | `MessageID`, now `MailID` | ^cbhpdjy |
 | `cancelCurrentTurn()`, `TurnCancellationResult` | `cancel()`, `CancellationResult` (`.requested`, `.nothingToCancel`) | ^cbhpdjy |
-| `cancel(id:)`, `cancelPrompt(id:)`, `PromptCancellationResult` | `cancel(message:)`, `MessageCancellationResult` (`.withdrawn`, `.cancelledInSubmission`, `.alreadyAnswered`) | ^cbhpdjy |
-| `SessionProjection.currentTurn` | `currentSubmission: SubmissionStart?`, and the waiting `MessageID`s | ^x7cxsg3 |
+| `cancel(id:)`, `cancelPrompt(id:)`, `PromptCancellationResult` | History: `cancel(message:)`, `MessageCancellationResult` (`.withdrawn`, `.cancelledInSubmission`, `.alreadyAnswered`). Now: the signals `cancel(_ id: MailID) -> SignalID` and `cancelAll() -> SignalID`, and the terminal event `cancelled(MailID)` | ^cbhpdjy |
+| `SessionProjection.currentTurn` | `currentSubmission: SubmissionStart?`, and the waiting `MailID`s (`messagesAwaitingAnswer`) | ^x7cxsg3 |
 | `TurnBoundaryTool.turnWillBegin()` | `SubmissionBoundaryTool.submissionWillBegin()`, called one time before each submission: the first submission of an answer (also one that only mail started) and each continuation submission | ^f33q8gw |
 | `awaitingUser(_:)` | Gone (5.5 rule 6) | ^f33q8gw |
 | Tracing span `turn`, attributes `turn.id`, `turn.entry_point` | Span `submission`, attributes `submission.id`, `submission.cause` | ^x7cxsg3 |
@@ -345,7 +347,7 @@ The counts are from `rg` over each consumer's sources on 2026-09-25.
 | 2 | ^1psqdm9 | One submission to Foundation is the item; `SessionLanguageModel`; submission events; the refusal of a same-model wait inside a submission. |
 | 3 | ^dpn2ytt | Reads and forks from the settled transcript, with no wait on `turnLock`. |
 | 4 | ^3qx0mpt | The per-session message queue and one pump replace `turnLock`. |
-| 5 | ^cbhpdjy | Public message API: `send`, `MessageID`, `cancel()`, `cancel(message:)`. |
+| 5 | ^cbhpdjy | Public message API: `send`, `MessageID`, `cancel()`, `cancel(message:)`. History: now `MailID`, and the signals `cancel(_ id: MailID)` and `cancelAll()`. |
 | 6 | ^x7cxsg3 | Submission and answer events; `SessionAnswer`; `currentSubmission`; the tracing span. |
 | 7 | ^5d0qx1b | Limits for each answer; the stored key `recoveriesPerTurn` stays on disk. |
 | 8 | ^f33q8gw | Rewritten: the boundary tool, `awaitingUser`, the last "turn" names and docs. |
