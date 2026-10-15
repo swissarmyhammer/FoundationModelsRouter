@@ -906,14 +906,9 @@ struct SessionTreeRestorationTests {
         // pre-envelope recording carries (the additive-schema acceptance:
         // an absent key must decode as nil and restore with today's
         // defaults, never fail).
-        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-            .appendingPathComponent(root.id.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
-        var json = try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
-        json.removeValue(forKey: "configuration")
-        try FileManager.default.removeItem(at: sidecarURL)
-        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+        try Self.rewriteRecordedSidecar(of: root.id, routerId: router1.id, recordingsDir: recordingsDir) { json in
+            json.removeValue(forKey: "configuration")
+        }
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -1006,6 +1001,83 @@ struct SessionTreeRestorationTests {
             grace,
             madeWith: SessionConfiguration(inlineSettleGrace: grace),
             readBy: \.inlineSettleGrace)
+    }
+
+    /// The production change that makes this test fail: a sidecar that does
+    /// not record the user presence, or a restore that does not give it to
+    /// the run plane. The restored session is then interactive.
+    @Test("a headless session keeps its user presence in a fork and after a restore (task ^0hps8jg)")
+    @MainActor
+    func restoredTreeReappliesRecordedUserPresence() async throws {
+        // Not the default, so the fork and the restore cannot pass by
+        // falling back to the default.
+        try await Self.expectForkAndRestoreKeep(
+            UserPresence.headless,
+            madeWith: SessionConfiguration(userPresence: .headless),
+            readBy: \.runPlane.userPresence)
+    }
+
+    /// The production change that makes this test fail: a restore that
+    /// reads a missing or an unknown recorded user presence as headless, or
+    /// that fails on it.
+    @Test(
+        "a sidecar with no user presence, or with a value this version does not know, restores an interactive session (task ^0hps8jg)",
+        arguments: [nil, "elsewhere"] as [String?])
+    @MainActor
+    func missingOrUnknownRecordedUserPresenceRestoresInteractive(recorded: String?) async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession(configuration: SessionConfiguration(userPresence: .headless))
+        _ = try await root.respond(to: "hello")
+
+        // A headless session, so a restore that ignores the edit gives a
+        // headless session and the test fails.
+        try Self.rewriteRecordedSidecar(of: root.id, routerId: router1.id, recordingsDir: recordingsDir) { json in
+            var configuration = json["configuration"] as? [String: Any] ?? [:]
+            configuration[Self.userPresenceKey] = recorded
+            json["configuration"] = configuration
+        }
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
+        #expect(restoredRoot.runPlane.userPresence == .interactive)
+    }
+
+    /// The key of the user presence in the configuration envelope of a
+    /// sidecar.
+    private static let userPresenceKey = "userPresence"
+
+    /// Reads the recorded sidecar of `session`, lets `edit` change its JSON
+    /// object, and writes the result back in place of the old file.
+    ///
+    /// - Parameters:
+    ///   - session: The id of the recorded session.
+    ///   - routerId: The id of the router that recorded the session.
+    ///   - recordingsDir: The recordings directory of that router.
+    ///   - edit: The change to the top-level JSON object of the sidecar.
+    /// - Throws: What the read, the parse or the write throws, or a failed
+    ///   `#require` when the sidecar is not a JSON object.
+    private static func rewriteRecordedSidecar(
+        of session: ULID, routerId: ULID, recordingsDir: URL, edit: (inout [String: Any]) -> Void
+    ) throws {
+        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: routerId, recordingsDir: recordingsDir)
+            .appendingPathComponent(session.description, isDirectory: true)
+            .appendingPathComponent("session.json", isDirectory: false)
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
+        edit(&json)
+        try FileManager.default.removeItem(at: sidecarURL)
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
     }
 
     // MARK: - Decided restore losses (task ^xky3j8w)

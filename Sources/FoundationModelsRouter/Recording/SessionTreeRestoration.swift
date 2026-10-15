@@ -374,14 +374,19 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // caller's originals, it never derives one live session from
             // another) — mirroring the root site's mount → cap; the fork
             // site is fork → mount → cap (task ^k4nygqa; see
-            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
+            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
+            // The run plane gets the recorded user presence (task ^0hps8jg),
+            // so a restored headless session stays headless. A sidecar with
+            // no envelope, with no presence, or with a presence that this
+            // version does not know restores interactive, the default.
             let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
                 tokenCounter: routedLLM.container.tokenCounter,
-                inlineSettleGrace: inlineSettleGrace
+                inlineSettleGrace: inlineSettleGrace,
+                userPresence: configuration?.restoredUserPresence ?? .interactive
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)

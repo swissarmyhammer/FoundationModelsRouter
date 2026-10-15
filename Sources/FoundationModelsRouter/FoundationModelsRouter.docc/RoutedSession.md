@@ -273,6 +273,15 @@ run, ``cancelAll()`` or ``close()``) gets one ``SessionEvent/elicitationEnded(_:
 with the id of its ``SessionEvent/elicitationRequested(_:)``. A question that
 the client answered gets none.
 
+A session with no user is headless: a host gives
+``SessionConfiguration/userPresence`` the value ``UserPresence/headless``.
+Each question of a run of that session ends at once with a cancel that gives
+the reason `RunPlane.noUserPresentReason`. The session sends no
+``SessionEvent/elicitationRequested(_:)`` and no
+``SessionEvent/elicitationEnded(_:)`` for it, and the run continues with the
+cancel. The default is ``UserPresence/interactive``. The sidecar records the
+value, a restore applies it again, and a fork inherits it.
+
 - ``respond(elicitationId:response:)``
 - ``complete(elicitationId:)``
 - ``ElicitationEnd``

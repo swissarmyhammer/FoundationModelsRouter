@@ -52,7 +52,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` for the recording directory.
     ///   - recordingRoot: A per-session recording root, or `nil` for the router-level root.
-    ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``.
+    ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``.
     ///   - budget: The auto-compaction opt-in, or `nil` for manual compaction only.
     ///   - compactionPrompt: The prompt automatic compactions send to the summarizer.
     ///   - agentSpawn: The parent session and tool call this session was spawned from, or `nil`.
@@ -113,7 +113,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             repetitionDetection: configuration.repetitionDetection,
             mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit,
             inlineSettleGrace: configuration.inlineSettleGrace,
-            isNoOpToolCall: configuration.isNoOpToolCall)
+            isNoOpToolCall: configuration.isNoOpToolCall,
+            userPresence: configuration.userPresence)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -133,6 +134,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``SessionConfiguration/inlineSettleGrace``.
     ///   - isNoOpToolCall: The host check that marks a tool call as a no-op.
     ///     See ``SessionConfiguration/isNoOpToolCall``.
+    ///   - userPresence: Tells if a user can answer the questions of the
+    ///     session. See ``SessionConfiguration/userPresence``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -148,7 +151,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
-        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
+        userPresence: UserPresence = .interactive
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -157,7 +161,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
-        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
+        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
         // for the fresh outbox and run plane scope rule and the mount → cap
         // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
@@ -175,7 +179,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             sessionID: sessionId,
             cappedToTokenLimit: budget?.toolOutputLimit,
             tokenCounter: container.tokenCounter,
-            inlineSettleGrace: inlineSettleGrace
+            inlineSettleGrace: inlineSettleGrace,
+            userPresence: userPresence
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -261,7 +266,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// `FoundationModelsExtras.tool` span against the backend the router was
     /// constructed with.
     /// The outbox and the run plane are fresh per session and never shared.
-    /// The run plane runs its timers on ``RoutedModel/runClock``.
+    /// The run plane runs its timers on ``RoutedModel/runClock``, and it
+    /// answers the questions of the tools as `userPresence` tells.
     ///
     /// - Parameters:
     ///   - tools: The caller's original tools, never mutated.
@@ -270,16 +276,19 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tokenCounter: The counter the capping layer counts each result with.
     ///   - inlineSettleGrace: How long each background call waits for its own
     ///     run, in seconds. See ``SessionConfiguration/inlineSettleGrace``.
+    ///   - userPresence: Tells if a user can answer the questions of the
+    ///     session. See ``SessionConfiguration/userPresence``.
     /// - Returns: The session's outbox and run plane with the instanced tool list.
     func makeSessionToolWiring(
         _ tools: [any Tool],
         sessionID: ULID,
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter,
-        inlineSettleGrace: TimeInterval
+        inlineSettleGrace: TimeInterval,
+        userPresence: UserPresence
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
-        let runPlane = RunPlane(clock: runClock)
+        let runPlane = RunPlane(clock: runClock, userPresence: userPresence)
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool,

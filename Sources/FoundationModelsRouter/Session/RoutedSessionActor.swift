@@ -898,7 +898,10 @@ actor RoutedSessionActor: RoutedSession {
                 grammar: grammar,
                 repetitionDetection: repetitionDetection,
                 mailOnlyAnswerLimit: mailOnlyAnswerLimit,
-                inlineSettleGrace: self.inlineSettleGrace
+                inlineSettleGrace: self.inlineSettleGrace,
+                // The run plane holds the one copy of the user presence, so
+                // the sidecar records the presence that the session runs with.
+                userPresence: self.runPlane.userPresence
             ).persistable,
             to: recordingDirectory
         )

@@ -148,7 +148,7 @@ struct SessionWorkEventTests {
     /// - Parameter outputs: Outputs of a session.
     /// - Returns: Each ``SessionEvent/workStarted`` and
     ///   ``SessionEvent/workEnded`` event.
-    private static func workEvents(of outputs: [SessionOutput]) -> [SessionEvent] {
+    static func workEvents(of outputs: [SessionOutput]) -> [SessionEvent] {
         outputs.map(\.event).filter(\.isWorkEvent)
     }
 
@@ -178,7 +178,7 @@ struct SessionWorkEventTests {
     /// - Parameter session: The session.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled before the
     ///   pump ended.
-    private static func checkWorkEndAfterThePump(of session: RoutedSessionActor) async throws {
+    static func checkWorkEndAfterThePump(of session: RoutedSessionActor) async throws {
         try await session.idleChanges.wait(until: { await !session.isPumpRunning })
         await session.reportWorkEndIfIdle()
     }

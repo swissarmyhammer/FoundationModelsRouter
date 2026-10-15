@@ -386,6 +386,9 @@ enum RouterTelemetry {
         /// The name of an SDK case that the router does not know.
         static let entryCase = prefix + "entry.case"
 
+        /// A recorded user presence that the router does not know.
+        static let userPresence = prefix + "user_presence"
+
         /// What a failed encode tried to encode, as the router names it.
         static let encodeContext = prefix + "encode.context"
 
@@ -485,7 +488,7 @@ enum RouterTelemetry {
 
         /// Every key above.
         static let allKeys = [
-            category, sessionId, entryId, segmentId, responseFormatName, entryCase, encodeContext,
+            category, sessionId, entryId, segmentId, responseFormatName, entryCase, userPresence, encodeContext,
             schemaName, errorType, errorCode, filePath, byteOffset, eventSeq, supersededSeq,
             repetitionStop, reasoningStop, generationStall, mailDeliveryPause, contextTokens, promptTokens,
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,

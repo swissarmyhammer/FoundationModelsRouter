@@ -82,7 +82,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // mount → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:inlineSettleGrace:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:inlineSettleGrace:isNoOpToolCall:userPresence:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
@@ -109,7 +109,7 @@ extension RoutedSessionActor {
         // runs live in the fork's own run plane, never the parent's — and,
         // when the fork inherits ``autoCompactionBudget``, capped outermost
         // to its ``TokenBudget/toolOutputLimit``, exactly as
-        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
+        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
         // caps a root session's tools. The child's mounts carry this session's
         // tracer, which the child actor is constructed with too, so a tool span
         // the fork opens reports to the same backend as the parent's.
@@ -118,8 +118,10 @@ extension RoutedSessionActor {
         // background runs and pending elicitations never migrate between
         // sessions (see ``RoutedSessionActor/runPlane``).
         // The child runs its timers on the clock of this session, so one
-        // clock drives the whole family.
-        let childRunPlane = RunPlane(clock: runPlane.clock)
+        // clock drives the whole family. The user presence is a host
+        // setting, so the child keeps the presence of this session: a fork
+        // of a headless session is headless.
+        let childRunPlane = RunPlane(clock: runPlane.clock, userPresence: runPlane.userPresence)
         // Minted before the tool composition below, deliberately: the
         // child's binding layers (the runners and the binding-only decorator
         // of the Extras tool hosting)

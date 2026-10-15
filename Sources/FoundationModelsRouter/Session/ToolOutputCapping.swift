@@ -152,7 +152,7 @@ extension ToolMounting {
     ///
     /// ``RoutedSessionActor/fork(workingDirectory:)`` forks each tool first and
     /// hands the forked copy here;
-    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
+    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
     /// is the root and restore site.
     ///
     /// - Parameters:

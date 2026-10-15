@@ -167,6 +167,7 @@ struct SessionConfigurationTests {
         #expect(configuration.agentSpawn == nil)
         #expect(configuration.discoveryPriming == nil)
         #expect(configuration.grammar == nil)
+        #expect(configuration.userPresence == .interactive)
     }
 
     // MARK: - The Codable slice
@@ -187,7 +188,8 @@ struct SessionConfigurationTests {
                 parentSessionId: ULID.generate(), parentToolCallId: "call-1"),
             discoveryPriming: DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value"),
             grammar: .ebnf("root ::= \"yes\" | \"no\""),
-            inlineSettleGrace: 0.25
+            inlineSettleGrace: 0.25,
+            userPresence: .headless
         )
     }
 
@@ -206,10 +208,12 @@ struct SessionConfigurationTests {
         #expect(persistable.discoveryPriming == configuration.discoveryPriming)
         #expect(persistable.grammar == configuration.grammar)
         #expect(persistable.inlineSettleGrace == configuration.inlineSettleGrace)
+        #expect(persistable.restoredUserPresence == configuration.userPresence)
 
         let encoded = try JSONEncoder().encode(persistable)
         let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: encoded)
         #expect(decoded == persistable)
+        #expect(decoded.restoredUserPresence == configuration.userPresence)
     }
 
     @Test("an empty configuration's Codable slice round-trips")
@@ -264,7 +268,7 @@ struct SessionConfigurationTests {
     private static let flatSidecarKeys: Set<String> = [
         "instructions", "workingDirectory", "recordingRoot", "toolNames",
         "budget", "compactionPrompt", "agentSpawn", "discoveryPriming",
-        "grammar", "repetitionDetection", "mailOnlyAnswerLimit", "inlineSettleGrace",
+        "grammar", "repetitionDetection", "mailOnlyAnswerLimit", "inlineSettleGrace", "userPresence",
     ]
 
     /// A Codable slice in the format of a sidecar written before task
@@ -324,6 +328,7 @@ struct SessionConfigurationTests {
         #expect(decoded.toolNames == ["ambient-emitter"])
         #expect(decoded.budget == TokenBudget(limit: 4096, trigger: 0.9, target: 0.6, toolOutputLimit: 256))
         #expect(decoded.compactionPrompt == CompactionPrompt(name: "custom", text: "condense"))
+        #expect(decoded.restoredUserPresence == .interactive)
 
         let compaction = decoded.compaction(toolOutputProtection: nil)
         #expect(compaction.budget == decoded.budget)

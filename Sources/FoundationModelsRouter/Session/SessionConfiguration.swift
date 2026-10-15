@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Logging
 
 /// One value that carries everything a session is vended with.
 ///
@@ -107,11 +108,31 @@ public struct SessionConfiguration: Sendable {
     /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``.
     public var isNoOpToolCall: NoOpToolCallCheck
 
+    /// Tells if a user can answer the questions of the session.
+    ///
+    /// The session gives this value to its run plane one time, when the
+    /// session starts. The value does not change for the life of the session.
+    ///
+    /// - ``UserPresence/interactive`` (the default): a question of a tool goes
+    ///   to the host as ``SessionEvent/elicitationRequested(_:)``, and the run
+    ///   that asked it waits for the answer.
+    /// - ``UserPresence/headless``: no user is present. Each question ends at
+    ///   once with a cancel that gives `RunPlane.noUserPresentReason`. The
+    ///   session sends no ``SessionEvent/elicitationRequested(_:)`` and no
+    ///   ``SessionEvent/elicitationEnded(_:)`` for it, and keeps no pending
+    ///   question. The run continues with the cancel, and the session sends
+    ///   ``SessionEvent/workEnded`` as usual.
+    ///
+    /// The sidecar records the value, a restore applies it again, and a fork
+    /// inherits it.
+    public var userPresence: UserPresence
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
     /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`,
-    /// and `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``.
+    /// `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``, and
+    /// `userPresence` defaults to ``UserPresence/interactive``.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -124,7 +145,8 @@ public struct SessionConfiguration: Sendable {
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit,
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
-        isNoOpToolCall: @escaping NoOpToolCallCheck = defaultIsNoOpToolCall
+        isNoOpToolCall: @escaping NoOpToolCallCheck = defaultIsNoOpToolCall,
+        userPresence: UserPresence = .interactive
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -138,6 +160,7 @@ public struct SessionConfiguration: Sendable {
         self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
         self.inlineSettleGrace = inlineSettleGrace
         self.isNoOpToolCall = isNoOpToolCall
+        self.userPresence = userPresence
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
@@ -158,7 +181,8 @@ public struct SessionConfiguration: Sendable {
             grammar: grammar,
             repetitionDetection: repetitionDetection,
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
-            inlineSettleGrace: inlineSettleGrace
+            inlineSettleGrace: inlineSettleGrace,
+            userPresence: Persistable.UserPresenceName(userPresence).rawValue
         )
     }
 
@@ -215,6 +239,62 @@ public struct SessionConfiguration: Sendable {
         /// `nil` in a sidecar written before the setting existed. A restore
         /// reads `nil` as `ToolMount.defaultInlineSettleGrace`.
         let inlineSettleGrace: TimeInterval?
+
+        /// The name of the user presence (``UserPresenceName``), or `nil` in a
+        /// sidecar written before the setting existed. The slice holds the
+        /// name as text, so a sidecar with a name that this version does not
+        /// know still decodes. ``restoredUserPresence`` reads it.
+        let userPresence: String?
+
+        /// The name of a ``UserPresence`` in a sidecar. The raw value is the
+        /// text that the sidecar holds.
+        ///
+        /// The two switches below have no `default`, so the compiler makes
+        /// each new case of ``UserPresence`` get a name here.
+        enum UserPresenceName: String {
+            /// The name of ``UserPresence/interactive``.
+            case interactive
+
+            /// The name of ``UserPresence/headless``.
+            case headless
+
+            /// Makes the name of `presence`.
+            ///
+            /// - Parameter presence: The user presence to name.
+            init(_ presence: UserPresence) {
+                switch presence {
+                case .interactive: self = .interactive
+                case .headless: self = .headless
+                }
+            }
+
+            /// The user presence that this name gives.
+            var presence: UserPresence {
+                switch self {
+                case .interactive: .interactive
+                case .headless: .headless
+                }
+            }
+        }
+
+        /// The user presence that a restore gives to the run plane of the
+        /// session.
+        ///
+        /// A sidecar written before the setting existed has no name. It gives
+        /// ``UserPresence/interactive``, the default of a new session. A name
+        /// that this version does not know can come from a sidecar that a
+        /// newer version wrote. It also gives ``UserPresence/interactive``,
+        /// and a warning log records the name. The restore does not fail.
+        var restoredUserPresence: UserPresence {
+            guard let userPresence else { return .interactive }
+            guard let name = UserPresenceName(rawValue: userPresence) else {
+                RouterTelemetry.makeLogger(.recording).warning(
+                    "the sidecar records a user presence that this version does not know; the session restores interactive",
+                    metadata: [RouterTelemetry.LogMetadataKey.userPresence: "\(userPresence)"])
+                return .interactive
+            }
+            return name.presence
+        }
 
         /// The compaction settings this slice records, the inverse of the
         /// flat keys that ``SessionConfiguration/persistable`` writes.

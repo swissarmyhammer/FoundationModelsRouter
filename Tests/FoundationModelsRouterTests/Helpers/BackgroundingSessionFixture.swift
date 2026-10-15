@@ -34,17 +34,21 @@ struct BackgroundingSessionFixture: Sendable {
     ///   - container: The container that vends the backend.
     ///   - mailOnlyAnswerLimit: The ``SessionConfiguration/mailOnlyAnswerLimit``
     ///     of the session.
+    ///   - userPresence: The ``SessionConfiguration/userPresence`` of the
+    ///     session.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws.
     static func make(
         prefix: String,
         tools: [any Tool],
         container: BackgroundingLLMContainer = BackgroundingLLMContainer(),
-        mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit
+        mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
+        userPresence: UserPresence = .interactive
     ) async throws -> Self {
         let started = try await SessionFixtureLifecycle.start(
             over: container,
-            configuration: SessionConfiguration(tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit),
+            configuration: SessionConfiguration(
+                tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit, userPresence: userPresence),
             prefix: prefix)
         let backend = try #require(container.lastBackend)
         return Self(session: started.session, backend: backend, router: started.router, directory: started.directory)

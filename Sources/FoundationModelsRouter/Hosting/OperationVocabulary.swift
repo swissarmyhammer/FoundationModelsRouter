@@ -60,6 +60,17 @@ import FoundationModelsExtras
 // definition: `FoundationModelsExtras.ToolDisplayContent`.
 @_exported import enum FoundationModelsExtras.ToolDisplayContent
 
+// MARK: - Session settings that only the router re-exports
+
+// The router re-exports the ORIGINAL declaration, not a typealias, for the
+// same reason as the names above. `UserPresencePublicSurfaceTests` guards
+// this.
+
+// Tells if a user can answer the questions of a session.
+// `SessionConfiguration.userPresence` sets it. Canonical definition:
+// `FoundationModelsExtras.UserPresence`.
+@_exported import enum FoundationModelsExtras.UserPresence
+
 // MARK: - Operation event names that only the router re-exports
 
 /// One tool call's live lifecycle record. Canonical definition:
