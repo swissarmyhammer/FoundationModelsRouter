@@ -495,6 +495,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///    ``SessionEvent/answerFailed(_:)`` with the reason
     ///    ``AnswerFailure/Reason/cancelled`` at once, and the output of the
     ///    session drops each later event of that answer and of its runs.
+    ///    Each event of other work, for example of a run that an earlier
+    ///    answer started, still goes out while the stopped answer winds down.
     ///    Each mail subscription and each helper stream of that mail ends.
     ///    The model call gets a cancel, so the cancel reaches the tool calls
     ///    that the SDK runs; work that does not check for a cancel can run

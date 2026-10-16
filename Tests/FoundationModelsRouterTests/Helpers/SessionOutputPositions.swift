@@ -35,6 +35,21 @@ enum SessionEventCase: String, Sendable {
     /// ``SessionEvent/runSettled(_:)``.
     case runSettled
 
+    /// ``SessionEvent/runProgress(_:)``.
+    case runProgress
+
+    /// ``SessionEvent/runMessage(_:)``.
+    case runMessage
+
+    /// ``SessionEvent/toolInvocation(_:toolCallID:)``.
+    case toolInvocation
+
+    /// ``SessionEvent/toolCallReport(_:)``.
+    case toolCallReport
+
+    /// ``SessionEvent/toolDisplay(_:)``.
+    case toolDisplay
+
     /// Whether `event` is of this case.
     ///
     /// - Parameter event: An event of a session.

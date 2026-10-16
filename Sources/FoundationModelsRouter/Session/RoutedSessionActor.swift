@@ -545,8 +545,11 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The composed event sink of the running answer (see
     /// ``answerEventSink()``), or `nil` between answers.
-    /// ``deliver(invocation:)`` uses it to hand a live
-    /// ``SessionEvent/toolInvocation(_:toolCallID:)`` to the running answer.
+    /// ``deliverLive(_:)`` uses it to hand a live event, for example a
+    /// ``SessionEvent/toolInvocation(_:toolCallID:)``, to the running answer.
+    /// It stays set while the answer that ``cancelAll()`` stopped winds
+    /// down, so a post of other work does not use it then
+    /// (``deliverPost(_:)``).
     var currentAnswerEventSink: ((SessionEvent) -> Void)?
 
     /// The join of the live tool run records of this session to the SDK tool
