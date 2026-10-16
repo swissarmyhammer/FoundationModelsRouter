@@ -31,8 +31,24 @@ comments:
     - evidence: RED `swift test --filter 'FoundationModelsRouterTests.SessionCloseFromOwnWorkTests/aForkToolThatClosesTheParentWhoseToolWaitsForTheForkGetsTheReturnAtOnce'` 1 test, 1 issue (fork tool not own work of the parent), no hang. GREEN `--filter 'FoundationModelsRouterTests.SessionCloseFromOwnWorkTests'` 4 tests passed. Full `swift test` one run: 1794 tests in 217 suites passed (1 known issue, expected by RealModelHarness), plus 26 and 19 passed. `swift build --package-path IntegrationTests --build-tests` complete. Only warning: the SwiftPM "missing creator for mutated node ... mlx-swift_Cmlx.bundle", which exists before this change. Files: SessionOwnWork.swift, SessionOutbox.swift, RoutedSessionActor.swift, RoutedSessionActorPump.swift, RoutedSessionActorQueueing.swift, RoutedSessionActorAnswerExecution.swift, RoutedSessionActorForking.swift, RoutedSession.swift, Tests SessionCloseFromOwnWorkTests.swift.
     - next: /review
   timestamp: 2026-10-16T12:55:30.134879+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m52cw0nq72fpn0a3gb5agrfm
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (7d769045). 9 files reviewed. Findings 0, confirmed 0, refuted 0, attempted 7, failed 0. 4 .kanban files are excluded by .reviewignore.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-16T13:01:54.231669+00:00
+- actor: claude-code
+  id: 01m52cwmctrznh3815w8p0fm81
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 files
+    - test: green — the one full swift test run of the implement step: 1794 tests in 217 suites + 26 + 19 passed, 0 failures, no hang; IntegrationTests build complete
+    - commit: 7d769045
+    - review: clean — 0 findings, 9 files reviewed
+  timestamp: 2026-10-16T13:02:14.426190+00:00
+position_column: done
+position_ordinal: fffffff480
 title: close() of a parent from a tool of a child whose answer a parent tool waits for deadlocks
 ---
 Found in ^3jpewc9.
