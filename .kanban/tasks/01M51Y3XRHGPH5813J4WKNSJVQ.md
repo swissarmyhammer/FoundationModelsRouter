@@ -124,8 +124,24 @@ comments:
     - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift, .kanban/tasks/01M51Y3XRHGPH5813J4WKNSJVQ.md (findings checked). swift test: 1792 passed (1 known issue), 26 passed, 19 passed. IntegrationTests build complete.
     - next: review
   timestamp: 2026-10-16T10:39:07.814376+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m524zddrtezaz9zqzdx9np7g
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit e7334dc1, local backend): 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 2 files reviewed. The 2 `.kanban/` files are excluded by `.reviewignore`. The 2 items of "Review Findings (2026-10-16 05:27)" are fixed: `SubagentRelayFixtures.swift` has one private generic `waitUntil(atLeast:of:counted:)`, and `waitForChildren`, `waitForFinishedRelays` and `waitForAnswers` call it. `SubagentQuestionRelayTests.swift` has one helper `expectOneEndAtEachLevel`, and six relay tests call it. All earlier items are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-16T10:43:56.984294+00:00
+- actor: claude-code
+  id: 01m525049a9w4mp1qj8pv8a7vb
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — 2 test files
+    - test: green — swift test, 1792 passed, 1 known issue; IntegrationTests build complete
+    - commit: e7334dc1
+    - review: clean — 0 findings
+  timestamp: 2026-10-16T10:44:20.394333+00:00
+position_column: done
+position_ordinal: fffffff280
 title: 'Elicitation phase 4: subagent questions (design for Router tasks 12, 13, 14)'
 ---
 Design only. This card holds the design of phase 4 of `/Users/wballard/github/swissarmyhammer/elicitation-plan.md` (Router tasks 12, 13, 14; Agents tasks 45, 46). The step lead splits the checklist at the end into implementation cards. File references use `file:line` of Router head `fd148614`, Extras head `2935533` and Agents head `bf9bbe9`.
