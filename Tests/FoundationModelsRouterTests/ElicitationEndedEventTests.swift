@@ -19,12 +19,44 @@ import Testing
 /// the session recorded the question before the test ends it. The return gate
 /// of the tool is open from the start, so the run returns as soon as its
 /// question ends. The tests read the order of the outputs, not a clock.
+///
+/// Other tests ask the question inside an answer (task ^vkkecjt): the
+/// session runs the call of ``InAnswerURLAskingTool`` to completion inside
+/// the answer to a prompt, and the test reads the feed up to the question.
+/// The answer then waits on the question, so the test ends the question while
+/// the answer runs.
 @Suite("A question of a run that ends with no answer of the client gives one elicitationEnded event")
 struct ElicitationEndedEventTests {
+    // MARK: - Fixtures
+
+    /// A tool with no background declaration: the session runs its call to
+    /// completion inside the answer that calls it. The call asks one URL-mode
+    /// question through `ToolContext.elicit(_:)`, and then returns the action
+    /// of the answer. This is the shape of a runCode call whose MCP tool asks
+    /// a URL-mode question.
+    struct InAnswerURLAskingTool: Tool {
+        let name = "in_answer_url_asking_tool"
+        let description = "test-only tool that asks one URL-mode question inside the answer that calls it"
+
+        func call(arguments: BackgroundFixtureArguments) async throws -> String {
+            guard let context = ToolContext.current else { return SessionWorkEventTests.noContextOutput }
+            let response = try await context.elicit(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
+            return "answered: \(response.action.rawValue)"
+        }
+    }
+
+    // MARK: - Constants
+
+    /// The prefix of the directory of each session.
+    private static let prefix = "ElicitationEndedEventTests"
+
+    /// The prompt whose answer calls ``InAnswerURLAskingTool``.
+    private static let askingPrompt = "ask inside the answer"
+
     // MARK: - Helpers
 
-    /// One session with one ``SessionWorkEventTests/AskingTool`` whose run
-    /// waits on an open question, and a feed that read up to the question.
+    /// One session whose tool waits on an open question, and a feed that read
+    /// up to the question.
     private struct AskedQuestion {
         /// The fixture of the session.
         let fixture: BackgroundingSessionFixture
@@ -35,8 +67,8 @@ struct ElicitationEndedEventTests {
         /// The `.elicitation` event of the question.
         let question: OperationEvent
 
-        /// The ask gate of the tool, open after the question.
-        let askGate: RunLatch
+        /// The gates of the tool, opened at the end of the test.
+        let gates: [RunLatch]
 
         /// The id of the question.
         var questionId: ULID {
@@ -46,8 +78,18 @@ struct ElicitationEndedEventTests {
         /// Ends the fixture: opens the gates, closes the session and removes
         /// the directory.
         func end() async {
-            await fixture.end(opening: [askGate])
+            await fixture.end(opening: gates)
         }
+    }
+
+    /// A question that a tool asks inside the answer to a prompt, and the id
+    /// of the mail of that prompt.
+    private struct QuestionInsideAnAnswer {
+        /// The question. The answer to the prompt waits on it.
+        var asked: AskedQuestion
+
+        /// The id of the mail of the prompt.
+        let promptMail: MailID
     }
 
     /// Makes a session with one ``SessionWorkEventTests/AskingTool`` whose
@@ -60,12 +102,30 @@ struct ElicitationEndedEventTests {
         let returnGate = RunLatch()
         await returnGate.open()
         let fixture = try await BackgroundingSessionFixture.make(
-            prefix: "ElicitationEndedEventTests",
+            prefix: prefix,
             tools: [SessionWorkEventTests.AskingTool(asksForURL: false, askGate: askGate, returnGate: returnGate)])
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         let asking = try await SessionWorkEventTests.outputsUpToTheQuestion(
             of: fixture, askGate: askGate, feed: &feed)
-        return AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), askGate: askGate)
+        return AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), gates: [askGate])
+    }
+
+    /// Makes a session with one ``InAnswerURLAskingTool``, mails
+    /// ``askingPrompt``, and reads the feed up to the question that the tool
+    /// asks inside the answer to that prompt. The answer then runs, and its
+    /// tool waits on the question.
+    ///
+    /// - Returns: The question and the id of the prompt mail.
+    /// - Throws: What the fixture throws, or when the feed has no question.
+    private static func askQuestionInsideAnAnswer() async throws -> QuestionInsideAnAnswer {
+        let fixture = try await BackgroundingSessionFixture.make(prefix: prefix, tools: [InAnswerURLAskingTool()])
+        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+        let prompt = try fixture.sessionActor().mail(
+            RoutedSessionActor.userMessage(askingPrompt, maxTokens: nil, mode: .reply))
+        let asking = await SessionWorkEventTests.outputs(
+            from: &feed, through: SessionEventCase.elicitationRequested.matches)
+        let asked = AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), gates: [])
+        return QuestionInsideAnAnswer(asked: asked, promptMail: prompt.id)
     }
 
     /// Checks that the session takes no answer and no completion to the
@@ -152,6 +212,45 @@ struct ElicitationEndedEventTests {
 
         #expect(delivery == .delivered)
         #expect(PendingElicitationFixtures.ends(in: resumed + rest).isEmpty)
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: a journal that gives
+    /// the end to the event sink of the answer that `cancelAll()` stopped.
+    /// That answer continues until its tool gets the cancel, and the output
+    /// drops each event for the mail of a stopped answer, so the end does not
+    /// come.
+    @Test("cancelAll() during an answer whose tool waits on a question gives the end before signalDone")
+    func cancelAllDuringAnAnswerGivesTheEndBeforeItsSignalDone() async throws {
+        let inside = try await Self.askQuestionInsideAnAnswer()
+        var asked = inside.asked
+
+        let signal = asked.fixture.session.cancelAll()
+        let outputs = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
+
+        let failure = AnswerFailure(mailIds: [inside.promptMail], reason: .cancelled)
+        let failed = try position(of: .answerFailed(failure), in: outputs)
+        let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
+        #expect(end.origin == .signal(signal))
+        #expect(failed < end.position)
+        #expect(end.position < (try position(of: .signalDone(signal), in: outputs)))
+        try await Self.expectNoPendingQuestion(asked)
+        await asked.end()
+    }
+
+    /// The production change that makes this test fail: a journal that drops
+    /// the end that `close()` gives to a question inside the answer that
+    /// runs, or a `close()` that ends the feeds before that end.
+    @Test("close() during an answer whose tool waits on a question gives the end with the origin system, before the feed ends")
+    func closeDuringAnAnswerGivesTheEndBeforeTheFeedEnds() async throws {
+        var asked = try await Self.askQuestionInsideAnAnswer().asked
+
+        await asked.fixture.session.close()
+        let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+
+        let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
+        #expect(end.origin == .system)
+        try await Self.expectNoPendingQuestion(asked)
         await asked.end()
     }
 }

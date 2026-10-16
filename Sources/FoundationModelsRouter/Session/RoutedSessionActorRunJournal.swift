@@ -87,7 +87,9 @@ extension RoutedSessionActor: OperationEventJournal {
     /// post (``questionPosts``). A cancel-all signal or ``close()`` that
     /// found this completion on its way waits for it, and sends its terminal
     /// event only after the completion
-    /// (``awaitQuestionPosts(of:)``).
+    /// (``awaitQuestionPosts(of:)``). The completion then goes out also while
+    /// the answer that the signal stopped continues
+    /// (``deliverQuestionPost(_:origin:)``).
     ///
     /// - Parameters:
     ///   - elicitationId: The id of the question that completed.
@@ -95,7 +97,7 @@ extension RoutedSessionActor: OperationEventJournal {
     func record(elicitationCompleted elicitationId: ULID, poster: Origin) async {
         guard let origin = askedQuestions.complete(elicitationId, postedBy: poster) else { return }
         noteWorkStarted()
-        deliverLive(.elicitationCompleted(ElicitationCompletion(elicitationId: elicitationId)), origin: origin)
+        deliverQuestionPost(.elicitationCompleted(ElicitationCompletion(elicitationId: elicitationId)), origin: origin)
         questionPosts.signal()
         await workDidChange()
     }
@@ -122,7 +124,13 @@ extension RoutedSessionActor: OperationEventJournal {
     /// the session sent the end of a cancelled run with the origin of the run
     /// mail of the terminal of the run, and before that terminal. No reader
     /// of the output reads this origin. The output drops the event when it
-    /// drops `poster` (``deliverLive(_:origin:)``).
+    /// drops `poster` (``deliverQuestionPost(_:origin:)``).
+    ///
+    /// The end of a question that a tool asked inside the answer that
+    /// ``cancelAll()`` or ``close()`` stopped also goes out
+    /// (``deliverQuestionPost(_:origin:)``): the stop posts that end while
+    /// the stopped answer continues, because the tool of the answer waits on
+    /// the question until the end post returns (task ^vkkecjt).
     ///
     /// After the event, the session reports that the journal handled the
     /// post (``questionPosts``), as for a completion.
@@ -134,8 +142,43 @@ extension RoutedSessionActor: OperationEventJournal {
     func record(elicitationEnded elicitationId: ULID, response: ElicitationResponse, poster: Origin) async {
         guard askedQuestions.end(elicitationId) else { return }
         let end = ElicitationEnd(elicitationId: elicitationId, response: response)
-        deliverLive(.elicitationEnded(end), origin: RunEventOrigin(mailID: nil, poster: poster))
+        deliverQuestionPost(.elicitationEnded(end), origin: RunEventOrigin(mailID: nil, poster: poster))
         questionPosts.signal()
+    }
+
+    /// Sends the live event of a question post (an end or a completion) with
+    /// ``deliverLive(_:origin:)``, but session-scoped while the open answer
+    /// is the answer that ``cancelAll()`` or ``close()`` stopped
+    /// (``OpenAnswerMail/isSilenced``).
+    ///
+    /// The stopped answer continues until its work ends, so its event sink
+    /// (``currentAnswerEventSink``) is still set. That sink gives each event
+    /// the mail of the stopped answer as its audience, and the output drops
+    /// each event for that audience (``SessionOutputHub/emit(_:failure:audience:)``).
+    /// A question post is never output of the stopped answer: the stop
+    /// itself posts the end of each open question, and a completion on its
+    /// way comes from the client or from a tool. The mail of the stopped
+    /// answer already has its terminal event, so no reader of that mail
+    /// waits for the post. Thus the event goes to the feed of the session,
+    /// with no audience: before the ``SessionEvent/signalDone(_:)`` of
+    /// ``cancelAll()``, or before the end of the feeds at ``close()``.
+    ///
+    /// The output still drops the event when it drops the poster, as
+    /// ``deliverLive(_:origin:)`` does. Each other live event uses
+    /// ``deliverLive(_:origin:)`` with no change.
+    ///
+    /// - Parameters:
+    ///   - event: The live event of the post.
+    ///   - origin: The run mail of the question and the work that posted it.
+    func deliverQuestionPost(_ event: SessionEvent, origin: RunEventOrigin) {
+        guard openAnswerMail.isSilenced else {
+            deliverLive(event, origin: origin)
+            return
+        }
+        guard !outputHub.drops(origin.poster) else { return }
+        OriginContext.$current.withValue(origin.output) {
+            emitSessionScopedEvent(event)
+        }
     }
 
     /// Hands the live event of one journaled run event to

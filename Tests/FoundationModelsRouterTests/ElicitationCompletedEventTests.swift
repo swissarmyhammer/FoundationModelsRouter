@@ -72,6 +72,10 @@ struct ElicitationCompletedEventTests {
         /// The completion token of the fake run that asks the question.
         let runToken: String
 
+        /// The gate that holds the answer that runs while the question is
+        /// asked, or `nil` when no answer runs.
+        let answerGate: RunLatch?
+
         /// Accepts the question through the session.
         ///
         /// - Returns: What the run plane did with the accept.
@@ -79,12 +83,12 @@ struct ElicitationCompletedEventTests {
             await fixture.session.respond(elicitationId: id.description, response: .accept(content: nil))
         }
 
-        /// Opens the gate of the run, closes the session, and reads the feed
-        /// to its end.
+        /// Opens the gate of the run and the gate of the answer, closes the
+        /// session, and reads the feed to its end.
         ///
         /// - Returns: Each output of the feed, in order.
         mutating func outputsToTheEnd() async -> [SessionOutput] {
-            await fixture.end(opening: [runGate])
+            await fixture.end(opening: [runGate, answerGate].compactMap { $0 })
             return await SessionWorkEventTests.remainingOutputs(of: &feed)
         }
     }
@@ -106,6 +110,10 @@ struct ElicitationCompletedEventTests {
     ///     The body of that run ends when the gate releases the canceler. A
     ///     sweep cancels the runs in start order, so it runs that canceler
     ///     before it comes to the run that asks.
+    ///   - answerGate: The gate that holds the answer to ``heldPrompt``, or
+    ///     `nil` for no answer. With a gate, the session answers
+    ///     ``heldPrompt`` before the run asks, and the answer runs until the
+    ///     test opens the gate.
     ///   - makeRequest: Makes the question from its id.
     /// - Returns: The question and its session.
     /// - Throws: What the fixture throws, or ``ConditionNeverHeld``.
@@ -114,12 +122,17 @@ struct ElicitationCompletedEventTests {
         holdingCompletionsAt completionGate: RunLatch? = nil,
         holdingEndsAt endGate: RunLatch? = nil,
         startingFirst slowRun: CancelerHold? = nil,
+        duringAnAnswerHeldAt answerGate: RunLatch? = nil,
         _ makeRequest: (ULID) -> ElicitationRequest
     ) async throws -> AskedQuestion {
-        let fixture = try await BackgroundingSessionFixture.make(prefix: prefix, tools: [])
+        let fixture = try await BackgroundingSessionFixture.make(
+            prefix: prefix, tools: [], container: BackgroundingLLMContainer(holdFirstAnswer: answerGate))
         let session = try fixture.sessionActor()
         await session.attachOutboxJournalIfNeeded()
         let feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+        if answerGate != nil {
+            try await startTheHeldAnswer(of: fixture)
+        }
         if let slowRun {
             _ = await trackFakeRun(
                 on: session.runPlane, latch: slowRun.release, kind: .process, holdingCancelerAt: slowRun)
@@ -136,7 +149,23 @@ struct ElicitationCompletedEventTests {
         try await postings.waitForPosts(questionPosts)
         return AskedQuestion(
             fixture: fixture, feed: feed, context: context, postings: postings, id: id, answer: answer,
-            runGate: runGate, runToken: token)
+            runGate: runGate, runToken: token, answerGate: answerGate)
+    }
+
+    /// The prompt of the answer that runs while the question is asked.
+    private static let heldPrompt = "answer while the question is open"
+
+    /// Mails ``heldPrompt`` to the session of `fixture`, and waits until the
+    /// backend got it. The answer to the prompt then runs, and it waits at
+    /// the hold of the first answer of the backend.
+    ///
+    /// - Parameter fixture: The fixture whose backend holds the first answer.
+    /// - Throws: When the session is not a ``RoutedSessionActor``, or
+    ///   ``ConditionNeverHeld``.
+    private static func startTheHeldAnswer(of fixture: BackgroundingSessionFixture) async throws {
+        _ = try fixture.sessionActor().mail(RoutedSessionActor.userMessage(heldPrompt, maxTokens: nil, mode: .reply))
+        let backend = fixture.backend
+        try await backend.changes.wait(until: { !backend.receivedPrompts.isEmpty })
     }
 
     /// The count of the waits on ``RoutedSessionActor/questionPosts`` when
@@ -524,16 +553,40 @@ struct ElicitationCompletedEventTests {
     /// wait for that post.
     @Test("cancelAll() while the completion of the tool is on its way gives that completion before the signalDone, and no end")
     func cancelAllWhileAToolCompletionIsOnItsWayGivesTheCompletion() async throws {
+        try await Self.expectTheCompletionOnItsWayBeforeTheSignalDone(duringAnAnswerHeldAt: nil)
+    }
+
+    /// The production change that makes this test fail: a journal that gives
+    /// the completion to the event sink of the answer that `cancelAll()`
+    /// stopped. That answer continues until the test opens its gate, and the
+    /// output drops each event for the mail of a stopped answer, so the
+    /// completion does not come.
+    @Test("cancelAll() during an answer while the completion of the tool is on its way gives that completion before the signalDone")
+    func cancelAllDuringAnAnswerWhileAToolCompletionIsOnItsWayGivesTheCompletion() async throws {
+        try await Self.expectTheCompletionOnItsWayBeforeTheSignalDone(duringAnAnswerHeldAt: RunLatch())
+    }
+
+    /// Completes the accepted URL question through the tool while a gate
+    /// holds the completion post, sends `cancelAll()`, and checks that the
+    /// completion comes one time, before the `signalDone` of the signal, and
+    /// that no end comes.
+    ///
+    /// - Parameter answerGate: The gate that holds the answer that runs
+    ///   while the question is asked, or `nil` for no answer.
+    /// - Throws: What the fixture, the waits or the checks throw.
+    private static func expectTheCompletionOnItsWayBeforeTheSignalDone(
+        duringAnAnswerHeldAt answerGate: RunLatch?
+    ) async throws {
         let gate = RunLatch()
-        var asked = try await Self.ask(holdingCompletionsAt: gate, Self.urlRequest)
-        let opener = try await Self.completeThroughTheTool(asked, holdingAt: gate)
+        var asked = try await ask(holdingCompletionsAt: gate, duringAnAnswerHeldAt: answerGate, urlRequest)
+        let opener = try await completeThroughTheTool(asked, holdingAt: gate)
 
         let signal = asked.fixture.session.cancelAll()
         let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
-        let outputs = stopped + (try await Self.releaseTheCompletion(gate, openedBy: opener, of: &asked))
+        let outputs = stopped + (try await releaseTheCompletion(gate, openedBy: opener, of: &asked))
 
-        let completion = try Self.soleCompletion(in: outputs, of: asked)
-        Self.expectNoEnd(in: outputs)
+        let completion = try soleCompletion(in: outputs, of: asked)
+        expectNoEnd(in: outputs)
         #expect(completion < (try position(of: .signalDone(signal), in: outputs)))
     }
 
