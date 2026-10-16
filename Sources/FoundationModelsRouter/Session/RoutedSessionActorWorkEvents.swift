@@ -218,7 +218,7 @@ struct AskedQuestions: Sendable {
     /// - Parameter ids: The ids of questions.
     /// - Returns: `true` when the record holds a question of `ids`.
     func holdsQuestion(amongAnyOf ids: [ULID]) -> Bool {
-        ids.contains { questions[$0] != nil }
+        ids.contains(where: wasAsked)
     }
 
     /// Records what the run plane did with an answer to the question `id`.

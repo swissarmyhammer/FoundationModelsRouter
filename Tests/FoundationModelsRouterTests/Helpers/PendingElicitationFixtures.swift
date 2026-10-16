@@ -1,5 +1,6 @@
 import Foundation
 import Synchronization
+import Testing
 
 @testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
@@ -164,9 +165,53 @@ final class ElicitationPostings: OperationEventSink {
 
 /// The helpers that the suites share when a test holds an elicitation
 /// pending on the run plane of a session: `ElicitationRoutingTests`,
-/// `SessionRunPlaneTests` and `SessionWorkEventTests`. Each helper is in one
-/// place only.
+/// `SessionRunPlaneTests`, `SessionWorkEventTests`,
+/// `ElicitationEndedEventTests` and `ElicitationCompletedEventTests`. Each
+/// helper is in one place only.
 enum PendingElicitationFixtures {
+    /// The count of the ends of one question that ended with no answer of
+    /// the client.
+    private static let oneEnd = 1
+
+    /// The response that the run plane gives to each question of a stopped
+    /// run.
+    static let runCancelled = ElicitationResponse.cancel(reason: RunPlane.runCancelledReason)
+
+    /// Each ``SessionEvent/elicitationEnded(_:)`` of `outputs`, with its
+    /// origin and its position.
+    ///
+    /// - Parameter outputs: Outputs of a session.
+    /// - Returns: The ends, in order.
+    static func ends(in outputs: [SessionOutput]) -> [(position: Int, origin: Origin, end: ElicitationEnd)] {
+        outputs.enumerated().compactMap { position, output in
+            guard case .elicitationEnded(let end) = output.event else { return nil }
+            return (position, output.origin, end)
+        }
+    }
+
+    /// The one ``SessionEvent/elicitationEnded(_:)`` of `outputs`, checked
+    /// against the question: the same id, and the cancel of a stopped run
+    /// (``runCancelled``).
+    ///
+    /// - Parameters:
+    ///   - outputs: Outputs of a session.
+    ///   - id: The id of the question.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Returns: The position and the origin of the end.
+    /// - Throws: When `outputs` hold no end.
+    static func soleEnd(
+        in outputs: [SessionOutput], of id: ULID, sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> (position: Int, origin: Origin) {
+        let found = ends(in: outputs)
+        #expect(
+            found.count == oneEnd, "expected one end of the question, got \(found.count)",
+            sourceLocation: sourceLocation)
+        let end = try #require(found.first, sourceLocation: sourceLocation)
+        #expect(
+            end.end == ElicitationEnd(elicitationId: id, response: runCancelled), sourceLocation: sourceLocation)
+        return (end.position, end.origin)
+    }
+
     /// Makes a form-mode request that asks for one string, the name.
     ///
     /// - Parameter elicitationId: The id of the request.

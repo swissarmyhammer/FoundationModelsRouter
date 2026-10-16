@@ -23,10 +23,6 @@ import Testing
 struct ElicitationEndedEventTests {
     // MARK: - Helpers
 
-    /// The response that the run plane gives to each question of a stopped
-    /// run.
-    private static let runCancelled = ElicitationResponse.cancel(reason: RunPlane.runCancelledReason)
-
     /// One session with one ``SessionWorkEventTests/AskingTool`` whose run
     /// waits on an open question, and a feed that read up to the question.
     private struct AskedQuestion {
@@ -72,36 +68,6 @@ struct ElicitationEndedEventTests {
         return AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), askGate: askGate)
     }
 
-    /// Each ``SessionEvent/elicitationEnded(_:)`` of `outputs`, with its
-    /// origin and its position.
-    ///
-    /// - Parameter outputs: Outputs of a session.
-    /// - Returns: The ends, in order.
-    private static func ends(in outputs: [SessionOutput]) -> [(position: Int, origin: Origin, end: ElicitationEnd)] {
-        outputs.enumerated().compactMap { position, output in
-            guard case .elicitationEnded(let end) = output.event else { return nil }
-            return (position, output.origin, end)
-        }
-    }
-
-    /// The one ``SessionEvent/elicitationEnded(_:)`` of `outputs`, checked
-    /// against the question: the same id, and the cancel of a stopped run.
-    ///
-    /// - Parameters:
-    ///   - outputs: Outputs of a session.
-    ///   - asked: The question.
-    /// - Returns: The position and the origin of the end.
-    /// - Throws: When `outputs` does not hold exactly one end.
-    private static func soleEnd(
-        in outputs: [SessionOutput], of asked: AskedQuestion
-    ) throws -> (position: Int, origin: Origin) {
-        let ends = ends(in: outputs)
-        #expect(ends.count == 1, "expected one end of the question, got \(ends.count)")
-        let end = try #require(ends.first)
-        #expect(end.end == ElicitationEnd(elicitationId: try asked.questionId, response: runCancelled))
-        return (end.position, end.origin)
-    }
-
     /// Checks that the session takes no answer and no completion to the
     /// question any more: each gives `.noPendingElicitation`.
     ///
@@ -132,7 +98,7 @@ struct ElicitationEndedEventTests {
         }
         let outputs = await SessionWorkEventTests.outputs(throughNextWorkEnd: &asked.feed)
 
-        let end = try Self.soleEnd(in: outputs, of: asked)
+        let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
         #expect(end.origin == cancelling)
         #expect(end.position < (try position(ofFirst: .runSettled, in: outputs)))
         try await Self.expectNoPendingQuestion(asked)
@@ -149,7 +115,7 @@ struct ElicitationEndedEventTests {
         let signal = asked.fixture.session.cancelAll()
         let outputs = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
 
-        let end = try Self.soleEnd(in: outputs, of: asked)
+        let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
         #expect(end.origin == .signal(signal))
         #expect(end.position < (try position(of: .signalDone(signal), in: outputs)))
         try await Self.expectNoPendingQuestion(asked)
@@ -166,7 +132,7 @@ struct ElicitationEndedEventTests {
         await asked.fixture.session.close()
         let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
 
-        let end = try Self.soleEnd(in: outputs, of: asked)
+        let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
         #expect(end.origin == .system)
         try await Self.expectNoPendingQuestion(asked)
         await asked.end()
@@ -185,7 +151,7 @@ struct ElicitationEndedEventTests {
         let rest = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
 
         #expect(delivery == .delivered)
-        #expect(Self.ends(in: resumed + rest).isEmpty)
+        #expect(PendingElicitationFixtures.ends(in: resumed + rest).isEmpty)
         await asked.end()
     }
 }

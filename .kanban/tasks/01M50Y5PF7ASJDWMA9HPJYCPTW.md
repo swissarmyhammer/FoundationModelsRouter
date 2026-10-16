@@ -35,6 +35,33 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Session/{SessionOutbox,OperationEventJournal,RoutedSessionActorRunJournal,RoutedSessionActorQuestionEnds,RoutedSessionActorWorkEvents,RoutedSessionActorDrain,RoutedSessionActorForking,RoutedSessionActorQueueing,RoutedSessionActor,SessionEvent,ElicitationEnd}.swift; Tests/FoundationModelsRouterTests/{ElicitationCompletedEventTests,ElicitationEndedEventTests,SessionOutboxTests,Helpers/BackgroundRunFixtures,Helpers/PendingElicitationFixtures}.swift; red-then-green: cancelAllWithASlowCancelerGivesTheEndThatTheRunGot, closeWithASlowCancelerGivesTheEndThatTheRunGot; full run 1751 tests in 212 suites passed; IntegrationTests build complete
     - next: /review; tell the reviewer about the moved run-cancel end before the push
   timestamp: 2026-10-16T01:39:04.016212+00:00
+- actor: claude-code
+  id: 01m516a4xmdnn6qc2cyx6pwvt3
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD. 4 findings (4 confirmed, 2 refuted). Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:221, Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:202, Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:279, Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:292. All are reuse/reuse.
+    - next: Correct the 4 items in "Review Findings (2026-10-15 20:39)". Then commit and review again. The open item "Tell the reviewer before the push" is for the orchestrator. It is not a finding.
+  timestamp: 2026-10-16T01:48:02.868199+00:00
+- actor: claude-code
+  id: 01m516akstf4yak69hyqtqy46x
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 16 files
+    - test: green — swift test, 1751 tests in 212 suites passed (1 known issue: the tripwire test embeddingSlotRecordsAnIssueWhenDriven); IntegrationTests build complete
+    - commit: 8868affc
+    - review: findings — RoutedSessionActorWorkEvents.swift:221, ElicitationCompletedEventTests.swift:202, ElicitationCompletedEventTests.swift:279, ElicitationCompletedEventTests.swift:292
+  timestamp: 2026-10-16T01:48:18.106264+00:00
+- actor: claude-code
+  id: 01m516nj2gb6qpme6jyyy45kjj
+  text: |-
+    ### implement — changed
+    - Finding 1: `AskedQuestions.holdsQuestion(amongAnyOf:)` is now `ids.contains(where: wasAsked)`. No other copy of the existence check is in the file.
+    - Finding 2: new `releaseHeld(_:openedBy:of:waitingFor:)` (async rethrows) does cancel-opener, open-gate, wait, read-to-end. `releaseTheEnd` and `releaseTheCompletion` call it with their own wait. `releaseTheCompletion` copies `postings` and `answer` before the call, because a closure cannot capture the inout `asked`.
+    - Findings 3 and 4: `ends(in:)`, `soleEnd(in:of:sourceLocation:)` (it returns position and origin) and `runCancelled` now live in `PendingElicitationFixtures` (Helpers/PendingElicitationFixtures.swift, which now imports Testing). Both suites call them. The copies in ElicitationEndedEventTests and ElicitationCompletedEventTests are deleted. `soleEndAndNoCompletion` calls the shared `soleEnd` and adds only the completion check. Same cause in the file: `expectNoEnd` and `cancelTheRunAfterTheAccept` now use the shared `ends(in:)` and `runCancelled`.
+    - Note: the `files` tool `replace_all: true` changed only one match. Edit each match by itself.
+    - evidence: swift test — "Test run with 1751 tests in 212 suites passed ... with 1 known issue", "26 tests in 14 suites passed", "19 tests in 3 suites passed"; XCTest executed 0 tests. IntegrationTests `swift build --build-tests --manifest-cache local` exit 0, "Build complete!". The only warning is the mlx bundle "missing creator for mutated node" note from the build system.
+    - next: /review. The open subtask "Tell the reviewer before the push" is not part of this step.
+  timestamp: 2026-10-16T01:54:16.784788+00:00
 position_column: doing
 position_ordinal: '80'
 title: cancelAll()/close() end a question that a tool completes before the sweep cancels it
@@ -66,3 +93,15 @@ Router part:
 - [ ] Tell the reviewer before the push: the change moves the order of the run-cancel end.
 
 #elicitation-phase-3
+
+## Review Findings (2026-10-15 20:39)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 16 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift:221` `reuse/reuse` — The new holdsQuestion(amongAnyOf:) repeats the per-id existence check that wasAsked(_:) already performs (questions[id] != nil). The check is written a second time instead of being called. Two copies of the same test can drift apart. Write the body as `ids.contains(where: wasAsked)`. This keeps the existence rule in one place.
+- [x] `Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:202` `reuse/reuse` — `releaseTheEnd` repeats the release sequence of the existing `releaseTheCompletion`: cancel the opener, open the gate, wait for the task that the gate held, then read the rest of the feed. Only the final wait differs, so the same release logic is written twice instead of being generalized. Extract the shared open-cancel-and-read steps into one helper that takes the wait as a closure, for example `releaseHeld(_ gate:, opener:, of:, waitingFor:)`. Have `releaseTheCompletion` and `releaseTheEnd` both call it, passing their own wait.
+- [x] `Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:279` `reuse/reuse` — `soleEndAndNoCompletion` rebuilds the one-end check that `soleEnd(in:of:)` already does in `ElicitationEndedEventTests`. The count check, the `#require` of the first end, the end comparison and the position return are the same steps in both, so the check is written twice. Make `soleEnd(in:of:)` a shared helper, usable from both suites, that returns the position. Have `soleEndAndNoCompletion` call it and add only the completion check. This needs the same shared-helper move as the `ends(in:)` finding.
+- [x] `Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:292` `reuse/reuse` — The new private static `ends(in:)` reimplements the same compactMap over `.elicitationEnded` outputs that already exists as the private static `ends(in:)` in `ElicitationEndedEventTests`. Two copies of one helper will drift apart when the end check changes. Move one `ends(in:)` to a shared helper, for example beside `SessionWorkEventTests.remainingOutputs(of:)` or in `PendingElicitationFixtures`, and call it from both suites. Delete the copy in `ElicitationCompletedEventTests`.

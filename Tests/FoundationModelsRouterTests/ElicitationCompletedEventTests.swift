@@ -191,6 +191,26 @@ struct ElicitationCompletedEventTests {
         return (cancel, try openWhenTheStopWaits(gate, for: asked))
     }
 
+    /// Cancels `opener`, opens `gate`, runs `wait`, and then reads the feed
+    /// to its end.
+    ///
+    /// - Parameters:
+    ///   - gate: The gate that holds a completion post or an end post.
+    ///   - opener: The task that opens `gate` when the stop waits.
+    ///   - asked: The question. Its feed is read to the end.
+    ///   - wait: Waits for the work that `gate` held.
+    /// - Returns: The rest of the feed.
+    /// - Throws: What `wait` throws.
+    private static func releaseHeld(
+        _ gate: RunLatch, openedBy opener: Task<Void, any Error>, of asked: inout AskedQuestion,
+        waitingFor wait: () async throws -> Void
+    ) async rethrows -> [SessionOutput] {
+        opener.cancel()
+        await gate.open()
+        try await wait()
+        return await asked.outputsToTheEnd()
+    }
+
     /// Opens `gate`, waits for the cancel whose end post it held, and then
     /// reads the feed to its end.
     ///
@@ -203,10 +223,7 @@ struct ElicitationCompletedEventTests {
         _ gate: RunLatch, held: (cancel: Task<Void, Never>, opener: Task<Void, any Error>),
         of asked: inout AskedQuestion
     ) async -> [SessionOutput] {
-        held.opener.cancel()
-        await gate.open()
-        await held.cancel.value
-        return await asked.outputsToTheEnd()
+        await releaseHeld(gate, openedBy: held.opener, of: &asked) { await held.cancel.value }
     }
 
     /// Accepts the URL question, and completes its flow through the tool
@@ -242,11 +259,12 @@ struct ElicitationCompletedEventTests {
     private static func releaseTheCompletion(
         _ gate: RunLatch, openedBy opener: Task<Void, any Error>, of asked: inout AskedQuestion
     ) async throws -> [SessionOutput] {
-        opener.cancel()
-        await gate.open()
-        try await asked.postings.waitForCompletions(oneCompletion)
-        #expect(try await asked.answer.value.action == .accept)
-        return await asked.outputsToTheEnd()
+        let postings = asked.postings
+        let answer = asked.answer
+        return try await releaseHeld(gate, openedBy: opener, of: &asked) {
+            try await postings.waitForCompletions(oneCompletion)
+            #expect(try await answer.value.action == .accept)
+        }
     }
 
     /// Cancels the run of the accepted URL question through the tool
@@ -262,7 +280,7 @@ struct ElicitationCompletedEventTests {
         #expect(await asked.accept() == .acceptedAwaitingCompletion)
         _ = await asked.context.cancel(completionToken: asked.runToken)
         let response = try await asked.answer.value
-        #expect(response == .cancel(reason: RunPlane.runCancelledReason))
+        #expect(response == PendingElicitationFixtures.runCancelled)
         #expect(try await asked.fixture.sessionActor().runPlane.completingElicitations().isEmpty)
     }
 
@@ -276,24 +294,9 @@ struct ElicitationCompletedEventTests {
     /// - Returns: The position of the end.
     /// - Throws: When `outputs` hold no end.
     private static func soleEndAndNoCompletion(in outputs: [SessionOutput], of asked: AskedQuestion) throws -> Int {
-        let found = ends(in: outputs)
-        #expect(found.count == oneEnd, "expected one end of the question, got \(found.count)")
-        let end = try #require(found.first)
-        #expect(end.end == ElicitationEnd(elicitationId: asked.id, response: .cancel(reason: RunPlane.runCancelledReason)))
+        let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: asked.id)
         #expect(completions(in: outputs).isEmpty)
         return end.position
-    }
-
-    /// Each ``SessionEvent/elicitationEnded(_:)`` of `outputs`, with its
-    /// origin and its position.
-    ///
-    /// - Parameter outputs: Outputs of a session.
-    /// - Returns: The ends, in order.
-    private static func ends(in outputs: [SessionOutput]) -> [(position: Int, origin: Origin, end: ElicitationEnd)] {
-        outputs.enumerated().compactMap { position, output in
-            guard case .elicitationEnded(let end) = output.event else { return nil }
-            return (position, output.origin, end)
-        }
     }
 
     /// Checks that `outputs` tell the client the same end of the question
@@ -384,7 +387,7 @@ struct ElicitationCompletedEventTests {
     ///
     /// - Parameter outputs: Outputs of a session.
     private static func expectNoEnd(in outputs: [SessionOutput]) {
-        #expect(firstPosition(in: outputs, where: SessionEventCase.elicitationEnded.matches) == nil)
+        #expect(PendingElicitationFixtures.ends(in: outputs).isEmpty)
     }
 
     // MARK: - Tests
@@ -655,7 +658,7 @@ struct ElicitationCompletedEventTests {
         let outputs = stopped + (await asked.outputsToTheEnd())
 
         try Self.expectTheEndThatTheRunGot(response, in: outputs, of: asked)
-        #expect(Self.ends(in: outputs).allSatisfy { $0.origin == .signal(signal) })
+        #expect(PendingElicitationFixtures.ends(in: outputs).allSatisfy { $0.origin == .signal(signal) })
     }
 
     /// The production change that makes this test fail: a `close()` that
@@ -684,6 +687,6 @@ struct ElicitationCompletedEventTests {
 
         #expect(rest.isEmpty)
         try Self.expectTheEndThatTheRunGot(response, in: closed, of: asked)
-        #expect(Self.ends(in: closed).allSatisfy { $0.origin == .system })
+        #expect(PendingElicitationFixtures.ends(in: closed).allSatisfy { $0.origin == .system })
     }
 }
