@@ -51,8 +51,24 @@ comments:
     - evidence: files Tests/FoundationModelsRouterTests/Helpers/MailOnlyAnswerFixtures.swift, Tests/FoundationModelsRouterTests/MailOnlyAnswerLimitTests.swift, Tests/FoundationModelsRouterTests/MailOnlyAnswerCountTests.swift. swift test (one run): exit 0; 1770 tests in 215 suites passed with 1 known issue (the expected RealModelHarness one), plus 26 tests in 14 suites and 19 tests in 3 suites passed; no Swift compiler warnings. IntegrationTests: swift build --build-tests --manifest-cache local, exit 0, Build complete.
     - next: review
   timestamp: 2026-10-16T08:06:42.894818+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m51w7knr8jggzka6cqjvsxk5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (96e08d3e), local backend: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. The 2 items of "Review Findings (2026-10-16 02:49)" are fixed: the two suites call the shared `MailOnlyAnswerFixtures.Session.make(prefix:limit:gates:tool:callsTool:)` and `answerCallerPrompt(_:)`. The private `makeFixture`, `startTheChain(on:)` and `answerTheFirstPrompt(on:)` copies are deleted.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-16T08:11:08.344026+00:00
+- actor: claude-code
+  id: 01m51w85h9jwsrgkpj6jwhw3ac
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files
+    - test: green — swift test, 1770 passed, 1 known issue; IntegrationTests build complete
+    - commit: 96e08d3e
+    - review: clean — 0 findings
+  timestamp: 2026-10-16T08:11:26.633410+00:00
+position_column: done
+position_ordinal: fffffff180
 title: Count an answer toward mailOnlyAnswerLimit only when the model started a new background run in it
 ---
 Follow-up (a) of the task 11 review ^jrb5y4t (accepted: keep the limit and its rule).
