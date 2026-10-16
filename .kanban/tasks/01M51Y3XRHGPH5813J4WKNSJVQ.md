@@ -89,6 +89,41 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Session/SubagentQuestionRelay.swift (type doc), Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift (new test closeOfTheParentEndsTheChildCopyWhileTheChildIsOpen, askOneLevel rootStep parameter), Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift (closeGate, finishedRelays). Red: SubagentQuestionRelayTests.swift:442 "expected one end of the question, got 0" with E2 skipped. swift test: 1792 passed (1 known issue), 26 passed, 19 passed. IntegrationTests build complete.
     - next: review
   timestamp: 2026-10-16T10:26:48.988964+00:00
+- actor: claude-code
+  id: 01m524b8hehw59b754v6jfh1pe
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit 9235e4b3). 2 findings (2 confirmed, 1 refuted): Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift:228, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:441. The 2 items of "Review Findings (2026-10-16 04:55)" are fixed: the type doc of `SubagentQuestionRelay` gives the reasons for change 2 and change 6, and the new test `closeOfTheParentEndsTheChildCopyWhileTheChildIsOpen` is in the commit.
+    - next: Do the 2 items of "Review Findings (2026-10-16 05:27)". The task stays in review.
+  timestamp: 2026-10-16T10:32:56.622113+00:00
+- actor: claude-code
+  id: 01m524bry9m646mmnpx6epdj4k
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 3 files
+    - test: green — swift test, 1792 passed, 1 known issue; IntegrationTests build complete
+    - commit: 9235e4b3
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift:228, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:441
+  timestamp: 2026-10-16T10:33:13.417666+00:00
+- actor: claude-code
+  id: 01m524pg8htp8fjwzxm7b7tfbk
+  text: |-
+    ### implement — changed (review findings 2026-10-16 05:27)
+    - Finding 1 done: SubagentRelayBox has one private generic wait, waitUntil(atLeast:of:counted:). It calls changes.wait(untilAtLeast:of:) (Helpers/ChangeSignalWait.swift) and reads the field again after the wait. waitForChildren, waitForAnswers and waitForFinishedRelays call it, and each waiter still returns its own value. The box has no other copy of the wait.
+    - Finding 2 done: SubagentQuestionRelayTests has one private static helper, expectOneEndAtEachLevel(of:rootOutputs:childOutputs:rootOrigin:childOrigin:sourceLocation:). It finds the sole end at the root and in the child, checks the origin of each (default .system), calls expectNoQuestion, and returns the position of each end. All six end tests call it (child run cancel, cancelAll, close of the root, close of the root with the child open, cancel of the relaying run, close of the child). Each test keeps its own checks (positions against runSettled or signalDone, the answer, the child-closed state, the finished count). The tests no longer keep an unused id.
+    - Test behavior is the same: the same checks run on the same outputs; soleEnd gets the source location of the call.
+    - Filter run: swift test --filter 'SubagentQuestionRelayTests|RelayedQuestionsTableTests' gave 22 tests in 2 suites passed.
+    - Full run, one time: swift test gave 1792 tests in 217 suites passed (1 known issue, the existing RealModelHarness one), 26 tests in 14 suites passed, 19 tests in 3 suites passed. Only warning: the known mlx-swift_Cmlx bundle line.
+    - IntegrationTests: swift build --build-tests --manifest-cache local gave Build complete, only the known mlx bundle line.
+    - Both findings checked off in the card file.
+  timestamp: 2026-10-16T10:39:04.977357+00:00
+- actor: claude-code
+  id: 01m524pk16mxt4dama06g8jtcs
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift, .kanban/tasks/01M51Y3XRHGPH5813J4WKNSJVQ.md (findings checked). swift test: 1792 passed (1 known issue), 26 passed, 19 passed. IntegrationTests build complete.
+    - next: review
+  timestamp: 2026-10-16T10:39:07.814376+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Elicitation phase 4: subagent questions (design for Router tasks 12, 13, 14)'
@@ -346,3 +381,13 @@ Each test is written first and is red: the API does not exist. "Red because" nam
 
 - [x] `Sources/FoundationModelsRouter/Session/SubagentQuestionRelay.swift:59` `step-lead/decision` — The doc of `SubagentQuestionRelay` does not give the reasons of change 2 and change 6. The reason of change 2 (the relay wait does not end when the parent closes, because the journal records a question also after `close()` started, and an earlier end of the wait can leave the question open forever) is only in the doc of an internal method in `RoutedSessionActorRelayedQuestions.swift`. The reason of change 6 (if `ToolContext.elicit` throws, the relay writes a log and ends the question with the cancel of a stopped run) is only in the doc of a private method of `SubagentQuestionRelay.swift`. Put the two reasons in the type doc of `SubagentQuestionRelay`.
 - [x] `Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:392` `step-lead/decision` — `closeOfTheParentEndsEachLevelBeforeEachFeedEnds` does not prove the full sequence of change 2. The close of the root also cancels the relaying run, and the fixture then closes the child. A close of the child also gives one end at the child with origin `.system`, so the test does not show that E2 (`RunPlane.endElicitation`) ended the copy in the child. The test also does not record that `finish()` returned. Add a test (or extend this test) that keeps the child open while the parent closes with a relayed question open, and that checks: the question ends through the close path of the parent, E2 ends it in the child (the child end comes before the close of the child), and `finish()` returns.
+
+## Review Findings (2026-10-16 05:27)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift:228` `reuse/reuse` — waitForFinishedRelays repeats the wait-until-count shape of the existing waiters in the same box. It is a third copy of the same pattern, so the wait logic is not shared. Extract one private generic helper, for example waitUntil(atLeast:of:) -> Int, that calls changes.wait(untilAtLeast:of:). Call it from the three waiters. Keep the returned collection in each waiter. This is optional, since the existing waiters already follow this idiom.
+- [x] `Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:441` `reuse/reuse` — The new test repeats the end checks of the existing test closeOfTheParentEndsEachLevelBeforeEachFeedEnds: it finds the sole end at each level, asserts both origins are .system, and calls expectNoQuestion. The same check is written out twice, so a change to the expected end shape must be made in two places. Move the shared assertions into one private static helper, for example expectSystemEndAtBothLevels(_:of:rootOutputs:childOutputs:), and call it from both tests. Keep the test-specific checks (the answer, the child-closed state, and the finished count) in the new test.

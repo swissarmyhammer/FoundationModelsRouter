@@ -211,8 +211,7 @@ final class SubagentRelayBox: Sendable {
     /// - Returns: The children.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForChildren(_ count: Int) async throws -> [Child] {
-        try await changes.wait(untilAtLeast: count, of: { children.count })
-        return children
+        try await waitUntil(atLeast: count, of: { children }, counted: \.count)
     }
 
     /// The count of the relays whose ``SubagentQuestionRelay/finish()``
@@ -226,8 +225,7 @@ final class SubagentRelayBox: Sendable {
     /// - Returns: The count of the relays that finished.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForFinishedRelays(_ count: Int) async throws -> Int {
-        try await changes.wait(untilAtLeast: count, of: { finishedRelays })
-        return finishedRelays
+        try await waitUntil(atLeast: count, of: { finishedRelays }, counted: { $0 })
     }
 
     /// Waits until at least `count` asking runs got an answer.
@@ -236,8 +234,23 @@ final class SubagentRelayBox: Sendable {
     /// - Returns: The answers.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForAnswers(_ count: Int) async throws -> [ElicitationResponse] {
-        try await changes.wait(untilAtLeast: count, of: { answers.count })
-        return answers
+        try await waitUntil(atLeast: count, of: { answers }, counted: \.count)
+    }
+
+    /// The one wait of the box for a count: waits until the count of a field
+    /// is at least `count`, and then reads the field again.
+    ///
+    /// - Parameters:
+    ///   - count: The count to wait for.
+    ///   - read: Reads the field.
+    ///   - counted: Gives the count of a value of the field.
+    /// - Returns: The field, read after the wait.
+    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    private func waitUntil<Value>(
+        atLeast count: Int, of read: () -> Value, counted: (Value) -> Int
+    ) async throws -> Value {
+        try await changes.wait(untilAtLeast: count, of: { counted(read()) })
+        return read()
     }
 
     /// Changes the fields under the lock, and then signals ``changes``.

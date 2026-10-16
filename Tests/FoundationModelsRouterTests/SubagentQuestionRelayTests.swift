@@ -160,6 +160,34 @@ struct SubagentQuestionRelayTests {
         }
     }
 
+    /// Checks the one end of the question of `level` at the root and in the
+    /// child, each with its origin. Then checks that no level takes an answer
+    /// or a completion to the question any more.
+    ///
+    /// - Parameters:
+    ///   - level: The root and its child.
+    ///   - rootOutputs: The outputs of the root that hold the end.
+    ///   - childOutputs: The outputs of the child that hold the end.
+    ///   - rootOrigin: The origin of the end at the root.
+    ///   - childOrigin: The origin of the end in the child.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Returns: The position of the end at the root and in the child.
+    /// - Throws: When the outputs of a level hold no end.
+    @discardableResult
+    private static func expectOneEndAtEachLevel(
+        of level: OneLevel, rootOutputs: [SessionOutput], childOutputs: [SessionOutput],
+        rootOrigin: Origin = .system, childOrigin: Origin = .system,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws -> (root: Int, child: Int) {
+        let id = try level.questionId
+        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id, sourceLocation: sourceLocation)
+        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id, sourceLocation: sourceLocation)
+        #expect(rootEnd.origin == rootOrigin, sourceLocation: sourceLocation)
+        #expect(childEnd.origin == childOrigin, sourceLocation: sourceLocation)
+        await expectNoQuestion(id, at: [level.root, level.child])
+        return (rootEnd.position, childEnd.position)
+    }
+
     /// The test of a question with the id `id`.
     ///
     /// - Parameter id: The id of a question.
@@ -343,7 +371,6 @@ struct SubagentQuestionRelayTests {
     @Test("a cancel of the asking run in the child ends the question one time at each level")
     func aRunCancelInTheChildEndsTheQuestionOneTimeAtEachLevel() async throws {
         var level = try await Self.askOneLevel()
-        let id = try level.questionId
         let childActor = try #require(level.child as? RoutedSessionActor)
         let cancelling = Origin.mail([MailID()])
 
@@ -355,13 +382,10 @@ struct SubagentQuestionRelayTests {
         let rootOutputs = await SessionWorkEventTests.outputs(
             from: &level.rootFeed, through: SessionEventCase.elicitationEnded.matches)
 
-        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
-        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
-        #expect(childEnd.origin == cancelling)
-        #expect(childEnd.position < (try position(ofFirst: .runSettled, in: childOutputs)))
-        #expect(rootEnd.origin == .system)
+        let ends = try await Self.expectOneEndAtEachLevel(
+            of: level, rootOutputs: rootOutputs, childOutputs: childOutputs, childOrigin: cancelling)
+        #expect(ends.child < (try position(ofFirst: .runSettled, in: childOutputs)))
         #expect(firstPosition(in: rootOutputs, where: SessionEventCase.runSettled.matches) == nil)
-        await Self.expectNoQuestion(id, at: [level.root, level.child])
         await level.fixture.end(opening: [level.rootStep.gate])
     }
 
@@ -372,20 +396,16 @@ struct SubagentQuestionRelayTests {
     @Test("cancelAll() of the root ends the question one time at each level, before its signalDone")
     func cancelAllOfTheParentEndsEachLevelOneTime() async throws {
         var level = try await Self.askOneLevel()
-        let id = try level.questionId
 
         let signal = level.root.cancelAll()
         let rootOutputs = await Self.outputs(
             from: &level.rootFeed, throughEach: [{ $0 == .signalDone(signal) }, SessionEventCase.runSettled.matches])
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
 
-        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
-        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
-        #expect(rootEnd.origin == .signal(signal))
-        #expect(rootEnd.position < (try position(of: .signalDone(signal), in: rootOutputs)))
-        #expect(rootEnd.position < (try position(ofFirst: .runSettled, in: rootOutputs)))
-        #expect(childEnd.origin == .system)
-        await Self.expectNoQuestion(id, at: [level.root, level.child])
+        let ends = try await Self.expectOneEndAtEachLevel(
+            of: level, rootOutputs: rootOutputs, childOutputs: childOutputs, rootOrigin: .signal(signal))
+        #expect(ends.root < (try position(of: .signalDone(signal), in: rootOutputs)))
+        #expect(ends.root < (try position(ofFirst: .runSettled, in: rootOutputs)))
         await level.fixture.end()
     }
 
@@ -394,17 +414,12 @@ struct SubagentQuestionRelayTests {
     @Test("close() of the root ends the question one time at each level, before each feed ends")
     func closeOfTheParentEndsEachLevelBeforeEachFeedEnds() async throws {
         var level = try await Self.askOneLevel()
-        let id = try level.questionId
 
         await level.root.close()
         let rootOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.rootFeed)
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
 
-        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
-        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
-        #expect(rootEnd.origin == .system)
-        #expect(childEnd.origin == .system)
-        await Self.expectNoQuestion(id, at: [level.root, level.child])
+        try await Self.expectOneEndAtEachLevel(of: level, rootOutputs: rootOutputs, childOutputs: childOutputs)
         await level.fixture.end()
     }
 
@@ -423,7 +438,6 @@ struct SubagentQuestionRelayTests {
         let closeGate = RunLatch()
         var level = try await Self.askOneLevel(
             rootStep: SubagentRelayStep(agentName: Self.reviewer, closeGate: closeGate))
-        let id = try level.questionId
         let childActor = try #require(level.child as? RoutedSessionActor)
         let root = level.root
 
@@ -438,16 +452,12 @@ struct SubagentQuestionRelayTests {
         let rootOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.rootFeed)
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
 
-        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
-        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
-        #expect(rootEnd.origin == .system)
-        #expect(childEnd.origin == .system)
+        try await Self.expectOneEndAtEachLevel(of: level, rootOutputs: rootOutputs, childOutputs: childOutputs)
         #expect(answers == [PendingElicitationFixtures.runCancelled])
         #expect(childWasClosed == false)
         #expect(childOpen.isEmpty)
         #expect(finishedBeforeTheChildClosed == 0)
         #expect(finished == Self.once)
-        await Self.expectNoQuestion(id, at: [level.root, level.child])
         await level.fixture.end()
     }
 
@@ -457,7 +467,6 @@ struct SubagentQuestionRelayTests {
     @Test("a cancel of the relaying run ends the root question with the origin of the cancel, before its runSettled")
     func aCancelOfTheRelayingRunEndsTheParentQuestionBeforeItsRunSettled() async throws {
         var level = try await Self.askOneLevel()
-        let id = try level.questionId
         let rootActor = try level.fixture.sessionActor()
         let cancelling = Origin.mail([MailID()])
 
@@ -468,12 +477,9 @@ struct SubagentQuestionRelayTests {
             from: &level.rootFeed, through: SessionEventCase.runSettled.matches)
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
 
-        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
-        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
-        #expect(rootEnd.origin == cancelling)
-        #expect(rootEnd.position < (try position(ofFirst: .runSettled, in: rootOutputs)))
-        #expect(childEnd.origin == .system)
-        await Self.expectNoQuestion(id, at: [level.root, level.child])
+        let ends = try await Self.expectOneEndAtEachLevel(
+            of: level, rootOutputs: rootOutputs, childOutputs: childOutputs, rootOrigin: cancelling)
+        #expect(ends.root < (try position(ofFirst: .runSettled, in: rootOutputs)))
         await level.fixture.end()
     }
 
@@ -483,19 +489,15 @@ struct SubagentQuestionRelayTests {
     @Test("a close of the child ends its question, and the root copy ends before the relaying run settles")
     func closeOfTheChildEndsTheParentCopyBeforeTheRunSettled() async throws {
         var level = try await Self.askOneLevel()
-        let id = try level.questionId
 
         await level.rootStep.gate.open()
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
         let rootOutputs = await SessionWorkEventTests.outputs(
             from: &level.rootFeed, through: SessionEventCase.runSettled.matches)
 
-        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
-        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
-        #expect(childEnd.origin == .system)
-        #expect(rootEnd.origin == .system)
-        #expect(rootEnd.position < (try position(ofFirst: .runSettled, in: rootOutputs)))
-        await Self.expectNoQuestion(id, at: [level.root, level.child])
+        let ends = try await Self.expectOneEndAtEachLevel(
+            of: level, rootOutputs: rootOutputs, childOutputs: childOutputs)
+        #expect(ends.root < (try position(ofFirst: .runSettled, in: rootOutputs)))
         await level.fixture.end()
     }
 
