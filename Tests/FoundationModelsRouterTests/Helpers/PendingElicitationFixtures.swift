@@ -30,6 +30,10 @@ final class ElicitationPostings: OperationEventSink {
     /// downstream sink, or `nil` when no gate holds it.
     private let completionGate: RunLatch?
 
+    /// The gate that holds each end post before it goes to the downstream
+    /// sink, or `nil` when no gate holds it.
+    private let endGate: RunLatch?
+
     /// Signalled after each post.
     let changes = ChangeSignal()
 
@@ -44,9 +48,18 @@ final class ElicitationPostings: OperationEventSink {
     ///     waits, the run plane keeps the id of the question in
     ///     `RunPlane.completingElicitations()`. The default is `nil`: no gate
     ///     holds the post.
-    init(forwardingTo downstream: (any OperationEventSink)? = nil, holdingCompletionsAt completionGate: RunLatch? = nil) {
+    ///   - endGate: The gate that holds each end post
+    ///     (``post(elicitationEnded:response:)``) until it opens. While the
+    ///     post waits, the run plane keeps the id of the question in
+    ///     `RunPlane.endingElicitations()`. The default is `nil`: no gate
+    ///     holds the post.
+    init(
+        forwardingTo downstream: (any OperationEventSink)? = nil, holdingCompletionsAt completionGate: RunLatch? = nil,
+        holdingEndsAt endGate: RunLatch? = nil
+    ) {
         self.downstream = downstream
         self.completionGate = completionGate
+        self.endGate = endGate
     }
 
     /// The number of posts so far.
@@ -112,6 +125,40 @@ final class ElicitationPostings: OperationEventSink {
     ///   first.
     func waitForCompletions(_ expected: Int) async throws {
         try await changes.wait(until: { completionCount >= expected })
+    }
+
+    /// The number of end posts that came to this sink so far, also the ones
+    /// that the end gate still holds.
+    private let arrivedEnds = Mutex(0)
+
+    /// The number of end posts that came to this sink so far, also the ones
+    /// that the end gate still holds.
+    var arrivedEndCount: Int { arrivedEnds.withLock { $0 } }
+
+    /// Counts the end post and signals ``changes``, then waits until the end
+    /// gate opens, when there is one. Then sends the end of the question to
+    /// the downstream sink. The run plane posts it when a cancel of the run
+    /// plane ends the question, and the downstream post ends after the
+    /// journal of the session handled it.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The id of the question that ended.
+    ///   - response: The answer that the run of the question gets.
+    func post(elicitationEnded elicitationId: ULID, response: ElicitationResponse) async {
+        arrivedEnds.withLock { $0 += 1 }
+        changes.signal()
+        await endGate?.waitUntilOpen()
+        await downstream?.post(elicitationEnded: elicitationId, response: response)
+    }
+
+    /// Waits until at least `expected` end posts came to this sink, also
+    /// when the end gate still holds them.
+    ///
+    /// - Parameter expected: The number of end posts to wait for.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   first.
+    func waitForArrivedEnds(_ expected: Int) async throws {
+        try await changes.wait(until: { arrivedEndCount >= expected })
     }
 }
 

@@ -51,6 +51,24 @@ actor CancelCounter {
     }
 }
 
+/// Holds the canceler of a fake run at a gate: the canceler opens
+/// ``entered`` and then waits until ``release`` opens. A test that waits for
+/// ``entered`` knows that the sweep of the run plane runs that canceler now,
+/// and it can do work in that time.
+struct CancelerHold: Sendable {
+    /// Opens when the canceler starts.
+    let entered = RunLatch()
+
+    /// Lets the canceler report when it opens.
+    let release = RunLatch()
+
+    /// Opens ``entered``, and waits until ``release`` opens.
+    func hold() async {
+        await entered.open()
+        await release.waitUntilOpen()
+    }
+}
+
 /// The identity every fake background run is stamped with, so a suite can assert
 /// the stamps it reads back off the run plane.
 enum FakeRun {
@@ -86,6 +104,9 @@ enum FakeRun {
 ///   - cancelerOutcome: The outcome the run's canceler reports.
 ///   - counter: Counts this run's canceler invocations, when a test supplies
 ///     one.
+///   - cancelerHold: Holds the canceler at its gate before it does its
+///     work, when a test supplies one. The default is `nil`: the canceler
+///     does not wait.
 /// - Returns: The run's completion token.
 func trackFakeRun(
     on runPlane: RunPlane,
@@ -93,7 +114,8 @@ func trackFakeRun(
     kind: RunKind = .swiftTask,
     detailOnSettle: String = "done",
     cancelerOutcome: OperationOutcome = .cancelled,
-    counter: CancelCounter? = nil
+    counter: CancelCounter? = nil,
+    holdingCancelerAt cancelerHold: CancelerHold? = nil
 ) async -> String {
     let token = RunPlane.makeCompletionToken()
     let settling = Task<OperationEvent, Never> {
@@ -117,6 +139,7 @@ func trackFakeRun(
         kind: kind,
         completionToken: token,
         canceler: {
+            await cancelerHold?.hold()
             await counter?.increment()
             switch kind {
             case .swiftTask:

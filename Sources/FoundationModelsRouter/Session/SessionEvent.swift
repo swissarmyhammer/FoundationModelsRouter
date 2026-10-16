@@ -397,14 +397,19 @@ public enum SessionEvent: Sendable, Equatable {
     /// ``RoutedSession/complete(elicitationId:)`` of an accepted URL-mode
     /// question).
     ///
-    /// The origin (``SessionOutput/origin``) and the place of the event
-    /// follow the work that ended the question:
+    /// The run plane decides each end, and it ends a question only in one
+    /// step that a cancel of the run plane makes: an answer or a completion
+    /// of the client before that step wins, and the question gets no end.
+    /// The run gets its cancel only after the session got the end, so this
+    /// event comes before each later event of that run.
     ///
-    /// - A cancel of the run (`ToolContext.cancel(completionToken:)`):
-    ///   ``Origin/mail(_:)`` with the ``MailID`` of the run mail that holds
-    ///   the terminal of the run, as the ``runSettled(_:)`` of the run. The
-    ///   event comes before that ``runSettled(_:)``, thus before the terminal
-    ///   event of that mail.
+    /// The origin (``SessionOutput/origin``) is the origin of the work that
+    /// ended the question, and the place of the event follows that work:
+    ///
+    /// - A cancel of the run (`ToolContext.cancel(completionToken:)`): the
+    ///   origin of the work that cancelled the run, for example
+    ///   ``Origin/mail(_:)`` of the answer whose tool cancelled it. The event
+    ///   comes before the ``runSettled(_:)`` of the run.
     /// - ``RoutedSession/cancelAll()``: ``Origin/signal(_:)`` of the
     ///   cancel-all signal. The event comes before the
     ///   ``signalDone(_:)`` of that signal.

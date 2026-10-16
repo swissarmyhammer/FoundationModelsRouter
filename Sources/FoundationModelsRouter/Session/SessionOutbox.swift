@@ -58,8 +58,10 @@ import Tracing
 /// removes it.
 ///
 /// The outbox also hands the completion of an accepted URL-mode question
-/// (``post(elicitationCompleted:)``) to the attached journal, on the same
-/// ordered chain as the run events. The completion is never mail.
+/// (``post(elicitationCompleted:)``) and the end of a question that a cancel
+/// of the run plane ended (``post(elicitationEnded:response:)``) to the
+/// attached journal, on the same ordered chain as the run events. Neither is
+/// mail.
 
 /// The observer that a ``SessionOutbox`` tells about its run mail.
 ///
@@ -506,6 +508,31 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     func post(elicitationCompleted elicitationId: ULID) async {
         let poster = OriginContext.current
         await enqueueJournalWork { await $0.record(elicitationCompleted: elicitationId, poster: poster) }?.value
+    }
+
+    /// Posts the end of the question `elicitationId` to the attached
+    /// journal.
+    ///
+    /// The run plane of Extras posts it when a cancel of the run plane ends
+    /// an open question: `RunPlane.cancelOpenElicitations()` of
+    /// ``RoutedSession/cancelAll()`` and ``RoutedSession/close()``, a cancel
+    /// of the run of the question, or a sweep. The run plane posts it after
+    /// the post of the question, and the run gets `response` only after this
+    /// post returns. The end is not staged and makes no mail. It joins the
+    /// same ordered ``journalChain`` as the run events. The journal sends
+    /// ``SessionEvent/elicitationEnded(_:)``
+    /// (``OperationEventJournal/record(elicitationEnded:response:poster:)``),
+    /// with the origin of the work that ended the question. Before a journal
+    /// is attached, the end is dropped.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The id of the question that ended.
+    ///   - response: The answer that the run of the question gets.
+    func post(elicitationEnded elicitationId: ULID, response: ElicitationResponse) async {
+        let poster = OriginContext.current
+        await enqueueJournalWork {
+            await $0.record(elicitationEnded: elicitationId, response: response, poster: poster)
+        }?.value
     }
 
     /// Chains one journal write onto ``journalChain``.

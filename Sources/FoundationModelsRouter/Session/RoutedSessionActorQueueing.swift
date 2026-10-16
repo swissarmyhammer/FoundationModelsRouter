@@ -226,38 +226,33 @@ extension RoutedSessionActor {
     }
 
     /// The steps that ``respond(elicitationId:response:)`` and
-    /// ``complete(elicitationId:)`` share. It parses the inbound id, records
-    /// that the answer is on its way to the run plane
-    /// (``beginAnswer(to:)``), notes the start of work when `answer` resumes
-    /// the run that asks the question (``noteWorkStart(answering:with:)``),
-    /// gives the parsed id to `runPlaneCall`, and then records what the run
-    /// plane did (``noteAnswer(to:outcome:startedWork:)``).
+    /// ``complete(elicitationId:)`` share. It parses the inbound id, notes
+    /// the start of work when `answer` resumes the run that asks the
+    /// question (``noteWorkStart(answering:with:)``), gives the parsed id to
+    /// `runPlaneCall`, and then records what the run plane did
+    /// (``noteAnswer(to:outcome:startedWork:)``).
     ///
-    /// A question that ended with no answer of the client
-    /// (``SessionEvent/elicitationEnded(_:)``) takes no answer: the answer
-    /// does not go to the run plane, and the call gives `noQuestionResult`.
-    ///
-    /// It is internal, not private, so a test can give a `runPlaneCall` that
-    /// waits at a gate: the answer is then on its way while the test ends
-    /// the question.
+    /// The run plane decides whether the answer finds its question. A
+    /// question that a cancel of the run plane ended
+    /// (``SessionEvent/elicitationEnded(_:)``) is not open any more, so the
+    /// run plane gives the answer `noPendingElicitation`.
     ///
     /// - Parameters:
     ///   - elicitationId: The inbound id of the question.
     ///   - answer: The answer of the user.
-    ///   - noQuestionResult: The result when the id is not a ``ULID``, or
-    ///     when the question ended with no answer of the client.
+    ///   - noQuestionResult: The result when the id is not a ``ULID``.
     ///   - outcome: What the result of `runPlaneCall` did with the run.
     ///   - runPlaneCall: The call to the run plane, and each step that comes
     ///     directly after it.
     /// - Returns: The result of `runPlaneCall`, or `noQuestionResult`.
-    nonisolated func deliverAnswer<Delivery>(
+    private nonisolated func deliverAnswer<Delivery>(
         toElicitation elicitationId: String,
         _ answer: QuestionAnswer,
         orReturn noQuestionResult: Delivery,
         outcome: (Delivery) -> QuestionAnswerOutcome,
         through runPlaneCall: (ULID) async -> Delivery
     ) async -> Delivery {
-        guard let id = ULID(elicitationId), await beginAnswer(to: id) else {
+        guard let id = ULID(elicitationId) else {
             return noQuestionResult
         }
         let startedWork = await noteWorkStart(answering: id, with: answer)

@@ -39,13 +39,11 @@ extension RoutedSessionActor: OperationEventJournal {
     /// session after its live event (``noteQuestionAsked(_:mailID:)``): the run can
     /// now wait only for the user.
     ///
-    /// Before the live event of a terminal (`.completed`), each open question
-    /// of the run that left the run plane with no answer of the client gets
-    /// its ``SessionEvent/elicitationEnded(_:)``, with the same origin
-    /// (``endQuestionsThatLeftTheRunPlane(ofRunOf:origin:)``). When an answer
-    /// of the client to such a question is on its way, the live event of the
-    /// terminal waits until that answer returned from the run plane, so the
-    /// end that the answer sends also comes first.
+    /// The terminal of a run sends no end of a question. The run plane posts
+    /// the end of each question that it ends
+    /// (``record(elicitationEnded:response:poster:)``), before the run of the
+    /// question resumes. Thus the end of a question of a cancelled run comes
+    /// before the terminal of that run.
     ///
     /// - Parameters:
     ///   - event: The event the outbox has just accepted.
@@ -60,9 +58,6 @@ extension RoutedSessionActor: OperationEventJournal {
             if event.kind == .progress {
                 openProgressRow = OpenProgressRow(after: event)
             }
-        }
-        if event.kind == .completed {
-            await endQuestionsThatLeftTheRunPlane(ofRunOf: event, origin: origin)
         }
         deliverLive(Self.liveEvent(for: event), origin: origin)
         if event.kind == .elicitation {
@@ -88,10 +83,11 @@ extension RoutedSessionActor: OperationEventJournal {
     /// (``workDidChange()``), so a run that settled before its completion
     /// arrived still gives its work-end event.
     ///
-    /// After the event, the session reports the arrival of the completion
-    /// (``questionAnswerReturns``). A cancel-all signal or ``close()`` that
+    /// After the event, the session reports that the journal handled the
+    /// post (``questionPosts``). A cancel-all signal or ``close()`` that
     /// found this completion on its way waits for it, and sends its terminal
-    /// event only after the completion.
+    /// event only after the completion
+    /// (``awaitQuestionPosts(of:)``).
     ///
     /// - Parameters:
     ///   - elicitationId: The id of the question that completed.
@@ -100,8 +96,46 @@ extension RoutedSessionActor: OperationEventJournal {
         guard let origin = askedQuestions.complete(elicitationId, postedBy: poster) else { return }
         noteWorkStarted()
         deliverLive(.elicitationCompleted(ElicitationCompletion(elicitationId: elicitationId)), origin: origin)
-        questionAnswerReturns.signal()
+        questionPosts.signal()
         await workDidChange()
+    }
+
+    /// Sends ``SessionEvent/elicitationEnded(_:)`` for the question
+    /// `elicitationId`, which a cancel of the run plane ended with no answer
+    /// of the client (task ^fqb5rjr).
+    ///
+    /// The run plane decides each end, not the session. It takes the question
+    /// off in one step, so an answer or a completion of the client before that
+    /// step wins and gets no end, and one after it finds no question. It posts
+    /// the end after the post of the question, and the run gets `response`
+    /// only after this post returns.
+    ///
+    /// The record of the questions decides only whether the event goes out
+    /// (``AskedQuestions/end(_:)``): one time, and only for a question that
+    /// the journal recorded. The record takes the question out with no
+    /// suspension point before the live event.
+    ///
+    /// The origin of the event is `poster`, the work that ended the question:
+    /// the signal of ``cancelAll()``, ``Origin/system`` for ``close()``, or
+    /// the work that cancelled the run of the question, for example the
+    /// answer to the run mail of the question. This origin changed: before,
+    /// the session sent the end of a cancelled run with the origin of the run
+    /// mail of the terminal of the run, and before that terminal. No reader
+    /// of the output reads this origin. The output drops the event when it
+    /// drops `poster` (``deliverLive(_:origin:)``).
+    ///
+    /// After the event, the session reports that the journal handled the
+    /// post (``questionPosts``), as for a completion.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The id of the question that ended.
+    ///   - response: The answer that the run of the question gets.
+    ///   - poster: The origin of the work that ended the question.
+    func record(elicitationEnded elicitationId: ULID, response: ElicitationResponse, poster: Origin) async {
+        guard askedQuestions.end(elicitationId) else { return }
+        let end = ElicitationEnd(elicitationId: elicitationId, response: response)
+        deliverLive(.elicitationEnded(end), origin: RunEventOrigin(mailID: nil, poster: poster))
+        questionPosts.signal()
     }
 
     /// Hands the live event of one journaled run event to

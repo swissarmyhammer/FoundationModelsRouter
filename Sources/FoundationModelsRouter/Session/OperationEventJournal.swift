@@ -49,6 +49,22 @@ protocol OperationEventJournal: AnyObject, Sendable {
     ///   - elicitationId: The id of the question that completed.
     ///   - poster: The origin of the work that posted the completion.
     func record(elicitationCompleted elicitationId: ULID, poster: Origin) async
+
+    /// Sends ``SessionEvent/elicitationEnded(_:)`` for the question
+    /// `elicitationId`, which a cancel of the run plane ended with no answer
+    /// of the client. The write writes no transcript entry: the end is no
+    /// run event.
+    ///
+    /// The event goes out one time, and only for a question that the journal
+    /// recorded. It carries `response`, the answer that the run of the
+    /// question gets. Its origin is `poster`: the work that ended the
+    /// question.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The id of the question that ended.
+    ///   - response: The answer that the run of the question gets.
+    ///   - poster: The origin of the work that ended the question.
+    func record(elicitationEnded elicitationId: ULID, response: ElicitationResponse, poster: Origin) async
 }
 
 /// The origin of the output event of one run event that a session's

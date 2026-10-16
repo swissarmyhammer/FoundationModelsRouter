@@ -99,22 +99,35 @@ struct ElicitationCompletedEventTests {
     ///     opens its gate.
     ///   - completionGate: The gate that holds each completion post of the
     ///     context before it goes to the session, or `nil` for no gate.
+    ///   - endGate: The gate that holds each end post of the context before
+    ///     it goes to the session, or `nil` for no gate.
+    ///   - slowRun: The gate of the canceler of a ``RunKind/process`` run
+    ///     that starts before the run that asks, or `nil` for no such run.
+    ///     The body of that run ends when the gate releases the canceler. A
+    ///     sweep cancels the runs in start order, so it runs that canceler
+    ///     before it comes to the run that asks.
     ///   - makeRequest: Makes the question from its id.
     /// - Returns: The question and its session.
     /// - Throws: What the fixture throws, or ``ConditionNeverHeld``.
     private static func ask(
         runKind: RunKind = .swiftTask,
         holdingCompletionsAt completionGate: RunLatch? = nil,
+        holdingEndsAt endGate: RunLatch? = nil,
+        startingFirst slowRun: CancelerHold? = nil,
         _ makeRequest: (ULID) -> ElicitationRequest
     ) async throws -> AskedQuestion {
         let fixture = try await BackgroundingSessionFixture.make(prefix: prefix, tools: [])
         let session = try fixture.sessionActor()
         await session.attachOutboxJournalIfNeeded()
         let feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+        if let slowRun {
+            _ = await trackFakeRun(
+                on: session.runPlane, latch: slowRun.release, kind: .process, holdingCancelerAt: slowRun)
+        }
         let runGate = RunLatch()
         let token = await trackFakeRun(on: session.runPlane, latch: runGate, kind: runKind)
         let postings = ElicitationPostings(
-            forwardingTo: fixture.session.outbox, holdingCompletionsAt: completionGate)
+            forwardingTo: fixture.session.outbox, holdingCompletionsAt: completionGate, holdingEndsAt: endGate)
         let context = PendingElicitationFixtures.makeContext(
             for: fixture.session, postingTo: postings, completionToken: token)
         let id = ULID.generate()
@@ -126,32 +139,74 @@ struct ElicitationCompletedEventTests {
             runGate: runGate, runToken: token)
     }
 
-    /// The count of the waits on ``RoutedSessionActor/questionAnswerReturns``
-    /// when the stop of the session waits for the held completion.
+    /// The count of the waits on ``RoutedSessionActor/questionPosts`` when
+    /// the stop of the session waits for the held post.
     private static let theStopWaits = 1
 
     /// Opens `gate` when the session waits on
-    /// ``RoutedSessionActor/questionAnswerReturns``: the stop of the session
+    /// ``RoutedSessionActor/questionPosts``: the stop of the session
     /// (``RoutedSession/cancelAll()`` or ``RoutedSession/close()``) waits for
-    /// the completion that `gate` holds.
+    /// the completion post or the end post that `gate` holds.
     ///
-    /// A stop that does not wait for the completion leaves the gate shut. The
-    /// test then cancels the returned task and opens the gate itself, after
-    /// it read the outputs of the stop.
+    /// A stop that does not wait for the post leaves the gate shut. The test
+    /// then cancels the returned task and opens the gate itself, after it
+    /// read the outputs of the stop.
     ///
     /// - Parameters:
-    ///   - gate: The gate that holds the completion post.
+    ///   - gate: The gate that holds the post.
     ///   - asked: The question.
     /// - Returns: The task that opens the gate.
     /// - Throws: When the session is not a ``RoutedSessionActor``, or its
     ///   signal does not report its waiters.
     private static func openWhenTheStopWaits(_ gate: RunLatch, for asked: AskedQuestion) throws -> Task<Void, any Error> {
-        let returns = try asked.fixture.sessionActor().questionAnswerReturns
-        let waiters = try #require(returns.waiterChanges)
+        let posts = try asked.fixture.sessionActor().questionPosts
+        let waiters = try #require(posts.waiterChanges)
         return Task {
-            try await waiters.wait(until: { returns.waiterCount >= Self.theStopWaits })
+            try await waiters.wait(until: { posts.waiterCount >= Self.theStopWaits })
             await gate.open()
         }
+    }
+
+    /// Cancels the run of the question through the tool
+    /// (`ToolContext.cancel(completionToken:)`) while `gate` holds the end
+    /// post. The run plane then keeps the id in
+    /// `RunPlane.endingElicitations()`, the cancel waits for the post, and
+    /// the journal of the session has no end yet.
+    ///
+    /// - Parameters:
+    ///   - asked: The question.
+    ///   - gate: The gate that holds the end post.
+    /// - Returns: The task of the cancel, and the task that opens `gate` when
+    ///   the stop of the session waits (``openWhenTheStopWaits(_:for:)``).
+    /// - Throws: When the session is not a ``RoutedSessionActor``, or
+    ///   ``ConditionNeverHeld``.
+    private static func cancelTheRunWhileTheEndWaits(_ asked: AskedQuestion, at gate: RunLatch) async throws
+        -> (cancel: Task<Void, Never>, opener: Task<Void, any Error>)
+    {
+        let context = asked.context
+        let token = asked.runToken
+        let cancel = Task { _ = await context.cancel(completionToken: token) }
+        try await asked.postings.waitForArrivedEnds(oneEnd)
+        #expect(try await asked.fixture.sessionActor().runPlane.endingElicitations() == [asked.id])
+        return (cancel, try openWhenTheStopWaits(gate, for: asked))
+    }
+
+    /// Opens `gate`, waits for the cancel whose end post it held, and then
+    /// reads the feed to its end.
+    ///
+    /// - Parameters:
+    ///   - gate: The gate that holds the end post.
+    ///   - held: The task of the cancel and the task that opens `gate`.
+    ///   - asked: The question. Its feed is read to the end.
+    /// - Returns: The rest of the feed.
+    private static func releaseTheEnd(
+        _ gate: RunLatch, held: (cancel: Task<Void, Never>, opener: Task<Void, any Error>),
+        of asked: inout AskedQuestion
+    ) async -> [SessionOutput] {
+        held.opener.cancel()
+        await gate.open()
+        await held.cancel.value
+        return await asked.outputsToTheEnd()
     }
 
     /// Accepts the URL question, and completes its flow through the tool
@@ -221,15 +276,66 @@ struct ElicitationCompletedEventTests {
     /// - Returns: The position of the end.
     /// - Throws: When `outputs` hold no end.
     private static func soleEndAndNoCompletion(in outputs: [SessionOutput], of asked: AskedQuestion) throws -> Int {
-        let ends: [(position: Int, end: ElicitationEnd)] = outputs.enumerated().compactMap { position, output in
-            guard case .elicitationEnded(let end) = output.event else { return nil }
-            return (position, end)
-        }
-        #expect(ends.count == oneEnd, "expected one end of the question, got \(ends.count)")
-        let found = try #require(ends.first)
-        #expect(found.end == ElicitationEnd(elicitationId: asked.id, response: .cancel(reason: RunPlane.runCancelledReason)))
+        let found = ends(in: outputs)
+        #expect(found.count == oneEnd, "expected one end of the question, got \(found.count)")
+        let end = try #require(found.first)
+        #expect(end.end == ElicitationEnd(elicitationId: asked.id, response: .cancel(reason: RunPlane.runCancelledReason)))
         #expect(completions(in: outputs).isEmpty)
-        return found.position
+        return end.position
+    }
+
+    /// Each ``SessionEvent/elicitationEnded(_:)`` of `outputs`, with its
+    /// origin and its position.
+    ///
+    /// - Parameter outputs: Outputs of a session.
+    /// - Returns: The ends, in order.
+    private static func ends(in outputs: [SessionOutput]) -> [(position: Int, origin: Origin, end: ElicitationEnd)] {
+        outputs.enumerated().compactMap { position, output in
+            guard case .elicitationEnded(let end) = output.event else { return nil }
+            return (position, output.origin, end)
+        }
+    }
+
+    /// Checks that `outputs` tell the client the same end of the question
+    /// as the run got: one ``SessionEvent/elicitationCompleted(_:)`` and no
+    /// end when the run got the accept, or one
+    /// ``SessionEvent/elicitationEnded(_:)`` with the cancel of a stopped run
+    /// and no completion when the run got that cancel.
+    ///
+    /// - Parameters:
+    ///   - response: The answer that the run got.
+    ///   - outputs: Outputs of a session.
+    ///   - asked: The question.
+    /// - Throws: When `outputs` hold no question, or not the event that the
+    ///   answer of the run asks for.
+    private static func expectTheEndThatTheRunGot(
+        _ response: ElicitationResponse, in outputs: [SessionOutput], of asked: AskedQuestion
+    ) throws {
+        switch response.action {
+        case .accept:
+            _ = try soleCompletion(in: outputs, of: asked)
+            expectNoEnd(in: outputs)
+        case .decline, .cancel:
+            _ = try soleEndAndNoCompletion(in: outputs, of: asked)
+        }
+    }
+
+    /// Waits until the sweep of the session runs the held canceler of `hold`,
+    /// and then completes the flow of the accepted URL question of `asked`
+    /// through the tool that asked, in that window.
+    ///
+    /// - Parameters:
+    ///   - asked: The accepted question, asked after the run of `hold`
+    ///     started.
+    ///   - hold: The gate of the canceler of the run that started first.
+    /// - Returns: The answer that the run got.
+    /// - Throws: What the wait of the run throws.
+    private static func completeWhileTheCancelerWaits(_ asked: AskedQuestion, at hold: CancelerHold) async throws
+        -> ElicitationResponse
+    {
+        await hold.entered.waitUntilOpen()
+        _ = await asked.context.complete(elicitationId: asked.id)
+        return try await asked.answer.value
     }
 
     /// A URL-mode question.
@@ -448,10 +554,11 @@ struct ElicitationCompletedEventTests {
         Self.expectNoEnd(in: closed + rest)
     }
 
-    /// The production change that makes this test fail: a `cancelAll()` that
-    /// holds the end of each question that left the run plane for a
-    /// completion. A run cancel posts no completion, so the `signalDone`
-    /// then never comes.
+    /// The production change that makes this test fail: a session that sends
+    /// no end for the question that a run cancel took after the accept, or
+    /// that sends a second end at the `cancelAll()`. The run cancel ends the
+    /// question, so its end has the origin of the work that cancelled the
+    /// run, and it comes before the `signalDone`.
     @Test("cancelAll() after a run cancel took an accepted URL question gives one end before the signalDone, and no completion")
     func cancelAllAfterARunCancelGivesOneEnd() async throws {
         var asked = try await Self.ask(runKind: .process, Self.urlRequest)
@@ -462,14 +569,52 @@ struct ElicitationCompletedEventTests {
         let outputs = stopped + (await asked.outputsToTheEnd())
 
         let end = try Self.soleEndAndNoCompletion(in: outputs, of: asked)
-        #expect(outputs[end].origin == .signal(signal))
+        #expect(outputs[end].origin == .system)
+        #expect(end < (try position(of: .signalDone(signal), in: outputs)))
+    }
+
+    /// The production change that makes this test fail: a `cancelAll()`
+    /// whose `signalDone` does not wait for the end post of a run cancel that
+    /// is on its way (`RunPlane.endingElicitations()`), so the end comes
+    /// after the `signalDone`.
+    @Test("cancelAll() while the end of a run cancel is on its way gives that end before the signalDone")
+    func cancelAllWhileARunCancelEndIsOnItsWayGivesTheEnd() async throws {
+        let gate = RunLatch()
+        var asked = try await Self.ask(holdingEndsAt: gate, Self.urlRequest)
+        let held = try await Self.cancelTheRunWhileTheEndWaits(asked, at: gate)
+
+        let signal = asked.fixture.session.cancelAll()
+        let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
+        let outputs = stopped + (await Self.releaseTheEnd(gate, held: held, of: &asked))
+
+        let end = try Self.soleEndAndNoCompletion(in: outputs, of: asked)
+        #expect(outputs[end].origin == .system)
         #expect(end < (try position(of: .signalDone(signal), in: outputs)))
     }
 
     /// The production change that makes this test fail: a `close()` that
-    /// holds the end of each question that left the run plane for a
-    /// completion. A run cancel posts no completion, so the feed then never
-    /// ends.
+    /// ends the feeds before the end post of a run cancel that is on its way
+    /// (`RunPlane.endingElicitations()`), so nobody gets that end.
+    @Test("close() while the end of a run cancel is on its way gives that end before the feed ends")
+    func closeWhileARunCancelEndIsOnItsWayGivesTheEnd() async throws {
+        let gate = RunLatch()
+        var asked = try await Self.ask(holdingEndsAt: gate, Self.urlRequest)
+        let held = try await Self.cancelTheRunWhileTheEndWaits(asked, at: gate)
+        let session = asked.fixture.session
+
+        let close = Task { await session.close() }
+        let closed = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+        await close.value
+        let rest = await Self.releaseTheEnd(gate, held: held, of: &asked)
+
+        #expect(rest.isEmpty)
+        let end = try Self.soleEndAndNoCompletion(in: closed, of: asked)
+        #expect(closed[end].origin == .system)
+    }
+
+    /// The production change that makes this test fail: a session that sends
+    /// no end for the question that a run cancel took after the accept, or
+    /// that ends the feeds before that end.
     ///
     /// The body of the ``RunKind/process`` run ends only when its gate
     /// opens, and the drain of close waits for it. The feed ends before the
@@ -489,5 +634,56 @@ struct ElicitationCompletedEventTests {
         #expect(rest.isEmpty)
         let end = try Self.soleEndAndNoCompletion(in: closed, of: asked)
         #expect(closed[end].origin == .system)
+    }
+
+    /// The production change that makes this test fail: a `cancelAll()` that
+    /// sends the end of an open question itself, before the run plane ends
+    /// it. The sweep then holds at the slow canceler of the run that started
+    /// first, while the question is still open on the run plane. A completion
+    /// of the tool in that window resumes the run with the accept, and the
+    /// session sends no completion.
+    @Test("cancelAll() while a slow canceler holds the sweep tells the client the same end of the question as the run got")
+    func cancelAllWithASlowCancelerGivesTheEndThatTheRunGot() async throws {
+        let hold = CancelerHold()
+        var asked = try await Self.ask(startingFirst: hold, Self.urlRequest)
+        #expect(await asked.accept() == .acceptedAwaitingCompletion)
+
+        let signal = asked.fixture.session.cancelAll()
+        let response = try await Self.completeWhileTheCancelerWaits(asked, at: hold)
+        let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
+        await hold.release.open()
+        let outputs = stopped + (await asked.outputsToTheEnd())
+
+        try Self.expectTheEndThatTheRunGot(response, in: outputs, of: asked)
+        #expect(Self.ends(in: outputs).allSatisfy { $0.origin == .signal(signal) })
+    }
+
+    /// The production change that makes this test fail: a `close()` that
+    /// sends the end of an open question itself, before the run plane ends
+    /// it. The sweep then holds at the slow canceler of the run that started
+    /// first, while the question is still open on the run plane. A completion
+    /// of the tool in that window resumes the run with the accept, and the
+    /// session sends no completion.
+    ///
+    /// The feed ends before the drain of close, and the drain waits for the
+    /// held canceler, so the test opens the gate of the canceler after it
+    /// read the feed.
+    @Test("close() while a slow canceler holds the sweep tells the client the same end of the question as the run got")
+    func closeWithASlowCancelerGivesTheEndThatTheRunGot() async throws {
+        let hold = CancelerHold()
+        var asked = try await Self.ask(startingFirst: hold, Self.urlRequest)
+        #expect(await asked.accept() == .acceptedAwaitingCompletion)
+        let session = asked.fixture.session
+
+        let close = Task { await session.close() }
+        let response = try await Self.completeWhileTheCancelerWaits(asked, at: hold)
+        let closed = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+        await hold.release.open()
+        await close.value
+        let rest = await asked.outputsToTheEnd()
+
+        #expect(rest.isEmpty)
+        try Self.expectTheEndThatTheRunGot(response, in: closed, of: asked)
+        #expect(Self.ends(in: closed).allSatisfy { $0.origin == .system })
     }
 }

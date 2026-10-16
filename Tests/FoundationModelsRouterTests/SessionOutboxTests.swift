@@ -738,6 +738,9 @@ struct SessionOutboxTests {
 
         /// Records nothing: the tests of this suite post no completion.
         func record(elicitationCompleted elicitationId: ULID, poster: Origin) {}
+
+        /// Records nothing: the tests of this suite post no end of a question.
+        func record(elicitationEnded elicitationId: ULID, response: ElicitationResponse, poster: Origin) {}
     }
 
     /// Builds a canned ``ToolCallReport`` for one call, so a test can focus on

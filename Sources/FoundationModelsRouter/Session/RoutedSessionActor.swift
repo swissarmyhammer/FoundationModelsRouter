@@ -397,26 +397,24 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Reports each change of a state of this session that sends no event of
     /// its own: a mail that ``mail(_:)`` put in the queue, a stop of the
-    /// running work (``requestCancelOfRunningWork()``), a cancel of the
-    /// running compaction (``cancelActiveCompaction()``), and an end of a
-    /// question that waits for an answer on its way
-    /// (``AskedQuestions/hasDeferredEnd(of:)``).
+    /// running work (``requestCancelOfRunningWork()``), and a cancel of the
+    /// running compaction (``cancelActiveCompaction()``).
     ///
     /// Only the tests read it. A test reads the state, and waits on this
     /// signal for the next change when the state is not the state it wants.
     nonisolated let stateChanges = ChangeSignal()
 
-    /// Reports each return of an answer of the client from the run plane
-    /// (``noteAnswer(to:outcome:startedWork:)``). An end check that found a
-    /// question gone while an answer was on its way waits on it until the
-    /// answer returned (``awaitAnswersOnTheirWay(to:)``), and only then sends
-    /// the terminal event that the end of the question must come before.
-    /// ``close()`` waits on it until no end check holds an end
-    /// (``awaitDeferredEnds()``) before the feeds end.
+    /// Reports each end post and each completion post of a question that the
+    /// journal handled (``record(elicitationEnded:response:poster:)`` and
+    /// ``record(elicitationCompleted:poster:)``). The stop of the session
+    /// waits on it until the journal handled each such post that was on its
+    /// way (``awaitQuestionPosts(of:)``), and only then sends its terminal
+    /// event.
     ///
     /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
-    /// so a test can wait until ``close()`` waits for such an answer.
-    nonisolated let questionAnswerReturns = ChangeSignal(observingWaiters: true)
+    /// so a test can wait until the stop of the session waits for such a
+    /// post.
+    nonisolated let questionPosts = ChangeSignal(observingWaiters: true)
 
     /// Reports each read of the repetition watch that found no stop
     /// (``startRepetitionWatch()``). The watch first stores the texts of
