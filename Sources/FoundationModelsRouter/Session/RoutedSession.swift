@@ -662,6 +662,25 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// signal work does not run after close: it sends no event, and a wait
     /// for its terminal event ends with ``MailRefusal/closed``.
     ///
+    /// If a tool or a run body of this session calls close(), close() returns
+    /// before the close ends. The close ends after that work returns. Close
+    /// waits for all work of the session, and that work includes the caller,
+    /// so a close that waited would never return. A `Task {}` that a tool
+    /// body or a run body of this session starts copies the task-locals of
+    /// that work, so a close from that task also returns before the close
+    /// ends. That is correct: the task is still the own work of the session.
+    /// A task that `Task.detached` starts copies no task-local, so a close
+    /// from it waits as a close from outside the session does.
+    ///
+    /// A caller outside the session gets the contract above: when close
+    /// returns, the session is closed. A close from outside also waits for a
+    /// close that the own work of the session started. A tool or a run body
+    /// of another session is outside this session, also a tool of a
+    /// ``fork(workingDirectory:)`` child of this session. So do not close a
+    /// session from the tool of a child session while a tool of that session
+    /// waits for the answer of the child: the close waits for the tool, the
+    /// tool waits for the child, and the child waits for the close.
+    ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.
     func close() async

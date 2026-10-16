@@ -388,6 +388,11 @@ actor RoutedSessionActor: RoutedSession {
     /// `nil`. While it runs, no pump starts. See ``startDrainIfNeeded()``.
     var drainTask: Task<Void, Never>?
 
+    /// The close that the own work of this session started, or `nil` when
+    /// that work called no ``close()``. It ends after that work returns. A
+    /// close from outside the session waits for it first. See ``close()``.
+    var closeFromOwnWork: Task<Void, Never>?
+
     /// Wakes each ``awaitIdle()`` call that waits for the next change of the
     /// work of this session. See ``signalWorkChange()``.
     ///

@@ -57,10 +57,16 @@ struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
 }
 
 /// The backend the background-run suites drive: its first call calls every
-/// composed ``LatchedBackgroundToolRunner`` — each of which backgrounds its call —
-/// and answers with the last pending envelope; every later call answers
+/// composed tool that takes ``BackgroundFixtureArguments`` — a background tool
+/// such as ``LatchedBackgroundToolRunner`` backgrounds its call, and a tool
+/// with no background declaration runs to completion in the call — and
+/// answers with the output of the last call; every later call answers
 /// ``answerPrefix`` plus the prompt it was given, so an answer grounded in
 /// settled results is provable by reading the answer.
+///
+/// A fork with tools (``makeFork(tools:)``) is a new backend of this kind
+/// over the tools of the child, with the same holds, so the first call of
+/// the child calls the tools of the child.
 ///
 /// Every mutable field is behind one `Mutex`. The pump of the owning session
 /// drives one backend method at a time, but it delivers a settled run in a
@@ -138,17 +144,24 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
             return Self.answerPrefix + prompt
         }
         var rendered = ""
-        for tool in tools {
-            guard
-                let mounted = ToolFailureDelivery.throwingTool(of: tool)
-                    as? BackgroundToolRunner<BackgroundFixtureArguments>
-            else { continue }
+        for mounted in fixtureTools {
             capture { $0.toolCallCount += 1 }
             rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
             capture { [rendered] in $0.toolOutputs.append(rendered) }
         }
         await holdFirstAnswer?.waitUntilOpen()
         return rendered
+    }
+
+    /// The composed tools that take ``BackgroundFixtureArguments``, in the
+    /// order of the session's tool list: each one is the layer beneath the
+    /// failure delivery, a ``BackgroundToolRunner`` for a background tool and
+    /// a ``RunToCompletionRunner`` for a tool with no background declaration.
+    private var fixtureTools: [any Tool<BackgroundFixtureArguments, String>] {
+        tools.map(ToolFailureDelivery.throwingTool(of:)).compactMap { tool in
+            if let background = tool as? BackgroundToolRunner<BackgroundFixtureArguments> { return background }
+            return tool as? RunToCompletionRunner<BackgroundFixtureArguments>
+        }
     }
 
     /// Changes the captures under their lock, and then signals ``changes``.
@@ -179,6 +192,15 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
 
     func makeFork() -> any LanguageModelSessionBackend {
         inner.makeFork()
+    }
+
+    /// A new backend of this kind over `tools`, the tools of the child, with
+    /// the holds of this backend.
+    ///
+    /// - Parameter tools: The composed tool list of the child.
+    /// - Returns: The backend of the child.
+    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+        BackgroundingBackend(tools: tools, holdFirstAnswer: holdFirstAnswer, holdLaterAnswers: holdLaterAnswers)
     }
 
     func transcriptEntries() -> [Transcript.Entry] {

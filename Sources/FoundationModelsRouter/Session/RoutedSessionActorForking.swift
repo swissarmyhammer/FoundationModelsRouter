@@ -359,7 +359,37 @@ extension RoutedSessionActor {
     /// ``SessionEvent/compactionFailed(_:)`` before the feeds finish. Nothing
     /// is lost: the transcript keeps no compacted value, and a restore uses
     /// the full transcript.
+    ///
+    /// **A close from the own work of this session** (task ^3jpewc9). The end
+    /// of all work waits for each tool call and each run body of this
+    /// session. So when the caller is such work (``SessionOwnWork``), this
+    /// call starts the close in a detached task (``closeFromOwnWork``) and
+    /// returns at once, and the close ends after that work returns. The task
+    /// is detached for the same reason as the pump (``wakePump()``): the
+    /// close then has no task-local of the caller, so no origin of the tool
+    /// reaches the events of the close. A close from outside the session
+    /// first waits for that close, so the two do not run at the same time,
+    /// and then runs the close itself, which finds each step done.
     func close() async {
+        guard !SessionOwnWork.current.contains(id) else {
+            startCloseFromOwnWork()
+            return
+        }
+        await closeFromOwnWork?.value
+        await closeAndAwaitTheEnd()
+    }
+
+    /// Starts the close for a caller that is the own work of this session,
+    /// when no such close started before, and does not wait. See ``close()``.
+    private func startCloseFromOwnWork() {
+        guard closeFromOwnWork == nil else { return }
+        closeFromOwnWork = Task.detached { await self.closeAndAwaitTheEnd() }
+    }
+
+    /// The work of ``close()``: stops all work of this session, waits until
+    /// it ended, and then closes the output, the progress row, the mail
+    /// records and the prompt cache. A second run finds each step done.
+    private func closeAndAwaitTheEnd() async {
         // The signals that wait behind the work that runs now do not run
         // after close. They send no event, and a wait for their terminal
         // event ends with ``MailRefusal/closed``.

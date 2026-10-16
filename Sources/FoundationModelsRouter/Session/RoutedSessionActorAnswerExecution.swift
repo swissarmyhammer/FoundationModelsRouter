@@ -897,7 +897,11 @@ extension RoutedSessionActor {
     /// task-local of the session, so the submission binds each one itself.
     /// The SDK gives them to each tool body it runs inside the call. The
     /// tracing `ServiceContext` of the submission is one of them, so the span
-    /// of each tool call stays a child of the span of its submission.
+    /// of each tool call stays a child of the span of its submission. The
+    /// ``SessionOwnWork`` of the session of `context` is one more: each tool
+    /// body of the call, and each run body that a tool body starts, is the
+    /// own work of that session, so ``close()`` from it does not wait for
+    /// itself.
     ///
     /// - Parameters:
     ///   - body: The model work: one whole SDK call.
@@ -928,7 +932,9 @@ extension RoutedSessionActor {
                         try await ToolResultAppendBoundary.$current.withValue(boundary) {
                             try await checks.bound {
                                 try await ToolContext.$current.withValue(context) {
-                                    try await body(composedPrompt)
+                                    try await SessionOwnWork.run(as: context.sessionID) {
+                                        try await body(composedPrompt)
+                                    }
                                 }
                             }
                         }
