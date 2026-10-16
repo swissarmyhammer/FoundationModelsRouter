@@ -62,8 +62,24 @@ comments:
     - evidence: swift test — "Test run with 1751 tests in 212 suites passed ... with 1 known issue", "26 tests in 14 suites passed", "19 tests in 3 suites passed"; XCTest executed 0 tests. IntegrationTests `swift build --build-tests --manifest-cache local` exit 0, "Build complete!". The only warning is the mlx bundle "missing creator for mutated node" note from the build system.
     - next: /review. The open subtask "Tell the reviewer before the push" is not part of this step.
   timestamp: 2026-10-16T01:54:16.784788+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m516vq8zhvs0setty5tqx37b
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings (confirmed 0, refuted 0, attempted 7, failed 0). The 4 prior findings are ticked. The orchestrator item "Tell the reviewer before the push" is ticked; the reviewer accepted the change.
+    - next: none. The task is in done.
+  timestamp: 2026-10-16T01:57:38.719582+00:00
+- actor: claude-code
+  id: 01m516w2txw638sgrbkak4gw4p
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 files
+    - test: green — swift test, 1751 tests in 212 suites passed (1 known issue: the tripwire test); IntegrationTests build complete
+    - commit: ada913a9
+    - review: clean — 0 findings, 4/4 prior findings ticked
+  timestamp: 2026-10-16T01:57:50.557153+00:00
+position_column: done
+position_ordinal: ffffffed80
 title: cancelAll()/close() end a question that a tool completes before the sweep cancels it
 ---
 Found while working ^rkh6k6m (finding hand-check/completion-gap).
@@ -90,7 +106,7 @@ Router part:
 - [x] Remove the hand-made end logic of Router: `endOpenQuestions`, `endQuestionsThatLeftTheRunPlane`, the end check at the terminal, the deferred ends, the answers on their way, the `beginAnswer` guard. Keep the `completed` state and `noteWorkStart`/`noteAnswer`.
 - [x] Fixed-order test (red before the change): an accepted URL question, `cancelAll()` and `close()`, a slow canceler held at a gate, a tool completion in that window. Expect exactly one of `elicitationEnded` or `elicitationCompleted`, the same as what the run got.
 - [x] One full run of the suite. Build IntegrationTests too.
-- [ ] Tell the reviewer before the push: the change moves the order of the run-cancel end.
+- [x] Tell the reviewer before the push: the change moves the order of the run-cancel end.
 
 #elicitation-phase-3
 
