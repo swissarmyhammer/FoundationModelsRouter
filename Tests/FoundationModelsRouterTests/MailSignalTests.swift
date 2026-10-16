@@ -50,21 +50,6 @@ struct MailSignalTests {
 
     // MARK: - Fixtures
 
-    /// Starts an answer for ``heldPrompt`` on a backend that `latch` holds
-    /// open, and waits until its submission reached the backend.
-    ///
-    /// - Parameters:
-    ///   - session: The session.
-    ///   - backend: The backend of the session.
-    /// - Returns: The id of the held message.
-    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
-    ///   submission reaches the backend.
-    private static func startHeldAnswer(on session: any RoutedSession, backend: Backend) async throws -> MailID {
-        let held = try session.send(heldPrompt)
-        try await backend.waitForPrompts(1)
-        return held
-    }
-
     /// Posts one progress event to `session` and puts its run mail on hold.
     ///
     /// - Parameter session: The session.
@@ -236,7 +221,7 @@ struct MailSignalTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let queued = try session.send(Self.firstPrompt)
         let cancelOfQueued = session.cancel(queued)
         // The first signal removes the mail, so this second cancel finds nothing.
@@ -272,7 +257,7 @@ struct MailSignalTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let runMail = try await MailQueueFixtures.post(
             MailQueueFixtures.progressEvent(detail: "a queued step"), to: session)
         let first = try session.send(Self.firstPrompt)
@@ -309,7 +294,7 @@ struct MailSignalTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let replaced = try session.send(Self.firstPrompt)
         let behind = RoutedSessionActor.userMessage(Self.secondPrompt, maxTokens: Self.namedCeiling, mode: .reply)
         _ = try session.mail(behind)
@@ -357,7 +342,7 @@ struct MailSignalTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let runMail = try await MailQueueFixtures.post(
             MailQueueFixtures.progressEvent(detail: "a queued step"), to: session)
         let queued = try session.send(Self.firstPrompt)
@@ -394,7 +379,7 @@ struct MailSignalTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let runMail = try await MailQueueFixtures.post(
             MailQueueFixtures.progressEvent(detail: "a queued step"), to: session)
         let queued = try session.send(Self.firstPrompt)

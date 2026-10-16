@@ -97,15 +97,6 @@ struct SessionMessagePumpTests {
             state.withLock { $0.prompts }
         }
 
-        /// Waits until at least `count` prompts reached this backend.
-        ///
-        /// - Parameter count: How many prompts to wait for.
-        /// - Throws: ``ConditionNeverHeld`` when the waiting task is cancelled
-        ///   first.
-        func waitForPrompts(_ count: Int) async throws {
-            try await changes.wait(until: { self.prompts.count >= count })
-        }
-
         /// The answer the call with `ordinal` gives.
         ///
         /// - Parameter ordinal: The one-based ordinal of the call.

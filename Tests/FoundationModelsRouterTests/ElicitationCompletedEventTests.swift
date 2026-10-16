@@ -131,7 +131,7 @@ struct ElicitationCompletedEventTests {
         await session.attachOutboxJournalIfNeeded()
         let feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         if answerGate != nil {
-            try await startTheHeldAnswer(of: fixture)
+            try await MailQueueFixtures.startHeldAnswer(heldPrompt, on: fixture.session, backend: fixture.backend)
         }
         if let slowRun {
             _ = await trackFakeRun(
@@ -154,19 +154,6 @@ struct ElicitationCompletedEventTests {
 
     /// The prompt of the answer that runs while the question is asked.
     private static let heldPrompt = "answer while the question is open"
-
-    /// Mails ``heldPrompt`` to the session of `fixture`, and waits until the
-    /// backend got it. The answer to the prompt then runs, and it waits at
-    /// the hold of the first answer of the backend.
-    ///
-    /// - Parameter fixture: The fixture whose backend holds the first answer.
-    /// - Throws: When the session is not a ``RoutedSessionActor``, or
-    ///   ``ConditionNeverHeld``.
-    private static func startTheHeldAnswer(of fixture: BackgroundingSessionFixture) async throws {
-        _ = try fixture.sessionActor().mail(RoutedSessionActor.userMessage(heldPrompt, maxTokens: nil, mode: .reply))
-        let backend = fixture.backend
-        try await backend.changes.wait(until: { !backend.receivedPrompts.isEmpty })
-    }
 
     /// The count of the waits on ``RoutedSessionActor/questionPosts`` when
     /// the stop of the session waits for the held post.
@@ -595,19 +582,53 @@ struct ElicitationCompletedEventTests {
     /// that ends the feeds before that post.
     @Test("close() while the completion of the tool is on its way gives that completion before the feed ends, and no end")
     func closeWhileAToolCompletionIsOnItsWayGivesTheCompletion() async throws {
+        try await Self.expectTheCompletionOnItsWayBeforeTheFeedEnds(duringAnAnswerHeldAt: nil)
+    }
+
+    /// The production change that makes this test fail: a journal that gives
+    /// the completion to the event sink of the answer that `close()`
+    /// stopped. That answer continues until the test opens its gate, and the
+    /// output drops each event for the mail of a stopped answer, so the
+    /// completion does not come before the feed ends.
+    @Test("close() during an answer while the completion of the tool is on its way gives that completion before the feed ends, and no end")
+    func closeDuringAnAnswerWhileAToolCompletionIsOnItsWayGivesTheCompletion() async throws {
+        try await Self.expectTheCompletionOnItsWayBeforeTheFeedEnds(duringAnAnswerHeldAt: RunLatch())
+    }
+
+    /// Completes the accepted URL question through the tool while a gate
+    /// holds the completion post, sends `close()`, and checks that the
+    /// completion comes one time before the feed ends, and that no end
+    /// comes.
+    ///
+    /// The completion keeps the origin of the run mail of the question
+    /// (``soleCompletion(in:of:)``). The poster of the post is the work of
+    /// close (``Origin/system``), which the output does not drop.
+    ///
+    /// The drain of close waits for the generation pass of the stopped
+    /// answer, and that pass waits at the gate of the answer. Thus the test
+    /// opens the gate of the answer after it read the feed to its end, and
+    /// only then waits for the end of close.
+    ///
+    /// - Parameter answerGate: The gate that holds the answer that runs
+    ///   while the question is asked, or `nil` for no answer.
+    /// - Throws: What the fixture, the waits or the checks throw.
+    private static func expectTheCompletionOnItsWayBeforeTheFeedEnds(
+        duringAnAnswerHeldAt answerGate: RunLatch?
+    ) async throws {
         let gate = RunLatch()
-        var asked = try await Self.ask(holdingCompletionsAt: gate, Self.urlRequest)
-        let opener = try await Self.completeThroughTheTool(asked, holdingAt: gate)
+        var asked = try await ask(holdingCompletionsAt: gate, duringAnAnswerHeldAt: answerGate, urlRequest)
+        let opener = try await completeThroughTheTool(asked, holdingAt: gate)
         let session = asked.fixture.session
 
         let close = Task { await session.close() }
         let closed = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
+        await answerGate?.open()
         await close.value
-        let rest = try await Self.releaseTheCompletion(gate, openedBy: opener, of: &asked)
+        let rest = try await releaseTheCompletion(gate, openedBy: opener, of: &asked)
 
         #expect(rest.isEmpty)
-        _ = try Self.soleCompletion(in: closed, of: asked)
-        Self.expectNoEnd(in: closed + rest)
+        _ = try soleCompletion(in: closed, of: asked)
+        expectNoEnd(in: closed + rest)
     }
 
     /// The production change that makes this test fail: a session that sends

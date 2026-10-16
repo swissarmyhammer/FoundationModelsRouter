@@ -6,7 +6,9 @@ import Testing
 
 /// The fixtures that the suites of the mail queue share
 /// (`mailbox.md`, sections 4 and 5): `MailQueueBatchTests`,
-/// `MailSignalTests` and `MailSubscriptionTests`.
+/// `MailSignalTests` and `MailSubscriptionTests`. `CancelAllSignalTests`
+/// and `ElicitationCompletedEventTests` also start their held answer with
+/// ``startHeldAnswer(_:on:backend:)``.
 ///
 /// Each session runs on ``SessionMessagePumpTests/PumpProbeBackend``, a stub
 /// backend that records each prompt and can hold a call open on a
@@ -135,4 +137,64 @@ enum MailQueueFixtures {
         }
         return outputs
     }
+
+    /// The count of prompts that reach the backend when the held answer
+    /// starts.
+    private static let heldAnswerPrompts = 1
+
+    /// Sends `prompt` to `session`, and waits until `backend` got it. The
+    /// answer to the prompt then runs, and it waits at the hold of the first
+    /// call of `backend`.
+    ///
+    /// This is the one step "start the held answer" of the suites. The
+    /// session sends the prompt as one user message in reply mode
+    /// (``RoutedSession/send(_:)-(String)``).
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt of the held answer.
+    ///   - session: The session.
+    ///   - backend: The backend of the session.
+    /// - Returns: The id of the held message.
+    /// - Throws: What the send throws, or ``ConditionNeverHeld`` when the
+    ///   task is cancelled before the submission reaches the backend.
+    @discardableResult
+    static func startHeldAnswer(
+        _ prompt: String, on session: any RoutedSession, backend: some PromptCountingBackend
+    ) async throws -> MailID {
+        let held = try session.send(prompt)
+        try await backend.waitForPrompts(heldAnswerPrompts)
+        return held
+    }
+}
+
+/// A stub backend that counts the prompts it got, and signals each change
+/// of that count on ``changes``. A test waits for a prompt with no clock
+/// (``waitForPrompts(_:)``).
+protocol PromptCountingBackend: Sendable {
+    /// The signal of each change of the backend, sent after the change.
+    var changes: ChangeSignal { get }
+
+    /// The count of prompts that the backend got so far.
+    var promptCount: Int { get }
+}
+
+extension PromptCountingBackend {
+    /// Waits until at least `count` prompts reached this backend.
+    ///
+    /// - Parameter count: How many prompts to wait for.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task is cancelled
+    ///   first.
+    func waitForPrompts(_ count: Int) async throws {
+        try await changes.wait(until: { self.promptCount >= count })
+    }
+}
+
+extension SessionMessagePumpTests.PumpProbeBackend: PromptCountingBackend {
+    /// The count of ``prompts``.
+    var promptCount: Int { prompts.count }
+}
+
+extension BackgroundingBackend: PromptCountingBackend {
+    /// The count of ``receivedPrompts``.
+    var promptCount: Int { receivedPrompts.count }
 }

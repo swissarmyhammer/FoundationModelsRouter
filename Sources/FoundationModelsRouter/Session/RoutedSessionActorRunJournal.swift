@@ -164,7 +164,8 @@ extension RoutedSessionActor: OperationEventJournal {
     /// ``cancelAll()``, or before the end of the feeds at ``close()``.
     ///
     /// The output still drops the event when it drops the poster, as
-    /// ``deliverLive(_:origin:)`` does. Each other live event uses
+    /// ``deliverLive(_:origin:)`` does: both use
+    /// ``deliver(_:origin:through:)``. Each other live event uses
     /// ``deliverLive(_:origin:)`` with no change.
     ///
     /// - Parameters:
@@ -175,9 +176,29 @@ extension RoutedSessionActor: OperationEventJournal {
             deliverLive(event, origin: origin)
             return
         }
+        deliver(event, origin: origin) { emitSessionScopedEvent($0) }
+    }
+
+    /// Gives `event` to `emit`, with ``RunEventOrigin/output`` of `origin`
+    /// as the task-local origin (``OriginContext/current``). When the output
+    /// drops the poster of `origin` (``SessionOutputHub/drops(_:)``), this
+    /// call does not send the event.
+    ///
+    /// This is the one drop check and the one origin binding of each live
+    /// event of a run. Only the audience is different:
+    /// ``deliverLive(_:origin:)`` gives the event to the running answer or
+    /// to the feed of the session (``deliverLive(_:)``), and
+    /// ``deliverQuestionPost(_:origin:)`` gives the post of a stopped
+    /// answer to the feed of the session.
+    ///
+    /// - Parameters:
+    ///   - event: The live event.
+    ///   - origin: The run mail of the event and the work that posted it.
+    ///   - emit: Sends the event to its audience.
+    private func deliver(_ event: SessionEvent, origin: RunEventOrigin, through emit: (SessionEvent) -> Void) {
         guard !outputHub.drops(origin.poster) else { return }
         OriginContext.$current.withValue(origin.output) {
-            emitSessionScopedEvent(event)
+            emit(event)
         }
     }
 
@@ -199,10 +220,7 @@ extension RoutedSessionActor: OperationEventJournal {
     ///   - event: The live event.
     ///   - origin: The run mail of the event and the work that posted it.
     func deliverLive(_ event: SessionEvent, origin: RunEventOrigin) {
-        guard !outputHub.drops(origin.poster) else { return }
-        OriginContext.$current.withValue(origin.output) {
-            deliverLive(event)
-        }
+        deliver(event, origin: origin) { deliverLive($0) }
     }
 
     /// The live ``SessionEvent`` that carries a recorded event to the host.

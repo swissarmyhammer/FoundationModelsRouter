@@ -97,21 +97,6 @@ struct MailQueueBatchTests {
         queue.take { RoutedSessionActor.joinsNewBatch($0, $1, isGuided: false) }.map(\.id)
     }
 
-    /// Starts an answer for ``heldPrompt`` that `latch` holds open in the
-    /// backend, and waits until its submission reached the backend.
-    ///
-    /// - Parameters:
-    ///   - session: The session.
-    ///   - backend: The backend of the session.
-    /// - Returns: The id of the held message.
-    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
-    ///   submission reaches the backend.
-    private static func startHeldAnswer(on session: any RoutedSession, backend: Backend) async throws -> MailID {
-        let held = try session.send(heldPrompt)
-        try await backend.waitForPrompts(1)
-        return held
-    }
-
     /// Reads `feed` to its end. Call it after ``RoutedSession/close()``,
     /// which finishes the feed.
     ///
@@ -257,7 +242,7 @@ struct MailQueueBatchTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let streamed = Self.stream(Self.firstPrompt)
         _ = try session.mail(streamed)
         let reply = try session.send(Self.secondPrompt)
@@ -281,7 +266,7 @@ struct MailQueueBatchTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let small = Self.reply(Self.firstPrompt, maxTokens: Self.smallCeiling)
         let large = Self.reply(Self.secondPrompt, maxTokens: Self.largeCeiling)
         let sameAsSmall = Self.reply(Self.thirdPrompt, maxTokens: Self.smallCeiling)
@@ -314,7 +299,7 @@ struct MailQueueBatchTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let feed = await session.streamSessionEvents()
 
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let event = MailQueueFixtures.progressEvent(detail: "the run goes on")
         let runMail = try await MailQueueFixtures.post(event, to: session)
         await latch.open()

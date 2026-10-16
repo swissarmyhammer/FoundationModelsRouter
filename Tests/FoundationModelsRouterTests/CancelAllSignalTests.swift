@@ -438,21 +438,6 @@ struct CancelAllSignalTests {
         return (mail, subscription)
     }
 
-    /// Starts an answer for ``heldPrompt`` on a backend that holds the call
-    /// open, and waits until its submission reached the backend.
-    ///
-    /// - Parameters:
-    ///   - session: The session.
-    ///   - backend: The backend of the session.
-    /// - Returns: The id of the held message.
-    /// - Throws: When the waiting task is cancelled before the submission
-    ///   reached the backend.
-    private static func startHeldAnswer(on session: any RoutedSession, backend: ProbeBackend) async throws -> MailID {
-        let held = try session.send(heldPrompt)
-        try await backend.waitForPrompts(1)
-        return held
-    }
-
     /// Starts a background run on the run plane of `session`. The body of
     /// the run waits until its task is cancelled. The canceler of the run
     /// waits on the gate of the record, and then cancels the body.
@@ -731,7 +716,7 @@ struct CancelAllSignalTests {
         let backend = ProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let first = try session.send(Self.firstPrompt)
         let second = RoutedSessionActor.userMessage(Self.secondPrompt, maxTokens: Self.namedCeiling, mode: .reply)
         _ = try session.mail(second)
@@ -792,7 +777,7 @@ struct CancelAllSignalTests {
         let backend = ProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
-        let held = try await Self.startHeldAnswer(on: session, backend: backend)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
 
         let delivered = session.cancel(held)
         let unknown = session.cancel(MailID())
