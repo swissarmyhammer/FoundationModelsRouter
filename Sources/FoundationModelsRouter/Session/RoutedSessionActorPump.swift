@@ -269,6 +269,7 @@ extension RoutedSessionActor: SessionMailObserver {
         // suspension point here.
         recordMailQueueDepth()
         startAnswerLimits()
+        let openRunsAtStart = await readOpenRunTokens()
         // Each event of the answer has the origin of its batch. The pump is a
         // detached task, so no origin of a caller reaches it.
         await OriginContext.$current.withValue(.mail(Set(batch.ids))) {
@@ -278,7 +279,7 @@ extension RoutedSessionActor: SessionMailObserver {
         }
         // The terminal event of the answer already cleared ``openAnswerMail``
         // (``emitAnswerEnd(for:)``).
-        countAnswer()
+        await countAnswer(openRunsAtStart: openRunsAtStart)
         openAnswerRunMail = []
         openAnswerDeliveredUserMail = false
         endPumpWork()
@@ -297,13 +298,47 @@ extension RoutedSessionActor: SessionMailObserver {
         outbox.forget(mail.map(\.id))
     }
 
-    /// Counts the answer that just ended for the bound on answers that run
-    /// mail alone starts (``SessionConfiguration/mailOnlyAnswerLimit``). An
-    /// answer that delivered user-type mail, also mail that joined a
-    /// continuation, starts the count again. An answer that only run mail
-    /// started adds one.
-    private func countAnswer() {
-        mailOnlyAnswersInARow = openAnswerDeliveredUserMail ? 0 : mailOnlyAnswersInARow + 1
+    /// Counts the answer that just ended, with its first submission and each
+    /// continuation, for the bound on answers that run mail alone starts
+    /// (``SessionConfiguration/mailOnlyAnswerLimit``).
+    ///
+    /// - An answer that delivered user-type mail, also mail that joined a
+    ///   continuation, sets the count to zero.
+    /// - An answer that only run mail started adds one when it started a new
+    ///   background run: a run of ``runPlane`` that is open now and was not
+    ///   open at the start of the answer. The read covers each depth of the
+    ///   run plane: a background call of the model, and a run that a tool
+    ///   body starts and leaves open, also a run of a nested call. A run that
+    ///   started and settled inside the answer does not count, and a run that
+    ///   was open at the two reads does not count.
+    /// - An answer that only run mail started and that started no new run
+    ///   keeps the count. A loop with no end also has answers to messages of
+    ///   its runs between the answers that start its runs, so such an answer
+    ///   does not set the count to zero.
+    ///
+    /// A run that a background run of an earlier answer starts while this
+    /// answer runs counts for this answer. That error goes toward a pause,
+    /// never toward a loop with no end. A child session has a run plane of
+    /// its own, and its own count.
+    ///
+    /// - Parameter openRunsAtStart: The completion tokens of the open runs of
+    ///   ``runPlane`` at the start of the answer (``readOpenRunTokens()``).
+    private func countAnswer(openRunsAtStart: Set<String>) async {
+        guard !openAnswerDeliveredUserMail else {
+            mailOnlyAnswersInARow = 0
+            return
+        }
+        let openRunsAtEnd = await readOpenRunTokens()
+        guard !openRunsAtEnd.isSubset(of: openRunsAtStart) else { return }
+        mailOnlyAnswersInARow += 1
+    }
+
+    /// Reads the completion tokens of the open background runs of
+    /// ``runPlane``, for ``countAnswer(openRunsAtStart:)``.
+    ///
+    /// - Returns: The tokens of the open runs.
+    private func readOpenRunTokens() async -> Set<String> {
+        Set(await runPlane.backgroundRuns().map(\.completionToken))
     }
 
     /// Holds the run mail of a batch that only run mail started, because

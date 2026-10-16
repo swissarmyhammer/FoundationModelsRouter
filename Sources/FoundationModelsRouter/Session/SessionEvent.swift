@@ -322,8 +322,9 @@ public enum SessionEvent: Sendable, Equatable {
     case generationCall(GenerationCallUsage)
 
     /// The session held new mail and started no answer for it, because
-    /// ``SessionConfiguration/mailOnlyAnswerLimit`` answers in a row had no
-    /// user-type mail (`generation-queue.md`, section 5.4). The held mail
+    /// ``SessionConfiguration/mailOnlyAnswerLimit`` answers that only run mail
+    /// started each started a new background run, with no user-type mail
+    /// between them (`generation-queue.md`, section 5.4). The held mail
     /// waits in the queue of the session, and the next user-type mail
     /// carries it into its submission. Only
     /// ``RoutedSession/streamSessionEvents()`` carries this event, because no

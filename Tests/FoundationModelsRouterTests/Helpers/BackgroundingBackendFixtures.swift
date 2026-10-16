@@ -56,6 +56,20 @@ struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
     }
 }
 
+extension Array where Element == any Tool {
+    /// The composed tools of this tool list that take
+    /// ``BackgroundFixtureArguments``, in list order: each one is the layer
+    /// beneath the failure delivery, a ``BackgroundToolRunner`` for a
+    /// background tool and a ``RunToCompletionRunner`` for a tool with no
+    /// background declaration.
+    var fixtureTools: [any Tool<BackgroundFixtureArguments, String>] {
+        map(ToolFailureDelivery.throwingTool(of:)).compactMap { tool in
+            if let background = tool as? BackgroundToolRunner<BackgroundFixtureArguments> { return background }
+            return tool as? RunToCompletionRunner<BackgroundFixtureArguments>
+        }
+    }
+}
+
 /// The backend the background-run suites drive: its first call calls every
 /// composed tool that takes ``BackgroundFixtureArguments`` — a background tool
 /// such as ``LatchedBackgroundToolRunner`` backgrounds its call, and a tool
@@ -144,24 +158,13 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
             return Self.answerPrefix + prompt
         }
         var rendered = ""
-        for mounted in fixtureTools {
+        for mounted in tools.fixtureTools {
             capture { $0.toolCallCount += 1 }
             rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
             capture { [rendered] in $0.toolOutputs.append(rendered) }
         }
         await holdFirstAnswer?.waitUntilOpen()
         return rendered
-    }
-
-    /// The composed tools that take ``BackgroundFixtureArguments``, in the
-    /// order of the session's tool list: each one is the layer beneath the
-    /// failure delivery, a ``BackgroundToolRunner`` for a background tool and
-    /// a ``RunToCompletionRunner`` for a tool with no background declaration.
-    private var fixtureTools: [any Tool<BackgroundFixtureArguments, String>] {
-        tools.map(ToolFailureDelivery.throwingTool(of:)).compactMap { tool in
-            if let background = tool as? BackgroundToolRunner<BackgroundFixtureArguments> { return background }
-            return tool as? RunToCompletionRunner<BackgroundFixtureArguments>
-        }
     }
 
     /// Changes the captures under their lock, and then signals ``changes``.

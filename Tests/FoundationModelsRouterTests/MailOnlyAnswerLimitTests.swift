@@ -1,7 +1,5 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterTestSupport
-import Synchronization
 import Testing
 
 @testable import FoundationModelsExtras
@@ -12,165 +10,21 @@ import Testing
 ///
 /// Mail causes the next submission of a session with no caller call. A model
 /// that starts one more background run in each submission thus gets one more
-/// delivery for each run, with no end. The pump counts the answers in a row
-/// that mail alone starts. At ``SessionConfiguration/mailOnlyAnswerLimit`` it
-/// holds the mail in the outbox for the next caller message, and it sends
+/// delivery for each run, with no end. The pump counts the mail-only answers
+/// that started a new background run (task ^cgtxr00). At
+/// ``SessionConfiguration/mailOnlyAnswerLimit`` it holds the mail in the
+/// outbox for the next caller message, and it sends
 /// ``SessionEvent/mailDeliveryPaused(_:)``.
 ///
 /// Everything runs against a scripted backend that calls a real background
-/// tool of the session, so the suite needs no network and no GPU.
+/// tool of the session (``MailOnlyAnswerFixtures``), so the suite needs no
+/// network and no GPU. Each run of that tool waits at its own gate, so it is
+/// still open when the answer that started it ends. The test then settles it,
+/// and its terminal starts the next answer.
 @Suite("The bound on a chain of answers that mail alone starts")
 struct MailOnlyAnswerLimitTests {
-    // MARK: - Backend
-
-    /// A scripted model that starts one background run in each of its first
-    /// calls, as a model does that asks a background status tool after each
-    /// result.
-    ///
-    /// Each call that starts a run calls the first composed
-    /// ``LatchedBackgroundToolRunner`` of the session. Its gate is open, so the
-    /// run settles at once, and its terminal is mail that starts the next
-    /// submission. The pump drives this backend with no caller call, so every
-    /// mutable field is behind one `Mutex`.
-    final class RunStartingBackend: LanguageModelSessionBackend {
-        /// The backend that answers each call and records its prompt.
-        private let inner = StubSessionBackend()
-
-        /// The session's own composed tool list.
-        private let tools: [any Tool]
-
-        /// How many of the first calls start a run, or `nil` for every call.
-        private let runStartingCalls: Int?
-
-        /// The number of calls so far.
-        private let callCount = Mutex(0)
-
-        /// Makes a backend over `tools`.
-        ///
-        /// - Parameters:
-        ///   - tools: The session's composed tool list.
-        ///   - runStartingCalls: How many of the first calls start a run, or
-        ///     `nil` for every call.
-        init(tools: [any Tool], runStartingCalls: Int?) {
-            self.tools = tools
-            self.runStartingCalls = runStartingCalls
-        }
-
-        /// The prompt of each call so far, in call order.
-        var prompts: [String] { inner.receivedPrompts }
-
-        /// The signal that the backend sends after it records each prompt of
-        /// ``prompts``.
-        var changes: ChangeSignal { inner.changes }
-
-        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            let ordinal = callCount.withLock { count in
-                count += 1
-                return count
-            }
-            if runStartingCalls.map({ ordinal <= $0 }) ?? true {
-                try await startRun(prompt: prompt)
-            }
-            return try await inner.respond(to: prompt, maxTokens: maxTokens)
-        }
-
-        /// Calls the first composed background tool, which starts one run.
-        ///
-        /// - Parameter prompt: The prompt of the call, which the tool receives
-        ///   as its argument.
-        /// - Throws: What the tool throws.
-        private func startRun(prompt: String) async throws {
-            let mounted = try #require(
-                tools.lazy.compactMap {
-                    ToolFailureDelivery.throwingTool(of: $0) as? BackgroundToolRunner<BackgroundFixtureArguments>
-                }.first)
-            _ = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
-        }
-
-        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            inner.streamResponse(to: prompt, maxTokens: maxTokens)
-        }
-
-        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-            try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
-        }
-
-        func makeFork() -> any LanguageModelSessionBackend {
-            inner.makeFork()
-        }
-
-        func transcriptEntries() -> [Transcript.Entry] {
-            inner.transcriptEntries()
-        }
-
-        func usageTokenCounts() -> (input: Int, output: Int)? {
-            inner.usageTokenCounts()
-        }
-    }
-
-    /// Vends one ``RunStartingBackend`` for the session a test makes, with the
-    /// composed tool list of that session.
-    ///
-    /// The last vended backend is behind a ``Mutex``, and every other stored
-    /// property is an immutable `Sendable` value. Thus the type is `Sendable`
-    /// with no unchecked claim.
-    final class RunStartingContainer: LoadedLLMContainer, Sendable {
-        /// The scripted counter of this container: one token per `Character`.
-        let tokenCounter: any TokenCounter = CharacterTokenCounter()
-
-        /// How many of the first calls of each vended backend start a run, or
-        /// `nil` for every call.
-        private let runStartingCalls: Int?
-
-        /// The backend the last vend made.
-        private let vended = Mutex<RunStartingBackend?>(nil)
-
-        /// Makes a container.
-        ///
-        /// - Parameter runStartingCalls: How many of the first calls of each
-        ///   vended backend start a run, or `nil` for every call.
-        init(runStartingCalls: Int?) {
-            self.runStartingCalls = runStartingCalls
-        }
-
-        /// The backend the last vend made, or `nil` before a vend.
-        var lastBackend: RunStartingBackend? { vended.withLock { $0 } }
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            makeSession(instructions: instructions, tools: [])
-        }
-
-        func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            let backend = RunStartingBackend(tools: tools, runStartingCalls: runStartingCalls)
-            vended.withLock { $0 = backend }
-            return backend
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
-        }
-    }
-
-    /// One session over a ``RunStartingBackend``, with what a test reads.
-    struct Fixture: Sendable {
-        /// The session under test.
-        let session: any RoutedSession
-
-        /// The backend the session runs on.
-        let backend: RunStartingBackend
-
-        /// The feed of the session's events.
-        let events: SessionEventLog
-
-        /// The task that drains ``events``.
-        let drain: Task<Void, Never>
-
-        /// The router that keeps the models of the session resident.
-        let router: Router
-
-        /// The temporary directory the router caches under.
-        let directory: URL
-    }
+    /// The fixtures of the suite.
+    typealias Fixtures = MailOnlyAnswerFixtures
 
     // MARK: - Constants
 
@@ -187,170 +41,147 @@ struct MailOnlyAnswerLimitTests {
     /// The prompt of the caller message after the chain stopped.
     private static let nextPrompt = "what is the status now"
 
-    /// The output of each background run.
-    private static let runOutput = "the status check is done"
+    /// The name of the background tool of each session.
+    private static let jobName = "status_check"
 
     // MARK: - Fixtures
 
     /// Makes a session with `limit`, over a backend that starts a run in each
-    /// of its first `runStartingCalls` calls, and watches its events.
+    /// call that `callsTool` names, and watches its events.
     ///
     /// - Parameters:
     ///   - limit: The ``SessionConfiguration/mailOnlyAnswerLimit`` of the session.
-    ///   - runStartingCalls: How many of the first calls start a run, or `nil`
-    ///     for every call.
+    ///   - callsTool: Whether the backend call with a one-based ordinal starts
+    ///     a run.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws.
-    private static func makeFixture(limit: Int = Self.limit, runStartingCalls: Int?) async throws -> Fixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "MailOnlyAnswerLimitTests")
-        let container = RunStartingContainer(runStartingCalls: runStartingCalls)
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory)
-        let gate = RunLatch()
-        await gate.open()
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(
-                tools: [LatchedBackgroundToolRunner(name: "status_check", gate: gate, output: runOutput)],
-                mailOnlyAnswerLimit: limit))
-        let backend = try #require(container.lastBackend)
-        let (events, drain) = await SessionEventLog.watch(session)
-        return Fixture(
-            session: session, backend: backend, events: events, drain: drain, router: router, directory: directory)
+    private static func makeFixture(
+        limit: Int = Self.limit, callsTool: @escaping @Sendable (Int) -> Bool
+    ) async throws -> Fixtures.Session {
+        let gates = Fixtures.RunGates()
+        return try await Fixtures.Session.make(
+            prefix: "MailOnlyAnswerLimitTests", limit: limit, tool: Fixtures.GatedJob(name: jobName, gates: gates),
+            gates: gates, callsTool: callsTool)
     }
 
-    /// Waits until the session sent `count` pause events.
+    /// Whether the backend call with a one-based ordinal starts a run: each
+    /// call does.
+    private static let everyCall: @Sendable (Int) -> Bool = { _ in true }
+
+    /// Sends the first caller message, and waits until the pump ended its
+    /// answer. That answer starts the first run.
     ///
-    /// - Parameters:
-    ///   - count: How many pause events to wait for.
-    ///   - fixture: The fixture whose events are watched.
-    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
-    private static func waitForPauses(_ count: Int, on fixture: Fixture) async throws {
-        try await fixture.events.wait(until: { $0.mailDeliveryPauses.count == count })
+    /// - Parameter fixture: The fixture of the session.
+    /// - Throws: What the answer throws.
+    private static func startTheChain(on fixture: Fixtures.Session) async throws {
+        _ = try await fixture.session.respond(to: firstPrompt)
+        #expect(await fixture.session.pumpEnds())
     }
 
-    /// Closes the session, and gives each event of its feed.
+    /// Settles the runs of one whole chain, one after the other: the run of
+    /// the caller answer, then the run of each of the `limit` answers that
+    /// mail alone started. The bound holds the terminal of the last run.
     ///
-    /// The close finishes the feed after the last event of the session, so
-    /// the drain task ends after it appended that event. Thus the log then
-    /// holds each event that the session sent.
-    ///
-    /// - Parameter fixture: The fixture to close.
-    /// - Returns: Each event of the feed, in delivery order.
-    private static func everyEventAfterClose(of fixture: Fixture) async -> [SessionEvent] {
-        await fixture.session.close()
-        await fixture.drain.value
-        return await fixture.events.events
-    }
-
-    /// The mail that waits in the outbox of the session.
-    ///
-    /// - Parameter fixture: The fixture whose outbox is read.
-    /// - Returns: The pending mail events, in outbox order.
-    private static func waitingMail(of fixture: Fixture) async -> [SessionOutbox.PendingEvent] {
-        await fixture.session.outbox.pending().events
-    }
-
-    /// Ends the fixture: stops the event drain and removes the directory.
-    ///
-    /// - Parameter fixture: The fixture to end.
-    private static func tearDown(_ fixture: Fixture) {
-        fixture.drain.cancel()
-        try? FileManager.default.removeItem(at: fixture.directory)
-        withExtendedLifetime(fixture.router) {}
+    /// - Parameter fixture: The fixture of the session.
+    /// - Throws: What ``MailOnlyAnswerFixtures/Session/settleTheOpenRun(of:)``
+    ///   throws.
+    private static func settleTheRunsOfOneChain(on fixture: Fixtures.Session) async throws {
+        try await fixture.settleTheOpenRuns(promptsOfOneChain, of: jobName)
     }
 
     // MARK: - The bound
 
     @Test("an endless chain of mail-only answers stops at the limit, and the session sends the pause event")
     func anEndlessChainStopsAtTheLimit() async throws {
-        let fixture = try await Self.makeFixture(runStartingCalls: nil)
-        defer { Self.tearDown(fixture) }
-
-        _ = try await fixture.session.respond(to: Self.firstPrompt)
+        let fixture = try await Self.makeFixture(callsTool: Self.everyCall)
+        try await Self.startTheChain(on: fixture)
 
         // The caller answer, then `limit` answers that mail alone started.
-        try await Self.waitForPauses(1, on: fixture)
-        #expect(await fixture.session.pumpEnds())
+        // Each of them started a run that was still open when it ended.
+        try await Self.settleTheRunsOfOneChain(on: fixture)
+
+        try await fixture.waitForPauses(1)
         #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
         // The mail of the last run waits, held: its progress report and its
         // terminal.
-        let held = await Self.waitingMail(of: fixture)
+        let held = await fixture.waitingMail()
         #expect(held.filter { $0.event.kind == .completed }.count == 1)
         #expect(held.allSatisfy { $0.isHeld })
         let pause = try #require(await fixture.events.events.mailDeliveryPauses.first)
         #expect(pause == MailDeliveryPause(limit: Self.limit, heldMail: held.map(\.event)))
+        #expect(await fixture.end().mailDeliveryPauses.count == 1)
     }
 
     @Test("the mail that the bound holds rides the next caller message")
     func theHeldMailRidesTheNextCallerMessage() async throws {
         // The last run starts in the last answer that mail started, so the
         // bound holds its mail, and the next caller answer starts no run.
-        let fixture = try await Self.makeFixture(runStartingCalls: Self.promptsOfOneChain)
-        defer { Self.tearDown(fixture) }
-        _ = try await fixture.session.respond(to: Self.firstPrompt)
-        try await Self.waitForPauses(1, on: fixture)
-        #expect(await fixture.session.pumpEnds())
-        let held = try #require(await Self.waitingMail(of: fixture).first { $0.event.kind == .completed })
+        let fixture = try await Self.makeFixture(callsTool: { $0 <= Self.promptsOfOneChain })
+        try await Self.startTheChain(on: fixture)
+        try await Self.settleTheRunsOfOneChain(on: fixture)
+        try await fixture.waitForPauses(1)
+        let held = try #require(await fixture.waitingMail().first { $0.event.kind == .completed })
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
 
         let nextCallerPrompt = try #require(fixture.backend.prompts.dropFirst(Self.promptsOfOneChain).first)
         #expect(nextCallerPrompt.contains(OperationEventSegment.renderedLine(for: held.event)))
         #expect(nextCallerPrompt.hasSuffix(Self.nextPrompt))
-        #expect(await Self.waitingMail(of: fixture).isEmpty)
+        #expect(await fixture.waitingMail().isEmpty)
+        #expect(await fixture.end().mailDeliveryPauses.count == 1)
     }
 
     @Test("a caller message starts the count again, so mail again starts answers up to the limit")
     func aCallerMessageStartsTheCountAgain() async throws {
-        let fixture = try await Self.makeFixture(runStartingCalls: nil)
-        defer { Self.tearDown(fixture) }
-        _ = try await fixture.session.respond(to: Self.firstPrompt)
-        try await Self.waitForPauses(1, on: fixture)
-        #expect(await fixture.session.pumpEnds())
+        let fixture = try await Self.makeFixture(callsTool: Self.everyCall)
+        try await Self.startTheChain(on: fixture)
+        try await Self.settleTheRunsOfOneChain(on: fixture)
+        try await fixture.waitForPauses(1)
 
+        // The caller message carries the held mail, and its answer starts one
+        // more run. User-type mail sets the count to zero.
         _ = try await fixture.session.respond(to: Self.nextPrompt)
+        #expect(await fixture.session.pumpEnds())
+        try await Self.settleTheRunsOfOneChain(on: fixture)
 
         // The second chain pauses too: one pause for each chain.
         let pausesOfTwoChains = 2
-        try await Self.waitForPauses(pausesOfTwoChains, on: fixture)
-        #expect(await fixture.session.pumpEnds())
+        try await fixture.waitForPauses(pausesOfTwoChains)
         #expect(fixture.backend.prompts.count == Self.promptsOfOneChain + Self.promptsOfOneChain)
+        #expect(await fixture.end().mailDeliveryPauses.count == pausesOfTwoChains)
     }
 
-    @Test("a chain of mail-only answers that reaches the limit, and no further, runs whole with no pause")
+    @Test("a chain of `limit` mail-only answers whose last answer starts no run runs whole with no pause")
     func aChainUpToTheLimitRunsWhole() async throws {
-        let fixture = try await Self.makeFixture(runStartingCalls: Self.limit)
-        defer { Self.tearDown(fixture) }
-
-        _ = try await fixture.session.respond(to: Self.firstPrompt)
+        let fixture = try await Self.makeFixture(callsTool: { $0 <= Self.limit })
+        try await Self.startTheChain(on: fixture)
 
         // Each of the first `limit` calls started a run, and the mail of each
-        // run started one more answer.
-        try await fixture.backend.changes.wait(until: {
-            fixture.backend.prompts.count == Self.promptsOfOneChain
-        })
-        #expect(await fixture.session.pumpEnds())
-        #expect(await Self.waitingMail(of: fixture).isEmpty)
+        // run started one more answer. The last answer started no run.
+        try await fixture.settleTheOpenRuns(Self.limit, of: Self.jobName)
+
+        #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
+        #expect(await fixture.waitingMail().isEmpty)
         // Only the pump sends a pause, and the pump ended. The close then
         // finishes the feed after each event that the pump sent, so a pause
         // is in the events now, or never came.
-        #expect(await Self.everyEventAfterClose(of: fixture).mailDeliveryPauses.isEmpty)
+        #expect(await fixture.end().mailDeliveryPauses.isEmpty)
         #expect(fixture.backend.prompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
     }
 
     @Test("a limit of zero holds all mail for the next caller message")
     func aLimitOfZeroHoldsAllMail() async throws {
-        let fixture = try await Self.makeFixture(limit: 0, runStartingCalls: nil)
-        defer { Self.tearDown(fixture) }
+        let fixture = try await Self.makeFixture(limit: 0, callsTool: Self.everyCall)
+        try await Self.startTheChain(on: fixture)
 
-        _ = try await fixture.session.respond(to: Self.firstPrompt)
+        try await fixture.settleTheOpenRun(of: Self.jobName)
 
-        try await Self.waitForPauses(1, on: fixture)
-        #expect(await fixture.session.pumpEnds())
+        try await fixture.waitForPauses(1)
         #expect(fixture.backend.prompts == [Self.firstPrompt])
-        let held = await Self.waitingMail(of: fixture)
+        let held = await fixture.waitingMail()
         #expect(!held.isEmpty)
         #expect(held.allSatisfy { $0.isHeld })
+        #expect(await fixture.end().mailDeliveryPauses.count == 1)
     }
 
     // MARK: - The setting

@@ -47,25 +47,34 @@ public struct SessionConfiguration: Sendable {
     /// again, and a fork inherits it.
     public var repetitionDetection: RepetitionDetection
 
-    /// The default of ``mailOnlyAnswerLimit``: 100 answers in a row.
+    /// The default of ``mailOnlyAnswerLimit``: 100 answers that start a new
+    /// background run.
     ///
     /// A normal chain is short: a model starts some background runs, and each
-    /// settled run starts one answer. 100 answers in a row with no user-type
-    /// mail is far past such a chain, and each of them holds the model for
-    /// a whole submission. So only a chain with no end reaches it.
+    /// settled run starts one answer. 100 answers that each start a new
+    /// background run, with no user-type mail, is far past such a chain, and
+    /// each of them holds the model for a whole submission. So only a chain
+    /// with no end reaches it.
     public static let defaultMailOnlyAnswerLimit = 100
 
-    /// The most answers in a row that run mail alone starts, with no
-    /// user-type mail between them (`generation-queue.md`, section 5.4).
+    /// The most answers that run mail alone starts and that start a new
+    /// background run, with no user-type mail between them
+    /// (`generation-queue.md`, section 5.4).
     ///
     /// Run mail causes the next submission of the session with no caller call.
     /// So a model that starts one more background run in each answer gets one
-    /// more answer for each run, with no end. When this many answers in a row
-    /// had no user-type mail (a user message, an agent message or an
-    /// elicitation answer), the session holds new run mail in its queue and
-    /// starts no answer for it. The next user-type mail carries the held mail
-    /// into its submission, and the count starts again. The mail is never
-    /// lost. The session reports each hold with
+    /// more answer for each run, with no end. The session counts each answer
+    /// that only run mail started and that started a new background run: a
+    /// run of the session that is open at the end of the answer and was not
+    /// open at its start, also a run that a tool body starts and leaves open.
+    /// A run that settles inside the answer does not count. An answer that
+    /// only run mail started and that started no new run, for example the
+    /// answer to a message of a run, keeps the count. User-type mail (a user
+    /// message, an agent message or an elicitation answer) sets the count to
+    /// zero. When the count reaches this limit, the session holds new run mail
+    /// in its queue and starts no answer for it. The next user-type mail
+    /// carries the held mail into its submission, and the count starts again.
+    /// The mail is never lost. The session reports each hold with
     /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
     ///
     /// `0` holds all run mail for the next user-type mail. A negative value acts
@@ -230,9 +239,10 @@ public struct SessionConfiguration: Sendable {
         /// before the setting existed. A restore reads `nil` as the default.
         let repetitionDetection: RepetitionDetection?
 
-        /// The most answers in a row that mail alone starts, or `nil` in a
-        /// sidecar written before the setting existed. A restore reads `nil`
-        /// as ``SessionConfiguration/defaultMailOnlyAnswerLimit``.
+        /// The most answers that mail alone starts and that start a new
+        /// background run, or `nil` in a sidecar written before the setting
+        /// existed. A restore reads `nil` as
+        /// ``SessionConfiguration/defaultMailOnlyAnswerLimit``.
         let mailOnlyAnswerLimit: Int?
 
         /// How long a background call waits for its own run, in seconds, or

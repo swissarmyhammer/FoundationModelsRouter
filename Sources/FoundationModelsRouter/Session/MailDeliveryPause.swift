@@ -6,14 +6,16 @@ import Foundation
 /// Run mail causes the next submission of a session with no caller call
 /// (`generation-queue.md`, section 5.4). A model that starts one more
 /// background run in each answer thus gets one more answer for each run, with
-/// no end. When ``SessionConfiguration/mailOnlyAnswerLimit`` answers in a row
-/// had no user-type mail (a user message, an agent message or an elicitation
-/// answer), the session holds the new run mail in its queue. The next
+/// no end. When ``SessionConfiguration/mailOnlyAnswerLimit`` answers that only
+/// run mail started each started a new background run, with no user-type mail
+/// (a user message, an agent message or an elicitation answer) between them,
+/// the session holds the new run mail in its queue (task ^cgtxr00). The next
 /// user-type mail carries the held mail into its submission, and the count
 /// starts again. The mail is never lost.
 public struct MailDeliveryPause: Sendable, Equatable, CustomStringConvertible {
-    /// The limit in force: the most answers in a row that mail alone starts.
-    /// The session reached it when it held the mail.
+    /// The limit in force: the most answers that mail alone starts and that
+    /// start a new background run. The session reached it when it held the
+    /// mail.
     public let limit: Int
 
     /// The mail the session held, in queue order. The next user-type mail
@@ -35,7 +37,8 @@ public struct MailDeliveryPause: Sendable, Equatable, CustomStringConvertible {
     public var description: String {
         """
         the session held \(heldMail.count) mail events and started no answer for them: \
-        the answers in a row with no caller message reached the mailOnlyAnswerLimit of \(limit); \
+        the answers with no caller message that started a new background run \
+        reached the mailOnlyAnswerLimit of \(limit); \
         the next caller message carries the held mail
         """
     }

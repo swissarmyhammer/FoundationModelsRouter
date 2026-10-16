@@ -127,8 +127,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - grammar: The grammar that constrains the session, or `nil`.
     ///   - repetitionDetection: The settings of the repetition watch of the
     ///     session. See ``RepetitionDetection``.
-    ///   - mailOnlyAnswerLimit: The most answers in a row that mail alone
-    ///     starts. See ``SessionConfiguration/mailOnlyAnswerLimit``.
+    ///   - mailOnlyAnswerLimit: The most answers that mail alone starts and
+    ///     that start a new background run. See
+    ///     ``SessionConfiguration/mailOnlyAnswerLimit``.
     ///   - inlineSettleGrace: How long each background tool call waits for
     ///     its own run, in seconds. See
     ///     ``SessionConfiguration/inlineSettleGrace``.

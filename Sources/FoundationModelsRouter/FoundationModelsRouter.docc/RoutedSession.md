@@ -149,10 +149,13 @@ The session pushes settlement to the model — the model never polls:
 A model can start one more background run in each answer, for example to ask
 a status tool again after each result. Each settled run then starts one more
 answer, with no end. ``SessionConfiguration/mailOnlyAnswerLimit`` bounds that
-chain: when that many answers in a row had no user-type mail (a user message,
-an agent message or an elicitation answer), the session holds new run mail in
-its queue and starts no answer for it. The next user-type mail carries the
-held mail, so no mail is lost. The session reports each
+chain. The session counts each answer that only run mail started and that
+started a new background run: a run that is open at the end of the answer and
+was not open at its start. An answer to a message of a run that starts no new
+run keeps the count, and user-type mail (a user message, an agent message or
+an elicitation answer) sets it to zero. When the count reaches the limit, the
+session holds new run mail in its queue and starts no answer for it. The next
+user-type mail carries the held mail, so no mail is lost. The session reports each
 hold with ``SessionEvent/mailDeliveryPaused(_:)`` and a log line. The default,
 ``SessionConfiguration/defaultMailOnlyAnswerLimit``, is far past a normal
 chain.

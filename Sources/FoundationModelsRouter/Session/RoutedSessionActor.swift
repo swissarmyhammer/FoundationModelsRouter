@@ -597,9 +597,10 @@ actor RoutedSessionActor: RoutedSession {
     /// records it. See ``RepetitionDetection``.
     nonisolated let repetitionDetection: RepetitionDetection
 
-    /// The most answers in a row that mail alone starts, which this session
-    /// was vended, forked or restored with. A fork carries it forward, and
-    /// the sidecar records it. See ``SessionConfiguration/mailOnlyAnswerLimit``.
+    /// The most answers that mail alone starts and that start a new
+    /// background run, which this session was vended, forked or restored
+    /// with. A fork carries it forward, and the sidecar records it. See
+    /// ``SessionConfiguration/mailOnlyAnswerLimit``.
     nonisolated let mailOnlyAnswerLimit: Int
 
     /// How long each background tool call of this session waits for its own
@@ -629,9 +630,10 @@ actor RoutedSessionActor: RoutedSession {
     /// (``noteRealToolResult(_:)``).
     nonisolated let noOpRoundChanges = ChangeSignal()
 
-    /// How many answers in a row run mail alone started since the last
-    /// answer that delivered user-type mail. The pump counts it, and holds
-    /// new mail when it reaches ``mailOnlyAnswerLimit`` (``countAnswer()``).
+    /// How many answers that run mail alone started also started a new
+    /// background run, since the last answer that delivered user-type mail.
+    /// The pump counts it, and holds new mail when it reaches
+    /// ``mailOnlyAnswerLimit`` (``countAnswer(openRunsAtStart:)``).
     var mailOnlyAnswersInARow = 0
 
     /// The stall watch over the one model call in flight, or `nil` between
