@@ -24,22 +24,19 @@ struct MailOnlyAnswerCountTests {
 
     // MARK: - Constants
 
-    /// The limit each test session has: small, so a test runs few submissions.
-    private static let limit = 3
+    /// The prefix of the temporary directory of the router of each session.
+    private static let directoryPrefix = "MailOnlyAnswerCountTests"
 
     /// The prompt of the first caller message. Its answer attaches the outbox
     /// of the session, so later mail wakes the pump.
     private static let firstPrompt = "start the work"
 
-    /// The name of the background tool of each session.
-    private static let jobName = "build_job"
-
     /// The count of messages that one background run sends, far past
-    /// ``limit``.
+    /// ``MailOnlyAnswerFixtures/limit``.
     private static let messageCount = 10
 
     /// The count of mail-only answers in the test of runs that settle inside
-    /// their settle period, past ``limit``.
+    /// their settle period, past ``MailOnlyAnswerFixtures/limit``.
     private static let inlineAnswerCount = 5
 
     /// The settle period of the tool whose runs settle inside it. The run
@@ -51,42 +48,11 @@ struct MailOnlyAnswerCountTests {
     /// the messaging run, beside the answers of the messages.
     private static let callerAndTerminalPrompts = 2
 
-    /// The answers that start a run, up to the limit, beside the caller
-    /// answer.
-    private static let promptsOfOneChain = limit + 1
-
     /// The messaging run, beside the runs of the tool, in the settled runs of
     /// a session.
     private static let messagingRuns = 1
 
     // MARK: - Fixtures
-
-    /// Makes a session with ``limit`` and the one fixture tool `tool`, whose
-    /// backend calls `tool` in each call that `callsTool` names.
-    ///
-    /// - Parameters:
-    ///   - tool: The fixture tool of the session.
-    ///   - gates: The gates of the runs of `tool`.
-    ///   - callsTool: Whether the backend call with a one-based ordinal calls
-    ///     `tool`.
-    /// - Returns: The fixture.
-    /// - Throws: What the resolve of the profile throws.
-    private static func makeFixture(
-        tool: any Tool, gates: Fixtures.RunGates, callsTool: @escaping @Sendable (Int) -> Bool
-    ) async throws -> Fixtures.Session {
-        try await Fixtures.Session.make(
-            prefix: "MailOnlyAnswerCountTests", limit: limit, tool: tool, gates: gates, callsTool: callsTool)
-    }
-
-    /// Sends the first caller message, and waits until the pump ended its
-    /// answer.
-    ///
-    /// - Parameter fixture: The fixture of the session.
-    /// - Throws: What the answer throws.
-    private static func answerTheFirstPrompt(on fixture: Fixtures.Session) async throws {
-        _ = try await fixture.session.respond(to: firstPrompt)
-        #expect(await fixture.session.pumpEnds())
-    }
 
     /// The text of the message with a one-based ordinal.
     ///
@@ -114,11 +80,9 @@ struct MailOnlyAnswerCountTests {
     /// run. The fourth message then pauses the delivery.
     @Test("many messages of one background run start many mail-only answers that start no run, and none pauses")
     func manyMessagesOfOneRunDoNotPause() async throws {
-        let gates = Fixtures.RunGates()
-        let fixture = try await Self.makeFixture(
-            tool: Fixtures.GatedJob(name: Self.jobName, gates: gates), gates: gates, callsTool: { _ in false })
+        let fixture = try await Fixtures.Session.make(prefix: Self.directoryPrefix, callsTool: { _ in false })
         let messaging = await Fixtures.MessagingRun.start(on: fixture.session)
-        try await Self.answerTheFirstPrompt(on: fixture)
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         await Self.sendMessages(Self.messageCount, from: messaging)
         try await messaging.settle()
@@ -133,11 +97,12 @@ struct MailOnlyAnswerCountTests {
     /// answer. The fourth message then pauses the delivery.
     @Test("a run that settles inside its settle period does not count, so its mail-only answers do not pause")
     func aRunThatSettlesInsideTheAnswerDoesNotCount() async throws {
-        let gates = Fixtures.RunGates(opensEachGate: true)
-        let job = Fixtures.GatedJob(name: Self.jobName, gates: gates, settlePeriod: Self.neverEndingSettlePeriod)
-        let fixture = try await Self.makeFixture(tool: job, gates: gates, callsTool: { _ in true })
+        let fixture = try await Fixtures.Session.make(
+            prefix: Self.directoryPrefix, gates: Fixtures.RunGates(opensEachGate: true),
+            tool: { Fixtures.GatedJob(name: Fixtures.jobName, gates: $0, settlePeriod: Self.neverEndingSettlePeriod) },
+            callsTool: { _ in true })
         let messaging = await Fixtures.MessagingRun.start(on: fixture.session)
-        try await Self.answerTheFirstPrompt(on: fixture)
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         await Self.sendMessages(Self.inlineAnswerCount, from: messaging)
         try await messaging.settle()
@@ -161,18 +126,16 @@ struct MailOnlyAnswerCountTests {
         // Calls 2, 4 and 6 start a run: the answers of the first message and
         // of the terminals of the first two runs.
         let runStartingCalls: Set = [2, 4, 6]
-        let gates = Fixtures.RunGates()
-        let fixture = try await Self.makeFixture(
-            tool: Fixtures.GatedJob(name: Self.jobName, gates: gates), gates: gates,
-            callsTool: { runStartingCalls.contains($0) })
+        let fixture = try await Fixtures.Session.make(
+            prefix: Self.directoryPrefix, callsTool: { runStartingCalls.contains($0) })
         let messaging = await Fixtures.MessagingRun.start(on: fixture.session)
-        try await Self.answerTheFirstPrompt(on: fixture)
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         await messaging.send(Self.message(1))
         await messaging.send(Self.message(2))
-        try await fixture.settleTheOpenRun(of: Self.jobName)
+        try await fixture.settleTheOpenRun()
         await messaging.send(Self.message(3))
-        try await fixture.settleTheOpenRun(of: Self.jobName)
+        try await fixture.settleTheOpenRun()
         let pausingMessage = Self.message(4)
         await messaging.send(pausingMessage)
 
@@ -193,18 +156,19 @@ struct MailOnlyAnswerCountTests {
     /// the inner run that a tool body leaves open on its context.
     @Test("a tool body that leaves an inner background run open counts, so a chain of such answers pauses")
     func anInnerRunOfAToolBodyCounts() async throws {
-        let gates = Fixtures.RunGates()
-        let starter = Fixtures.InnerJobStarter(job: Fixtures.GatedJob(name: Self.jobName, gates: gates))
-        let fixture = try await Self.makeFixture(tool: starter, gates: gates, callsTool: { _ in true })
-        try await Self.answerTheFirstPrompt(on: fixture)
+        let fixture = try await Fixtures.Session.make(
+            prefix: Self.directoryPrefix,
+            tool: { Fixtures.InnerJobStarter(job: Fixtures.GatedJob(name: Fixtures.jobName, gates: $0)) },
+            callsTool: { _ in true })
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         // The run of the caller answer, then the run of each of the `limit`
         // answers that mail alone started. The bound holds the terminal of
         // the last run.
-        try await fixture.settleTheOpenRuns(Self.promptsOfOneChain, of: Self.jobName)
+        try await fixture.settleTheRunsOfOneChain()
 
         try await fixture.waitForPauses(1)
-        #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
+        #expect(fixture.backend.prompts.count == Fixtures.promptsOfOneChain)
         let held = await fixture.waitingMail()
         #expect(held.allSatisfy { $0.isHeld })
         #expect(held.contains { $0.event.kind == .completed && $0.event.detail.contains(Fixtures.GatedJob.output) })

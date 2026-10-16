@@ -28,12 +28,8 @@ struct MailOnlyAnswerLimitTests {
 
     // MARK: - Constants
 
-    /// The limit each test session has: small, so a test runs few submissions.
-    private static let limit = 3
-
-    /// The prompts of one chain: the caller answer, then `limit` answers that
-    /// mail alone started.
-    private static let promptsOfOneChain = limit + 1
+    /// The prefix of the temporary directory of the router of each session.
+    private static let directoryPrefix = "MailOnlyAnswerLimitTests"
 
     /// The prompt of the first caller message, which starts the chain.
     private static let firstPrompt = "start the status checks"
@@ -41,74 +37,30 @@ struct MailOnlyAnswerLimitTests {
     /// The prompt of the caller message after the chain stopped.
     private static let nextPrompt = "what is the status now"
 
-    /// The name of the background tool of each session.
-    private static let jobName = "status_check"
-
-    // MARK: - Fixtures
-
-    /// Makes a session with `limit`, over a backend that starts a run in each
-    /// call that `callsTool` names, and watches its events.
-    ///
-    /// - Parameters:
-    ///   - limit: The ``SessionConfiguration/mailOnlyAnswerLimit`` of the session.
-    ///   - callsTool: Whether the backend call with a one-based ordinal starts
-    ///     a run.
-    /// - Returns: The fixture.
-    /// - Throws: What the resolve of the profile throws.
-    private static func makeFixture(
-        limit: Int = Self.limit, callsTool: @escaping @Sendable (Int) -> Bool
-    ) async throws -> Fixtures.Session {
-        let gates = Fixtures.RunGates()
-        return try await Fixtures.Session.make(
-            prefix: "MailOnlyAnswerLimitTests", limit: limit, tool: Fixtures.GatedJob(name: jobName, gates: gates),
-            gates: gates, callsTool: callsTool)
-    }
-
     /// Whether the backend call with a one-based ordinal starts a run: each
     /// call does.
     private static let everyCall: @Sendable (Int) -> Bool = { _ in true }
-
-    /// Sends the first caller message, and waits until the pump ended its
-    /// answer. That answer starts the first run.
-    ///
-    /// - Parameter fixture: The fixture of the session.
-    /// - Throws: What the answer throws.
-    private static func startTheChain(on fixture: Fixtures.Session) async throws {
-        _ = try await fixture.session.respond(to: firstPrompt)
-        #expect(await fixture.session.pumpEnds())
-    }
-
-    /// Settles the runs of one whole chain, one after the other: the run of
-    /// the caller answer, then the run of each of the `limit` answers that
-    /// mail alone started. The bound holds the terminal of the last run.
-    ///
-    /// - Parameter fixture: The fixture of the session.
-    /// - Throws: What ``MailOnlyAnswerFixtures/Session/settleTheOpenRun(of:)``
-    ///   throws.
-    private static func settleTheRunsOfOneChain(on fixture: Fixtures.Session) async throws {
-        try await fixture.settleTheOpenRuns(promptsOfOneChain, of: jobName)
-    }
 
     // MARK: - The bound
 
     @Test("an endless chain of mail-only answers stops at the limit, and the session sends the pause event")
     func anEndlessChainStopsAtTheLimit() async throws {
-        let fixture = try await Self.makeFixture(callsTool: Self.everyCall)
-        try await Self.startTheChain(on: fixture)
+        let fixture = try await Fixtures.Session.make(prefix: Self.directoryPrefix, callsTool: Self.everyCall)
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         // The caller answer, then `limit` answers that mail alone started.
         // Each of them started a run that was still open when it ended.
-        try await Self.settleTheRunsOfOneChain(on: fixture)
+        try await fixture.settleTheRunsOfOneChain()
 
         try await fixture.waitForPauses(1)
-        #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
+        #expect(fixture.backend.prompts.count == Fixtures.promptsOfOneChain)
         // The mail of the last run waits, held: its progress report and its
         // terminal.
         let held = await fixture.waitingMail()
         #expect(held.filter { $0.event.kind == .completed }.count == 1)
         #expect(held.allSatisfy { $0.isHeld })
         let pause = try #require(await fixture.events.events.mailDeliveryPauses.first)
-        #expect(pause == MailDeliveryPause(limit: Self.limit, heldMail: held.map(\.event)))
+        #expect(pause == MailDeliveryPause(limit: Fixtures.limit, heldMail: held.map(\.event)))
         #expect(await fixture.end().mailDeliveryPauses.count == 1)
     }
 
@@ -116,15 +68,16 @@ struct MailOnlyAnswerLimitTests {
     func theHeldMailRidesTheNextCallerMessage() async throws {
         // The last run starts in the last answer that mail started, so the
         // bound holds its mail, and the next caller answer starts no run.
-        let fixture = try await Self.makeFixture(callsTool: { $0 <= Self.promptsOfOneChain })
-        try await Self.startTheChain(on: fixture)
-        try await Self.settleTheRunsOfOneChain(on: fixture)
+        let fixture = try await Fixtures.Session.make(
+            prefix: Self.directoryPrefix, callsTool: { $0 <= Fixtures.promptsOfOneChain })
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
+        try await fixture.settleTheRunsOfOneChain()
         try await fixture.waitForPauses(1)
         let held = try #require(await fixture.waitingMail().first { $0.event.kind == .completed })
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
 
-        let nextCallerPrompt = try #require(fixture.backend.prompts.dropFirst(Self.promptsOfOneChain).first)
+        let nextCallerPrompt = try #require(fixture.backend.prompts.dropFirst(Fixtures.promptsOfOneChain).first)
         #expect(nextCallerPrompt.contains(OperationEventSegment.renderedLine(for: held.event)))
         #expect(nextCallerPrompt.hasSuffix(Self.nextPrompt))
         #expect(await fixture.waitingMail().isEmpty)
@@ -133,34 +86,34 @@ struct MailOnlyAnswerLimitTests {
 
     @Test("a caller message starts the count again, so mail again starts answers up to the limit")
     func aCallerMessageStartsTheCountAgain() async throws {
-        let fixture = try await Self.makeFixture(callsTool: Self.everyCall)
-        try await Self.startTheChain(on: fixture)
-        try await Self.settleTheRunsOfOneChain(on: fixture)
+        let fixture = try await Fixtures.Session.make(prefix: Self.directoryPrefix, callsTool: Self.everyCall)
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
+        try await fixture.settleTheRunsOfOneChain()
         try await fixture.waitForPauses(1)
 
         // The caller message carries the held mail, and its answer starts one
         // more run. User-type mail sets the count to zero.
-        _ = try await fixture.session.respond(to: Self.nextPrompt)
-        #expect(await fixture.session.pumpEnds())
-        try await Self.settleTheRunsOfOneChain(on: fixture)
+        try await fixture.answerCallerPrompt(Self.nextPrompt)
+        try await fixture.settleTheRunsOfOneChain()
 
         // The second chain pauses too: one pause for each chain.
         let pausesOfTwoChains = 2
         try await fixture.waitForPauses(pausesOfTwoChains)
-        #expect(fixture.backend.prompts.count == Self.promptsOfOneChain + Self.promptsOfOneChain)
+        #expect(fixture.backend.prompts.count == Fixtures.promptsOfOneChain + Fixtures.promptsOfOneChain)
         #expect(await fixture.end().mailDeliveryPauses.count == pausesOfTwoChains)
     }
 
     @Test("a chain of `limit` mail-only answers whose last answer starts no run runs whole with no pause")
     func aChainUpToTheLimitRunsWhole() async throws {
-        let fixture = try await Self.makeFixture(callsTool: { $0 <= Self.limit })
-        try await Self.startTheChain(on: fixture)
+        let fixture = try await Fixtures.Session.make(
+            prefix: Self.directoryPrefix, callsTool: { $0 <= Fixtures.limit })
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         // Each of the first `limit` calls started a run, and the mail of each
         // run started one more answer. The last answer started no run.
-        try await fixture.settleTheOpenRuns(Self.limit, of: Self.jobName)
+        try await fixture.settleTheOpenRuns(Fixtures.limit)
 
-        #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
+        #expect(fixture.backend.prompts.count == Fixtures.promptsOfOneChain)
         #expect(await fixture.waitingMail().isEmpty)
         // Only the pump sends a pause, and the pump ended. The close then
         // finishes the feed after each event that the pump sent, so a pause
@@ -171,10 +124,11 @@ struct MailOnlyAnswerLimitTests {
 
     @Test("a limit of zero holds all mail for the next caller message")
     func aLimitOfZeroHoldsAllMail() async throws {
-        let fixture = try await Self.makeFixture(limit: 0, callsTool: Self.everyCall)
-        try await Self.startTheChain(on: fixture)
+        let fixture = try await Fixtures.Session.make(
+            prefix: Self.directoryPrefix, limit: 0, callsTool: Self.everyCall)
+        try await fixture.answerCallerPrompt(Self.firstPrompt)
 
-        try await fixture.settleTheOpenRun(of: Self.jobName)
+        try await fixture.settleTheOpenRun()
 
         try await fixture.waitForPauses(1)
         #expect(fixture.backend.prompts == [Self.firstPrompt])
@@ -193,10 +147,10 @@ struct MailOnlyAnswerLimitTests {
 
     @Test("the sidecar form of a configuration keeps the limit")
     func thePersistableFormKeepsTheLimit() throws {
-        let persistable = SessionConfiguration(mailOnlyAnswerLimit: Self.limit).persistable
+        let persistable = SessionConfiguration(mailOnlyAnswerLimit: Fixtures.limit).persistable
         let decoded = try JSONDecoder().decode(
             SessionConfiguration.Persistable.self, from: JSONEncoder().encode(persistable))
-        #expect(decoded.mailOnlyAnswerLimit == Self.limit)
+        #expect(decoded.mailOnlyAnswerLimit == Fixtures.limit)
     }
 
     @Test("a sidecar written before the limit existed decodes with no limit, which a restore reads as the default")

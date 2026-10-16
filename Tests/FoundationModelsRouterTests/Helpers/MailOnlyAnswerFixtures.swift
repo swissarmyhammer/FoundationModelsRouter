@@ -22,6 +22,18 @@ enum MailOnlyAnswerFixtures {
     /// ``ToolContext``. A mounted tool body always has one.
     struct MissingToolContext: Error {}
 
+    // MARK: - Constants
+
+    /// The limit each test session has: small, so a test runs few submissions.
+    static let limit = 3
+
+    /// The prompts of one chain: the caller answer, then ``limit`` answers
+    /// that mail alone started, each of which started a new background run.
+    static let promptsOfOneChain = limit + 1
+
+    /// The name of the ``GatedJob`` of each session.
+    static let jobName = "gated_job"
+
     // MARK: - Gates
 
     /// The gates of the background runs of the ``GatedJob`` tools of one
@@ -258,24 +270,29 @@ enum MailOnlyAnswerFixtures {
         /// The temporary directory the router caches under.
         let directory: URL
 
-        /// Makes a session with `limit` and the one fixture tool `tool`, and
-        /// watches its events. The run plane of the session has a manual
-        /// clock, so no settle period ends.
+        /// Makes a session with `limit` and the one fixture tool that `tool`
+        /// makes, and watches its events. The run plane of the session has a
+        /// manual clock, so no settle period ends.
         ///
         /// - Parameters:
         ///   - prefix: The prefix of the temporary directory of the router.
         ///   - limit: The ``SessionConfiguration/mailOnlyAnswerLimit`` of the
-        ///     session.
-        ///   - tool: The fixture tool of the session.
-        ///   - gates: The gates of the runs of `tool`.
+        ///     session. The default is ``MailOnlyAnswerFixtures/limit``.
+        ///   - gates: The gates of the runs of the fixture tool. The default
+        ///     holds each run until the test settles it.
+        ///   - tool: Makes the fixture tool of the session over `gates`. The
+        ///     default makes a ``GatedJob`` with the name
+        ///     ``MailOnlyAnswerFixtures/jobName``.
         ///   - callsTool: Whether the backend call with a one-based ordinal
-        ///     calls `tool`.
+        ///     calls the fixture tool.
         /// - Returns: The fixture.
         /// - Throws: What the resolve of the profile throws.
         static func make(
-            prefix: String, limit: Int, tool: any Tool, gates: RunGates,
+            prefix: String, limit: Int = MailOnlyAnswerFixtures.limit, gates: RunGates = RunGates(),
+            tool: (RunGates) -> any Tool = { GatedJob(name: MailOnlyAnswerFixtures.jobName, gates: $0) },
             callsTool: @escaping @Sendable (Int) -> Bool
         ) async throws -> Self {
+            let tool = tool(gates)
             let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
             let container = Container(callsTool: callsTool)
             let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
@@ -289,15 +306,27 @@ enum MailOnlyAnswerFixtures {
                 directory: directory)
         }
 
+        /// Sends `prompt` as a caller message, and waits until the pump ended
+        /// its answer. The answer of the first caller message attaches the
+        /// outbox of the session, so later mail wakes the pump.
+        ///
+        /// - Parameter prompt: The prompt of the caller message.
+        /// - Throws: What the answer throws.
+        func answerCallerPrompt(_ prompt: String) async throws {
+            _ = try await session.respond(to: prompt)
+            #expect(await session.pumpEnds())
+        }
+
         /// Settles the one open run of the tool `name`, and waits until the
         /// pump handled its terminal: an answer delivered it, or the bound
         /// held it.
         ///
-        /// - Parameter name: The name of the tool of the run.
+        /// - Parameter name: The name of the tool of the run. The default is
+        ///   ``MailOnlyAnswerFixtures/jobName``.
         /// - Throws: When the run plane does not hold exactly one open run of
         ///   `name`, or ``ConditionNeverHeld`` when the test task was
         ///   cancelled first.
-        func settleTheOpenRun(of name: String) async throws {
+        func settleTheOpenRun(of name: String = MailOnlyAnswerFixtures.jobName) async throws {
             let runs = await session.runPlane.backgroundRuns().filter { $0.tool == name }
             try #require(runs.count == 1, "exactly one run of \(name) must be open")
             let token = try #require(runs.first).completionToken
@@ -336,12 +365,23 @@ enum MailOnlyAnswerFixtures {
         ///
         /// - Parameters:
         ///   - count: How many runs to settle.
-        ///   - name: The name of the tool of the runs.
+        ///   - name: The name of the tool of the runs. The default is
+        ///     ``MailOnlyAnswerFixtures/jobName``.
         /// - Throws: What ``settleTheOpenRun(of:)`` throws.
-        func settleTheOpenRuns(_ count: Int, of name: String) async throws {
+        func settleTheOpenRuns(_ count: Int, of name: String = MailOnlyAnswerFixtures.jobName) async throws {
             for _ in 0..<count {
                 try await settleTheOpenRun(of: name)
             }
+        }
+
+        /// Settles the runs of one whole chain, one after the other: the run
+        /// of the caller answer, then the run of each of the
+        /// ``MailOnlyAnswerFixtures/limit`` answers that mail alone started.
+        /// The bound holds the terminal of the last run.
+        ///
+        /// - Throws: What ``settleTheOpenRun(of:)`` throws.
+        func settleTheRunsOfOneChain() async throws {
+            try await settleTheOpenRuns(MailOnlyAnswerFixtures.promptsOfOneChain)
         }
 
         /// Waits until the session sent `count` pause events or more. A test
