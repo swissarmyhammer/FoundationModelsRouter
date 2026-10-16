@@ -102,8 +102,8 @@ struct StoppedAnswerOtherWorkEventTests {
         /// - Returns: Each output of the feed after the `signalDone` of the
         ///   stop, in order.
         mutating func outputsToTheEnd() async -> [SessionOutput] {
-            await fixture.end(opening: [cancelerHold.release, otherRun.gate, ownRun.gate, answerGate])
-            return await SessionWorkEventTests.remainingOutputs(of: &feed)
+            await fixture.outputsToTheEnd(
+                of: &feed, opening: [cancelerHold.release, otherRun.gate, ownRun.gate, answerGate])
         }
     }
 

@@ -71,4 +71,18 @@ struct BackgroundingSessionFixture: Sendable {
         await SessionFixtureLifecycle.end(
             SessionFixtureLifecycle.Started(session: session, router: router, directory: directory), opening: gates)
     }
+
+    /// Ends the fixture with ``end(opening:)`` and then reads `feed` to its
+    /// end. The close of the session finishes the feed.
+    ///
+    /// - Parameters:
+    ///   - feed: The iterator of a feed of the session.
+    ///   - gates: The gates of the runs of the session.
+    /// - Returns: Each output that `feed` did not give yet, in order.
+    func outputsToTheEnd(
+        of feed: inout AsyncStream<SessionOutput>.Iterator, opening gates: [RunLatch]
+    ) async -> [SessionOutput] {
+        await end(opening: gates)
+        return await SessionWorkEventTests.remainingOutputs(of: &feed)
+    }
 }

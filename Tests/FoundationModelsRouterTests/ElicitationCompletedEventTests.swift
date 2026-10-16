@@ -88,8 +88,7 @@ struct ElicitationCompletedEventTests {
         ///
         /// - Returns: Each output of the feed, in order.
         mutating func outputsToTheEnd() async -> [SessionOutput] {
-            await fixture.end(opening: [runGate, answerGate].compactMap { $0 })
-            return await SessionWorkEventTests.remainingOutputs(of: &feed)
+            await fixture.outputsToTheEnd(of: &feed, opening: [runGate, answerGate].compactMap { $0 })
         }
     }
 

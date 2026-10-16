@@ -29,6 +29,31 @@ comments:
     - Discovery: the sweep of `cancelAll()` journals the swept terminals with the origin of the signal, so a swept runSettled was dropped too while the stopped answer ran. The same route fixes it.
     - next: review.
   timestamp: 2026-10-16T04:45:56.946250+00:00
+- actor: claude-code
+  id: 01m51gwx02gk0nkmp7pdc162qe
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (50d8ab0e): 1 finding, 1 confirmed, 0 refuted — Tests/FoundationModelsRouterTests/StoppedAnswerOtherWorkEventTests.swift:104 (reuse/reuse)
+    - next: implement the open item in the Review Findings section. The task stays in review.
+  timestamp: 2026-10-16T04:53:03.106890+00:00
+- actor: claude-code
+  id: 01m51gxcqhr6kw9pj9420n22mr
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files
+    - test: green — swift test, 1766 tests in 214 suites passed (1 known issue: the tripwire test); IntegrationTests build complete
+    - commit: 50d8ab0e
+    - review: findings — StoppedAnswerOtherWorkEventTests.swift:104
+  timestamp: 2026-10-16T04:53:19.217293+00:00
+- actor: claude-code
+  id: 01m51h5w438asbgetysnwh465d
+  text: |-
+    Review finding reuse/reuse (StoppedAnswer.outputsToTheEnd): added `BackgroundingSessionFixture.outputsToTheEnd(of:opening:)` in Tests/FoundationModelsRouterTests/Helpers/BackgroundingSessionFixture.swift. It calls `end(opening:)` and then `SessionWorkEventTests.remainingOutputs(of:)`. StoppedAnswer (StoppedAnswerOtherWorkEventTests) and AskedQuestion (ElicitationCompletedEventTests) now call it with their gate lists. rg found no other copy of end(opening:) followed by remainingOutputs in Tests/ or IntegrationTests/. The `session.close()` then `remainingOutputs` sites (ElicitationEndedEventTests, SessionWorkEventTests, SessionUserPresenceTests, ElicitationCompletedEventTests close tests) are a different shape: they close without the open of the gates and without the end of the fixture, and they check state before the gates open. Thus they stay as they are; a change there changes the order of the test.
+
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/BackgroundingSessionFixture.swift, Tests/FoundationModelsRouterTests/StoppedAnswerOtherWorkEventTests.swift, Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift; `swift test` one run: 1766 tests in 214 suites passed (1 known issue, expected), plus 26 and 19; IntegrationTests `swift build --build-tests --manifest-cache local` Build complete, no compiler warnings.
+    - next: review
+  timestamp: 2026-10-16T04:57:57.123840+00:00
 position_column: doing
 position_ordinal: '80'
 title: Live events of other work are dropped while the answer that cancelAll() stopped winds down
@@ -47,3 +72,12 @@ A host then misses, for example, the question of a background run that asks whil
 - [x] Fixed-order red test: a background run posts a live event (for example elicitationRequested, or runSettled) after cancelAll() stopped an answer that is held open, before that answer ends. Expect the event on the feed.
 - [x] Fix: decide the route of a live event of other work while the open answer is silenced (for example the same rule as `deliverQuestionPost(_:origin:)`), and keep the drop of the output of the stopped answer itself.
 - [x] One full run. #defect
+
+## Review Findings (2026-10-15 23:46)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/StoppedAnswerOtherWorkEventTests.swift:104` `reuse/reuse` — StoppedAnswer.outputsToTheEnd() repeats the close-then-read-to-end helper that already exists in another test file. The new copy only differs in which gates it opens, so it is a near-match that was not generalized into a shared helper. Move the shared shape into one helper that takes the gates as a parameter, for example in Tests/FoundationModelsRouterTests/Helpers/, and have both StoppedAnswer and AskedQuestion call it. If the two differ in more than the gate list, keep the separate copy and note why in a comment.
