@@ -21,7 +21,11 @@ import Tracing
 ///   ``Origin/mail(_:)`` with the id of its run mail (``RunEventOrigin``). A
 ///   posted run terminal (``OperationEventKind/completed``) or run message
 ///   (``OperationEventKind/message``) tells the attached
-///   ``SessionMailObserver``, so the pump can deliver it.
+///   ``SessionMailObserver``, so the pump can deliver it. A question that a
+///   ``SubagentQuestionRelay`` sent up from a subagent
+///   (``ElicitationRequest/isRelayed``) makes no mail: only the level whose
+///   own run asked a question puts it in the prompt of its model. The journal
+///   still records it.
 /// - User-type mail: the mail of ``RoutedSession/mail(_:)``, and of each
 ///   helper on top of it. The session puts it into the queue itself.
 ///
@@ -369,6 +373,10 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     private func stage(event: OperationEvent, as id: MailID) -> MailID? {
         // A stopped run makes no mail; the journal still records the event.
         guard !ignoredRuns.withLock({ $0.tokens.contains(event.correlationID) }) else { return nil }
+        // A question that a relay sent up from a child makes no mail: only
+        // the level whose own run asked the question puts it in the prompt of
+        // its model. The journal still records the event.
+        guard event.elicitation?.isRelayed != true else { return nil }
         if event.kind == .progress,
             let older = queue.pending.first(where: { $0.runEvent.map { Self.progress(event, replaces: $0) } ?? false }),
             queue.replace(older.id, with: .runEvent(event))

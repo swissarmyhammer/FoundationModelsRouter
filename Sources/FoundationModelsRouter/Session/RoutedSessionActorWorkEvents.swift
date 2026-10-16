@@ -116,6 +116,11 @@ struct AskedQuestions: Sendable {
         /// URL-mode question.
         let requestedSchema: ElicitationRequestedSchema?
 
+        /// Whether a ``SubagentQuestionRelay`` sent the question up from a
+        /// child (``ElicitationRequest/isRelayed``). An answer to it gives no
+        /// answer mail to this session.
+        let isRelayed: Bool
+
         /// Whether the question is a URL-mode question: its completion gives
         /// ``SessionEvent/elicitationCompleted(_:)``.
         var takesCompletion: Bool {
@@ -140,7 +145,19 @@ struct AskedQuestions: Sendable {
     mutating func noteAsked(_ request: ElicitationRequest, mailID: MailID?) {
         let isForm = request.mode == .form
         questions[request.elicitationId] = Question(
-            state: isForm ? .form : .url, mailID: mailID, requestedSchema: isForm ? request.requestedSchema : nil)
+            state: isForm ? .form : .url, mailID: mailID, requestedSchema: isForm ? request.requestedSchema : nil,
+            isRelayed: request.isRelayed)
+    }
+
+    /// Whether the recorded question `id` is a question that a
+    /// ``SubagentQuestionRelay`` sent up from a child. Only the level whose
+    /// own run asked a question mails the answer to its model.
+    ///
+    /// - Parameter id: The id of a question.
+    /// - Returns: `true` when the record holds the question and a relay sent
+    ///   it up.
+    func isRelayed(_ id: ULID) -> Bool {
+        questions[id]?.isRelayed ?? false
     }
 
     /// Takes the URL-mode question `id` out of the record, because the run
@@ -385,6 +402,10 @@ extension RoutedSessionActor {
     /// ``askedQuestions``). The question mail starts no answer, so no end of
     /// the pump reports this change.
     ///
+    /// A question that a ``SubagentQuestionRelay`` sent up is now recorded,
+    /// so the relay can read the next event of its child
+    /// (``awaitRelayedQuestionRecorded(_:)``).
+    ///
     /// - Parameters:
     ///   - event: The `.elicitation` event that the journal recorded.
     ///   - mailID: The id of the run mail that holds the question, or `nil`
@@ -392,6 +413,9 @@ extension RoutedSessionActor {
     func noteQuestionAsked(_ event: OperationEvent, mailID: MailID?) async {
         if let request = event.elicitation {
             askedQuestions.noteAsked(request, mailID: mailID)
+            if relayedQuestions.noteRecorded(request.elicitationId) {
+                relayChanges.signal()
+            }
         }
         await workDidChange()
     }

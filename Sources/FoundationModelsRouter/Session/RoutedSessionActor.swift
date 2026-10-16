@@ -472,6 +472,21 @@ actor RoutedSessionActor: RoutedSession {
     /// ``AskedQuestions``.
     var askedQuestions = AskedQuestions()
 
+    /// The questions that the relays of subagents sent up to the runs of
+    /// this session, and the work state of the child of each relay. See
+    /// ``RelayedQuestions``.
+    var relayedQuestions = RelayedQuestions()
+
+    /// The child session of each open relay, by the id of the relay. A
+    /// relaying level sends a URL accept of the user down to it at once
+    /// (``respond(elicitationId:response:)``).
+    var relayChildren: [ULID: any RoutedSession] = [:]
+
+    /// Wakes each relay that waits until the journal of this session
+    /// recorded a question that the relay sent up, or until the task of that
+    /// question settled (``awaitRelayedQuestionRecorded(_:)``).
+    nonisolated let relayChanges = ChangeSignal()
+
     /// The task of the compaction that runs now, or `nil`. Only the
     /// compaction handler (``performCompaction(_:_:)``) sets it, and only
     /// ``close()`` cancels it (``cancelActiveCompaction()``).
@@ -913,5 +928,17 @@ actor RoutedSessionActor: RoutedSession {
             ).persistable,
             to: recordingDirectory
         )
+    }
+
+    /// See ``RoutedSession/openElicitationIds()``. The open questions of
+    /// ``runPlane`` whose ``SessionEvent/elicitationRequested(_:)`` went out:
+    /// the journal recorded them (``AskedQuestions/wasAsked(_:)``). A question
+    /// whose completion post or end post is in progress is not open in the
+    /// run plane, so it is not in the list.
+    ///
+    /// - Returns: The ids, in the order the questions came.
+    func openElicitationIds() async -> [String] {
+        let open = await runPlane.openElicitations()
+        return open.filter { askedQuestions.wasAsked($0.elicitationId) }.map(\.elicitationId.description)
     }
 }

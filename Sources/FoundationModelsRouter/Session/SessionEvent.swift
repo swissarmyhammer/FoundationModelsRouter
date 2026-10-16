@@ -305,6 +305,17 @@ public enum SessionEvent: Sendable, Equatable {
     /// elicitation that arrives after the session closed, makes no run mail:
     /// its origin is the origin of the work that posted it.
     ///
+    /// A question of a subagent that a ``SubagentQuestionRelay`` sent up to a
+    /// run of this session also comes as this event. Its `elicitationId` is
+    /// the id that the run that asked gave, at each level. Its `tool`, `op`
+    /// and `correlationID` are those of the run of this session that drives
+    /// the subagent. `ElicitationRequest.agentPath` names the agents from this
+    /// level to the agent that asked, and `ElicitationRequest.source` names
+    /// the tool that asked. Such a question makes no run mail, so the model of
+    /// this session does not see it: only the level whose own run asked a
+    /// question puts it in the prompt of its model. Its origin is
+    /// ``Origin/system``.
+    ///
     /// Known limit: an elicitation posted through
     /// `ToolContext.mount(_:op:as:postingTo:)` with a sink that does not
     /// forward to the session's outbox never reaches the session's journal,
@@ -361,7 +372,10 @@ public enum SessionEvent: Sendable, Equatable {
     /// are the rules of ``RoutedSession/awaitIdle()``: an open background
     /// run, pump work that runs or waits, or queued run mail that can start
     /// an answer by itself. A background run that waits only for the user
-    /// (an open question of ``elicitationRequested(_:)``) is no work.
+    /// (an open question of ``elicitationRequested(_:)``) is no work, unless
+    /// a subagent that the run drives works: the ``SubagentQuestionRelay`` of
+    /// the run reads the work events of the subagent, and the run is work
+    /// while the subagent works.
     ///
     /// The event comes before each output of the new work. Its origin
     /// (``SessionOutput/origin``) is ``Origin/system``, and only
@@ -416,6 +430,13 @@ public enum SessionEvent: Sendable, Equatable {
     ///   ``signalDone(_:)`` of that signal.
     /// - ``RoutedSession/close()``: ``Origin/system``. The event comes
     ///   before the end of ``RoutedSession/streamSessionEvents()``.
+    /// - An end that comes up from a subagent (``SubagentQuestionRelay``):
+    ///   ``Origin/system``. The event comes before the ``runSettled(_:)`` of
+    ///   the run that drives the subagent.
+    ///
+    /// A question that a ``SubagentQuestionRelay`` sent up ends one time at
+    /// each level, with the same response: an end at one level goes up to
+    /// each parent and down to each child.
     ///
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of
     /// the answer when the question ends inside an answer.
@@ -441,7 +462,9 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// The origin (``SessionOutput/origin``) is ``Origin/mail(_:)`` with the
     /// ``MailID`` of the run mail that holds the question, as the
-    /// ``elicitationRequested(_:)`` of the question. When the session had no
+    /// ``elicitationRequested(_:)`` of the question. A question with no run
+    /// mail, for example a question that a ``SubagentQuestionRelay`` sent up,
+    /// has the origin of the work that completed it. When the session had no
     /// work, ``workStarted`` comes before this event. The run resumes only
     /// after the session got the completion, so this event comes before each
     /// event of the resumed run.

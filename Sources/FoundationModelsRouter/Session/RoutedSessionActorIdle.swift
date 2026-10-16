@@ -173,7 +173,12 @@ extension RoutedSessionActor {
     /// An open run is no work only when it waits only for the user and the
     /// journal recorded one of its open questions (``askedQuestions``): the
     /// question is then on the output, so a work-end event never comes
-    /// before the question that ends the work.
+    /// before the question that ends the work. A run that drives a subagent
+    /// is still work while the child of a relay of that run works
+    /// (``RelayedQuestions/runTokensWithWorkingChild``): the run of the child
+    /// waits for the user, but the child can still ask, answer or end its own
+    /// run. Such a run that has other work besides counts as no work, as
+    /// `RunPlane.runsWaitingOnlyForUser()` does.
     ///
     /// - Parameters:
     ///   - workId: The ``lastWorkId`` of the first read.
@@ -182,7 +187,8 @@ extension RoutedSessionActor {
     func isIdle(startedAt workId: UInt64, reading reads: IdleReads) -> Bool {
         guard hasNoPumpWork, lastWorkId == workId else { return false }
         let userWaitRunTokens = Set(
-            reads.openQuestions.filter { askedQuestions.wasAsked($0.elicitationId) }.map(\.runToken))
+            reads.openQuestions.filter { askedQuestions.wasAsked($0.elicitationId) }.map(\.runToken)
+        ).subtracting(relayedQuestions.runTokensWithWorkingChild)
         return reads.openRuns.allSatisfy { userWaitRunTokens.contains($0.completionToken) }
             && !SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)
     }

@@ -866,7 +866,8 @@ extension RoutedSessionActor {
                 repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) }),
             context: ambientToolContext,
             serviceContext: submissionServiceContext,
-            origin: origin)
+            origin: origin,
+            session: self)
         let observer = generationPassObserver
         let metrics = sessionMetrics
         let modelCall = Task {
@@ -901,7 +902,9 @@ extension RoutedSessionActor {
     /// ``SessionOwnWork`` of the session of `context` is one more: each tool
     /// body of the call, and each run body that a tool body starts, is the
     /// own work of that session, so ``close()`` from it does not wait for
-    /// itself.
+    /// itself. The session itself is one more
+    /// (``SubagentQuestionHost/session``): a tool body or a run body that
+    /// drives a subagent reads it through ``SubagentQuestionTarget/current``.
     ///
     /// - Parameters:
     ///   - body: The model work: one whole SDK call.
@@ -914,6 +917,7 @@ extension RoutedSessionActor {
     ///     (``submissionServiceContext``), or `nil`.
     ///   - origin: The origin of the work that makes the call
     ///     (``OriginContext/current``).
+    ///   - session: The session that submits the call.
     /// - Returns: The submission.
     private static func submission(
         of body: @escaping @Sendable (String) async throws -> String,
@@ -923,7 +927,8 @@ extension RoutedSessionActor {
         checks: ModelCallToolChecks,
         context: ToolContext,
         serviceContext: ServiceContext?,
-        origin: Origin
+        origin: Origin,
+        session: RoutedSessionActor
     ) -> @Sendable () async throws -> String {
         {
             try await OriginContext.$current.withValue(origin) {
@@ -933,7 +938,9 @@ extension RoutedSessionActor {
                             try await checks.bound {
                                 try await ToolContext.$current.withValue(context) {
                                     try await SessionOwnWork.run(as: context.sessionID) {
-                                        try await body(composedPrompt)
+                                        try await SubagentQuestionHost.$session.withValue(session) {
+                                            try await body(composedPrompt)
+                                        }
                                     }
                                 }
                             }

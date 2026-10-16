@@ -592,7 +592,11 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// 1. No background run is open, except a run that waits only for the
     ///    user: a run whose question (``SessionEvent/elicitationRequested(_:)``)
     ///    is open. Only the user can move that run, so it is no work. Its
-    ///    result still comes to the model later.
+    ///    result still comes to the model later. A run that drives a
+    ///    subagent through a ``SubagentQuestionRelay`` is work while the
+    ///    subagent works, also when the run has an open question. So a
+    ///    session whose subagents wait only for the user is idle, level by
+    ///    level up to the root.
     /// 2. No pump work runs or waits: no answer, no requested compaction
     ///    that waits or runs, no end of all work of ``close()``, and no
     ///    user-type mail in the queue.
@@ -749,6 +753,11 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``ElicitationRequestedSchema/invalidAnswerReasonPrefix`` followed by
     /// the failure.
     ///
+    /// A question that a ``SubagentQuestionRelay`` sent up from a subagent
+    /// gives no answer mail to this session: the answer goes down to the
+    /// subagent, and only the level whose own run asked the question gets the
+    /// mail. A URL-mode accept of such a question goes down at once.
+    ///
     /// - Parameter elicitationId: The pending elicitation's id, the string form of ``ElicitationRequest/elicitationId``.
     @discardableResult
     func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery
@@ -759,6 +768,22 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ended with no answer of the client (``SessionEvent/elicitationEnded(_:)``).
     @discardableResult
     func complete(elicitationId: String) async -> ElicitationCompletionDelivery
+
+    /// The ids of the questions of this session that are open now: their
+    /// ``SessionEvent/elicitationRequested(_:)`` went out, and no answer that
+    /// resumed the run, no completion and no end came yet. A URL-mode
+    /// question that the user accepted is open until its completion. A
+    /// question that a ``SubagentQuestionRelay`` sent up to this session
+    /// counts, the same as a question of a run of this session.
+    ///
+    /// An owner of a subagent reads it to know whether the subagent waits for
+    /// the user: a session with no work (``awaitIdle()``) and one or more open
+    /// questions waits only for external input.
+    ///
+    /// - Returns: The ids, in the string form that
+    ///   ``respond(elicitationId:response:)`` takes, in the order the
+    ///   questions came.
+    func openElicitationIds() async -> [String]
 }
 
 extension RoutedSession {

@@ -164,6 +164,13 @@ extension RoutedSessionActor {
     /// answer (``noteWorkStart(answering:with:)``), so it comes before each
     /// output of the resumed run.
     ///
+    /// A question that a ``SubagentQuestionRelay`` sent up from a child
+    /// (``AskedQuestions/isRelayed(_:)``) gives no answer mail at this level:
+    /// only the level whose own run asked the question mails the answer to
+    /// its model. The answer resumes the task of the relay, which gives the
+    /// answer to the child. A URL-mode accept does not resume that task, so
+    /// it goes down to the child at once (``sendAcceptDown(answering:with:)``).
+    ///
     /// - Returns: The ``ElicitationAnswerDelivery``.
     @discardableResult
     nonisolated func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery {
@@ -174,9 +181,13 @@ extension RoutedSessionActor {
             // Read before the run plane gets the answer: a question whose
             // run resumes leaves the record after this call.
             let mailed = await mailedResponse(answering: id, with: response)
+            let isRelayed = await askedQuestions.isRelayed(id)
             let delivery = await runPlane.respond(elicitationId: id, response)
-            if delivery == .delivered {
+            if delivery == .delivered, !isRelayed {
                 postElicitationAnswer(id: id, response: mailed)
+            }
+            if delivery == .acceptedAwaitingCompletion {
+                await sendAcceptDown(answering: id, with: response)
             }
             return delivery
         }

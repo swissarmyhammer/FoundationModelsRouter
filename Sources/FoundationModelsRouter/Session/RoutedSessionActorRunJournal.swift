@@ -139,6 +139,9 @@ extension RoutedSessionActor: OperationEventJournal {
     ///   - response: The answer that the run of the question gets.
     ///   - poster: The origin of the work that ended the question.
     func record(elicitationEnded elicitationId: ULID, response: ElicitationResponse, poster: Origin) async {
+        // Before the run resumes: the task of a question that a relay sent up
+        // then ends the copy of the question in the child.
+        relayedQuestions.noteEndedHere(elicitationId, with: response)
         guard askedQuestions.end(elicitationId) else { return }
         let end = ElicitationEnd(elicitationId: elicitationId, response: response)
         deliverLive(.elicitationEnded(end), origin: RunEventOrigin(mailID: nil, poster: poster))

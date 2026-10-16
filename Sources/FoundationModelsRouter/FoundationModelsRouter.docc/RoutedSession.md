@@ -44,8 +44,9 @@ mail. All output is events. Control is signals.
   ``Origin-enum/mail(_:)`` with the id of its run mail. Thus a reader waits
   for the ``SessionEvent/mailDelivered(_:)`` of that id to know that the model
   sees the run event. A run event that makes no run mail (a run that
-  ``cancelAll()`` stopped, or a run event after ``close()``) keeps the origin
-  of the work that posted it.
+  ``cancelAll()`` stopped, a run event after ``close()``, or a question that
+  a ``SubagentQuestionRelay`` sent up from a subagent) keeps the origin of the
+  work that posted it.
 - **Signals.** ``cancel(_:)``, ``cancelAll()``, ``replace(_:with:)`` and
   ``compact(prompt:budget:)`` do not wait in the mail queue. Each returns a
   ``SignalID`` at once. ``close()`` ends the session.
@@ -291,10 +292,46 @@ An accepted URL-mode question whose flow completes gets one
 ``complete(elicitationId:)`` or from the tool that asked
 (`ToolContext.complete(elicitationId:)`).
 
+``openElicitationIds()`` lists the questions of the session that are open
+now: their ``SessionEvent/elicitationRequested(_:)`` went out, and no answer
+that resumed the run, no completion and no end came yet.
+
+A question of a subagent goes up to the user level by level. The tool call or
+the run body that drives the subagent reads ``SubagentQuestionTarget/current``,
+gives its ``SubagentQuestionTarget/userPresence`` to the session of the
+subagent, and starts a ``SubagentQuestionRelay`` before the first mail of the
+subagent. The relay asks each question of the subagent again in the run of the
+target, with the same `elicitationId`, the name of the subagent in front of
+`ElicitationRequest.agentPath`, and the tool that asked as
+`ElicitationRequest.source`. Thus the root session shows each question of each
+level one time, and the client answers it with the one id:
+
+- The relayed question is on the feed and in the journal of each level, but it
+  makes no run mail: only the level whose own run asked it puts it in the
+  prompt of its model. Its origin at a relaying level is ``Origin-enum/system``.
+- An answer goes down level by level to the run that asked. Only that level
+  gets the answer as ``MailBody/elicitationAnswer(id:response:)`` mail. A
+  URL-mode accept goes down at once, and each level sends one
+  ``SessionEvent/elicitationCompleted(_:)`` for the completion.
+- An end with no answer at one level ends the question one time at each level.
+  An end that comes up from a child has the origin ``Origin-enum/system``.
+- An answer at the root and an end in the child can cross. Then the root gives
+  ``ElicitationAnswerDelivery/delivered`` and the child sends
+  ``SessionEvent/elicitationEnded(_:)``. Each level has one outcome.
+- A child that is not a Router session gets no
+  ``SessionEvent/elicitationEnded(_:)`` when its parent ends the question.
+
+The owner closes the subagent at the end of the drive, then calls
+``SubagentQuestionRelay/finish()``, and then drops the target, which holds the
+parent session.
+
 - ``respond(elicitationId:response:)``
 - ``complete(elicitationId:)``
+- ``openElicitationIds()``
 - ``ElicitationEnd``
 - ``ElicitationCompletion``
+- ``SubagentQuestionTarget``
+- ``SubagentQuestionRelay``
 
 ### Context and compaction
 
@@ -317,7 +354,11 @@ resumes. Use ``awaitTerminal(of:)-(SignalID)`` to wait for the result. Only
 ### Lifecycle and forking
 
 ``awaitIdle()`` returns when the session has no work. A background run that
-waits only for the user is no work. ``streamSessionEvents()`` reports the same
+waits only for the user is no work, also a run whose subagent waits only for
+the user: the ``SubagentQuestionRelay`` of that run reads the work events of the
+subagent, and the run is work again while the subagent works. Thus a parent
+whose subagents wait only for the user is idle too, level by level up to the
+root. ``streamSessionEvents()`` reports the same
 state with no call: ``SessionEvent/workStarted`` comes when the session gets
 work while it had none, and ``SessionEvent/workEnded`` comes when it has no
 work any more. Both have the origin ``Origin-enum/system``, and they come in turns,

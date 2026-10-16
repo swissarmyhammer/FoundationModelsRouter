@@ -359,6 +359,10 @@ enum RouterTelemetry {
         /// The "enter" record of a span that can suspend for a long time
         /// (``EnterRecord``).
         case enter = "Enter"
+
+        /// The relay of the questions of a subagent to its parent session
+        /// (``SubagentQuestionRelay``).
+        case subagentQuestionRelay = "SubagentQuestionRelay"
     }
 
     /// The key of every metadata value of a router log record.
