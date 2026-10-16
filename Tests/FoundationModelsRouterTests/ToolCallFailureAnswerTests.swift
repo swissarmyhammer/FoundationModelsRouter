@@ -9,10 +9,12 @@ import Testing
 /// Apple's `LanguageModelSession` cancels the other calls of a submission when
 /// one call throws, and then it ends the submission. The mount decorators
 /// therefore give an ordinary failure to the model as a tool result, and they
-/// throw only for a true cancellation. This suite drives real answers over the
-/// scripted model and holds the three conditions of the card: the good calls
-/// beside a failed call complete, the model reads the failure and can call
-/// again, and a cancellation still stops the submission.
+/// throw only for a true cancellation: a cancel of the task of the call. A
+/// `CancellationError` while the task of the call is not cancelled is an
+/// ordinary failure. This suite drives real answers over the scripted model
+/// and holds the three conditions of the card: the good calls beside a failed
+/// call complete, the model reads the failure and can call again, and a
+/// cancellation still stops the submission.
 @Suite("A failed tool call is a tool result, and a cancellation still stops the submission")
 struct ToolCallFailureAnswerTests {
     /// The suite's temp-directory prefix, handed to
@@ -120,10 +122,20 @@ struct ToolCallFailureAnswerTests {
             mounting: [cancellingTool],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let answering = Task { try await fixture.session.respond(to: ScriptedToolFixture.prompt) }
 
+        // The stop comes when the tool call runs, as a stop of a user does.
+        // It cancels the model call, so the task of the tool call is
+        // cancelled, and the tool ends at that cancel.
+        try await cancellingTool.entered.wait()
+        fixture.session.cancelAll()
         let error = await #expect(throws: (any Error).self) {
-            _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
+            _ = try await answering.value
         }
+        // The stop sends the end of the answer before the stopped submission
+        // ends. The checks of the passes need that end, so the test waits
+        // for the pump.
+        #expect(await fixture.session.pumpEnds())
 
         #expect(error.map(Self.isCancellation) == true, "the answer ended with \(String(describing: error))")
         #expect(cancellingTool.calledSteps == [Step.failing])
@@ -131,5 +143,24 @@ struct ToolCallFailureAnswerTests {
         // generation never ran.
         #expect(fixture.log.generationPassCount == 1)
         #expect(fixture.log.deliveredToolOutputs.isEmpty)
+    }
+
+    @Test("a tool that throws CancellationError while its call is not cancelled gives the model a failure tool result")
+    func cancellationErrorOfOtherWorkIsAToolResult() async throws {
+        let failingTool = ThrowingMarkerTool(failingWith: { _ in CancellationError() })
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: ScriptedAnswerScript(rounds: [
+                [Self.call(on: ThrowingMarkerTool.toolName, with: .literal(Step.failing))]
+            ]),
+            mounting: [failingTool],
+            tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
+
+        let expectedOutputs = [String(describing: CancellationError())]
+        #expect(failingTool.calledSteps == [Step.failing])
+        #expect(fixture.log.deliveredToolOutputs == expectedOutputs)
+        #expect(answer == ScriptedToolFixture.answer(fromToolOutputs: expectedOutputs))
     }
 }

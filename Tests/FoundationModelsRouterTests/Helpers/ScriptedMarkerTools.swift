@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsRouter
 import Synchronization
 import Testing
 
@@ -131,24 +132,45 @@ final class ThrowingMarkerTool: MarkerRecordingTool, Sendable {
     /// announced.
     var calledSteps: [String] { callLog.calls }
 
+    /// Makes the error that a call throws, from the step that the call names.
+    private let makeFailure: @Sendable (String) -> any Error
+
+    /// Creates the tool.
+    ///
+    /// - Parameter makeFailure: Makes the error that a call throws, from the
+    ///   step that the call names. The default makes a ``CallFailure``. A test
+    ///   that gives `CancellationError` holds a cancellation that does not
+    ///   come from a cancel of the task of the call.
+    init(failingWith makeFailure: @escaping @Sendable (String) -> any Error = { CallFailure(step: $0) }) {
+        self.makeFailure = makeFailure
+    }
+
     /// Records the step this call names, then fails.
     ///
     /// - Parameter arguments: The call's decoded arguments; `value` is the step
     ///   name.
     /// - Returns: Nothing — this entry point never returns a value.
-    /// - Throws: ``CallFailure`` for the named step, always.
+    /// - Throws: The error that `makeFailure` makes for the named step, always.
     func call(arguments: AmbientToolArguments) async throws -> String {
         callLog.record(arguments.value)
-        throw CallFailure(step: arguments.value)
+        throw makeFailure(arguments.value)
     }
 }
 
-/// A `FoundationModels.Tool` that records its call and then throws
-/// `CancellationError`, as a tool body does when its task is cancelled.
+/// A `FoundationModels.Tool` that records its call, waits until the call is
+/// cancelled, and then ends at that cancel with `CancellationError`.
 ///
 /// The counterpart of ``ThrowingMarkerTool`` for a true cancellation: the
 /// mount gives an ordinary failure to the model as a tool result, but it must
 /// still throw a cancellation, so an answer that calls this tool must stop.
+///
+/// The mount throws a `CancellationError` again only when the task of the
+/// call is cancelled. A `CancellationError` while the task of the call is not
+/// cancelled, for example from a cancel of other work, is an ordinary failure
+/// that the model reads. Thus this tool does not throw by itself. It waits
+/// until a test stops the answer, as production does: the stop cancels the
+/// model call, the model call cancels the task of the tool call, and that
+/// cancel reaches this body.
 final class CancellingMarkerTool: MarkerRecordingTool, Sendable {
     /// The model-facing tool name a scripted call names to reach this tool.
     static let toolName = "marker-cancelled"
@@ -158,24 +180,35 @@ final class CancellingMarkerTool: MarkerRecordingTool, Sendable {
 
     /// The `Tool` description requirement — see ``MarkerEmittingTool/description``
     /// for why a scripted fixture still carries one.
-    let description = "test-only tool that always ends as cancelled"
+    let description = "test-only tool that waits until its call is cancelled"
 
     /// Backing store for ``calledSteps``.
     private let callLog = MarkerToolCallLog()
 
+    /// The event the call sends when it waits for its cancel. A test stops
+    /// the answer only after this event, so the cancel reaches a call that
+    /// runs.
+    let entered = AwaitedEvent()
+
     /// Every step this tool was called for, in call order — recorded before the
-    /// throw, so a test can prove the call really ran.
+    /// wait, so a test can prove the call really ran.
     var calledSteps: [String] { callLog.calls }
 
-    /// Records the step this call names, then throws `CancellationError`.
+    /// Records the step this call names, sends ``entered``, and waits until
+    /// the task of the call is cancelled.
+    ///
+    /// The wait is on a semaphore that nothing signals, so only a cancel ends
+    /// it.
     ///
     /// - Parameter arguments: The call's decoded arguments; `value` is the step
     ///   name.
     /// - Returns: Nothing — this entry point never returns a value.
-    /// - Throws: `CancellationError`, always.
+    /// - Throws: `CancellationError` when the task of the call is cancelled.
     func call(arguments: AmbientToolArguments) async throws -> String {
         callLog.record(arguments.value)
-        throw CancellationError()
+        let neverSignalled = AsyncSemaphore(value: 0)
+        try await neverSignalled.waitUnlessCancelled(onQueued: { self.entered.signal() })
+        preconditionFailure("nothing signals the semaphore, so only a cancel ends the wait")
     }
 }
 
