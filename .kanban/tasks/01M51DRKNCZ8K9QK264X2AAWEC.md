@@ -54,8 +54,24 @@ comments:
     - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/BackgroundingSessionFixture.swift, Tests/FoundationModelsRouterTests/StoppedAnswerOtherWorkEventTests.swift, Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift; `swift test` one run: 1766 tests in 214 suites passed (1 known issue, expected), plus 26 and 19; IntegrationTests `swift build --build-tests --manifest-cache local` Build complete, no compiler warnings.
     - next: review
   timestamp: 2026-10-16T04:57:57.123840+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m51hc9cjawwkjbz2qqe7ppeh
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (f418cf7d). 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 3 files reviewed, 2 .kanban files not reviewed (ignore rule). The prior finding StoppedAnswerOtherWorkEventTests.swift:104 is ticked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-16T05:01:27.314998+00:00
+- actor: claude-code
+  id: 01m51hcq609msw7ffhqf74e4yk
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files
+    - test: green — swift test, 1766 tests in 214 suites passed (1 known issue: the tripwire test); IntegrationTests build complete
+    - commit: f418cf7d
+    - review: clean — 0 findings, 1/1 prior finding ticked
+  timestamp: 2026-10-16T05:01:41.440638+00:00
+position_column: done
+position_ordinal: fffffff080
 title: Live events of other work are dropped while the answer that cancelAll() stopped winds down
 ---
 Found during ^vkkecjt. Not fixed there: that card fixed only the question posts (elicitationEnded, elicitationCompleted) with `deliverQuestionPost(_:origin:)` in Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift.
