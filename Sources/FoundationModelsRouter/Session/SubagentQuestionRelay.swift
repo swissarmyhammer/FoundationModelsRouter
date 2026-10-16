@@ -18,9 +18,12 @@ enum SubagentQuestionHost {
 ///
 /// Read it with ``current`` in the tool call or the run body that drives the
 /// subagent, and give it to ``SubagentQuestionRelay/start(child:agentName:target:)``.
-/// Each question that the relay sends up links to that run, so the
-/// `correlationID` of the question at this level is the completion token of
-/// the run, and a cancel of the run ends the question.
+/// Each question that the relay sends up links to the run that holds that
+/// tool call or run body (`ToolContext.holdingRunToken`), so the
+/// `correlationID` of the question at this level is the token of that run,
+/// and a cancel of that run ends the question. For a call that a run mounts
+/// with `ToolContext.mount(_:op:as:)`, that is the token of the mounting run,
+/// not the completion token of the mounted call.
 ///
 /// The target holds a strong reference to the session of the run. An owner
 /// that keeps the target, for example in the request of a subagent run, must
@@ -149,7 +152,7 @@ public final class SubagentQuestionRelay: Sendable {
     ) async -> SubagentQuestionRelay {
         let subscription = await subscribe(to: child)
         let relay = await target.session.openRelay(
-            child: child, runToken: target.context.completionToken, childWorks: subscription.childWorks)
+            child: child, runToken: target.context.holdingRunToken, childWorks: subscription.childWorks)
         let link = SubagentQuestionLink(child: child, agentName: agentName, target: target, relay: relay)
         // Detached: the relay gets no task-local of the run that starts it,
         // so no origin and no mark of that run reaches the work of the relay.

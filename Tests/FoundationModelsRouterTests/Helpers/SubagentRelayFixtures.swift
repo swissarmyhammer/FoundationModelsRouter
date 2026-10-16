@@ -33,6 +33,12 @@ struct SubagentRelayStep: Sendable {
     /// opens, also after a cancel of the run. Thus a test keeps the child
     /// open while the parent closes.
     var closeGate: RunLatch?
+
+    /// When `true`, the relaying run does not relay by itself. It mounts a
+    /// synchronous tool (`ToolContext.mount(_:op:as:)`), and the call of
+    /// that tool relays. Thus the context of the relay has its own
+    /// completion token, and the relaying run holds the call.
+    var relaysThroughAMount = false
 }
 
 /// The question of the asking level of a test.
@@ -299,6 +305,8 @@ struct SubagentJobTool: Tool, BackgroundTool {
             return Self.idleOutput
         }
         switch role {
+        case .relay(let step) where step.relaysThroughAMount:
+            return try await context.mount(MountedRelay(job: self, step: step)).call(arguments: arguments)
         case .relay(let step):
             return try await relay(step, in: context)
         case .ask(let step):
@@ -329,6 +337,25 @@ struct SubagentJobTool: Tool, BackgroundTool {
         await relay.finish()
         box.noteRelayFinished()
         return Self.relayedOutput
+    }
+
+    /// The synchronous tool that a relaying run mounts when its step
+    /// ``SubagentRelayStep/relaysThroughAMount``. Its call relays in its own
+    /// context, and the relaying run holds that call.
+    private struct MountedRelay: Tool {
+        let name = "subagent_mounted_relay"
+        let description = "test-only synchronous tool that relays the questions of a child"
+
+        /// The tool that mounts this tool.
+        let job: SubagentJobTool
+
+        /// The relaying level.
+        let step: SubagentRelayStep
+
+        func call(arguments: BackgroundFixtureArguments) async throws -> String {
+            let context = try #require(ToolContext.current)
+            return try await job.relay(step, in: context)
+        }
     }
 
     /// Asks the user one question, records the answer in the box, and

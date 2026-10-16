@@ -175,9 +175,12 @@ extension RoutedSessionActor {
     /// question is then on the output, so a work-end event never comes
     /// before the question that ends the work. A run that drives a subagent
     /// is still work while the child of a relay of that run works
-    /// (``RelayedQuestions/runTokensWithWorkingChild``): the run of the child
-    /// waits for the user, but the child can still ask, answer or end its own
-    /// run. Such a run that has other work besides counts as no work, as
+    /// (``RelayedQuestions/runTokensWithWorkingChild``). The relay keeps the
+    /// token of the run that holds its questions
+    /// (`ToolContext.holdingRunToken`), so a relay in a mounted call keeps
+    /// the mounting run as work. The run of the child waits for the user,
+    /// but the child can still ask, answer or end its own run. Such a run
+    /// that has other work besides counts as no work, as
     /// `RunPlane.runsWaitingOnlyForUser()` does.
     ///
     /// - Parameters:

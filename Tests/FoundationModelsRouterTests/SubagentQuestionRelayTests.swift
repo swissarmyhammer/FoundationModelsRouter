@@ -533,6 +533,30 @@ struct SubagentQuestionRelayTests {
         await level.fixture.end(opening: [level.rootStep.gate])
     }
 
+    /// The production change that makes this test fail: a relay that flags
+    /// the work of its child under the completion token of a mounted call,
+    /// and not under the token of the run that holds the call and its
+    /// questions.
+    @Test("a relay in a mounted call keeps the holding run as work while the child works, and not after")
+    func aRelayInAMountedCallKeepsTheHoldingRunAsWork() async throws {
+        let besideRun = RunLatch()
+        var level = try await Self.askOneLevel(
+            SubagentAskStep(besideRun: besideRun),
+            rootStep: SubagentRelayStep(agentName: Self.reviewer, relaysThroughAMount: true))
+        let target = try #require(level.fixture.box.targets.first)
+
+        let isIdleWhileTheChildWorks = try await level.fixture.sessionActor().isIdle()
+        await besideRun.open()
+        let rest = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.rootFeed)
+        let isIdleWhileTheChildWaits = await level.root.awaitIdle()
+
+        #expect(target.context.completionToken != target.context.holdingRunToken)
+        #expect(isIdleWhileTheChildWorks == false)
+        #expect(rest.last?.event == .workEnded)
+        #expect(isIdleWhileTheChildWaits)
+        await level.fixture.end(opening: [level.rootStep.gate])
+    }
+
     /// The production change that makes this test fail: a relaying level
     /// that notes no start of work before the answer goes down.
     @Test("a root answer starts the work of the root first, and then of the child")

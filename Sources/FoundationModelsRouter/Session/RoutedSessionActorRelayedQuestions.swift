@@ -81,8 +81,9 @@ struct RelayedQuestions: Sendable {
 
     /// The work state of the child of one relay.
     private struct Relay: Sendable {
-        /// The completion token of the run of this session that the relay
-        /// sends the questions to.
+        /// The token of the run of this session that holds the questions
+        /// that the relay sends up (`ToolContext.holdingRunToken`). For a
+        /// mounted call, it is the token of the mounting run.
         let runToken: String
 
         /// Whether the child works now: its last work event was
@@ -103,7 +104,8 @@ struct RelayedQuestions: Sendable {
     ///
     /// - Parameters:
     ///   - relay: The id of the relay.
-    ///   - runToken: The completion token of the run of this session.
+    ///   - runToken: The token of the run of this session that holds the
+    ///     relayed questions (`ToolContext.holdingRunToken`).
     ///   - childWorks: Whether the child works when the relay starts.
     mutating func openRelay(_ relay: ULID, runToken: String, childWorks: Bool) {
         relays[relay] = Relay(runToken: runToken, childWorks: childWorks)
@@ -126,9 +128,9 @@ struct RelayedQuestions: Sendable {
         relays[relay] = nil
     }
 
-    /// The completion tokens of the runs of this session that a relay with
-    /// a working child sends to. Such a run is work, also while it waits
-    /// only for the user.
+    /// The tokens of the runs of this session that hold the questions of a
+    /// relay with a working child (`ToolContext.holdingRunToken`). Such a
+    /// run is work, also while it waits only for the user.
     var runTokensWithWorkingChild: Set<String> {
         Set(relays.values.filter(\.childWorks).map(\.runToken))
     }
@@ -278,7 +280,9 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - child: The child session.
-    ///   - runToken: The completion token of the run that drives the child.
+    ///   - runToken: The token of the run that holds the call that drives
+    ///     the child (`ToolContext.holdingRunToken`). For a mounted call, it
+    ///     is the token of the mounting run.
     ///   - childWorks: Whether the child works when the relay starts.
     /// - Returns: The id of the relay.
     func openRelay(child: any RoutedSession, runToken: String, childWorks: Bool) -> ULID {
