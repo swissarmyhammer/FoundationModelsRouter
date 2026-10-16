@@ -263,8 +263,8 @@ extension RoutedSessionActor: SessionMailObserver {
         let options =
             batch.userMail.first.flatMap { SubmissionOptions(for: $0, isGuided: grammar != nil) } ?? .mailDelivery
         pumpWork?.kind = .answer(options: options)
-        let callerContext = batch.userMail.first.flatMap { outbox.takeCallerContext(for: $0.id) }
-        deliver(batch.mail)
+        let callers = deliver(batch.mail)
+        let callerContext = batch.userMail.first.flatMap { callers[$0.id]?.serviceContext }
         // The batch left the queue: the depth is synchronous, so it adds no
         // suspension point here.
         recordMailQueueDepth()
@@ -282,20 +282,28 @@ extension RoutedSessionActor: SessionMailObserver {
         await countAnswer(openRunsAtStart: openRunsAtStart)
         openAnswerRunMail = []
         openAnswerDeliveredUserMail = false
+        openAnswerCallerWork = .none
         endPumpWork()
     }
 
     /// Makes `mail` part of the open answer: its ids join
-    /// ``openAnswerMail``, its run mail joins ``openAnswerRunMail``, and its
-    /// hold and caller contexts are forgotten. The answer sends
+    /// ``openAnswerMail``, its run mail joins ``openAnswerRunMail``, the own
+    /// work of its senders joins ``openAnswerCallerWork``, and its hold and
+    /// callers are forgotten. The answer sends
     /// ``SessionEvent/mailDelivered(_:)`` for each one.
     ///
     /// - Parameter mail: The mail that the pump took for the answer.
-    private func deliver(_ mail: [Mail]) {
+    /// - Returns: The task-locals of the caller of each mail of `mail` that
+    ///   had one, by id (``SessionOutbox/takeCallers(of:)``).
+    @discardableResult
+    private func deliver(_ mail: [Mail]) -> [MailID: SessionOutbox.MailCaller] {
         openAnswerMail.append(mail.map(\.id))
         openAnswerRunMail += mail.filter(\.isRunMail)
         openAnswerDeliveredUserMail = openAnswerDeliveredUserMail || mail.contains { !$0.isRunMail }
+        let callers = outbox.takeCallers(of: mail.map(\.id))
+        openAnswerCallerWork = callers.values.reduce(openAnswerCallerWork) { $0.union($1.ownWork) }
         outbox.forget(mail.map(\.id))
+        return callers
     }
 
     /// Counts the answer that just ended, with its first submission and each

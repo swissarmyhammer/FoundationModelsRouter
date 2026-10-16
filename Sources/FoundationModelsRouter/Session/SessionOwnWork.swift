@@ -17,17 +17,35 @@ import FoundationModelsExtras
 ///
 /// The value is a set, and the binding adds the id of its session to the set
 /// that the task has: a task that runs the work of a session inside the work
-/// of another session is the own work of both. The pump of a session is a
-/// detached task, so an answer of a session never has the value of the
-/// caller that sent its mail. Thus the answer of a child session that a tool
-/// of the parent asked for is the own work of the child only.
+/// of another session is the own work of both.
+///
+/// **Mail carries the value of its sender** (task ^hrkxav5). The pump of a
+/// session is a detached task, so an answer gets no task-local of the caller
+/// that sent its mail. So each mail records the value of its sender
+/// (``SessionOutbox/noteCaller(_:for:)``), and each submission of the answer
+/// that delivers the mail adds that value to its own binding
+/// (``RoutedSessionActor/openAnswerCallerWork``). Thus
+/// the answer of a child session that a tool of the parent asked for is the
+/// own work of the child and also of the parent. A tool of the child that
+/// closes the parent then does not wait for the tool of the parent, which
+/// waits for the child. Mail from a host carries an empty set, and changes
+/// nothing.
 struct SessionOwnWork: Sendable {
-    /// The own work of the current task: an empty set outside the work of a
+    /// The own work of a task outside the work of each session: an empty
+    /// set.
+    static let none = SessionOwnWork(sessionIDs: [])
+
+    /// The own work of the current task: ``none`` outside the work of a
     /// session.
-    @TaskLocal static var current = SessionOwnWork(sessionIDs: [])
+    @TaskLocal static var current = none
 
     /// The ids of the sessions whose own work the task is.
     private let sessionIDs: Set<ULID>
+
+    /// Whether the value names no session.
+    var isEmpty: Bool {
+        sessionIDs.isEmpty
+    }
 
     /// Whether the task is the own work of the session of `sessionID`.
     ///
@@ -37,18 +55,29 @@ struct SessionOwnWork: Sendable {
         sessionIDs.contains(sessionID)
     }
 
-    /// Runs `body` as the own work of the session of `sessionID`, and also of
-    /// each session whose own work the calling task is.
+    /// The own work of each session of this value and of `other`.
+    ///
+    /// - Parameter other: The other value.
+    /// - Returns: The union of the two sets.
+    func union(_ other: SessionOwnWork) -> SessionOwnWork {
+        SessionOwnWork(sessionIDs: sessionIDs.union(other.sessionIDs))
+    }
+
+    /// Runs `body` as the own work of the session of `sessionID`, of each
+    /// session of `carried`, and also of each session whose own work the
+    /// calling task is.
     ///
     /// - Parameters:
     ///   - sessionID: The id of the session.
+    ///   - carried: The own work that the mail of the work carries from its
+    ///     senders, or ``none``.
     ///   - body: The work.
     /// - Returns: What `body` returns.
     /// - Throws: What `body` throws.
     static func run<Result: Sendable>(
-        as sessionID: ULID, _ body: () async throws -> Result
+        as sessionID: ULID, carrying carried: SessionOwnWork, _ body: () async throws -> Result
     ) async throws -> Result {
-        let work = SessionOwnWork(sessionIDs: current.sessionIDs.union([sessionID]))
+        let work = current.union(carried).union(SessionOwnWork(sessionIDs: [sessionID]))
         return try await $current.withValue(work) {
             try await body()
         }

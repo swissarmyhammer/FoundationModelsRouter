@@ -58,7 +58,9 @@ extension RoutedSessionActor {
         if !mail.isRunMail {
             noteWorkStarted()
         }
-        outbox.noteCallerContext(ServiceContext.current, for: mail.id)
+        outbox.noteCaller(
+            SessionOutbox.MailCaller(serviceContext: ServiceContext.current, ownWork: SessionOwnWork.current),
+            for: mail.id)
         // The record comes before the wake of the pump, so the transcript
         // holds the arrival of the mail before its delivery.
         recordMail([.mailQueued(mail)])

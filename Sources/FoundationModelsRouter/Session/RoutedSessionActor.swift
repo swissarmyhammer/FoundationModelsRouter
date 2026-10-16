@@ -517,6 +517,20 @@ actor RoutedSessionActor: RoutedSession {
     /// joined a continuation. ``countAnswer()`` reads it.
     var openAnswerDeliveredUserMail = false
 
+    /// The own work that the mail of the open answer carries from its
+    /// senders (task ^hrkxav5): the union of the ``SessionOwnWork`` of the
+    /// sender of each mail that the answer delivered, also mail that joined a
+    /// continuation. Each model call of the answer binds it with the id of
+    /// this session (``SessionOwnWork/run(as:carrying:_:)``).
+    ///
+    /// It is the union, not the value of the leader only. Each sender waits
+    /// for the end of this answer, so a tool of this answer that closes the
+    /// session of any sender must not wait for that sender. A model call
+    /// reads it when it starts, so mail that joins a continuation reaches
+    /// the model calls that start after the join, not a tool body that
+    /// already runs. The pump clears it after the end of the answer.
+    var openAnswerCallerWork = SessionOwnWork.none
+
     /// The output of this session: the feeds, the mail subscriptions and the
     /// ledger of the terminal events. See ``emitSessionScopedEvent(_:)``.
     nonisolated let outputHub = SessionOutputHub()

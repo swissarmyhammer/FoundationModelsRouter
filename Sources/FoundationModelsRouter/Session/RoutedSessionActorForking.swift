@@ -362,9 +362,11 @@ extension RoutedSessionActor {
     ///
     /// **A close from the own work of this session** (task ^3jpewc9). The end
     /// of all work waits for each tool call and each run body of this
-    /// session. So when the caller is such work (``SessionOwnWork``), this
-    /// call starts the close in a detached task (``closeFromOwnWork``) and
-    /// returns at once, and the close ends after that work returns. The task
+    /// session. So when the caller is such work (``SessionOwnWork``), also a
+    /// tool of another session whose answer delivers mail that this session
+    /// sent (task ^hrkxav5), this call starts the close in a detached task
+    /// (``closeFromOwnWork``) and returns at once, and the close ends after
+    /// that work returns. The task
     /// is detached for the same reason as the pump (``wakePump()``): the
     /// close then has no task-local of the caller, so no origin of the tool
     /// reaches the events of the close. A close from outside the session

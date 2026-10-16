@@ -678,14 +678,26 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// A task that `Task.detached` starts copies no task-local, so a close
     /// from it waits as a close from outside the session does.
     ///
+    /// Mail carries the own work of its sender into the answer that delivers
+    /// it. When a tool or a run body of this session sends mail to another
+    /// session (for example with `respond(to:)` or `send(_:)` on a
+    /// ``fork(workingDirectory:)`` child), each tool and each run body of the
+    /// answer of the other session is also the own work of this session. So
+    /// a close of this session from such a tool also returns before the close
+    /// ends: the tool of this session waits for that answer, so a close that
+    /// waited for the tool would never return. The close stops the tool of
+    /// this session, and the close ends after that tool and the answer that
+    /// it waits for return. A tool body that already ran when the mail joined
+    /// a running answer of the other session does not get the own work of the
+    /// sender: only the model calls of that answer that start after the join
+    /// get it.
+    ///
     /// A caller outside the session gets the contract above: when close
     /// returns, the session is closed. A close from outside also waits for a
     /// close that the own work of the session started. A tool or a run body
-    /// of another session is outside this session, also a tool of a
-    /// ``fork(workingDirectory:)`` child of this session. So do not close a
-    /// session from the tool of a child session while a tool of that session
-    /// waits for the answer of the child: the close waits for the tool, the
-    /// tool waits for the child, and the child waits for the close.
+    /// of another session that no mail of this session started is outside
+    /// this session, also a tool of a ``fork(workingDirectory:)`` child of
+    /// this session that a host asked.
     ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.

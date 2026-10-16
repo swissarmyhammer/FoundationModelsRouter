@@ -143,10 +143,88 @@ struct SessionCloseFromOwnWorkTests {
         }
     }
 
+    /// A tool that a parent session and its fork share (task ^hrkxav5). In
+    /// the parent, its body asks the fork one question and waits for the
+    /// answer. In the fork, its body closes the parent.
+    ///
+    /// It declares no mount, so the session mounts it run-to-completion: the
+    /// body runs in the answer that called it.
+    struct ChildClosingTheParentTool: Tool {
+        let name = "child-closing-the-parent-probe"
+        let description = "test-only tool: the parent asks its fork, and the fork closes the parent"
+
+        /// The parent as target, and the steps of the body in the parent.
+        let parentProbe: CloseProbe
+
+        /// The fork as target, and the steps of the body in the fork. Its
+        /// ``CloseProbe/workReturns`` is sent when the body in the fork ends.
+        let childProbe: CloseProbe
+
+        func call(arguments: BackgroundFixtureArguments) async throws -> String {
+            guard let parent = parentProbe.target, let child = childProbe.target else {
+                return SessionCloseFromOwnWorkTests.noTargetOutput
+            }
+            guard ToolContext.current?.sessionID == parent.id else {
+                return await Self.closeParent(parent, recordingTo: childProbe)
+            }
+            return try await Self.askChild(child, recordingTo: parentProbe)
+        }
+
+        /// The body in the parent. It asks `child` in a `Task {}`, which
+        /// copies the task-locals of the body but not its cancel. Then it
+        /// waits for its cancel, which only the close of the parent gives,
+        /// and then for the answer of `child`.
+        ///
+        /// - Parameters:
+        ///   - child: The fork.
+        ///   - probe: The probe that gets the steps.
+        /// - Returns: The answer of `child`.
+        /// - Throws: What the respond of `child` throws.
+        private static func askChild(_ child: any RoutedSession, recordingTo probe: CloseProbe) async throws -> String {
+            let asking = Task { try await child.respond(to: SessionCloseFromOwnWorkTests.childPrompt) }
+            await SessionDrainTests.waitForCancel()
+            probe.record(SessionCloseFromOwnWorkTests.parentSawCancelStep)
+            let answer = try await asking.value
+            probe.record(answer)
+            return answer
+        }
+
+        /// The body in the fork. It closes `parent` only when the body is the
+        /// own work of `parent`: in the other case the close waits for the
+        /// body of the parent, which waits for this body, so the close never
+        /// returns.
+        ///
+        /// - Parameters:
+        ///   - parent: The parent.
+        ///   - probe: The probe that gets the steps.
+        /// - Returns: ``SessionCloseFromOwnWorkTests/toolOutput``.
+        private static func closeParent(_ parent: any RoutedSession, recordingTo probe: CloseProbe) async -> String {
+            defer { probe.workReturns.signal() }
+            guard SessionOwnWork.current.contains(parent.id) else {
+                probe.record(SessionCloseFromOwnWorkTests.notOwnWorkOfTheParentStep)
+                return SessionCloseFromOwnWorkTests.toolOutput
+            }
+            await parent.close()
+            probe.record(SessionCloseFromOwnWorkTests.closeReturnedStep)
+            return SessionCloseFromOwnWorkTests.toolOutput
+        }
+    }
+
     // MARK: - Constants
 
     /// The output of a ``ClosingTool`` call.
     static let toolOutput = "the session is told to close"
+
+    /// The prompt that the tool of a parent sends to its fork.
+    static let childPrompt = "answer the parent"
+
+    /// The step that the body of a ``ChildClosingTheParentTool`` in the
+    /// parent records when it saw its cancel.
+    static let parentSawCancelStep = "parent tool saw its cancel"
+
+    /// The step that the body of a ``ChildClosingTheParentTool`` in the fork
+    /// records when it is not the own work of the parent.
+    static let notOwnWorkOfTheParentStep = "fork tool is not the own work of the parent"
 
     /// The output of a ``ClosingTool`` call when the test set no target, so
     /// a misbuilt fixture reads as a wrong answer rather than as a pass.
@@ -297,6 +375,53 @@ struct SessionCloseFromOwnWorkTests {
 
         #expect(answer == Self.toolOutput)
         #expect(probe.steps == [Self.parentRunEndedStep, Self.closeReturnedStep])
+        await Self.expectClosed(parent)
+        await child.close()
+        await fixture.end()
+    }
+
+    /// A tool of the parent asks its fork one question and waits for the
+    /// answer, and a tool of the fork closes the parent (task ^hrkxav5). The
+    /// question carries the own work of the tool of the parent, so the
+    /// answer of the fork is also the own work of the parent. Thus the close
+    /// returns at once. The close then stops the tool of the parent, and that
+    /// tool gets the answer of the fork.
+    ///
+    /// The production change that makes this test fail: mail that does not
+    /// carry the own work of its sender. The tool of the fork then does not
+    /// call close, because that close never returns, and the test closes the
+    /// parent itself, so the failure does not hang.
+    @Test(
+        "a tool of a fork that closes the parent whose tool waits for the answer of the fork gets the return at once")
+    @MainActor
+    func aForkToolThatClosesTheParentWhoseToolWaitsForTheForkGetsTheReturnAtOnce() async throws {
+        let parentProbe = CloseProbe()
+        let childProbe = CloseProbe()
+        let fixture = try await BackgroundingSessionFixture.make(
+            prefix: "SessionCloseFromOwnWorkTests",
+            tools: [ChildClosingTheParentTool(parentProbe: parentProbe, childProbe: childProbe)])
+        let parent = try fixture.sessionActor()
+        let child = try await parent.fork(workingDirectory: nil)
+        parentProbe.setTarget(parent)
+        childProbe.setTarget(child)
+        let events = await parent.streamSessionEvents()
+
+        let answering = Task { try await parent.respond(to: Self.prompt) }
+        try await childProbe.workReturns.wait()
+        if childProbe.steps != [Self.closeReturnedStep] {
+            // The tool of the fork did not close the parent, so only this
+            // close stops the tool of the parent.
+            await parent.close()
+        }
+        // The close stopped the answer that called the tool of the parent.
+        await #expect(throws: CancellationError.self) {
+            try await answering.value
+        }
+        await Self.readToTheEnd(of: events)
+        await parent.close()
+
+        #expect(childProbe.steps == [Self.closeReturnedStep])
+        #expect(parentProbe.steps == [Self.parentSawCancelStep, Self.toolOutput])
         await Self.expectClosed(parent)
         await child.close()
         await fixture.end()

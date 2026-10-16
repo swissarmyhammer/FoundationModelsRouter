@@ -759,7 +759,7 @@ extension RoutedSessionActor {
     /// passes and tool bodies. The worker of the queue runs it on a task of
     /// its own, which inherits no task-local of this call, so the submission
     /// binds the task-locals of the model call itself (see
-    /// ``submission(of:composedPrompt:mark:boundary:context:serviceContext:)``).
+    /// ``submission(of:composedPrompt:mark:boundary:checks:context:serviceContext:origin:callerWork:session:)``).
     /// Any other task-local of the caller does not reach the tool bodies of a
     /// queued call. With no `target`, the call runs directly, on a task of
     /// its own.
@@ -867,6 +867,7 @@ extension RoutedSessionActor {
             context: ambientToolContext,
             serviceContext: submissionServiceContext,
             origin: origin,
+            callerWork: openAnswerCallerWork,
             session: self)
         let observer = generationPassObserver
         let metrics = sessionMetrics
@@ -902,7 +903,10 @@ extension RoutedSessionActor {
     /// ``SessionOwnWork`` of the session of `context` is one more: each tool
     /// body of the call, and each run body that a tool body starts, is the
     /// own work of that session, so ``close()`` from it does not wait for
-    /// itself. The session itself is one more
+    /// itself. It is also the own work that the mail of the answer carries
+    /// from its senders (`callerWork`, task ^hrkxav5), so a close of the
+    /// session of a sender that waits for this answer does not wait for
+    /// itself either. The session itself is one more
     /// (``SubagentQuestionHost/session``): a tool body or a run body that
     /// drives a subagent reads it through ``SubagentQuestionTarget/current``.
     ///
@@ -917,6 +921,8 @@ extension RoutedSessionActor {
     ///     (``submissionServiceContext``), or `nil`.
     ///   - origin: The origin of the work that makes the call
     ///     (``OriginContext/current``).
+    ///   - callerWork: The own work that the mail of the open answer carries
+    ///     from its senders (``openAnswerCallerWork``).
     ///   - session: The session that submits the call.
     /// - Returns: The submission.
     private static func submission(
@@ -928,6 +934,7 @@ extension RoutedSessionActor {
         context: ToolContext,
         serviceContext: ServiceContext?,
         origin: Origin,
+        callerWork: SessionOwnWork,
         session: RoutedSessionActor
     ) -> @Sendable () async throws -> String {
         {
@@ -937,7 +944,7 @@ extension RoutedSessionActor {
                         try await ToolResultAppendBoundary.$current.withValue(boundary) {
                             try await checks.bound {
                                 try await ToolContext.$current.withValue(context) {
-                                    try await SessionOwnWork.run(as: context.sessionID) {
+                                    try await SessionOwnWork.run(as: context.sessionID, carrying: callerWork) {
                                         try await SubagentQuestionHost.$session.withValue(session) {
                                             try await body(composedPrompt)
                                         }

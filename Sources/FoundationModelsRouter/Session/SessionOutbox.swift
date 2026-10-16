@@ -142,11 +142,28 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// (``stage(event:as:)``).
     private nonisolated let outputHub = Mutex<SessionOutputHub?>(nil)
 
-    /// The tracing context of the caller of each queued user-type mail that
-    /// had one, so the span of the submission that delivers the mail is a
-    /// child of the span of the caller. The pump task inherits no task-local
-    /// of the caller. An id leaves the map with ``forget(_:)``.
-    private nonisolated let callerContexts = Mutex<[MailID: ServiceContext]>([:])
+    /// The task-locals of the caller of a queued mail that the answer that
+    /// delivers the mail needs. The pump task inherits no task-local of the
+    /// caller, so the mail carries them.
+    struct MailCaller: Sendable {
+        /// The tracing context of the caller, or `nil`. The span of the
+        /// submission that delivers the mail is a child of its span.
+        let serviceContext: ServiceContext?
+
+        /// The own work of the caller (``SessionOwnWork/current``). Each
+        /// submission of the answer that delivers the mail is also that own
+        /// work (task ^hrkxav5).
+        let ownWork: SessionOwnWork
+
+        /// Whether the caller had no task-local that the answer needs.
+        var isEmpty: Bool {
+            serviceContext == nil && ownWork.isEmpty
+        }
+    }
+
+    /// The task-locals of the caller of each queued mail that had one. An id
+    /// leaves the map with ``takeCallers(of:)`` or ``forget(_:)``.
+    private nonisolated let callers = Mutex<[MailID: MailCaller]>([:])
 
     /// The journal every posted event is recorded into, or `nil` before
     /// ``attach(journal:)``. Weak to avoid a reference cycle.
@@ -279,39 +296,42 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         return refused
     }
 
-    /// Records the tracing context of the caller of the user-type mail `id`.
+    /// Records the task-locals of the caller of the mail `id`. A caller with
+    /// no task-local that the answer needs records nothing.
     ///
     /// - Parameters:
-    ///   - context: The tracing context of the caller, or `nil`.
+    ///   - caller: The task-locals of the caller.
     ///   - id: The id of the mail.
-    nonisolated func noteCallerContext(_ context: ServiceContext?, for id: MailID) {
-        guard let context else { return }
-        callerContexts.withLock { $0[id] = context }
+    nonisolated func noteCaller(_ caller: MailCaller, for id: MailID) {
+        guard !caller.isEmpty else { return }
+        callers.withLock { $0[id] = caller }
     }
 
-    /// Takes the tracing context that ``noteCallerContext(_:for:)`` recorded
-    /// for the mail `id`.
+    /// Takes the task-locals that ``noteCaller(_:for:)`` recorded for each
+    /// mail of `ids`.
     ///
-    /// - Parameter id: The id of the mail.
-    /// - Returns: The tracing context, or `nil` when the caller had none.
-    nonisolated func takeCallerContext(for id: MailID) -> ServiceContext? {
-        callerContexts.withLock { $0.removeValue(forKey: id) }
+    /// - Parameter ids: The ids of the mail.
+    /// - Returns: The task-locals of each mail whose caller had one, by id.
+    nonisolated func takeCallers(of ids: some Sequence<MailID>) -> [MailID: MailCaller] {
+        callers.withLock { callers in
+            var taken: [MailID: MailCaller] = [:]
+            for id in ids {
+                taken[id] = callers.removeValue(forKey: id)
+            }
+            return taken
+        }
     }
 
-    /// Forgets the hold and the caller context of each mail of `ids`. The
-    /// session calls it when each mail leaves the queue for good: it is
-    /// delivered, cancelled, drained or closed.
+    /// Forgets the hold and the caller of each mail of `ids`. The session
+    /// calls it when each mail leaves the queue for good: it is delivered,
+    /// cancelled, drained or closed.
     ///
     /// - Parameter ids: The ids of the mail.
     nonisolated func forget(_ ids: some Sequence<MailID>) {
         let ids = Set(ids)
         guard !ids.isEmpty else { return }
         heldMail.withLock { $0.subtract(ids) }
-        callerContexts.withLock { contexts in
-            for id in ids {
-                contexts.removeValue(forKey: id)
-            }
-        }
+        _ = takeCallers(of: ids)
     }
 
     /// The ids of the held mail.
