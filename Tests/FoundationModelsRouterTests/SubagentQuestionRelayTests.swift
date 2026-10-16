@@ -76,11 +76,14 @@ struct SubagentQuestionRelayTests {
     /// Starts a root whose child asks one question, and reads both feeds up
     /// to that question.
     ///
-    /// - Parameter step: The question of the child.
+    /// - Parameters:
+    ///   - step: The question of the child.
+    ///   - rootStep: The relaying level of the root.
     /// - Returns: The root, its child and the feeds.
     /// - Throws: What the fixture throws, or when a feed has no question.
-    private static func askOneLevel(_ step: SubagentAskStep = SubagentAskStep()) async throws -> OneLevel {
-        let rootStep = SubagentRelayStep(agentName: reviewer)
+    private static func askOneLevel(
+        _ step: SubagentAskStep = SubagentAskStep(), rootStep: SubagentRelayStep = SubagentRelayStep(agentName: reviewer)
+    ) async throws -> OneLevel {
         let fixture = try await SubagentRelayFixture.make(root: rootStep, children: [.ask(step)])
         var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         try await fixture.start()
@@ -401,6 +404,49 @@ struct SubagentQuestionRelayTests {
         let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
         #expect(rootEnd.origin == .system)
         #expect(childEnd.origin == .system)
+        await Self.expectNoQuestion(id, at: [level.root, level.child])
+        await level.fixture.end()
+    }
+
+    /// The production change that makes this test fail: a relaying level
+    /// that does not end the copy in the child with
+    /// `RunPlane.endElicitation(_:with:)` when the close of the parent ended
+    /// its own copy. Then the child sends no end while it is open, and its
+    /// later close finds no question to end.
+    ///
+    /// The relaying run holds the child open on a close gate, so only the
+    /// relay can end the copy in the child. The asking run in the child
+    /// resumes only after the end of the child went out, so its answer shows
+    /// that the end came while the child was still open.
+    @Test("close() of the root ends the child copy through the relay while the child is open, and finish() returns")
+    func closeOfTheParentEndsTheChildCopyWhileTheChildIsOpen() async throws {
+        let closeGate = RunLatch()
+        var level = try await Self.askOneLevel(
+            rootStep: SubagentRelayStep(agentName: Self.reviewer, closeGate: closeGate))
+        let id = try level.questionId
+        let childActor = try #require(level.child as? RoutedSessionActor)
+        let root = level.root
+
+        let closing = Task { await root.close() }
+        let answers = try await level.fixture.box.waitForAnswers(Self.once)
+        let childWasClosed = await childActor.isClosed
+        let childOpen = await level.child.openElicitationIds()
+        let finishedBeforeTheChildClosed = level.fixture.box.finishedRelays
+        await closeGate.open()
+        await closing.value
+        let finished = try await level.fixture.box.waitForFinishedRelays(Self.once)
+        let rootOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.rootFeed)
+        let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
+
+        let rootEnd = try PendingElicitationFixtures.soleEnd(in: rootOutputs, of: id)
+        let childEnd = try PendingElicitationFixtures.soleEnd(in: childOutputs, of: id)
+        #expect(rootEnd.origin == .system)
+        #expect(childEnd.origin == .system)
+        #expect(answers == [PendingElicitationFixtures.runCancelled])
+        #expect(childWasClosed == false)
+        #expect(childOpen.isEmpty)
+        #expect(finishedBeforeTheChildClosed == 0)
+        #expect(finished == Self.once)
         await Self.expectNoQuestion(id, at: [level.root, level.child])
         await level.fixture.end()
     }

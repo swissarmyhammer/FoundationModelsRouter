@@ -46,6 +46,49 @@ comments:
     - For the step lead (API changes): new public SubagentQuestionTarget, SubagentQuestionRelay; new RoutedSession requirement openElicitationIds() with no default implementation (ACPAgent CloseCountingRoutedSession needs its forward); no new SessionEvent case or field; changes of meaning as the design lists (relayed elicitationRequested with origin .system and no run mail, same id at each level, no answer mail at a relaying level, .system origin for an end that came up).
     - next: review
   timestamp: 2026-10-16T09:53:53.896644+00:00
+- actor: claude-code
+  id: 01m5225f4wt6bsxsmzxprzhg6n
+  text: |-
+    ### Step lead decisions on the implementation (2026-10-16)
+    - The step lead accepts changes 1 to 6 from the design.
+    - [ ] Change 2: make sure that a test covers this sequence. The parent closes while a relayed question is open. The question ends through the close path of the parent. E2 ends it on the child. finish() returns.
+    - [ ] Put the reasons of change 2 (the relay wait does not end when the parent closes) and change 6 (the relay ends the question with a cancel and writes a log if ToolContext.elicit throws) in the doc of SubagentQuestionRelay.
+  timestamp: 2026-10-16T09:54:49.628751+00:00
+- actor: claude-code
+  id: 01m523gwcm7rpsveskw8m8g7nv
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (5659e240). Engine: 0 findings, 0 confirmed, 2 refuted, 14 files. Open items of the step lead added as findings: Sources/FoundationModelsRouter/Session/SubagentQuestionRelay.swift:59 (the type doc does not give the reasons of change 2 and change 6), Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:392 (no test proves that E2 ends the child copy when the parent closes, and that finish() returns).
+    - next: implement the 2 open items in the "## Review Findings (2026-10-16 04:55)" section. The task stays in review.
+  timestamp: 2026-10-16T10:18:32.212179+00:00
+- actor: claude-code
+  id: 01m523hjva0aej3q8n8j2vp8dy
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 4 new files, 12 changed files
+    - test: green — swift test, 1791 passed, 1 known issue; IntegrationTests build complete, 0 warnings
+    - commit: 5659e240
+    - review: findings — Sources/FoundationModelsRouter/Session/SubagentQuestionRelay.swift:59, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:392
+  timestamp: 2026-10-16T10:18:55.210678+00:00
+- actor: claude-code
+  id: 01m523zyny4bxtr94e5qm9y2jj
+  text: |-
+    ### implement — changed (review findings 2026-10-16 04:55)
+    - Finding 1 done: the type doc of SubagentQuestionRelay now gives the reason of change 2 (the wait after a question goes up does not stop when the parent closes: the parent journal records a question also after close(); an earlier stop can let the end of the child feed find no question, the question stays open, its task never resumes and finish() never returns; the close of the parent ends the question at the parent through its close path, and the task then ends the child copy with E2) and the reason of change 6 (ToolContext.elicit does not throw today; if it throws, the relay writes an error log in the SubagentQuestionRelay log category and ends the question with a cancel that gives RunPlane.runCancelledReason, so the task always settles, the child copy ends and finish() returns).
+    - Finding 2 done: new test closeOfTheParentEndsTheChildCopyWhileTheChildIsOpen. Fixture: SubagentRelayStep.closeGate (the relaying run closes the child only after this gate opens, also after a cancel) and SubagentRelayBox.finishedRelays / waitForFinishedRelays (the tool records each return of finish()). The test closes the root in a task while the relayed question is open. It waits for the answer of the asking run in the child (E2 resumes the run only after the end post), and then checks with the close gate still shut: child isClosed == false, child openElicitationIds() empty, no relay finished yet. Then it opens the gate, awaits close(), and waits for one finished relay. Checks: exactly one end at the root (origin .system) and exactly one end in the child (origin .system), answer == runCancelled, finish() returned one time, and respond/complete give .noPendingElicitation at each level.
+    - Red: with E2 temporarily replaced by child.respond (no end in the child), the new test failed at SubagentQuestionRelayTests.swift:442: "expected one end of the question, got 0". E2 restored, then green (1 test in 1 suite).
+    - Step lead decisions on the implementation (2026-10-16): both open items are done. [x] Change 2 test (parent closes with a relayed question open, the question ends through the parent close path, E2 ends it in the open child, finish() returns). [x] Reasons of change 2 and change 6 in the doc of SubagentQuestionRelay.
+    - Full run, one time: swift test → 1792 tests in 217 suites passed (1 known issue, the existing one), 26 tests in 14 suites passed, 19 tests in 3 suites passed. Only warning: the known mlx-swift_Cmlx bundle line.
+    - IntegrationTests: swift build --build-tests --manifest-cache local → Build complete, only the known mlx bundle line.
+    - Note: I checked off the two findings in the card file .kanban/tasks/01M51Y3XRHGPH5813J4WKNSJVQ.md with the files tool.
+  timestamp: 2026-10-16T10:26:46.078703+00:00
+- actor: claude-code
+  id: 01m52401gw473jh5ny4rm0p367
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Session/SubagentQuestionRelay.swift (type doc), Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift (new test closeOfTheParentEndsTheChildCopyWhileTheChildIsOpen, askOneLevel rootStep parameter), Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift (closeGate, finishedRelays). Red: SubagentQuestionRelayTests.swift:442 "expected one end of the question, got 0" with E2 skipped. swift test: 1792 passed (1 known issue), 26 passed, 19 passed. IntegrationTests build complete.
+    - next: review
+  timestamp: 2026-10-16T10:26:48.988964+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Elicitation phase 4: subagent questions (design for Router tasks 12, 13, 14)'
@@ -287,3 +330,19 @@ Each test is written first and is red: the API does not exist. "Red because" nam
 - [x] Router: ends at each level (section 2, end part): `endedHere` mark, T_q settle, end of the feed, `finish()`. Tests 5 to 9 and the table unit suite.
 - [x] Router: task 14 (section 3) and `openElicitationIds()`: relay work flags, the idle rule, the work events. Tests 10 to 12 and 14. Docs in `SessionEvent.swift`, `RoutedSession.swift` and `RoutedSession.md`. Tell the step lead of the API changes.
 #elicitation-phase-4
+
+## Review Findings (2026-10-16 04:55)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 14 file(s) reviewed, 6 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+> The engine reported 0 findings (2 refuted). The two items below are the open items of the comment "Step lead decisions on the implementation (2026-10-16)". The code does not satisfy them yet.
+
+- [x] `Sources/FoundationModelsRouter/Session/SubagentQuestionRelay.swift:59` `step-lead/decision` — The doc of `SubagentQuestionRelay` does not give the reasons of change 2 and change 6. The reason of change 2 (the relay wait does not end when the parent closes, because the journal records a question also after `close()` started, and an earlier end of the wait can leave the question open forever) is only in the doc of an internal method in `RoutedSessionActorRelayedQuestions.swift`. The reason of change 6 (if `ToolContext.elicit` throws, the relay writes a log and ends the question with the cancel of a stopped run) is only in the doc of a private method of `SubagentQuestionRelay.swift`. Put the two reasons in the type doc of `SubagentQuestionRelay`.
+- [x] `Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:392` `step-lead/decision` — `closeOfTheParentEndsEachLevelBeforeEachFeedEnds` does not prove the full sequence of change 2. The close of the root also cancels the relaying run, and the fixture then closes the child. A close of the child also gives one end at the child with origin `.system`, so the test does not show that E2 (`RunPlane.endElicitation`) ended the copy in the child. The test also does not record that `finish()` returned. Add a test (or extend this test) that keeps the child open while the parent closes with a relayed question open, and that checks: the question ends through the close path of the parent, E2 ends it in the child (the child end comes before the close of the child), and `finish()` returns.

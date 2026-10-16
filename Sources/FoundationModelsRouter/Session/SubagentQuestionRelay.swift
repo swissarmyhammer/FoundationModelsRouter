@@ -92,6 +92,25 @@ public struct SubagentQuestionTarget: Sendable {
 /// end, and the answer goes no further. Each level still has exactly one
 /// outcome for the question.
 ///
+/// The wait after a question goes up does not stop when the parent starts
+/// its close. The reason: the journal of the parent records a question also
+/// after ``RoutedSession/close()`` started. If the wait stops before the
+/// question is open in the run plane of the parent, the end of the feed of
+/// the child can find no question to end. The question then stays open at
+/// the parent, its task never resumes, and ``finish()`` never returns. Thus
+/// the relay waits until the parent recorded the question or the task of
+/// the question settled. A close of the parent then ends the question at the
+/// parent through the close path of the parent, and the task of the question
+/// ends the copy in the child with the same response
+/// (`RunPlane.endElicitation(_:with:)`).
+///
+/// `ToolContext.elicit(_:)` does not throw an error today. If it throws for a
+/// relayed question, the relay writes an error log in the
+/// `SubagentQuestionRelay` log category and ends the question with a cancel
+/// that gives `RunPlane.runCancelledReason`, as for a stopped run. The reason:
+/// the relay must always settle the task of the question, so that the child
+/// copy ends and ``finish()`` returns.
+///
 /// A known limit: a child that is not a Router session gets no
 /// ``SessionEvent/elicitationEnded(_:)`` when the parent ends its question.
 /// Its copy of the question gets the response of the end through

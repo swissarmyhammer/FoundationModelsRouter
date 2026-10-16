@@ -10,7 +10,7 @@ import Testing
 enum SubagentRole: Sendable {
     /// The run makes a child session, relays the questions of the child to
     /// its own session (``SubagentQuestionRelay``), and mails the child one
-    /// message. Then it waits on the gate of the step, closes the child, and
+    /// message. Then it waits on the gates of the step, closes the child, and
     /// waits for the end of the relay.
     case relay(SubagentRelayStep)
 
@@ -28,6 +28,11 @@ struct SubagentRelayStep: Sendable {
     /// The gate of the relaying run. The run closes the child only after the
     /// gate opens, or after a cancel of the run.
     let gate = RunLatch()
+
+    /// When set, the relaying run closes the child only after this gate
+    /// opens, also after a cancel of the run. Thus a test keeps the child
+    /// open while the parent closes.
+    var closeGate: RunLatch?
 }
 
 /// The question of the asking level of a test.
@@ -82,6 +87,10 @@ final class SubagentRelayBox: Sendable {
 
         /// The target of each relaying run, in order.
         var targets: [SubagentQuestionTarget] = []
+
+        /// The count of the relays whose ``SubagentQuestionRelay/finish()``
+        /// returned.
+        var finishedRelays = 0
     }
 
     /// The fields, behind one lock.
@@ -171,6 +180,11 @@ final class SubagentRelayBox: Sendable {
         change { $0.answers.append(answer) }
     }
 
+    /// Records that ``SubagentQuestionRelay/finish()`` of a relay returned.
+    func noteRelayFinished() {
+        change { $0.finishedRelays += 1 }
+    }
+
     /// The session `id`, as the box recorded it.
     ///
     /// - Parameter id: The id of a session.
@@ -199,6 +213,21 @@ final class SubagentRelayBox: Sendable {
     func waitForChildren(_ count: Int) async throws -> [Child] {
         try await changes.wait(untilAtLeast: count, of: { children.count })
         return children
+    }
+
+    /// The count of the relays whose ``SubagentQuestionRelay/finish()``
+    /// returned so far.
+    var finishedRelays: Int { state.withLock { $0.finishedRelays } }
+
+    /// Waits until the ``SubagentQuestionRelay/finish()`` of at least `count`
+    /// relays returned.
+    ///
+    /// - Parameter count: The count to wait for.
+    /// - Returns: The count of the relays that finished.
+    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    func waitForFinishedRelays(_ count: Int) async throws -> Int {
+        try await changes.wait(untilAtLeast: count, of: { finishedRelays })
+        return finishedRelays
     }
 
     /// Waits until at least `count` asking runs got an answer.
@@ -265,8 +294,9 @@ struct SubagentJobTool: Tool, BackgroundTool {
     }
 
     /// Makes a child, relays its questions, mails it one message, waits on
-    /// the gate of `step` or for a cancel, closes the child, and waits for
-    /// the end of the relay.
+    /// the gate of `step` or for a cancel, and then on the close gate of
+    /// `step` when it has one. Then it closes the child, waits for the end
+    /// of the relay, and records that end in the box.
     ///
     /// - Parameters:
     ///   - step: The relaying level.
@@ -281,8 +311,10 @@ struct SubagentJobTool: Tool, BackgroundTool {
         let relay = await SubagentQuestionRelay.start(child: child, agentName: step.agentName, target: target)
         _ = try child.send(Self.childPrompt)
         await Self.waitUntilOpenOrCancelled(step.gate)
+        await step.closeGate?.waitUntilOpen()
         await child.close()
         await relay.finish()
+        box.noteRelayFinished()
         return Self.relayedOutput
     }
 
