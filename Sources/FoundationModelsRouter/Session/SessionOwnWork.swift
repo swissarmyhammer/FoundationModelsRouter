@@ -29,13 +29,6 @@ struct SessionOwnWork: Sendable {
     /// The ids of the sessions whose own work the task is.
     private let sessionIDs: Set<ULID>
 
-    /// Makes the own work of the sessions of `sessionIDs`.
-    ///
-    /// - Parameter sessionIDs: The ids of the sessions.
-    private init(sessionIDs: Set<ULID>) {
-        self.sessionIDs = sessionIDs
-    }
-
     /// Whether the task is the own work of the session of `sessionID`.
     ///
     /// - Parameter sessionID: The id of the session.

@@ -24,7 +24,23 @@ comments:
     - Decision on the set: kept a SET that nests (union with the inherited set). Note: the pump is Task.detached, so no inheritance crosses from a parent tool into the answer of a child; that case is documented in close() as a thing not to do, and recorded as ^hrkxav5.
     - next: review
   timestamp: 2026-10-16T02:16:27.450172+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m518ahf6ctn2mzcc8gyt5t35
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD: 1 finding (1 confirmed, 0 refuted, 7 files attempted). Sources/FoundationModelsRouter/Session/SessionOwnWork.swift:35 (code-hygiene/idioms-swift UseSynthesizedInitializer).
+    - next: Remove the explicit initializer that is identical to the compiler-synthesized initializer. Remove the same cause from the whole file. Then review again.
+  timestamp: 2026-10-16T02:23:12.870810+00:00
+- actor: claude-code
+  id: 01m518b2mthv6sxgp03y18k1j4
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 7 files
+    - test: green — swift test, 1754 tests in 213 suites passed (1 known issue: the tripwire test); IntegrationTests build complete
+    - commit: f6385b2b
+    - review: findings — SessionOwnWork.swift:35
+  timestamp: 2026-10-16T02:23:30.458070+00:00
+position_column: review
 position_ordinal: '80'
 title: close() called from a tool body of the same session deadlocks
 ---
@@ -42,3 +58,12 @@ The doc of close() (RoutedSession.swift ~:624-667) does not forbid this call.
 - [x] Test: a tool of a CHILD or forked session that closes its PARENT session is not the own work of the parent (a different id), so that close waits as normal. The child runs on its own, not inside a parent tool call. The close from the tool of the child returns only after the parent is closed, and does not hang.
 
 Follow-up: ^hrkxav5 (a tool of a child whose answer a parent tool waits for closes the parent: still a deadlock, because the pump is detached and the answer of the child does not inherit the task-local).
+
+## Review Findings (2026-10-15 21:17)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [ ] `Sources/FoundationModelsRouter/Session/SessionOwnWork.swift:35` `code-hygiene/idioms-swift` — UseSynthesizedInitializer: remove this explicit initializer, which is identical to the compiler-synthesized initializer.
