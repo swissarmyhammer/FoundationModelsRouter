@@ -56,6 +56,32 @@ comments:
     - evidence: 8 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift, Tests/FoundationModelsRouterTests/Helpers/MailQueueFixtures.swift, ElicitationCompletedEventTests.swift, CancelAllSignalTests.swift, MailSignalTests.swift, MailSubscriptionTests.swift, MailQueueBatchTests.swift, SessionMessagePumpTests.swift. Full run (swift test, one time): "Test run with 1759 tests in 213 suites passed ... with 1 known issue" (the known issue is the existing RealModelHarness withKnownIssue), plus 26 and 19 test runs passed, no compiler warning. IntegrationTests: swift build --build-tests --manifest-cache local, Build complete. After the full run, one doc-comment line in MailQueueFixtures.swift changed (no code).
     - next: /review. The card stays in doing.
   timestamp: 2026-10-16T04:14:57.230543+00:00
+- actor: claude-code
+  id: 01m51f15few89tp6fxjt2tyde9
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (6533bf82). 1 finding, 1 confirmed, 0 refuted. Tests/FoundationModelsRouterTests/Helpers/MailQueueFixtures.swift:187 reuse/reuse. The 4 prior findings are all checked.
+    - next: implement the finding. Add one generic wait-until-count helper on ChangeSignal and make waitForPrompts, waitForPasses and waitForPosts call it. The task stays in review.
+  timestamp: 2026-10-16T04:20:25.710224+00:00
+- actor: claude-code
+  id: 01m51f1pytxs6tm9wf5kgvtepf
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 8 files
+    - test: green — swift test, 1759 tests in 213 suites passed (1 known issue: the tripwire test); IntegrationTests build complete
+    - commit: 6533bf82
+    - review: findings — Helpers/MailQueueFixtures.swift:187
+  timestamp: 2026-10-16T04:20:43.610435+00:00
+- actor: claude-code
+  id: 01m51f9axc9kx6xrz9b9xz9e77
+  text: |-
+    ### implement — changed
+    - finding: MailQueueFixtures.swift:187 reuse/reuse. Added the test-only helper `ChangeSignal.wait(isolation:untilAtLeast:of:)` in Tests/FoundationModelsRouterTests/Helpers/ChangeSignalWait.swift. It is `wait(until: { try await value() >= count })`, with the same isolation, so the behaviour does not change. The closure is not @Sendable and can be async throws, the same as `wait(until:)`, so actor-isolated counters (`await spy.count`) fit.
+    - Removed the same cause in all of Tests/ (each ChangeSignal `wait(until:)` on a counter `>= count`): waitForPrompts (MailQueueFixtures), waitForPasses (PassObservingModel), waitForPosts, waitForCompletions, waitForArrivedEnds (PendingElicitationFixtures), RespondRunPlaneDrainTests (3), SubmissionBoundaryToolTests, SessionChokepointTests, InlineSettleGraceSessionTests, ElicitationCompletedEventTests.openWhenTheStopWaits, AsyncSemaphoreTests (3). 16 sites.
+    - Not changed, with the reason: the `>=` waits on `SessionEventLog.wait(until:)` (SubmissionAnswerEventTests, ToolDisplayDeliveryTests, RunProgressDeliveryTests) are a different API, not ChangeSignal. PerCallMountSessionTests has a compound condition (pump state and count), not the same shape.
+    - evidence: `swift test` one full run: "Test run with 1759 tests in 213 suites passed" (1 known issue: the existing withKnownIssue in RealModelHarnessTests), plus 26 and 19 tests passed; no compiler warnings. `cd IntegrationTests && swift build --build-tests --manifest-cache local`: Build complete, exit 0.
+    - next: /review. Card stays in doing.
+  timestamp: 2026-10-16T04:24:53.420630+00:00
 position_column: doing
 position_ordinal: '80'
 title: cancelAll() sends no elicitationEnded for an open URL question of a runCode MCP tool
@@ -88,3 +114,12 @@ Failing test: ElicitationRelayTests.sessionCancelDuringAPendingElicitationDelive
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift:178` `duplication/duplication` — deliverQuestionPost repeats the drop guard and the origin binding of deliverLive. Only the emit call differs. A later change to the drop rule or to how the origin is bound must be made in both functions. Move the guard and the withValue binding into one shared helper. Pass the emit step as a closure or a flag, and have deliverLive and deliverQuestionPost both call that helper. Keep the choice of audience (session scope or not) in the helper's one parameter.
 - [x] `Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:165` `reuse/reuse` — startTheHeldAnswer(of:) repeats the step "send the held prompt, then wait until the backend received it". Four other test files already define startHeldAnswer with that step, each private to its file. This adds a fifth copy instead of one shared helper. The body differs only in its API: it mails through fixture.sessionActor() and waits on backend.changes, where the others call session.send and backend.waitForPrompts(1). Move the send-and-wait step into one shared test helper in Tests/FoundationModelsRouterTests/Helpers/ that takes a session and a backend. Call it from this file and, if the fix is in scope, from the four existing copies. If the fixture API cannot fit that signature, record the difference in the doc comment so the fork is clear.
 - [x] `Tests/FoundationModelsRouterTests/ElicitationCompletedEventTests.swift:564` `completeness/invariant-propagation` — The change makes the completion post take the silenced branch of deliverQuestionPost while an answer is open, and that branch also covers close(), which uses poster Origin.system. Only the cancelAll() variant during an open answer is tested. The close() path for a completion during an open answer has no test, so that branch of record(elicitationCompleted:) is not proven for close(). Add a close() variant of the during-answer completion test. Pass answerGate: RunLatch() to expectTheCompletionOnItsWayBeforeTheSignalDone, or add a parallel helper that calls session.close() and asserts the completion comes before the feed ends with no end.
+
+## Review Findings (2026-10-15 23:15)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/MailQueueFixtures.swift:187` `reuse/reuse` — The new waitForPrompts repeats the wait-until-count pattern already used by waitForPasses and waitForPosts. The three functions differ only in the counter they read, so the shared shape is not extended and a third copy is added. Add one generic helper on ChangeSignal, for example wait(untilAtLeast count: Int, of value: @Sendable () async -> Int), and have waitForPrompts, waitForPasses and waitForPosts call it. Alternatively, accept the one-line duplicate and note it in the review. The copy is small, so this finding is low severity.

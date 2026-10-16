@@ -42,7 +42,7 @@ final class ObservedPassLog: Sendable {
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   first.
     func waitForPasses(_ count: Int) async throws {
-        try await changes.wait(until: { recorded.count >= count })
+        try await changes.wait(untilAtLeast: count, of: { recorded.count })
     }
 
     /// Every pass so far, in the order it started.

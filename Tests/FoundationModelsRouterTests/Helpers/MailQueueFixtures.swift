@@ -185,7 +185,7 @@ extension PromptCountingBackend {
     /// - Throws: ``ConditionNeverHeld`` when the waiting task is cancelled
     ///   first.
     func waitForPrompts(_ count: Int) async throws {
-        try await changes.wait(until: { self.promptCount >= count })
+        try await changes.wait(untilAtLeast: count, of: { self.promptCount })
     }
 }
 

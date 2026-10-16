@@ -71,7 +71,7 @@ struct AsyncSemaphoreTests {
     ///   or ``ConditionNeverHeld`` when the test task was cancelled first.
     private static func waitForWaiters(_ count: Int, on semaphore: AsyncSemaphore) async throws {
         let changes = try #require(semaphore.waiterChanges)
-        try await changes.wait(until: { semaphore.waiterCount >= count })
+        try await changes.wait(untilAtLeast: count, of: { semaphore.waiterCount })
     }
 
     /// Starts a task that takes a permit of `semaphore` with a plain
@@ -145,7 +145,7 @@ struct AsyncSemaphoreTests {
                 }
             }
 
-            try await counter.changes.wait(until: { await counter.active >= 1 })
+            try await counter.changes.wait(untilAtLeast: 1, of: { await counter.active })
             try await Self.waitForWaiters(Self.serializedBodies - 1, on: semaphore)
             #expect(await counter.active == 1)
 
@@ -178,7 +178,7 @@ struct AsyncSemaphoreTests {
             }
 
             // Wait until N bodies are inside the gate...
-            try await counter.changes.wait(until: { await counter.active >= n })
+            try await counter.changes.wait(untilAtLeast: n, of: { await counter.active })
             // ...and the remaining (total - N) are suspended on the gate.
             try await Self.waitForWaiters(total - n, on: gate)
 

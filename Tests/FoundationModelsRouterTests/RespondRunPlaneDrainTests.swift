@@ -306,7 +306,7 @@ struct RespondRunPlaneDrainTests {
     private static func backgroundTokens(
         atLeast count: Int, on session: any RoutedSession, reportedBy backend: BackgroundingBackend
     ) async throws -> [String] {
-        try await backend.changes.wait(until: { backend.toolOutputs.count >= count })
+        try await backend.changes.wait(untilAtLeast: count, of: { backend.toolOutputs.count })
         return await session.runPlane.backgroundRuns().map(\.completionToken)
     }
 
@@ -358,7 +358,7 @@ struct RespondRunPlaneDrainTests {
     private static func prompts(
         atLeast count: Int, reaching backend: BackgroundingBackend
     ) async throws -> [String] {
-        try await backend.changes.wait(until: { backend.receivedPrompts.count >= count })
+        try await backend.changes.wait(untilAtLeast: count, of: { backend.receivedPrompts.count })
         return backend.receivedPrompts
     }
 
@@ -527,7 +527,7 @@ struct RespondRunPlaneDrainTests {
         // submission starts the next run, until the seventh submission starts
         // none.
         let submissionCount = Self.backgroundingSubmissionCount + 1
-        try await backend.changes.wait(until: { backend.receivedPrompts.count >= submissionCount })
+        try await backend.changes.wait(untilAtLeast: submissionCount, of: { backend.receivedPrompts.count })
         // The settlement of each run and the end of each pump are changes of
         // the work of the session (`idleChanges`), so the wait reads the runs
         // and the pump again after each one.

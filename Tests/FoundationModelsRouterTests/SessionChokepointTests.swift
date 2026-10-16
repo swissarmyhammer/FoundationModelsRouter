@@ -296,7 +296,7 @@ struct SessionChokepointTests {
     ///   - count: The number of evictions to wait for.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
     private static func waitForEvictions(_ spy: EvictionSpy, count: Int) async throws {
-        try await spy.changes.wait(until: { await spy.count >= count })
+        try await spy.changes.wait(untilAtLeast: count, of: { await spy.count })
     }
 
     /// Runs an empty job on the admission queue of `pool`, and waits until

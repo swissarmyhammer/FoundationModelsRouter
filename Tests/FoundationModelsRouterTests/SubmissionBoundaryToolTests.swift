@@ -292,7 +292,7 @@ struct SubmissionBoundaryToolTests {
         await session.outbox.post(event: terminal)
 
         let expected = Self.oneSubmission + Self.oneSubmission
-        try await log.changes.wait(until: { await log.events.count >= expected.count })
+        try await log.changes.wait(untilAtLeast: expected.count, of: { await log.events.count })
         #expect(await log.events == expected)
         #expect(await session.becomesIdle())
     }

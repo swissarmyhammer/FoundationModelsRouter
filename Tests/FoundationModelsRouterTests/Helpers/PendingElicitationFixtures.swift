@@ -92,7 +92,7 @@ final class ElicitationPostings: OperationEventSink {
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   first.
     func waitForPosts(_ expected: Int) async throws {
-        try await changes.wait(until: { postCount >= expected })
+        try await changes.wait(untilAtLeast: expected, of: { postCount })
     }
 
     /// The ids of each completion that ``post(elicitationCompleted:)`` got,
@@ -125,7 +125,7 @@ final class ElicitationPostings: OperationEventSink {
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   first.
     func waitForCompletions(_ expected: Int) async throws {
-        try await changes.wait(until: { completionCount >= expected })
+        try await changes.wait(untilAtLeast: expected, of: { completionCount })
     }
 
     /// The number of end posts that came to this sink so far, also the ones
@@ -159,7 +159,7 @@ final class ElicitationPostings: OperationEventSink {
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   first.
     func waitForArrivedEnds(_ expected: Int) async throws {
-        try await changes.wait(until: { arrivedEndCount >= expected })
+        try await changes.wait(untilAtLeast: expected, of: { arrivedEndCount })
     }
 }
 

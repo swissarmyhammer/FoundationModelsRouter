@@ -48,4 +48,25 @@ extension ChangeSignal {
             }
         }
     }
+
+    /// Waits until a counter is at least `count`.
+    ///
+    /// This is the one wait of the tests for a count: a count of prompts,
+    /// passes, posts or waiters. It is ``wait(isolation:until:)`` with the
+    /// condition `value() >= count`.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `value` can read the state of the caller.
+    ///   - count: The smallest value of the counter that ends the wait.
+    ///   - value: Reads the counter.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before the counter got to `count`; otherwise what `value` throws.
+    func wait(
+        isolation: isolated (any Actor)? = #isolation,
+        untilAtLeast count: Int,
+        of value: () async throws -> Int
+    ) async throws {
+        try await wait(until: { try await value() >= count })
+    }
 }

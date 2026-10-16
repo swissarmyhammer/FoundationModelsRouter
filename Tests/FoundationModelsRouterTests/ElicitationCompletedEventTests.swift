@@ -178,7 +178,7 @@ struct ElicitationCompletedEventTests {
         let posts = try asked.fixture.sessionActor().questionPosts
         let waiters = try #require(posts.waiterChanges)
         return Task {
-            try await waiters.wait(until: { posts.waiterCount >= Self.theStopWaits })
+            try await waiters.wait(untilAtLeast: Self.theStopWaits, of: { posts.waiterCount })
             await gate.open()
         }
     }
