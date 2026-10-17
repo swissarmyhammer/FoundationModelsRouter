@@ -302,7 +302,7 @@ struct SessionMessagePumpTests {
         let settledRun = try await settledRunTerminal(on: session)
         _ = try await session.respond(to: firstPrompt)
         await session.outbox.post(event: settledRun)
-        try await backend.waitForPrompts(mailOnlySubmission)
+        try await MailQueueFixtures.waitForPrompts(mailOnlySubmission, on: backend, endingWhenIdle: session)
         #expect(backend.prompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
     }
 
@@ -368,7 +368,7 @@ struct SessionMessagePumpTests {
         let id = try session.send(Self.firstPrompt)
 
         // No driver call and no wait: the pump takes the message by itself.
-        try await backend.waitForPrompts(1)
+        try await MailQueueFixtures.waitForPrompts(1, on: backend, endingWhenIdle: session)
         #expect(Self.isAnswered(try await session.awaitTerminal(of: id)))
         #expect(await session.becomesIdle())
         #expect(backend.prompts == [Self.firstPrompt])
@@ -389,7 +389,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await backend.waitForPrompts(1)
+        try await backend.waitForPrompts(1, endingOnEndOf: first)
         let waiting = try session.send(Self.secondPrompt)
         #expect(await session.pendingMessages().map(\.id) == [waiting])
 
@@ -412,8 +412,7 @@ struct SessionMessagePumpTests {
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
-        let id = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let id = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         #expect(await session.mailQueueDepth().running == [id])
 
         // The mail left the queue, so the signal of the cancel finds
@@ -444,7 +443,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await backend.waitForPrompts(1)
+        try await backend.waitForPrompts(1, endingOnEndOf: first)
         // The later prompts arrive one after the other, so their order in
         // the outbox is known.
         let second = Task { try await session.respond(to: Self.secondPrompt) }
@@ -481,7 +480,7 @@ struct SessionMessagePumpTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await backend.waitForPrompts(1)
+        try await backend.waitForPrompts(1, endingOnEndOf: first)
         let second = Task { try await session.respond(to: Self.secondPrompt) }
         try await Self.awaitWaitingMessages(1, on: session)
 
@@ -516,7 +515,7 @@ struct SessionMessagePumpTests {
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await backend.waitForPrompts(1)
+        try await backend.waitForPrompts(1, endingOnEndOf: first)
         await session.outbox.post(event: settledRun)
         await latch.open()
         let firstAnswer = try await first.value
@@ -526,7 +525,7 @@ struct SessionMessagePumpTests {
         #expect(backend.prompts.first == Self.firstPrompt)
 
         // No caller asks again: the mail itself starts the next submission.
-        try await backend.waitForPrompts(2)
+        try await MailQueueFixtures.waitForPrompts(2, on: backend, endingWhenIdle: session)
         let deliveryPrompt = try #require(backend.prompts.last)
         #expect(deliveryPrompt.contains(OperationEventSegment.renderedLine(for: settledRun)))
         #expect(deliveryPrompt.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt))
@@ -549,7 +548,7 @@ struct SessionMessagePumpTests {
         // posted terminal starts a delivery submission.
         _ = try await session.respond(to: Self.firstPrompt)
         await session.outbox.post(event: settledRun)
-        try await backend.waitForPrompts(2)
+        try await MailQueueFixtures.waitForPrompts(2, on: backend, endingWhenIdle: session)
 
         // The delivery submission failed with no `.prompt` entry. The pump
         // itself puts the mail back into the outbox before it ends, so the
@@ -680,7 +679,7 @@ struct SessionMessagePumpTests {
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
-        try await backend.waitForPrompts(1)
+        try await backend.waitForPrompts(1, endingOnEndOf: first)
         let second = Task { try await session.respond(to: Self.secondPrompt) }
         try await Self.awaitWaitingMessages(1, on: session)
         await session.outbox.post(event: settledRun)

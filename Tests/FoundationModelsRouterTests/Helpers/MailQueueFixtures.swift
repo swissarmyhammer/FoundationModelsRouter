@@ -6,9 +6,10 @@ import Testing
 
 /// The fixtures that the suites of the mail queue share
 /// (`mailbox.md`, sections 4 and 5): `MailQueueBatchTests`,
-/// `MailSignalTests` and `MailSubscriptionTests`. `CancelAllSignalTests`
-/// and `ElicitationCompletedEventTests` also start their held answer with
-/// ``startHeldAnswer(_:on:backend:)``.
+/// `MailSignalTests` and `MailSubscriptionTests`. Other suites that run on
+/// the same backend also start their held answer with
+/// ``startHeldAnswer(_:on:backend:sourceLocation:)``, and wait for a prompt
+/// with ``waitForPrompts(_:on:endingWhenIdle:sourceLocation:)``.
 ///
 /// Each session runs on ``SessionMessagePumpTests/PumpProbeBackend``, a stub
 /// backend that records each prompt and can hold a call open on a
@@ -150,26 +151,67 @@ enum MailQueueFixtures {
     /// session sends the prompt as one user message in reply mode
     /// (``RoutedSession/send(_:)-(String)``).
     ///
+    /// The wait also ends when the session becomes idle (rule T1), as
+    /// ``waitForPrompts(_:on:endingWhenIdle:sourceLocation:)`` states.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt of the held answer.
     ///   - session: The session.
     ///   - backend: The backend of the session.
+    ///   - sourceLocation: The place of the call, for the failure.
     /// - Returns: The id of the held message.
-    /// - Throws: What the send throws, or ``ConditionNeverHeld`` when the
-    ///   task is cancelled before the submission reaches the backend.
+    /// - Throws: What the send throws, the error of `#require` when the
+    ///   session became idle before the prompt reached the backend, or
+    ///   ``ConditionNeverHeld`` when the task is cancelled first.
     @discardableResult
     static func startHeldAnswer(
-        _ prompt: String, on session: any RoutedSession, backend: some PromptCountingBackend
+        _ prompt: String, on session: any RoutedSession, backend: some PromptCountingBackend,
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async throws -> MailID {
         let held = try session.send(prompt)
-        try await backend.waitForPrompts(heldAnswerPrompts)
+        try await waitForPrompts(heldAnswerPrompts, on: backend, endingWhenIdle: session, sourceLocation: sourceLocation)
         return held
+    }
+
+    /// Waits until at least `count` prompts reached `backend`, or until
+    /// `session` became idle (rule T1). When the session became idle and the
+    /// count is still low, the test fails by an assertion.
+    ///
+    /// Use this wait after a step that must start a submission, when no
+    /// task of the test waits for the answer: a send, a ``RoutedSession/mail(_:)``,
+    /// or a post of a terminal or a message of a run. The session is idle
+    /// when no pump runs and no user-type mail waits
+    /// (``RoutedSession/becomesIdle()``). A send puts its mail in the queue
+    /// before it returns, and a post of a terminal or a message wakes the
+    /// pump before it returns. So the session becomes idle only after a pump
+    /// took the mail and ended, and that pump calls the backend before it
+    /// ends. When the submission fails before it calls the backend, the pump
+    /// ends with no prompt, and the wait ends. One failure stays quiet: mail
+    /// that wakes no pump stays in the queue, so the session does not become
+    /// idle, and no event ends the wait.
+    ///
+    /// - Parameters:
+    ///   - count: How many prompts to wait for.
+    ///   - backend: The backend of the session.
+    ///   - session: The session whose idle state is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the session became idle first,
+    ///   or ``ConditionNeverHeld`` when the test was cancelled first.
+    static func waitForPrompts(
+        _ count: Int, on backend: some PromptCountingBackend, endingWhenIdle session: any RoutedSession,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let idle = Task { await session.becomesIdle() }
+        // The cancel ends the wait for the idle state, so it leaves no
+        // waiter on the idle signal of the session.
+        defer { idle.cancel() }
+        try await backend.waitForPrompts(count, endingOnEndOf: idle, sourceLocation: sourceLocation)
     }
 }
 
 /// A stub backend that counts the prompts it got, and signals each change
 /// of that count on ``changes``. A test waits for a prompt with no clock
-/// (``waitForPrompts(_:)``).
+/// (``waitForPrompts(_:endingOnEndOf:sourceLocation:)``).
 protocol PromptCountingBackend: Sendable {
     /// The signal of each change of the backend, sent after the change.
     var changes: ChangeSignal { get }
@@ -179,13 +221,31 @@ protocol PromptCountingBackend: Sendable {
 }
 
 extension PromptCountingBackend {
-    /// Waits until at least `count` prompts reached this backend.
+    /// Waits until at least `count` prompts reached this backend, or until
+    /// `task` ended (rule T1). When `task` ended and the count is still low,
+    /// the test fails by an assertion.
     ///
-    /// - Parameter count: How many prompts to wait for.
-    /// - Throws: ``ConditionNeverHeld`` when the waiting task is cancelled
-    ///   first.
-    func waitForPrompts(_ count: Int) async throws {
-        try await changes.wait(untilAtLeast: count, of: { self.promptCount })
+    /// The end of `task` signals ``changes``, so one wait sees the count and
+    /// the end. After the end, the wait reads the count again. Thus a prompt
+    /// that came before `task` ended passes, also when the end signal comes
+    /// first. In a test that passes, `task` must not end before the prompts
+    /// came: for example `task` is the answer that the prompts start, and the
+    /// backend holds its call.
+    ///
+    /// - Parameters:
+    ///   - count: How many prompts to wait for.
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `task` ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    func waitForPrompts<Success: Sendable, Failure: Error>(
+        _ count: Int, endingOnEndOf task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let ended = RecordedWaitResult.recordingEnd(of: task, reportingTo: changes)
+        defer { ended.stopRecording() }
+        try await changes.wait(
+            until: { self.promptCount >= count }, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
     }
 }
 

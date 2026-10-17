@@ -74,8 +74,7 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let first = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let first = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         let second = try session.send(Self.secondPrompt)
         let third = try session.send(Self.thirdPrompt)
         await latch.open()
@@ -101,8 +100,7 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let first = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let first = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         let second = try session.send(Self.secondPrompt)
         // The first submission ends with a rejected tool call. The retry is a
         // continuation of the same chain, and the waiting message joins it.
@@ -135,8 +133,7 @@ struct SubmissionAnswerEventTests {
         }
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let id = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let id = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         // The latch never opens, so only cancelAll() can end the held call.
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
@@ -190,7 +187,7 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let run = Task { try await session.respond(to: Self.firstPrompt, observing: nil) }
-        try await backend.waitForPrompts(1)
+        try await backend.waitForPrompts(1, endingOnEndOf: run)
         // The stream of the message ends with no error when the task that
         // reads it is cancelled. The respond must throw, not stop the process.
         run.cancel()

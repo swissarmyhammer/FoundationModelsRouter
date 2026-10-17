@@ -135,7 +135,7 @@ struct MailSubscriptionTests {
 
         let running = Self.reply(Self.heldPrompt)
         let subscription = try session.mail(running)
-        try await backend.waitForPrompts(1)
+        try await MailQueueFixtures.waitForPrompts(1, on: backend, endingWhenIdle: session)
         let copy = Mail(
             id: running.id, sender: .user,
             body: .userMessage(prompt: Self.firstPrompt, options: UserMessageOptions()))

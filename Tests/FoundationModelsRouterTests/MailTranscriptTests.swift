@@ -195,8 +195,7 @@ struct MailTranscriptTests {
             await session.close()
         }
 
-        let held = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         let second = try session.send(Self.secondPrompt)
         let third = try session.send(Self.thirdPrompt)
         await latch.open()
@@ -238,8 +237,7 @@ struct MailTranscriptTests {
             await session.close()
         }
 
-        let held = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         let replaced = try session.send(Self.secondPrompt)
         let swept = try session.send(Self.thirdPrompt)
         let newBody = MailBody.userMessage(prompt: Self.replacedPrompt, options: UserMessageOptions())
@@ -361,8 +359,7 @@ struct MailTranscriptTests {
             await session.close()
         }
 
-        let first = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let first = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         let second = try session.send(Self.secondPrompt)
         await latch.open()
         _ = try await session.awaitTerminal(of: second)
@@ -558,8 +555,7 @@ struct MailTranscriptTests {
 
         // The held answer and the mail behind it have no terminal record when
         // the process stops.
-        let held = try session.send(Self.firstPrompt)
-        try await backend.waitForPrompts(1)
+        let held = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         let queued = try session.send(Self.secondPrompt)
         let sessionId = session.id
         // Each send puts its queued record on the serial record chain of the

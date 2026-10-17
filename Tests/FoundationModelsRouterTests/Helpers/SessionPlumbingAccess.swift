@@ -89,13 +89,20 @@ extension RoutedSession {
     /// (``RoutedSessionActor/mail(_:)``), and that pump ends with a change,
     /// so the wait reads the state again after it. No clock ends the wait.
     ///
+    /// The check reads the queue before the pump. A pump can start and take
+    /// the mail between the two reads. When the pump is read first, the
+    /// check can then see no pump and no mail while that pump runs. When the
+    /// queue is read first, a pump that took the mail runs until it ends, so
+    /// the read of the pump sees it.
+    ///
     /// - Returns: `true` when the session is idle, or `false` when the
     ///   waiting task was cancelled first.
     func becomesIdle() async -> Bool {
         do {
             try await idleChanges.wait(until: {
+                let noMailWaits = self.waitingUserMailCount == 0
                 let pumpRunning = await self.isPumpRunning
-                return !pumpRunning && self.waitingUserMailCount == 0
+                return noMailWaits && !pumpRunning
             })
             return true
         } catch {
