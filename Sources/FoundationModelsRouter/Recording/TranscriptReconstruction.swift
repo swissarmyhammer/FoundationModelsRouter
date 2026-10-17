@@ -243,7 +243,9 @@ extension TranscriptTree {
     /// The ``TranscriptReconstructionView/restore`` view is the context
     /// projection, ``ContextRenderer/context(of:)``: it also removes the mail
     /// records of each `.prompt` entry, because the text of the entry is
-    /// already the render of its mail.
+    /// already the render of its mail, and each question that a relay sent
+    /// up from a child, because a relayed question is not model input (rule
+    /// R5). The recorded events keep each relayed question.
     ///
     /// - Parameters:
     ///   - id: The session's span id.

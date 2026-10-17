@@ -36,6 +36,8 @@ struct BackgroundingSessionFixture: Sendable {
     ///     of the session.
     ///   - userPresence: The ``SessionConfiguration/userPresence`` of the
     ///     session.
+    ///   - recordingsDir: The durable transcripts root of the router, or
+    ///     `nil` (the default) for a router that records only in memory.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws.
     static func make(
@@ -43,13 +45,14 @@ struct BackgroundingSessionFixture: Sendable {
         tools: [any Tool],
         container: BackgroundingLLMContainer = BackgroundingLLMContainer(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
-        userPresence: UserPresence = .interactive
+        userPresence: UserPresence = .interactive,
+        recordingsDir: URL? = nil
     ) async throws -> Self {
         let started = try await SessionFixtureLifecycle.start(
             over: container,
             configuration: SessionConfiguration(
                 tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit, userPresence: userPresence),
-            prefix: prefix)
+            prefix: prefix, recordingsDir: recordingsDir)
         let backend = try #require(container.lastBackend)
         return Self(session: started.session, backend: backend, router: started.router, directory: started.directory)
     }

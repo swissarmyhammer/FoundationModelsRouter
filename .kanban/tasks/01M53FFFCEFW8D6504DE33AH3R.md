@@ -21,10 +21,26 @@ comments:
     - evidence: 8 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorQuestionEnds.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift, Sources/FoundationModelsRouter/Session/SessionEvent.swift, Tests/FoundationModelsRouterTests/ElicitationEndedEventTests.swift, Tests/FoundationModelsRouterTests/Helpers/BackgroundingSessionFixture.swift, Tests/FoundationModelsRouterTests/Helpers/SessionOutputPositions.swift, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift. RED: `swift test --filter 'FoundationModelsRouterTests.ElicitationEndedEventTests/closeEndsAQuestionThatOpensWhileItsStopWaits'` 1 test failed by assertion (`ends.count → 0`), no hang. GREEN: the same filter, 1 test passed. Full `swift test` one time: 1795 tests in 217 suites passed with 1 known issue (RealModelHarness `withKnownIssue`), plus 26 and 19 tests passed, exit 0. `swift build --package-path IntegrationTests --build-tests`: Build complete, exit 0. The only warning is the known SwiftPM "missing creator for mutated node" of mlx-swift_Cmlx.bundle.
     - next: review
   timestamp: 2026-10-17T00:27:56.715589+00:00
+- actor: claude-code
+  id: 01m53mdqpfqfp1sdqmajyxfmex
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit dc3ce566). Counts: findings 0, confirmed 0, refuted 2, attempted 7, failed 0, skipped 0. The engine reviewed 8 files. The .reviewignore rule excluded 4 .kanban files.
+    - next: The task is in done. No work remains.
+  timestamp: 2026-10-17T00:33:09.327242+00:00
+- actor: claude-code
+  id: 01m53megh1nqf1bdvcyk9a515v
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 8 files (4 Sources, 4 Tests)
+    - test: green — the one full swift test run of the implement step: 1795 tests in 217 suites + 26 + 19 passed, exit 0; IntegrationTests build complete
+    - commit: dc3ce566
+    - review: clean — 0 findings, 8 files reviewed
+  timestamp: 2026-10-17T00:33:34.753073+00:00
 depends_on:
 - 01M53FF6DB5XXAG4T9JDMZ1CB9
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffff680
 title: 'R3: end each open question on a feed before close ends the feeds'
 ---
 Source: elicitation check of 2026-10-16 (elicitation-plan.md section 10), item 1, rule R3, group A.

@@ -33,19 +33,24 @@ enum SessionFixtureLifecycle {
     ///   - configuration: The configuration of the session.
     ///   - prefix: The prefix of the temporary directory, so a directory
     ///     that stays shows the suite that made it.
+    ///   - recordingsDir: The durable transcripts root of the router, or
+    ///     `nil` (the default) for a router that records only in memory. The
+    ///     end of the session does not remove this directory: the test owns
+    ///     it.
     /// - Returns: The session, its router and its directory.
     /// - Throws: What the resolve of the profile throws.
     static func start(
-        over container: any LoadedLLMContainer, configuration: SessionConfiguration, prefix: String
+        over container: any LoadedLLMContainer, configuration: SessionConfiguration, prefix: String,
+        recordingsDir: URL? = nil
     ) async throws -> Started {
         let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory)
+            over: container, cacheDir: directory, recordingsDir: recordingsDir)
         let session = profile.standard.makeSession(configuration: configuration)
         return Started(session: session, router: router, directory: directory)
     }
 
-    /// Ends a session that ``start(over:configuration:prefix:)`` started:
+    /// Ends a session that ``start(over:configuration:prefix:recordingsDir:)`` started:
     /// opens `gates`, so no run body stays held, closes the session, and
     /// removes the directory. The router stays alive until the end.
     ///

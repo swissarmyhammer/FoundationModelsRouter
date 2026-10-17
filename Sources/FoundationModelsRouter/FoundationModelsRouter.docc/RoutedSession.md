@@ -308,7 +308,9 @@ level one time, and the client answers it with the one id:
 
 - The relayed question is on the feed and in the journal of each level, but it
   makes no run mail: only the level whose own run asked it puts it in the
-  prompt of its model. Its origin at a relaying level is ``Origin-enum/system``.
+  prompt of its model. A restore or a fork of a relaying level also gives its
+  model a context with no relayed question, and the journal keeps the
+  question. Its origin at a relaying level is ``Origin-enum/system``.
 - An answer goes down level by level to the run that asked. Only that level
   gets the answer as ``MailBody/elicitationAnswer(id:response:)`` mail. A
   URL-mode accept goes down at once, and each level sends one

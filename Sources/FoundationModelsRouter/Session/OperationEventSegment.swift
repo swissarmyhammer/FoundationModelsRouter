@@ -147,6 +147,59 @@ extension OperationEventSegment {
             return eventSegment.withoutPlan.transcriptSegment
         }
     }
+
+    /// `entries` with no relayed question: the form that model input holds
+    /// (rule R5, task ^k8wkxj2).
+    ///
+    /// A ``SubagentQuestionRelay`` sends the question of a child up to the
+    /// run of the parent. The journal of the parent records that question as
+    /// a `.toolOutput` entry (``RoutedSessionActor/record(event:origin:)``),
+    /// so a restore and a replay of the events still find it. The question is
+    /// not model input of the parent: it makes no run mail, and this read
+    /// takes it out of the context that a restore or a fork gives to the
+    /// model.
+    ///
+    /// A segment is a relayed question when it is an
+    /// ``OperationEventSegment`` of an `.elicitation` event whose request has
+    /// an agent path (``ElicitationRequest/isRelayed``). The path is in the
+    /// recorded JSON of each relayed question, so the read finds the
+    /// questions of an old journal too. A `.toolOutput` entry that holds no
+    /// segment after the read is removed. Every other entry, and every other
+    /// segment, stays as it is: a relayed question makes no mail, so no
+    /// `.prompt` entry holds one.
+    ///
+    /// - Parameter entries: The entries of a transcript that goes to a
+    ///   backend.
+    /// - Returns: The entries, in order, with the relayed questions removed.
+    static func removingRelayedQuestions(from entries: [Transcript.Entry]) -> [Transcript.Entry] {
+        entries.compactMap(entryWithoutRelayedQuestions)
+    }
+
+    /// `entry` with no relayed question, or `nil` for a `.toolOutput` entry
+    /// that holds only relayed questions. See
+    /// ``removingRelayedQuestions(from:)``.
+    ///
+    /// - Parameter entry: An entry of a transcript that goes to a backend.
+    /// - Returns: The entry, or `nil`.
+    private static func entryWithoutRelayedQuestions(_ entry: Transcript.Entry) -> Transcript.Entry? {
+        guard case .toolOutput(let output) = entry else { return entry }
+        let kept = output.segments.filter { !isRelayedQuestion($0) }
+        guard kept.count != output.segments.count else { return entry }
+        guard !kept.isEmpty else { return nil }
+        return .toolOutput(Transcript.ToolOutput(id: output.id, toolName: output.toolName, segments: kept))
+    }
+
+    /// Whether `segment` records a question that a relay sent up from a
+    /// child (``ElicitationRequest/isRelayed``).
+    ///
+    /// - Parameter segment: A segment of an entry.
+    /// - Returns: `true` for a relayed question.
+    private static func isRelayedQuestion(_ segment: Transcript.Segment) -> Bool {
+        guard case .structure(let structure) = segment,
+            let eventSegment = (try? OperationEventSegment(structuredSegment: structure)) ?? nil
+        else { return false }
+        return eventSegment.content.elicitation?.isRelayed == true
+    }
 }
 
 extension TranscriptEvent {

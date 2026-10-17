@@ -418,6 +418,8 @@ struct SubagentRelayFixture: Sendable {
     ///   - userPresence: The user presence of the root session.
     ///   - makeChild: Makes each child from the session of the relaying
     ///     run. `nil` forks that session.
+    ///   - recordingsDir: The durable transcripts root of the router, or
+    ///     `nil` (the default) for a router that records only in memory.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws.
     static func make(
@@ -425,14 +427,15 @@ struct SubagentRelayFixture: Sendable {
         children childRoles: [SubagentRole],
         container: BackgroundingLLMContainer = BackgroundingLLMContainer(),
         userPresence: UserPresence = .interactive,
-        makeChild: (@Sendable (any RoutedSession) async throws -> any RoutedSession)? = nil
+        makeChild: (@Sendable (any RoutedSession) async throws -> any RoutedSession)? = nil,
+        recordingsDir: URL? = nil
     ) async throws -> Self {
         let box =
             makeChild.map { SubagentRelayBox(childRoles: childRoles, makeChild: $0) }
             ?? SubagentRelayBox(childRoles: childRoles)
         let base = try await BackgroundingSessionFixture.make(
             prefix: "SubagentQuestionRelayTests", tools: [SubagentJobTool(box: box)], container: container,
-            userPresence: userPresence)
+            userPresence: userPresence, recordingsDir: recordingsDir)
         box.adopt(base.session, as: .relay(rootStep))
         return Self(base: base, box: box)
     }

@@ -1,0 +1,219 @@
+import Foundation
+import FoundationModels
+import FoundationModelsRouterTestSupport
+import Testing
+
+@testable import FoundationModelsExtras
+@testable import FoundationModelsRouter
+
+/// Exercises rule R5 (task ^k8wkxj2): a relayed question is not model input.
+///
+/// A child session asks a question q, and a ``SubagentQuestionRelay`` sends q
+/// up to the relaying session P. The journal of P keeps q, so a restore and
+/// a replay of the events still find it. The context of the model of P does
+/// not hold q: not live, not after a restore of P, and not after a fork of P.
+///
+/// Each test records P to disk and restores it with a second router over the
+/// same recording root, as a new process does. The steps have a fixed order,
+/// and each wait ends on the question or on the settle of the relaying run.
+/// Everything runs against the scripted ``BackgroundingBackend``, so the suite
+/// needs no network and no GPU.
+@Suite("A relayed question is not model input, also after a restore and after a fork")
+struct RelayedQuestionContextTests {
+    // MARK: - Constants
+
+    /// The prefix of each temporary directory of this suite.
+    private static let tempDirPrefix = "RelayedQuestionContextTests"
+
+    /// The agent name of the child of the root.
+    private static let reviewer = "reviewer"
+
+    /// The prompt of the second answer of the root. That answer settles the
+    /// transcript of the root after its journal recorded the question, so the
+    /// cut of a fork that comes next is after the question.
+    private static let promptAfterTheQuestion = "continue after the question"
+
+    // MARK: - Helpers
+
+    /// Makes a root session that records under `recordingsDir`, whose
+    /// relaying run forks one child that asks one form question.
+    ///
+    /// - Parameters:
+    ///   - rootStep: The relaying level of the root.
+    ///   - recordingsDir: The durable transcripts root.
+    /// - Returns: The fixture.
+    /// - Throws: What the resolve of the profile throws.
+    private static func makeFixture(
+        rootStep: SubagentRelayStep, recordingsDir: URL
+    ) async throws -> SubagentRelayFixture {
+        try await SubagentRelayFixture.make(
+            root: rootStep, children: [.ask(SubagentAskStep())], recordingsDir: recordingsDir)
+    }
+
+    /// Starts the relaying run of the root, and reads the feed of the root
+    /// up to the relayed question. The read also ends when a run of the root
+    /// settles, so a relay that sends no question fails the test.
+    ///
+    /// - Parameter fixture: The root session and its box.
+    /// - Returns: The relayed question at the root.
+    /// - Throws: When the feed of the root holds no question.
+    private static func relayedQuestion(of fixture: SubagentRelayFixture) async throws -> OperationEvent {
+        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+        try await fixture.start()
+        let outputs = await SessionWorkEventTests.outputs(from: &feed) { event in
+            SessionEventCase.elicitationRequested.matches(event) || SessionEventCase.runSettled.matches(event)
+        }
+        return try firstQuestion(in: outputs)
+    }
+
+    /// Whether `transcript` holds the question of `event`: as a run event
+    /// with the id of the question, or as text that holds the message of the
+    /// question.
+    ///
+    /// - Parameters:
+    ///   - event: The `.elicitation` event of a question.
+    ///   - transcript: The context of a model.
+    /// - Returns: `true` when the model reads the question.
+    /// - Throws: When `event` carries no question.
+    private static func holds(_ event: OperationEvent, in transcript: Transcript) throws -> Bool {
+        let question = try #require(event.elicitation)
+        let entries = Array(transcript)
+        let asRunEvent = TranscriptEntrySegments.operationEvents(in: entries).contains {
+            $0.elicitation?.elicitationId == question.elicitationId
+        }
+        let asText = entries.contains { CharacterTokenCounter.content(of: $0).contains(question.message) }
+        return asRunEvent || asText
+    }
+
+    /// Whether `transcript` holds the terminal of the run `correlationID`.
+    ///
+    /// - Parameters:
+    ///   - correlationID: The token of a run.
+    ///   - transcript: The context of a model.
+    /// - Returns: `true` when the model reads how the run ended.
+    private static func holdsTerminal(ofRun correlationID: String, in transcript: Transcript) -> Bool {
+        TranscriptEntrySegments.operationEvents(in: Array(transcript)).contains {
+            $0.correlationID == correlationID && $0.kind == .completed
+        }
+    }
+
+    /// Restores the session tree of the root of `fixture` with a second
+    /// router over the same recording root, runs `body`, and then closes
+    /// each restored session. The close comes also when `body` throws.
+    ///
+    /// - Parameters:
+    ///   - fixture: The closed root session.
+    ///   - recordingsDir: The durable transcripts root.
+    ///   - body: The checks of the test.
+    /// - Throws: What the resolve, the restore or `body` throws.
+    private static func withRestoredTree(
+        of fixture: SubagentRelayFixture, recordingsDir: URL, _ body: (RestoredSessionTree) async throws -> Void
+    ) async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
+        let router = RouterTestFixtures.makeRouter(
+            id: fixture.base.router.id, cacheDir: cacheDir, recordingsDir: recordingsDir,
+            recorder: await fixture.base.router.recorder,
+            loader: StubModelLoader(container: BackgroundingLLMContainer(), dimension: RouterTestFixtures.stubDimension))
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let tree = try await profile.standard.restoreSessionTree(root: fixture.session.id)
+        do {
+            try await body(tree)
+        } catch {
+            await close(tree)
+            throw error
+        }
+        await close(tree)
+        withExtendedLifetime(router) {}
+    }
+
+    /// Closes each session of `tree`.
+    ///
+    /// - Parameter tree: The restored tree.
+    private static func close(_ tree: RestoredSessionTree) async {
+        for session in sessions(of: tree, under: tree.root) {
+            await session.close()
+        }
+    }
+
+    /// `session` and each restored session under it, parents first.
+    ///
+    /// - Parameters:
+    ///   - tree: The restored tree.
+    ///   - session: A restored session of `tree`.
+    /// - Returns: The sessions.
+    private static func sessions(of tree: RestoredSessionTree, under session: any RoutedSession) -> [any RoutedSession] {
+        [session] + tree.children(of: session.id).flatMap { sessions(of: tree, under: $0) }
+    }
+
+    // MARK: - Restore
+
+    /// The production change that makes this test fail: a restore context
+    /// that keeps the `.toolOutput` journal entry of a relayed question
+    /// (`ContextRenderer.context(of:)` with no filter of relayed questions).
+    @Test("a restore of the relaying level gives a context with no relayed question, and keeps the other run events")
+    func aRestoreOfTheRelayingLevelLeavesTheQuestionOutOfTheContext() async throws {
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: recordingsDir) }
+        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
+        let fixture = try await Self.makeFixture(rootStep: rootStep, recordingsDir: recordingsDir)
+        var asked: OperationEvent?
+        try await fixture.base.endingAfter(opening: [rootStep.gate]) {
+            let question = try await Self.relayedQuestion(of: fixture)
+            asked = question
+            // The live path: the journal writes no entry to the backend, and
+            // a relayed question makes no run mail.
+            #expect(try Self.holds(question, in: await fixture.session.transcript) == false)
+        }
+        let question = try #require(asked)
+        let childID = try #require(fixture.box.children.first).session.id
+
+        try await Self.withRestoredTree(of: fixture, recordingsDir: recordingsDir) { tree in
+            let root = try #require(tree.session(fixture.session.id))
+            let rootContext = await root.transcript
+            #expect(try Self.holds(question, in: rootContext) == false)
+            #expect(Self.holdsTerminal(ofRun: question.correlationID, in: rootContext))
+            // The child asked the question itself, so its context keeps it.
+            let child = try #require(tree.session(childID))
+            #expect(try Self.holds(question, in: await child.transcript))
+        }
+    }
+
+    // MARK: - Fork
+
+    /// The production change that makes this test fail: a fork whose
+    /// restored context inherits the journal entry of a relayed question
+    /// from the relaying level, or a live fork of a restored relaying level
+    /// that copies that entry from the restored context.
+    @Test("a fork of the relaying level holds no relayed question, after a restore and as a live fork of the restored level")
+    func aForkOfTheRelayingLevelLeavesTheQuestionOutOfTheContext() async throws {
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: recordingsDir) }
+        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
+        let fixture = try await Self.makeFixture(rootStep: rootStep, recordingsDir: recordingsDir)
+        var asked: OperationEvent?
+        var forkID: ULID?
+        try await fixture.base.endingAfter(opening: [rootStep.gate]) {
+            let question = try await Self.relayedQuestion(of: fixture)
+            asked = question
+            _ = try await fixture.session.respond(to: Self.promptAfterTheQuestion)
+            let prompt = try #require(fixture.base.backend.receivedPrompts.last)
+            #expect(prompt.contains(try #require(question.elicitation).message) == false)
+            let fork = try await fixture.session.fork(workingDirectory: nil)
+            forkID = fork.id
+            await fork.close()
+        }
+        let question = try #require(asked)
+        let restoredForkID = try #require(forkID)
+
+        try await Self.withRestoredTree(of: fixture, recordingsDir: recordingsDir) { tree in
+            let restoredFork = try #require(tree.session(restoredForkID))
+            #expect(try Self.holds(question, in: await restoredFork.transcript) == false)
+            let root = try #require(tree.session(fixture.session.id))
+            let liveFork = try await root.fork(workingDirectory: nil)
+            let liveForkContext = await liveFork.transcript
+            await liveFork.close()
+            #expect(try Self.holds(question, in: liveForkContext) == false)
+        }
+    }
+}

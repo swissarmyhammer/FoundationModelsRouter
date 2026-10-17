@@ -138,44 +138,10 @@ struct PlanRestorationTests {
     /// - Parameter entries: The entries of a transcript.
     /// - Returns: The text of each segment, in order.
     private static func segmentTexts(of entries: [Transcript.Entry]) -> [String] {
-        entries.flatMap(segments(of:)).compactMap { segment in
+        entries.flatMap(TranscriptEntrySegments.segments(of:)).compactMap { segment in
             if case .text(let text) = segment { return text.content }
             if case .structure(let structure) = segment { return structure.content.jsonString }
             return nil
-        }
-    }
-
-    /// The segments of `entry`, or none for an entry that has no segments.
-    ///
-    /// - Parameter entry: A transcript entry.
-    /// - Returns: The segments of the entry.
-    private static func segments(of entry: Transcript.Entry) -> [Transcript.Segment] {
-        switch entry {
-        case .instructions(let instructions):
-            return instructions.segments
-        case .prompt(let prompt):
-            return prompt.segments
-        case .response(let response):
-            return response.segments
-        case .reasoning(let reasoning):
-            return reasoning.segments
-        case .toolOutput(let output):
-            return output.segments
-        case .toolCalls:
-            return []
-        @unknown default:
-            return []
-        }
-    }
-
-    /// The operation events that the structured segments of `entries` carry.
-    ///
-    /// - Parameter entries: The entries of a transcript.
-    /// - Returns: The decoded events, in order.
-    private static func operationEvents(in entries: [Transcript.Entry]) -> [OperationEvent] {
-        entries.flatMap(segments(of:)).compactMap { segment in
-            guard case .structure(let structure) = segment else { return nil }
-            return (try? OperationEventSegment(structuredSegment: structure))??.content
         }
     }
 
@@ -212,7 +178,7 @@ struct PlanRestorationTests {
     @Test("the transcript a restore gives to the model keeps each journaled plan event, with its detail and no plan")
     func theRestoredSeedKeepsEachPlanEventWithoutItsPlan() async throws {
         try await Self.withRestoration { restoration in
-            let seeded = Self.operationEvents(in: try await Self.seedEntries(of: restoration))
+            let seeded = TranscriptEntrySegments.operationEvents(in: try await Self.seedEntries(of: restoration))
             let planDetails = seeded.filter { $0.detail == PlanFixtures.planDetail }
 
             #expect(planDetails.count == [Self.replacedPlan, Self.lastPlan, Self.otherPlan].count)

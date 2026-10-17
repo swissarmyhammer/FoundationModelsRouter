@@ -309,7 +309,7 @@ struct NoOpToolCallSessionFixture {
 
     /// The session step of ``make(startsJob:codes:tempDirPrefix:)``: starts a
     /// session with the host check ``isNoOp(toolName:arguments:)`` with
-    /// ``SessionFixtureLifecycle/start(over:configuration:prefix:)``.
+    /// ``SessionFixtureLifecycle/start(over:configuration:prefix:recordingsDir:)``.
     ///
     /// - Parameters:
     ///   - container: The container that runs the model.

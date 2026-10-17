@@ -330,7 +330,9 @@ extension RoutedSessionActor {
     /// session's model sees how the background runs it left behind actually
     /// ended. ``OperationEventSegment`` rebuilds from its own persisted
     /// schema name, so restoring a closed session succeeds with no caller
-    /// setup.
+    /// setup. The one journal entry that the restored transcript leaves out
+    /// is a question that a relay sent up from a child
+    /// (``OperationEventSegment/removingRelayedQuestions(from:)``, rule R5).
     ///
     /// Journaling brings the session meta line with it: a close that
     /// journals anything first records the `.session` meta event (exactly as

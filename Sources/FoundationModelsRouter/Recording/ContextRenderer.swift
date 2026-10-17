@@ -22,6 +22,9 @@ import FoundationModelsExtras
 ///   rendered.
 /// - Model output, tool calls and tool results come after the `.prompt`
 ///   entry of their submission.
+/// - A question that a relay sent up from a child (rule R5) is not
+///   rendered. The journal keeps it as a `.toolOutput` entry, and each other
+///   run event of that journal is rendered.
 ///
 /// Both functions are pure: the same input gives the same output. The
 /// transcript is append-only, so between two submissions the context grows
@@ -88,6 +91,13 @@ enum ContextRenderer {
     /// the text of that entry is already the render of its mail, so the
     /// model reads each mail one time, as the live session gave it.
     ///
+    /// Last, it removes each question that a relay sent up from a child
+    /// (``OperationEventSegment/removingRelayedQuestions(from:)``), rule R5:
+    /// a relayed question is not model input. The journal keeps the
+    /// question, and each other run event stays in the context. A restore
+    /// and a fork both seed from this render, so neither gives the question
+    /// to the model.
+    ///
     /// - Parameter events: The effective events of the session, in `seq`
     ///   order, with the ``TranscriptEvent/Kind/repeatedPartRemoval`` events.
     ///   Each other router-only event is passed over.
@@ -98,7 +108,7 @@ enum ContextRenderer {
         let entries = try TranscriptTree.entries(
             of: TranscriptTree.reconstructableEvents(events.filter(\.kind.isEntryKind), view: .restore))
         let render = RepeatedPartRemoval.render(of: entries, applying: try TranscriptTree.renderCut(in: events))
-        return Transcript(
-            entries: render.map { MailRecordSegment.removingRecords(from: OperationEventSegment.removingPlans(from: $0)) })
+        let rendered = render.map { MailRecordSegment.removingRecords(from: OperationEventSegment.removingPlans(from: $0)) }
+        return Transcript(entries: OperationEventSegment.removingRelayedQuestions(from: rendered))
     }
 }

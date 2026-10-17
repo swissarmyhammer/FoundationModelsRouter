@@ -188,9 +188,16 @@ struct SessionTreeRestorationLostRunTests {
     /// root — the crashed-process simulation: the first session's
     /// run plane and outbox are only in memory, so they are gone.
     ///
+    /// - Parameters:
+    ///   - journaled: The events posted before the answer.
+    ///   - journaledAfterTheAnswer: The events posted after the answer. The
+    ///     journal records each one, and no answer delivers it.
+    ///   - cacheDir: The disposable cache directory.
+    ///   - recordingsDir: The durable recordings root.
     /// - Returns: The restored tree and the original root's id.
     private static func recordAndRestore(
         journaled: [OperationEvent],
+        journaledAfterTheAnswer: [OperationEvent] = [],
         cacheDir: URL,
         recordingsDir: URL
     ) async throws -> (restored: RestoredSessionTree, rootId: ULID) {
@@ -201,6 +208,9 @@ struct SessionTreeRestorationLostRunTests {
             await root.outbox.post(event: event)
         }
         _ = try await root.respond(to: "hello")
+        for event in journaledAfterTheAnswer {
+            await root.outbox.post(event: event)
+        }
 
         let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
@@ -290,6 +300,44 @@ struct SessionTreeRestorationLostRunTests {
         #expect(manufactured.tool == "snippet")
         #expect(manufactured.op == "elicit form")
         #expect(manufactured.detail == "Which account?")
+    }
+
+    /// The production change that makes this test fail: a lost terminal
+    /// whose detail is the message of the relayed question that the run
+    /// posted last. That terminal goes to the model as run mail, and rule R5
+    /// says a relayed question is not model input (task ^k8wkxj2).
+    @Test("an orphaned run whose newest event is a relayed question gets the detail of its own newest event")
+    @MainActor
+    func orphanedRunKeepsTheRelayedQuestionOutOfItsLostDetail() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        // The relaying run reports its own progress, and the answer delivers
+        // it. Then a relay sends the question of its child up through the
+        // context of that run, so the question is the newest event of the run.
+        let progress = Self.event(
+            tool: "snippet", op: "elicit form", correlationID: "ask-1", kind: .progress, detail: "812 lines so far")
+        let asked = Self.elicitationEvent(correlationID: "ask-1", message: "Which account?")
+        let relayed = Self.event(
+            tool: asked.tool, op: asked.op, correlationID: asked.correlationID, kind: .elicitation, detail: asked.detail,
+            elicitation: try #require(asked.elicitation).relayed(by: "reviewer", askedBy: asked.tool))
+        let (restored, _) = try await Self.recordAndRestore(
+            journaled: [progress],
+            journaledAfterTheAnswer: [relayed],
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+
+        let pending = await restored.root.outbox.pending()
+        #expect(pending.events.count == 1)
+        let manufactured = try #require(pending.events.first?.event)
+        #expect(manufactured.outcome == .lost)
+        #expect(manufactured.correlationID == "ask-1")
+        #expect(manufactured.detail == "812 lines so far")
     }
 
     // MARK: - Completed run -> nothing manufactured

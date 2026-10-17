@@ -641,12 +641,22 @@ extension TranscriptTree {
         var orphanCandidateOrder: [RunKey] = []
 
         /// Applies one journaled event to the scan.
+        ///
+        /// A question that a relay sent up from a child
+        /// (``ElicitationRequest/isRelayed``) is not model input (rule R5),
+        /// so it does not take the place of an older event of its run: the
+        /// detail of a lost terminal comes from the own events of the run.
+        /// When a relayed question is the first event of its run, it makes
+        /// the run a candidate, and a later event of the run takes its place.
         mutating func observe(_ event: OperationEvent) {
             let run = RunKey(tool: event.tool, correlationID: event.correlationID)
             switch event.kind {
             case .completed:
                 completedRuns.insert(run)
             case .progress, .elicitation, .message:
+                if event.elicitation?.isRelayed == true, newestNonTerminalByRun[run] != nil {
+                    return
+                }
                 if newestNonTerminalByRun.updateValue(event, forKey: run) == nil {
                     orphanCandidateOrder.append(run)
                 }
@@ -659,8 +669,9 @@ extension TranscriptTree {
     /// `events`. A run is orphaned when the stream carries a non-terminal
     /// event for its `(tool, correlationID)` pair but no `.completed` event
     /// for that pair. One event is made per orphaned run, in order of first
-    /// appearance. Its `detail` is the elicitation message, or the newest
-    /// event's `detail`, as the journal holds it.
+    /// appearance. Its `detail` is the message of a question that the run
+    /// asked itself, or the newest event's `detail`, as the journal holds it
+    /// (``lostDetail(of:)``). A relayed question gives no detail (rule R5).
     ///
     /// The journaled events are read through ``TranscriptEvent/operationEvents``,
     /// which passes over a stripped or undecodable segment. Transcript
@@ -685,9 +696,25 @@ extension TranscriptTree {
                 op: newest.op,
                 correlationID: run.correlationID,
                 kind: .completed,
-                detail: newest.elicitation?.message ?? newest.detail,
+                detail: lostDetail(of: newest),
                 outcome: .lost
             )
         }
+    }
+
+    /// The `detail` of the lost terminal of a run whose newest kept event
+    /// is `newest`: the message of its question, or its own `detail`.
+    ///
+    /// The lost terminal goes to the model as run mail. A question that a
+    /// relay sent up from a child (``ElicitationRequest/isRelayed``) is not
+    /// model input (rule R5), so its message is never the detail. The scan
+    /// keeps a relayed question as the newest event only when the run has no
+    /// other event, and then the detail is the `detail` of that event.
+    ///
+    /// - Parameter newest: The newest kept non-terminal event of the run.
+    /// - Returns: The detail.
+    private static func lostDetail(of newest: OperationEvent) -> String {
+        guard let question = newest.elicitation, !question.isRelayed else { return newest.detail }
+        return question.message
     }
 }

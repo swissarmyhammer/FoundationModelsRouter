@@ -191,14 +191,21 @@ enum RouterTestFixtures {
     ///     profile (``Router/useRunClock(_:)``), or `nil` (the default) for
     ///     the real time. A test gives a `ManualRunClock`, so each timer of
     ///     its sessions ends only when the test advances that clock.
+    ///   - recordingsDir: The durable transcripts root, or `nil` (the
+    ///     default) for a router that records only in memory. A router with
+    ///     a root writes each session to disk (``JSONLRecorder``), so a test
+    ///     can restore the sessions.
     /// - Returns: The router and the profile it resolved. A caller that has
     ///   to keep the router alive for the whole test keeps both.
     /// - Throws: What the resolve throws.
     static func resolveStandardProfile(
-        over container: any LoadedLLMContainer, cacheDir: URL, runClock: (any RunClock)? = nil
+        over container: any LoadedLLMContainer, cacheDir: URL, runClock: (any RunClock)? = nil,
+        recordingsDir: URL? = nil
     ) async throws -> (router: Router, profile: LanguageModelProfile) {
         let router = makeRouter(
-            cacheDir: cacheDir, loader: StubModelLoader(container: container, dimension: stubDimension))
+            cacheDir: cacheDir, recordingsDir: recordingsDir,
+            recorder: recordingsDir.map { JSONLRecorder(directory: $0) } ?? InMemoryRecorder(),
+            loader: StubModelLoader(container: container, dimension: stubDimension))
         if let runClock {
             await router.useRunClock(runClock)
         }
