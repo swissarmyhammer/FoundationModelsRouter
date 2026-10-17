@@ -89,10 +89,12 @@ struct ToolResultCompactionTests {
                 loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
             let profile = try await router.resolve(
                 profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            // The last step that can throw comes before the session, so no
+            // throw leaves a session that the caller cannot close.
+            let queue = try #require(profile[keyPath: slot].backendQueue)
             let session = profile[keyPath: slot].makeSession(tools: [tool], budget: budget)
             return Fixture(
-                session: session, tool: tool, recorder: recorder, directory: directory,
-                queue: try #require(profile[keyPath: slot].backendQueue))
+                session: session, tool: tool, recorder: recorder, directory: directory, queue: queue)
         }
     }
 
@@ -106,6 +108,7 @@ struct ToolResultCompactionTests {
     func crossingResultCompactsAndTheAnswerEnds() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await Self.streamedAnswer(on: fixture.session)
 
@@ -142,6 +145,7 @@ struct ToolResultCompactionTests {
     func ownModelSummarizerBetweenTwoSubmissionsCompletes() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength, slot: \.flash)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let (log, answer) = SessionEventLog.collect(
             await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil))
@@ -169,6 +173,7 @@ struct ToolResultCompactionTests {
     func recordHoldsTheStoppedRoundsBeforeTheBoundary() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         _ = try await Self.streamedAnswer(on: fixture.session)
 
@@ -197,6 +202,7 @@ struct ToolResultCompactionTests {
     func yieldedSubmissionEndsWithTheUsageOfItsAttempt() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await Self.streamedAnswer(on: fixture.session)
 
@@ -223,6 +229,7 @@ struct ToolResultCompactionTests {
     func unreportedUsageStillCrosses() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength, usage: Self.unreportedUsage)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await Self.streamedAnswer(on: fixture.session)
 
@@ -235,6 +242,7 @@ struct ToolResultCompactionTests {
     func resultUnderTheTriggerDoesNotCompact() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.smallResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await Self.streamedAnswer(on: fixture.session)
 
@@ -246,6 +254,7 @@ struct ToolResultCompactionTests {
     func userStopStaysAStop() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
         fixture.tool.stopsSubmission(of: fixture.session)
 
         let stream = await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil)

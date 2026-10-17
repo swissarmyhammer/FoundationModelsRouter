@@ -159,6 +159,7 @@ struct CompactionRenderCounterTests {
     func renderAfterCompactionHoldsInstructionsSnapshotAndNewMessages() async throws {
         let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
         _ = try await fixture.session.respond(to: Self.firstQuestion)
         _ = try await fixture.session.respond(to: Self.secondQuestion)
 
@@ -183,6 +184,7 @@ struct CompactionRenderCounterTests {
     func renderAfterTwoCompactionsHoldsOnlyTheLatestSnapshot() async throws {
         let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
         _ = try await fixture.session.respond(to: Self.firstQuestion)
         let first = try await Self.compact(fixture.session)
         _ = try await fixture.session.respond(to: Self.secondQuestion)
@@ -210,6 +212,7 @@ struct CompactionRenderCounterTests {
     func recordedTranscriptKeepsEveryEntryAcrossTwoCompactions() async throws {
         let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
         _ = try await fixture.session.respond(to: Self.firstQuestion)
         let beforeFirst = await fixture.recorder.events
         let first = try await Self.compact(fixture.session)
@@ -239,6 +242,7 @@ struct CompactionRenderCounterTests {
     func toolLoopCounterIsTheRenderNotTheSum() async throws {
         let fixture = try await Self.makeProbe(toolRoundsPerAnswer: Self.toolLoopRounds)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collect(fixture.session.streamEvents(to: Self.firstQuestion))
 
@@ -264,6 +268,7 @@ struct CompactionRenderCounterTests {
         let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 1)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.session
+        defer { await session.close() }
         let contextTokens = Self.probeContextTokens
 
         _ = try await session.respond(to: Self.firstQuestion)
@@ -302,6 +307,7 @@ struct CompactionRenderCounterTests {
         let fixture = try await MeteredToolLoopSessionFixture.make(
             calls: calls, context: Self.meteredContextTokens, budget: budget, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collect(fixture.session.streamEvents(to: Self.firstQuestion, maxTokens: Self.ceiling))
 

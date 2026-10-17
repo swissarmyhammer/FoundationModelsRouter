@@ -127,12 +127,14 @@ struct ForkAfterCompactionRestorationTests {
         // Parent records N answers, then compacts: the derived budget's target
         // is under the live context, so the one summarizer call runs.
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         try await driveAnswers(6, on: root)
         let rootBackend = try #require(container.lastBackend)
         let result = try await root.compactAndAwait(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
 
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         // The fork's cut in history coordinates: how many entry-kind events
         // the parent's recorded history holds at fork time — the raw,
@@ -181,6 +183,10 @@ struct ForkAfterCompactionRestorationTests {
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         #expect(restored.session(fork.id) != nil)
     }
 
@@ -206,6 +212,7 @@ struct ForkAfterCompactionRestorationTests {
         // A root that compacts and then keeps going, so its recorded history
         // carries a checkpoint with entries after it.
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         try await driveAnswers(6, on: root)
         let rootBackend = try #require(container.lastBackend)
         let result = try await root.compactAndAwait(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
@@ -219,6 +226,7 @@ struct ForkAfterCompactionRestorationTests {
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         // What the restored root was seeded with — the checkpoint's live
         // window plus everything recorded after it. The fork taken next
@@ -228,6 +236,7 @@ struct ForkAfterCompactionRestorationTests {
             .effectiveTranscript(forSession: root.id).map(\.id)
 
         let fork = try await restored.root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork off the restored root")
         _ = try await restored.root.respond(to: "restored root continues after the fork")
 
@@ -247,6 +256,10 @@ struct ForkAfterCompactionRestorationTests {
         let profile3 = try await router3.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restoredAgain = try await profile3.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restoredAgain.root.close()
+            await restoredAgain.session(fork.id)?.close()
+        }
         #expect(restoredAgain.session(fork.id) != nil)
     }
 
@@ -273,8 +286,10 @@ struct ForkAfterCompactionRestorationTests {
         // the legacy positional count and the history-coordinate cut agree,
         // which is exactly why old recordings keep restoring correctly.
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "remember 42")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork answer")
 
         // Rewrite the fork's sidecar without the new key, simulating a
@@ -301,6 +316,10 @@ struct ForkAfterCompactionRestorationTests {
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         #expect(restored.session(fork.id) != nil)
     }
 }

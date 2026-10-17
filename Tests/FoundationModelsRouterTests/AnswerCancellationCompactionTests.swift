@@ -125,6 +125,9 @@ extension AnswerCancellationTests {
             suspendingOn: { route == .cancelAll && !isSummarizerCall($0) && $0.hasSuffix(prompt) },
             insideTool: answerInside)
         let held = holdFirstSummarizerCall(fixture, otherwise: fixture.hook.midAnswer)
+        // No cancel ends the hold. When this helper throws, the hold ends here,
+        // so the close of the session in the test does not wait for ever.
+        defer { held.release.signal() }
         let actor = try #require(session as? RoutedSessionActor)
         let feed = await session.streamSessionEvents()
 
@@ -315,6 +318,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+        defer { await session.close() }
 
         let stopped = try await Self.stopAnswerDuringItsProactiveCompaction(fixture, session: session, by: route)
         try await Self.expectStopEnds(stopped.stop)
@@ -347,6 +351,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+        defer { await session.close() }
 
         // `LanguageModelSessionBackend` is a public protocol, and a conformer is free
         // to surface `CancellationError` from internals of its own — a timeout, a
@@ -394,6 +399,10 @@ extension AnswerCancellationTests {
         // and the result names the tier that wrote it.
         fixture.hook.reply = { Self.isSummarizerCall($0) ? "short summary" : nil }
         let held = Self.holdFirstSummarizerCall(fixture, throwing: ProbeError.summarizerFailed)
+        defer {
+            held.release.signal()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         try await Self.waitUntilSummarizerInside(held.inside, orEndOf: answerTask, fixture)
@@ -623,6 +632,7 @@ extension AnswerCancellationTests {
         // proactive compaction of its own.
         let session = try await Self.makeCompactionTriggeredSession(
             fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
+        defer { await session.close() }
         let actor = try #require(session as? RoutedSessionActor)
         // A short summary, so that the compaction shrinks the live context and
         // applies its snapshot. The backend asks for the reply text after the
@@ -683,6 +693,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+        defer { await session.close() }
 
         // Posted after the warm-up, so this answer is the answer that takes it.
         let posted = OperationEvent(
@@ -838,6 +849,10 @@ extension AnswerCancellationTests {
             guard !Self.isSummarizerCall(prompt), prompt.hasSuffix(Self.overflowingCompactionPrompt) else { return }
             throw Self.makeStubContextOverflow()
         }
+        defer {
+            held.release.signal()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let answerTask = Task {
@@ -885,6 +900,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+        defer { await session.close() }
 
         // Each tier fails, and no stop is outstanding: the compaction fails.
         fixture.hook.midAnswer = { prompt in
@@ -960,6 +976,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+        defer { await session.close() }
 
         // No hook installed and no stop requested: the cancellation boundary around
         // the summarizer call must cost the compaction nothing.

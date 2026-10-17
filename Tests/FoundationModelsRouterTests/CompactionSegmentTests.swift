@@ -431,6 +431,7 @@ struct CompactionSegmentTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "irrelevant — this answer exists only to trigger the recording chokepoint")
 
         let tree = try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -476,6 +477,7 @@ struct CompactionSegmentTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "irrelevant — this answer exists only to trigger the recording chokepoint")
 
         // "Fresh process": a second, independently constructed Router/profile
@@ -497,6 +499,7 @@ struct CompactionSegmentTests {
         // No caller setup at all: the segment rebuilds from its own persisted
         // schema name.
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(restored.root.id == root.id)
         let restoredTranscript = Array(

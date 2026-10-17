@@ -69,6 +69,7 @@ struct CeilingStopCompactionTests {
                 container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(tools: [], budget: budget)
+        defer { await session.close() }
         return try await collect(session.streamEvents(to: prompt, maxTokens: ceiling))
     }
 

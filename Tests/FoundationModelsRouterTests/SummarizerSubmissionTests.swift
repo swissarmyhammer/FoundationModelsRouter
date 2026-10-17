@@ -54,6 +54,10 @@ struct SummarizerSubmissionTests {
         /// tier.
         let standard: ConfiguredLLMContainer
 
+        /// The other session, on the flash slot. Its submission holds the
+        /// flash worker until the latch opens.
+        let flashSession: any RoutedSession
+
         /// The answer of the session on the flash slot. Its pass holds the
         /// flash worker until the latch opens.
         let flashAnswer: Task<String, any Error>
@@ -71,17 +75,23 @@ struct SummarizerSubmissionTests {
     /// that answer calls the flash summarizer, and the call waits for the
     /// flash worker, which the other submission holds until the latch opens.
     ///
-    /// When this helper throws, it opens the flash latch first (rule T1).
+    /// When this helper throws, it opens the flash latch first, and then
+    /// closes each session that it made (rule T1).
     ///
     /// - Returns: The parts that the test reads and releases.
     /// - Throws: Whatever the warm-up of the triggered session throws.
     private static func startSummarizerBehindAFlashSubmission() async throws -> WaitingSummarizer {
         let flash = PassObservingFixture()
+        // The sessions that this helper made, for the close on a throw.
+        var triggeredSession: (any RoutedSession)?
+        var flashSideSession: (any RoutedSession)?
         do {
             let (session, standard) = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: AutoCompactionFixtures.fixedBudget, flash: flash.container, tempDirPrefix: tempDirPrefix)
+            triggeredSession = session
             let flashQueue = try #require(session.profile.flash.backendQueue)
             let flashSession = session.profile.flash.makeSession()
+            flashSideSession = flashSession
 
             // The flash session's submission runs on the flash worker, and its
             // pass stays inside the model until the latch opens. The wait also
@@ -103,9 +113,10 @@ struct SummarizerSubmissionTests {
             await probe.enqueued.wait()
             return WaitingSummarizer(
                 flash: flash, flashQueue: flashQueue, session: session, standard: standard,
-                flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
+                flashSession: flashSession, flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
         } catch {
-            await flash.latch.open()
+            await SessionFixtureLifecycle.close(flashSideSession, opening: [flash.latch])
+            await triggeredSession?.close()
             throw error
         }
     }
@@ -114,6 +125,10 @@ struct SummarizerSubmissionTests {
     func aFlashSummarizerCallAndAFlashSubmissionNeverOverlap() async throws {
         let waiting = try await Self.startSummarizerBehindAFlashSubmission()
         let flash = waiting.flash
+        defer {
+            await SessionFixtureLifecycle.close(waiting.flashSession, opening: [flash.latch])
+            await waiting.session.close()
+        }
         let peakWhileTheSummarizerWaits = await flash.observer.maximumActive
 
         await flash.latch.open()

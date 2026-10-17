@@ -204,6 +204,7 @@ struct RoutedSessionCompactTests {
             budget: AutoCompactionFixtures.fixedBudget,
             samplingMode: .greedy,
             tempDirPrefix: "RoutedSessionCompactTests")
+        defer { await session.close() }
         // The root session's own backend already carries the mode, and no
         // compaction has asked the flash slot for a backend yet.
         #expect(standard.receivedSamplingModes == [.greedy])
@@ -234,6 +235,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         // Six answers of the canned text are much larger than the one copy of
         // it the summarizer answers with, so the summary shrinks the context.
         try await driveAnswers(6, on: session)
@@ -296,6 +298,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -334,6 +337,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let sessionId = session.id
@@ -394,6 +398,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -432,6 +437,7 @@ struct RoutedSessionCompactTests {
         let scratchProfile = try await router.resolve(
             profile: Self.profile(context: 1_000_000), reporting: ResolutionProgress())
         let scratchSession = scratchProfile.standard.makeSession()
+        defer { await scratchSession.close() }
         try await driveAnswers(6, on: scratchSession)
         let scratchBackend = try #require(container.lastBackend)
         let liveTokens = characterCount(of: scratchBackend.transcriptEntries())
@@ -445,6 +451,7 @@ struct RoutedSessionCompactTests {
         let profile2 = try await router2.resolve(
             profile: Self.profile(context: tightContext), reporting: ResolutionProgress())
         let session2 = profile2.standard.makeSession()
+        defer { await session2.close() }
         try await driveAnswers(6, on: session2)
 
         let result = try await session2.compactAndAwait()
@@ -482,6 +489,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -523,6 +531,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let sessionId = session.id
@@ -580,6 +589,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(2, on: session)
 
         // A generous budget the tiny transcript of two answers is already well
@@ -636,11 +646,11 @@ struct RoutedSessionCompactTests {
         let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
+        let latch = RunLatch()
         let session = profile.standard.makeSession()
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         try await driveAnswers(6, on: session)
 
-        let latch = RunLatch()
-        defer { await latch.open() }
         let token = await trackFakeRun(on: session.runPlane, latch: latch)
         await session.runPlane.updateProgress(completionToken: token, detail: "halfway through")
 
@@ -695,6 +705,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -732,6 +743,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(
             profile: Self.profile(context: contextTokens), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -787,6 +799,7 @@ struct RoutedSessionCompactTests {
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -847,6 +860,7 @@ struct RoutedSessionCompactTests {
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(instructions: "You are a test assistant.")
+        defer { await session.close() }
         try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
@@ -875,6 +889,7 @@ struct RoutedSessionCompactTests {
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: session.id)
+        defer { await restored.root.close() }
         #expect(restored.root.id == session.id)
 
         // The restored backend was seeded with the instructions plus the

@@ -102,6 +102,7 @@ struct AutoCompactionTests {
     @MainActor
     func proactiveCompactionPrefersFlashSummarizer() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        defer { await session.close() }
 
         // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up answers —
         // the very next answer should compact automatically, before its own
@@ -137,6 +138,7 @@ struct AutoCompactionTests {
     @MainActor
     func contextOverTheTriggerCompactsOnceBeforeTheAnswer() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        defer { await session.close() }
         #expect(await session.contextFill >= Self.fixedBudget.trigger)
 
         let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
@@ -164,6 +166,7 @@ struct AutoCompactionTests {
     @MainActor
     func proactiveCompactionFallsBackToOwnModelWhenFlashFails() async throws {
         let (session, standard, flash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        defer { await session.close() }
         flash.shouldThrow = true
         // The session's own live backend (driving the warm-up answers above)
         // is untouched, so the own-model fallback tier succeeds.
@@ -196,6 +199,7 @@ struct AutoCompactionTests {
     @MainActor
     func noBudgetMeansNoAutoCompaction() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: nil)
+        defer { await session.close() }
         #expect(await session.contextFill == 0.9)
 
         let events = try await collectEvents(session, prompt: Self.triggeringPrompt)
@@ -209,9 +213,11 @@ struct AutoCompactionTests {
     @MainActor
     func forkInheritsAutoCompactionBudget() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        defer { await session.close() }
         #expect(await session.contextFill == 0.9)
 
         let forked = try await session.fork(workingDirectory: nil)
+        defer { await forked.close() }
         // The fork inherits the parent's measured fill as of fork time
         // (already at/above trigger), so its very first answer should compact
         // proactively before running, with no warm-up of its own.
@@ -408,6 +414,7 @@ struct AutoCompactionTests {
     @MainActor
     func reactiveRetryRecoversFromContextOverflowAutomatically() async throws {
         let (session, standardContainer, _) = try await Self.makeOverflowSession()
+        defer { await session.close() }
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its
@@ -428,6 +435,7 @@ struct AutoCompactionTests {
     @MainActor
     func overflowRetrySendsTwoSubmissionPairsAndOneAnswer() async throws {
         let (session, _, _) = try await Self.makeOverflowSession()
+        defer { await session.close() }
         let (log, drain) = await SessionEventLog.watch(session)
 
         _ = try await session.respond(to: "keep going")
@@ -464,6 +472,7 @@ struct AutoCompactionTests {
         // so each answer retries one time.
         let (session, standardContainer, _) = try await Self.makeOverflowSession(
             overflowsRemaining: 0, overflowingCalls: [1, 3])
+        defer { await session.close() }
 
         let first = try await session.respond(to: "keep going")
         let second = try await session.respond(to: "keep going again")
@@ -558,6 +567,7 @@ struct AutoCompactionTests {
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(budget: TokenBudget(limit: 100_000, target: 0.35))
+        defer { await session.close() }
 
         var caughtOverflow = false
         do {
@@ -590,6 +600,7 @@ struct AutoCompactionTests {
         hardCeilingBudget.trigger = 2.0
         hardCeilingBudget.hardCeiling = 0.85
         let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
+        defer { await session.close() }
         #expect(await session.contextFill == 0.9)
 
         // A small increment for the triggering answer's own (retried) generate
@@ -703,6 +714,7 @@ struct AutoCompactionTests {
         // triggering answer's own 0.9.
         let hardCeilingBudget = TokenBudget(limit: 100_000, trigger: 2.0, target: 0.9, hardCeiling: 0.85)
         let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
+        defer { await session.close() }
         #expect(await session.contextFill == 0.9)
         let callsBeforeTriggeringAnswer = standard.lastBackend?.callCount
 
@@ -808,6 +820,7 @@ struct AutoCompactionTests {
         target: Double, responseCeiling: Int?
     ) async throws -> (target: OverflowRetryTarget, calls: Int) {
         let (session, container) = try await makeRoomTestSession(target: target, overflowsRemaining: 1)
+        defer { await session.close() }
         let prompt = String(repeating: "x", count: roomTestPromptTokens)
         let events = try await collect(session.streamEvents(to: prompt, maxTokens: responseCeiling))
         #expect(events.contains(.textDelta("recovered")))
@@ -885,6 +898,7 @@ struct AutoCompactionTests {
     func overflowWithAPromptLargerThanTheWindowDoesNotRetry() async throws {
         let (session, container) = try await Self.makeRoomTestSession(
             target: Self.targetAboveRoom, overflowsRemaining: 1)
+        defer { await session.close() }
         let prompt = String(repeating: "x", count: Self.roomTestWindowTokens + 1)
 
         var events: [SessionEvent] = []
@@ -924,6 +938,7 @@ struct AutoCompactionTests {
         let echo = EchoTool()
         let failing = FailingTool()
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget, tools: [echo, failing])
+        defer { await session.close() }
 
         guard let actor = session as? RoutedSessionActor else {
             Issue.record("expected a RoutedSessionActor")
@@ -960,6 +975,7 @@ struct AutoCompactionTests {
     @MainActor
     func autoCompactionMakesOneFlashCallOverTheWholeContext() async throws {
         let (session, standard, flash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        defer { await session.close() }
         let ownCallsBeforeAnswer = standard.generationLog.calls.count
 
         // No caller-side compact(): the triggering answer compacts on its own.

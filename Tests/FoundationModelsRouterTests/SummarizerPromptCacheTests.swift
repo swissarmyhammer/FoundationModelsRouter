@@ -108,6 +108,7 @@ struct SummarizerPromptCacheTests {
         let fixture = try await Self.makeFixture(failingFlash: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: Self.fillingPrompt)
         let keysBefore = fixture.log.storeKeys
 
@@ -129,6 +130,7 @@ struct SummarizerPromptCacheTests {
         let fixture = try await Self.makeFixture(reportedInputTokens: Self.reportedInputTokens)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession(budget: Self.budget)
+        defer { await session.close() }
         _ = try await session.respond(to: Self.fillingPrompt)
         let keysBefore = fixture.log.storeKeys
 

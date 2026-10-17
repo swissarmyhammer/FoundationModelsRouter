@@ -215,6 +215,7 @@ struct CompactionSpikeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         // Drives the chokepoint once so its post-generation diff persists
         // `synthesized`. SpikeBackend never mutates `entries` itself (see its
         // own doc comment), so with a `persistedEntryCount` baseline of 0 this
