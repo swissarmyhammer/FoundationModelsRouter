@@ -323,9 +323,15 @@ level one time, and the client answers it with the one id:
 - A child that is not a Router session gets no
   ``SessionEvent/elicitationEnded(_:)`` when its parent ends the question.
 
+A target whose session is headless gets no relay:
+``SubagentQuestionRelay/start(child:agentName:target:)`` returns `nil`. The
+subagent then has the headless presence of the target, so each of its
+questions gets its cancel at once in the subagent.
+
 The owner closes the subagent at the end of the drive, then calls
 ``SubagentQuestionRelay/finish()``, and then drops the target, which holds the
-parent session.
+parent session. The relay also reads on when the close of the parent ended
+before the parent recorded a question that the relay sent up.
 
 - ``respond(elicitationId:response:)``
 - ``complete(elicitationId:)``
@@ -358,9 +364,11 @@ resumes. Use ``awaitTerminal(of:)-(SignalID)`` to wait for the result. Only
 ``awaitIdle()`` returns when the session has no work. A background run that
 waits only for the user is no work, also a run whose subagent waits only for
 the user: the ``SubagentQuestionRelay`` of that run reads the work events of the
-subagent, and the run is work again while the subagent works. Thus a parent
-whose subagents wait only for the user is idle too, level by level up to the
-root. ``streamSessionEvents()`` reports the same
+subagent, and the session has work again while the subagent works. The work
+of a subagent is work of its parent also after ``cancelAll()`` settled the run
+that drives the subagent, until the subagent stops. Thus a parent whose
+subagents wait only for the user is idle too, level by level up to the root.
+``streamSessionEvents()`` reports the same
 state with no call: ``SessionEvent/workStarted`` comes when the session gets
 work while it had none, and ``SessionEvent/workEnded`` comes when it has no
 work any more. Both have the origin ``Origin-enum/system``, and they come in turns,

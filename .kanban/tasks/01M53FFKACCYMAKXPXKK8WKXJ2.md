@@ -67,10 +67,26 @@ comments:
     - build output: one SwiftPM warning, "missing creator for mutated node ... mlx-swift_Cmlx.bundle/Contents/MacOS". It comes from the build system, not from source code.
     - next: review
   timestamp: 2026-10-17T01:09:05.321026+00:00
+- actor: claude-code
+  id: 01m53pkj9q8t3vm3q3z6t9htrw
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (98b039f4). Counts: findings 0, confirmed 0, refuted 0, attempted 7, failed 0. 3 files reviewed. 4 .kanban files not reviewed (ignore rule). The two items of Review Findings (2026-10-16 19:55) are fixed: entryWithoutRelayedQuestions calls TranscriptSegmentFilter.keptSegments(of:dropping:), and removingPlans and isRelayedQuestion both call eventSegment(of:).
+    - next: none. The task is in done.
+  timestamp: 2026-10-17T01:11:17.559196+00:00
+- actor: claude-code
+  id: 01m53pm62n0egcv9fgs6h67hka
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files (2 findings fixed; follow-up task ^vn91mgt)
+    - test: green — swift test one run: 1802 tests in 219 suites + 26 + 19 passed, 0 failures
+    - commit: 98b039f4
+    - review: clean — 0 findings, 3 files reviewed; prior items :186 and :199 fixed
+  timestamp: 2026-10-17T01:11:37.813873+00:00
 depends_on:
 - 01M53FFFCEFW8D6504DE33AH3R
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffff780
 title: 'R5: a relayed question is not model input, also after restore and fork'
 ---
 Source: elicitation check of 2026-10-16 (elicitation-plan.md section 10), item 2, rule R5, group C.

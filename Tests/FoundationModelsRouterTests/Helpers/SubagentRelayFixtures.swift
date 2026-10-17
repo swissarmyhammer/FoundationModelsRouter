@@ -334,7 +334,7 @@ struct SubagentJobTool: Tool, BackgroundTool {
         await Self.waitUntilOpenOrCancelled(step.gate)
         await step.closeGate?.waitUntilOpen()
         await child.close()
-        await relay.finish()
+        await relay?.finish()
         box.noteRelayFinished()
         return Self.relayedOutput
     }
@@ -463,5 +463,23 @@ struct SubagentRelayFixture: Sendable {
     /// - Parameter gates: The gates to open first.
     func end(opening gates: [RunLatch] = []) async {
         await base.end(opening: gates)
+    }
+
+    /// Runs `body`, and then ends the fixture (``end(opening:)``). The end
+    /// comes also when `body` throws, so a failed test leaves no session open
+    /// (rule T1).
+    ///
+    /// - Parameters:
+    ///   - gates: The gates to open before the close.
+    ///   - body: The body of the test.
+    /// - Throws: What `body` throws, after the end.
+    func runThenEnd(opening gates: [RunLatch] = [], _ body: () async throws -> Void) async throws {
+        do {
+            try await body()
+        } catch {
+            await end(opening: gates)
+            throw error
+        }
+        await end(opening: gates)
     }
 }

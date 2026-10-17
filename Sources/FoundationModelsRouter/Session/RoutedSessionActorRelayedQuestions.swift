@@ -19,8 +19,9 @@ import FoundationModelsExtras
 ///   that completion up, and the task does nothing in the child.
 ///
 /// The table also keeps the work state of the child of each relay. The idle
-/// check reads it: an open run that waits only for the user is still work
-/// while the child of a relay of that run works.
+/// check reads it: the session has work while the child of one of its
+/// relays works, also when the run that drives the child waits only for the
+/// user or is not open any more.
 ///
 /// A question leaves the table when its task settled (``settle(_:resumedWith:)``),
 /// and a relay leaves it when the relay read the end of the feed of its child
@@ -79,45 +80,34 @@ struct RelayedQuestions: Sendable {
         var isRecorded = false
     }
 
-    /// The work state of the child of one relay.
-    private struct Relay: Sendable {
-        /// The token of the run of this session that holds the questions
-        /// that the relay sends up (`ToolContext.holdingRunToken`). For a
-        /// mounted call, it is the token of the mounting run.
-        let runToken: String
-
-        /// Whether the child works now: its last work event was
-        /// ``SessionEvent/workStarted``.
-        var childWorks: Bool
-    }
+    /// Whether the child of each open relay works now, by the id of the
+    /// relay: its last work event was ``SessionEvent/workStarted``.
+    private var childWorks: [ULID: Bool] = [:]
 
     /// Each relayed question whose task did not settle, by its id.
     private var questions: [ULID: Question] = [:]
 
-    /// Each open relay, by its id.
-    private var relays: [ULID: Relay] = [:]
-
     // MARK: - Relays
 
-    /// Records a relay that starts to send the questions of its child to the
-    /// run `runToken`.
+    /// Records a relay that starts to send the questions of its child to
+    /// this session.
     ///
     /// - Parameters:
     ///   - relay: The id of the relay.
-    ///   - runToken: The token of the run of this session that holds the
-    ///     relayed questions (`ToolContext.holdingRunToken`).
     ///   - childWorks: Whether the child works when the relay starts.
-    mutating func openRelay(_ relay: ULID, runToken: String, childWorks: Bool) {
-        relays[relay] = Relay(runToken: runToken, childWorks: childWorks)
+    mutating func openRelay(_ relay: ULID, childWorks: Bool) {
+        self.childWorks[relay] = childWorks
     }
 
-    /// Records the work state of the child of `relay`.
+    /// Records the work state of the child of `relay`. A relay that is not
+    /// open keeps no state.
     ///
     /// - Parameters:
     ///   - relay: The id of the relay.
     ///   - works: Whether the child works now.
     mutating func noteChild(of relay: ULID, works: Bool) {
-        relays[relay]?.childWorks = works
+        guard childWorks[relay] != nil else { return }
+        childWorks[relay] = works
     }
 
     /// Takes the relay out of the table: it read the end of the feed of its
@@ -125,14 +115,15 @@ struct RelayedQuestions: Sendable {
     ///
     /// - Parameter relay: The id of the relay.
     mutating func closeRelay(_ relay: ULID) {
-        relays[relay] = nil
+        childWorks[relay] = nil
     }
 
-    /// The tokens of the runs of this session that hold the questions of a
-    /// relay with a working child (`ToolContext.holdingRunToken`). Such a
-    /// run is work, also while it waits only for the user.
-    var runTokensWithWorkingChild: Set<String> {
-        Set(relays.values.filter(\.childWorks).map(\.runToken))
+    /// Whether the child of an open relay works now. The session then has
+    /// work, whatever the state of the run that drives the child: that run
+    /// can wait only for the user, or a sweep can have settled it while its
+    /// body and the relay still run.
+    var hasWorkingChild: Bool {
+        childWorks.values.contains(true)
     }
 
     // MARK: - Questions
@@ -275,27 +266,25 @@ extension ElicitationRequest {
 /// table in one step on this actor, so a check of the work
 /// (``isIdle(startedAt:reading:)``) reads one state of the table.
 extension RoutedSessionActor {
-    /// Records a relay that starts to send the questions of `child` to the
-    /// run `runToken` of this session.
+    /// Records a relay that starts to send the questions of `child` to a run
+    /// of this session.
     ///
     /// - Parameters:
     ///   - child: The child session.
-    ///   - runToken: The token of the run that holds the call that drives
-    ///     the child (`ToolContext.holdingRunToken`). For a mounted call, it
-    ///     is the token of the mounting run.
     ///   - childWorks: Whether the child works when the relay starts.
     /// - Returns: The id of the relay.
-    func openRelay(child: any RoutedSession, runToken: String, childWorks: Bool) -> ULID {
+    func openRelay(child: any RoutedSession, childWorks: Bool) -> ULID {
         let relay = ULID.generate()
-        relayedQuestions.openRelay(relay, runToken: runToken, childWorks: childWorks)
+        relayedQuestions.openRelay(relay, childWorks: childWorks)
         relayChildren[relay] = child
         return relay
     }
 
     /// Records a new work state of the child of `relay`, and reports it as
     /// work of this session. When the child starts to work, this session
-    /// notes a start of work (``noteWorkStarted()``): a run that waits only
-    /// for the user is work again while its child works. When the child
+    /// notes a start of work (``noteWorkStarted()``): the session has work
+    /// again while the child works, also when the run that drives the child
+    /// waits only for the user or is not open any more. When the child
     /// stops, the change can end the work of this session
     /// (``workDidChange()``).
     ///
@@ -333,18 +322,32 @@ extension RoutedSessionActor {
     }
 
     /// Waits until the journal of this session recorded the relayed question
-    /// `id`, or until its task settled. The relay reads the next event of
-    /// its child only after this wait, so an end of the question in the child
-    /// finds the question open in ``runPlane``, or already ended.
+    /// `id`, until its task settled, or until ``close()`` ended
+    /// (``didEndClose``). The relay reads the next event of its child only
+    /// after this wait, so an end of the question in the child finds the
+    /// question open in ``runPlane``, or already ended.
     ///
     /// The journal also records a question after ``close()`` started, so the
-    /// wait does not end at a close: an end of the wait before the question
-    /// is open in ``runPlane`` can let the end of the feed of the child find
-    /// no question, and the question then stays open.
+    /// wait does not end when a close starts: an end of the wait before the
+    /// question is open in ``runPlane`` can let the end of the feed of the
+    /// child find no question, and the question then stays open. When the
+    /// close ended, nothing in this session can record or settle the question
+    /// any more, so the wait ends. A run that the close swept gives a new
+    /// question its cancel at once, so the task of such a question settles
+    /// by itself.
     ///
     /// - Parameter id: The id of the question.
     func awaitRelayedQuestionRecorded(_ id: ULID) async {
-        _ = await relayChanges.waitUntil { relayedQuestions.isRecordedOrSettled(id) }
+        _ = await relayChanges.waitUntil { didEndClose || relayedQuestions.isRecordedOrSettled(id) }
+    }
+
+    /// Records that ``close()`` ended (``didEndClose``), and wakes each
+    /// relay that waits for the record of a question
+    /// (``awaitRelayedQuestionRecorded(_:)``). Only ``close()`` calls it, as
+    /// its last step.
+    func endRelayWaits() {
+        didEndClose = true
+        relayChanges.signal()
     }
 
     /// Records that the child ended its copy of the relayed question `id`

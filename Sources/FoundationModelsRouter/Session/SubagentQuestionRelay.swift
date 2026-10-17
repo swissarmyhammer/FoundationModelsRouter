@@ -87,9 +87,11 @@ public struct SubagentQuestionTarget: Sendable {
 ///   the child with the same response. When the feed of the child ends, each
 ///   question that is still open ends at the parent with a cancel that gives
 ///   `RunPlane.runCancelledReason`.
-/// - The work events of the child keep the run of the target as work while
-///   the child works (``RoutedSession/awaitIdle()``), also while the run waits
-///   only for the user.
+/// - The work events of the child keep the session of the target working
+///   while the child works (``RoutedSession/awaitIdle()``), also while the
+///   run of the target waits only for the user, and also after a sweep of
+///   ``RoutedSession/cancelAll()`` settled that run while the child still
+///   works.
 ///
 /// A known race: an answer at the parent and an end in the child can cross.
 /// Then the parent gives ``ElicitationAnswerDelivery/delivered`` and the child
@@ -107,7 +109,9 @@ public struct SubagentQuestionTarget: Sendable {
 /// the question settled. A close of the parent then ends the question at the
 /// parent through the close path of the parent, and the task of the question
 /// ends the copy in the child with the same response
-/// (`RunPlane.endElicitation(_:with:)`).
+/// (`RunPlane.endElicitation(_:with:)`). The wait also stops when the close
+/// of the parent ended: after that, nothing in the parent records or settles
+/// the question, and the relay reads on to the end of the feed of the child.
 ///
 /// `ToolContext.elicit(_:)` does not throw an error today. If it throws for a
 /// relayed question, the relay writes an error log in the
@@ -143,18 +147,26 @@ public final class SubagentQuestionRelay: Sendable {
     /// open. A question that the relay sends up after the run settled links
     /// to a run that is closed.
     ///
+    /// A target whose session is headless (``SubagentQuestionTarget/userPresence``
+    /// is not `.interactive`) gets no relay: no user can answer at that level.
+    /// Give the child the user presence of the target, so the child is
+    /// headless too, and each question of the child gets its cancel at once
+    /// in the child. The caller then drives the child with no relay and calls
+    /// no ``finish()``.
+    ///
     /// - Parameters:
     ///   - child: The session of the subagent.
     ///   - agentName: The name of the subagent. The relay puts it in front of
     ///     the agent path of each question.
     ///   - target: The run of the parent that drives the subagent.
-    /// - Returns: The relay.
+    /// - Returns: The relay, or `nil` when the session of `target` is
+    ///   headless.
     public static func start(
         child: any RoutedSession, agentName: String, target: SubagentQuestionTarget
-    ) async -> SubagentQuestionRelay {
+    ) async -> SubagentQuestionRelay? {
+        guard target.userPresence == .interactive else { return nil }
         let subscription = await subscribe(to: child)
-        let relay = await target.session.openRelay(
-            child: child, runToken: target.context.holdingRunToken, childWorks: subscription.childWorks)
+        let relay = await target.session.openRelay(child: child, childWorks: subscription.childWorks)
         let link = SubagentQuestionLink(child: child, agentName: agentName, target: target, relay: relay)
         // Detached: the relay gets no task-local of the run that starts it,
         // so no origin and no mark of that run reaches the work of the relay.

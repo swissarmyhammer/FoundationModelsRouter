@@ -60,8 +60,9 @@ extension RoutedSessionActor {
     }
 
     /// Whether the session has no work now: no background run is open that
-    /// does not wait only for the user, no pump work runs or waits, and no
-    /// waiting mail can start a submission by itself. Held mail
+    /// does not wait only for the user, no pump work runs or waits, no child
+    /// of a relay works, and no waiting mail can start a submission by
+    /// itself. Held mail
     /// (``SessionOutbox/PendingEvent/isHeld``), for example mail that
     /// ``SessionConfiguration/mailOnlyAnswerLimit`` holds, starts no
     /// submission, so it counts as idle.
@@ -173,25 +174,28 @@ extension RoutedSessionActor {
     /// An open run is no work only when it waits only for the user and the
     /// journal recorded one of its open questions (``askedQuestions``): the
     /// question is then on the output, so a work-end event never comes
-    /// before the question that ends the work. A run that drives a subagent
-    /// is still work while the child of a relay of that run works
-    /// (``RelayedQuestions/runTokensWithWorkingChild``). The relay keeps the
-    /// token of the run that holds its questions
-    /// (`ToolContext.holdingRunToken`), so a relay in a mounted call keeps
-    /// the mounting run as work. The run of the child waits for the user,
-    /// but the child can still ask, answer or end its own run. Such a run
-    /// that has other work besides counts as no work, as
-    /// `RunPlane.runsWaitingOnlyForUser()` does.
+    /// before the question that ends the work. Such a run that has other
+    /// work besides counts as no work, as `RunPlane.runsWaitingOnlyForUser()`
+    /// does.
+    ///
+    /// The working child of a relay is work of this session
+    /// (``RelayedQuestions/hasWorkingChild``), whatever the state of the run
+    /// that drives the child. The run can wait only for the user, but the
+    /// child can still ask, answer or end its own run. The sweep of
+    /// ``cancelAll()`` can settle that run while its body, the relay and the
+    /// child still run. The child then keeps this session working until the
+    /// child stops or the relay closes, so this session sends no
+    /// ``SessionEvent/workEnded`` and then a ``SessionEvent/workStarted``
+    /// with no new input.
     ///
     /// - Parameters:
     ///   - workId: The ``lastWorkId`` of the first read.
     ///   - reads: What ``readRunsAndMail()`` read after the first read.
     /// - Returns: `true` when the session has no work now.
     func isIdle(startedAt workId: UInt64, reading reads: IdleReads) -> Bool {
-        guard hasNoPumpWork, lastWorkId == workId else { return false }
+        guard hasNoPumpWork, lastWorkId == workId, !relayedQuestions.hasWorkingChild else { return false }
         let userWaitRunTokens = Set(
-            reads.openQuestions.filter { askedQuestions.wasAsked($0.elicitationId) }.map(\.runToken)
-        ).subtracting(relayedQuestions.runTokensWithWorkingChild)
+            reads.openQuestions.filter { askedQuestions.wasAsked($0.elicitationId) }.map(\.runToken))
         return reads.openRuns.allSatisfy { userWaitRunTokens.contains($0.completionToken) }
             && !SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)
     }

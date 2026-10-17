@@ -442,6 +442,13 @@ actor RoutedSessionActor: RoutedSession {
     /// starts after it (``runSignalWork(_:skipped:)``). See ``endIdleWaits()``.
     var isClosed = false
 
+    /// Whether ``close()`` ended: no work of this session runs, and the
+    /// feeds and the output are closed. It stays set. A relay that waits for
+    /// the record of a question then stops its wait
+    /// (``awaitRelayedQuestionRecorded(_:)``), because nothing in this
+    /// session can record or settle that question any more.
+    var didEndClose = false
+
     /// Whether mail arrived since the pump last looked, so the pump takes
     /// one more cycle before it ends.
     var pumpWakeRequested = false
@@ -485,7 +492,10 @@ actor RoutedSessionActor: RoutedSession {
     /// Wakes each relay that waits until the journal of this session
     /// recorded a question that the relay sent up, or until the task of that
     /// question settled (``awaitRelayedQuestionRecorded(_:)``).
-    nonisolated let relayChanges = ChangeSignal()
+    ///
+    /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
+    /// so a test can wait until a relay waits.
+    nonisolated let relayChanges = ChangeSignal(observingWaiters: true)
 
     /// The task of the compaction that runs now, or `nil`. Only the
     /// compaction handler (``performCompaction(_:_:)``) sets it, and only

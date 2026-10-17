@@ -468,5 +468,9 @@ extension RoutedSessionActor {
         // session that closed (``flushMailRecords()``).
         await flushMailRecords()
         await releasePromptCache()
+        // Last: nothing in this session records or settles a relayed
+        // question any more, so each relay that still waits for one reads
+        // on (``endRelayWaits()``).
+        endRelayWaits()
     }
 }

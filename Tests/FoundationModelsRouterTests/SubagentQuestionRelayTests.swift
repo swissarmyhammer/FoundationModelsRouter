@@ -249,31 +249,30 @@ struct SubagentQuestionRelayTests {
         await level.fixture.end(opening: [level.rootStep.gate])
     }
 
-    /// The production change that makes this test fail: a relay that sends
-    /// the question up while the session of the target is headless, or that
-    /// does not give the child the cancel that the target got at once.
-    @Test("a headless target gives the question of an interactive child a cancel at once, and shows no question")
-    func aHeadlessTargetGivesTheChildQuestionACancelAtOnce() async throws {
-        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
+    /// The production change that makes this test fail: a relay that starts
+    /// for a target whose session is headless. No user can answer at that
+    /// level, so the relay has nothing to send up, and the child of a
+    /// headless target is headless too (``SubagentQuestionTarget/userPresence``).
+    @Test("a relay does not start for a headless target, and the target session records no relay")
+    func aRelayDoesNotStartForAHeadlessTarget() async throws {
         let fixture = try await SubagentRelayFixture.make(
-            root: rootStep, children: [.ask(SubagentAskStep())], userPresence: .headless,
-            makeChild: { parent in
-                let tools = try #require(parent as? RoutedSessionActor).originalTools
-                return parent.profile.standard.makeSession(
-                    configuration: SessionConfiguration(tools: tools, userPresence: .interactive))
-            })
-        var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        try await fixture.start()
+            root: SubagentRelayStep(agentName: Self.reviewer), children: [], userPresence: .headless)
 
-        let answers = try await fixture.box.waitForAnswers(Self.once)
-        await rootStep.gate.open()
-        let rootOutputs = await SessionWorkEventTests.outputs(
-            from: &rootFeed, through: SessionEventCase.runSettled.matches)
+        try await fixture.runThenEnd {
+            let root = try fixture.sessionActor()
+            let target = SubagentQuestionTarget(
+                session: root, context: PendingElicitationFixtures.makeContext(for: root))
+            let child = try await root.fork(workingDirectory: nil)
+            let relay: SubagentQuestionRelay? = await SubagentQuestionRelay.start(
+                child: child, agentName: Self.reviewer, target: target)
+            let relayCount = await root.relayChildren.count
+            await child.close()
+            await relay?.finish()
 
-        #expect(answers == [.cancel(reason: RunPlane.noUserPresentReason)])
-        #expect(fixture.box.targets.map(\.userPresence) == [.headless])
-        #expect(Self.questions(in: rootOutputs).isEmpty)
-        await fixture.end()
+            #expect(target.userPresence == .headless)
+            #expect(relay == nil)
+            #expect(relayCount == 0)
+        }
     }
 
     // MARK: - The answer goes down
@@ -450,6 +449,41 @@ struct SubagentQuestionRelayTests {
         await level.fixture.end()
     }
 
+    /// The production change that makes this test fail: a relay that waits
+    /// for the record of its question also after the close of the parent
+    /// ended. Then no record and no settle can come, and the relay never
+    /// reads the next event of its child.
+    ///
+    /// The wait runs in a task of its own. The test waits until that wait
+    /// ended or registered on ``RoutedSessionActor/relayChanges``, and then
+    /// settles the question, so a wait that registered also ends.
+    @Test("the wait of a relay for the record of its question ends when the close of the parent ended")
+    func theRelayWaitEndsWhenTheCloseOfTheParentEnded() async throws {
+        let fixture = try await SubagentRelayFixture.make(
+            root: SubagentRelayStep(agentName: Self.reviewer), children: [])
+
+        try await fixture.runThenEnd {
+            let root = try fixture.sessionActor()
+            let waiters = try #require(root.relayChanges.waiterChanges)
+            let request = MountFixtures.proceedRequest()
+            await root.close()
+            await root.noteRelayed(request, by: ULID.generate())
+
+            let result = RecordedWaitResult(reportingTo: waiters)
+            let waiting = Task {
+                await root.awaitRelayedQuestionRecorded(request.elicitationId)
+                result.record(true)
+            }
+            try await waiters.wait(until: { result.value != nil || root.relayChanges.waiterCount > 0 })
+            let endedBeforeTheSettle = result.value != nil
+            _ = await root.settleRelayedQuestion(
+                request.elicitationId, resumedWith: PendingElicitationFixtures.runCancelled)
+            await waiting.value
+
+            #expect(endedBeforeTheSettle)
+        }
+    }
+
     /// The production change that makes this test fail: a relay whose run
     /// settles before the copy of the question in the child ended, or a
     /// relaying level that leaves that copy open.
@@ -522,10 +556,9 @@ struct SubagentQuestionRelayTests {
         await level.fixture.end(opening: [level.rootStep.gate])
     }
 
-    /// The production change that makes this test fail: a relay that flags
-    /// the work of its child under the completion token of a mounted call,
-    /// and not under the token of the run that holds the call and its
-    /// questions.
+    /// The production change that makes this test fail: a relay in a mounted
+    /// call whose working child is not work of the session, or whose child
+    /// stays work after it stopped.
     @Test("a relay in a mounted call keeps the holding run as work while the child works, and not after")
     func aRelayInAMountedCallKeepsTheHoldingRunAsWork() async throws {
         let besideRun = RunLatch()
@@ -544,6 +577,36 @@ struct SubagentQuestionRelayTests {
         #expect(rest.last?.event == .workEnded)
         #expect(isIdleWhileTheChildWaits)
         await level.fixture.end(opening: [level.rootStep.gate])
+    }
+
+    /// The production change that makes this test fail: an idle rule that
+    /// counts the working child of a relay only through the open run of the
+    /// relay. The sweep of `cancelAll()` settles that run, but the relay and
+    /// its child still run.
+    ///
+    /// The close gate holds the relaying run after the cancel, so the child
+    /// stays open, and the run beside the question keeps the child working.
+    @Test("after cancelAll() a parent is not idle while the child of its relay still works")
+    func aParentIsNotIdleAfterCancelAllWhileItsChildWorks() async throws {
+        let besideRun = RunLatch()
+        let closeGate = RunLatch()
+        var level = try await Self.askOneLevel(
+            SubagentAskStep(besideRun: besideRun),
+            rootStep: SubagentRelayStep(agentName: Self.reviewer, closeGate: closeGate))
+
+        try await level.fixture.runThenEnd(opening: [besideRun, closeGate]) {
+            let signal = level.root.cancelAll()
+            let rootOutputs = await Self.outputs(
+                from: &level.rootFeed,
+                throughEach: [{ $0 == .signalDone(signal) }, SessionEventCase.runSettled.matches])
+            let rootActor = try level.fixture.sessionActor()
+            let openRuns = await rootActor.runPlane.backgroundRuns()
+            let isIdleWhileTheChildWorks = await rootActor.isIdle()
+
+            #expect(rootOutputs.contains { SessionEventCase.runSettled.matches($0.event) })
+            #expect(openRuns.isEmpty)
+            #expect(isIdleWhileTheChildWorks == false)
+        }
     }
 
     /// The production change that makes this test fail: a relaying level
@@ -604,9 +667,6 @@ struct SubagentQuestionRelayTests {
 /// of a child ends.
 @Suite("The table of the relayed questions decides what each question does in the child")
 struct RelayedQuestionsTableTests {
-    /// The token of the relaying run of each table.
-    private static let runToken = "relaying-run"
-
     /// The cancel that ends a question with no answer.
     private static let ended = PendingElicitationFixtures.runCancelled
 
@@ -620,7 +680,7 @@ struct RelayedQuestionsTableTests {
     ) -> (table: RelayedQuestions, id: ULID, relay: ULID) {
         var table = RelayedQuestions()
         let relay = ULID.generate()
-        table.openRelay(relay, runToken: runToken, childWorks: false)
+        table.openRelay(relay, childWorks: false)
         table.noteRelayed(request, by: relay)
         return (table, request.elicitationId, relay)
     }
@@ -686,7 +746,7 @@ struct RelayedQuestionsTableTests {
         table.noteRelayed(second, by: relay)
         table.noteRelayed(endedHere, by: relay)
         table.noteEndedHere(endedHere.elicitationId, with: Self.ended)
-        table.openRelay(otherRelay, runToken: Self.runToken, childWorks: false)
+        table.openRelay(otherRelay, childWorks: false)
         table.noteRelayed(ofOtherRelay, by: otherRelay)
 
         let ended = table.endFeed(of: relay)
@@ -698,19 +758,23 @@ struct RelayedQuestionsTableTests {
     }
 
     /// The production change that makes this test fail: a table that does
-    /// not keep the run of a relay as work while the child of the relay
-    /// works.
-    @Test("a relay whose child works keeps its run as work, until the child stops or the relay closes")
-    func aRelayWithAWorkingChildKeepsItsRunAsWork() {
+    /// not report the work of the child of a relay while the child works, or
+    /// that keeps that work after the child stopped or the relay closed.
+    @Test("a relay whose child works is work, until the child stops or the relay closes")
+    func aRelayWithAWorkingChildIsWork() {
         var (table, _, relay) = Self.tableWithOneQuestion()
 
-        let idle = table.runTokensWithWorkingChild
+        let idle = table.hasWorkingChild
         table.noteChild(of: relay, works: true)
-        let working = table.runTokensWithWorkingChild
+        let working = table.hasWorkingChild
+        table.noteChild(of: relay, works: false)
+        let stopped = table.hasWorkingChild
+        table.noteChild(of: relay, works: true)
         table.closeRelay(relay)
 
-        #expect(idle.isEmpty)
-        #expect(working == [Self.runToken])
-        #expect(table.runTokensWithWorkingChild.isEmpty)
+        #expect(idle == false)
+        #expect(working)
+        #expect(stopped == false)
+        #expect(table.hasWorkingChild == false)
     }
 }
