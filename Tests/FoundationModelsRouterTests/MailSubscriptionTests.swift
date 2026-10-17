@@ -161,6 +161,7 @@ struct MailSubscriptionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
 
         await session.close()
         #expect(throws: MailRefusal.closed) {

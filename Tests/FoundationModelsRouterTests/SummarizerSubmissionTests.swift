@@ -82,8 +82,28 @@ struct SummarizerSubmissionTests {
         /// throws (rule T1). A session that the test closed already closes
         /// again with no effect.
         func end() async {
-            await SessionFixtureLifecycle.close(flashSession, opening: [flash.latch])
-            await triggered.end()
+            await Self.end(flashSession: flashSession, triggered: triggered, opening: flash.latch)
+        }
+
+        /// Opens `latch`, closes `flashSession`, and then ends `triggered`.
+        ///
+        /// This is the one teardown sequence of the parts. ``end()`` uses it
+        /// for a full set of parts, and
+        /// ``SummarizerSubmissionTests/startSummarizerBehindAFlashSubmission()``
+        /// uses it for the parts that it made before it threw.
+        ///
+        /// - Parameters:
+        ///   - flashSession: The session on the flash slot, or `nil` when it
+        ///     was not made. The latch opens also then.
+        ///   - triggered: The fixture of the session over the trigger, or
+        ///     `nil` when it was not made.
+        ///   - latch: The flash latch that holds the pass of the flash
+        ///     session.
+        static func end(
+            flashSession: (any RoutedSession)?, triggered: TriggeredFixture?, opening latch: RunLatch
+        ) async {
+            await SessionFixtureLifecycle.close(flashSession, opening: [latch])
+            await triggered?.end()
         }
     }
 
@@ -135,8 +155,8 @@ struct SummarizerSubmissionTests {
                 flash: flash, flashQueue: flashQueue, triggered: triggered,
                 flashSession: flashSession, flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
         } catch {
-            await SessionFixtureLifecycle.close(flashSideSession, opening: [flash.latch])
-            await triggeredFixture?.end()
+            await WaitingSummarizer.end(
+                flashSession: flashSideSession, triggered: triggeredFixture, opening: flash.latch)
             throw error
         }
     }

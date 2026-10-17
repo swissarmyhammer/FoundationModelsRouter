@@ -497,6 +497,9 @@ struct SessionDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = try await AnswerCancellationTests.makeFixture(cacheDir: dir)
         let session = try #require(fixture.model.makeSession() as? RoutedSessionActor)
+        // The test closes the session in its body before the check. This
+        // close is for a throw. A second close does nothing.
+        defer { await session.close() }
         await session.close()
 
         #expect(await Self.wakePumpAndReadIt(on: session) == false)
@@ -539,6 +542,9 @@ struct SessionDrainTests {
         let steps = Steps()
         let insideModelCall = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
+        // A cancel does not end the wait of the model call on `release`, so
+        // the permit ends that wait before the close (rule T1).
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
         // A model call that does not see its cancel until the test releases it.
         fixture.hook.midAnswer = { _ in
             insideModelCall.signal()
@@ -572,6 +578,7 @@ struct SessionDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = try await AnswerCancellationTests.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         try await StopRoute.cancelAll.run(on: session)
         try await StopRoute.cancelAll.run(on: session)

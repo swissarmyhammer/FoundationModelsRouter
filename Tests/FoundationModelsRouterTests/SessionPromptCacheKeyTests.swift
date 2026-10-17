@@ -141,6 +141,7 @@ struct SessionPromptCacheKeyTests {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()
+        defer { await session.close() }
 
         await session.close()
 

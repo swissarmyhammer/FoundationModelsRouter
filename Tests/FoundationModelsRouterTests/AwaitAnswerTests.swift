@@ -238,6 +238,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         let unknown = MailID()
 
         await session.close()
