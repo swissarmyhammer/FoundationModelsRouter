@@ -25,6 +25,10 @@ import Testing
 /// all — a ``PersistableStructuredSegment`` rebuilds from its persisted
 /// schema name and content JSON.
 ///
+/// The recorded sessions stay open until the restore and the checks are
+/// done, as the sessions of a crashed process do. Each test then closes them
+/// and the restored sessions, also when the test throws.
+///
 /// Everything runs against stubs (pattern from
 /// ``SessionTreeRestorationToolWiringTests``): no MLX, no network, no GPU.
 @Suite("restoreSessionTree: orphaned journaled runs manufacture .lost terminals")
@@ -188,34 +192,43 @@ struct SessionTreeRestorationLostRunTests {
     /// root — the crashed-process simulation: the first session's
     /// run plane and outbox are only in memory, so they are gone.
     ///
+    /// The recorded root stays open, as the session of a crashed process
+    /// does. When a step after its make throws, it closes before the error
+    /// goes to the caller.
+    ///
     /// - Parameters:
     ///   - journaled: The events posted before the answer.
     ///   - journaledAfterTheAnswer: The events posted after the answer. The
     ///     journal records each one, and no answer delivers it.
     ///   - cacheDir: The disposable cache directory.
     ///   - recordingsDir: The durable recordings root.
-    /// - Returns: The restored tree and the original root's id.
+    /// - Returns: The restored tree, the original root's id and the original
+    ///   root. The caller closes the restored root and the original root.
     private static func recordAndRestore(
         journaled: [OperationEvent],
         journaledAfterTheAnswer: [OperationEvent] = [],
         cacheDir: URL,
         recordingsDir: URL
-    ) async throws -> (restored: RestoredSessionTree, rootId: ULID) {
+    ) async throws -> (restored: RestoredSessionTree, rootId: ULID, recorded: any RoutedSession) {
         let router1 = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
-        for event in journaled {
-            await root.outbox.post(event: event)
-        }
-        _ = try await root.respond(to: "hello")
-        for event in journaledAfterTheAnswer {
-            await root.outbox.post(event: event)
-        }
+        return try await RouterTestFixtures.removingDirectoryOnThrow(
+            cacheDir, alsoOnThrow: { await root.close() }
+        ) {
+            for event in journaled {
+                await root.outbox.post(event: event)
+            }
+            _ = try await root.respond(to: "hello")
+            for event in journaledAfterTheAnswer {
+                await root.outbox.post(event: event)
+            }
 
-        let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        return (restored, root.id)
+            let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+            let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
+            let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+            return (restored, root.id, root)
+        }
     }
 
     // MARK: - Structured-segment round trip (regression)
@@ -232,7 +245,7 @@ struct SessionTreeRestorationLostRunTests {
 
         // A run that completed cleanly: the journaled segments exercise the
         // structured-segment rebuild path without tripping any orphan logic.
-        let (restored, rootId) = try await Self.recordAndRestore(
+        let (restored, rootId, recorded) = try await Self.recordAndRestore(
             journaled: [
                 Self.event(correlationID: "run-1", kind: .progress, detail: "10%"),
                 Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded),
@@ -240,6 +253,10 @@ struct SessionTreeRestorationLostRunTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         #expect(restored.session(rootId) != nil)
     }
@@ -256,11 +273,15 @@ struct SessionTreeRestorationLostRunTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [Self.event(correlationID: "run-1", kind: .progress, detail: "812 lines so far")],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.count == 1)
@@ -285,11 +306,15 @@ struct SessionTreeRestorationLostRunTests {
         // The production shape: the question rides `elicitation.message`,
         // `detail` is empty — the manufactured terminal must surface the
         // message, not an empty body.
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [Self.elicitationEvent(correlationID: "ask-1", message: "Which account?")],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.count == 1)
@@ -325,12 +350,16 @@ struct SessionTreeRestorationLostRunTests {
         let relayed = Self.event(
             tool: asked.tool, op: asked.op, correlationID: asked.correlationID, kind: .elicitation, detail: asked.detail,
             elicitation: try #require(asked.elicitation).relayed(by: "reviewer", askedBy: asked.tool))
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [progress],
             journaledAfterTheAnswer: [relayed],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.count == 1)
@@ -352,7 +381,7 @@ struct SessionTreeRestorationLostRunTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [
                 Self.event(correlationID: "run-1", kind: .progress, detail: "10%"),
                 Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded),
@@ -360,6 +389,10 @@ struct SessionTreeRestorationLostRunTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.isEmpty)
@@ -377,7 +410,7 @@ struct SessionTreeRestorationLostRunTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [
                 Self.event(correlationID: "run-1", kind: .progress, detail: "first run"),
                 Self.event(correlationID: "run-2", kind: .progress, detail: "second run"),
@@ -385,6 +418,10 @@ struct SessionTreeRestorationLostRunTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         let manufactured = pending.events.map(\.event)
@@ -410,7 +447,7 @@ struct SessionTreeRestorationLostRunTests {
         // manufactured .lost must exist and be attributed to the snippet
         // run, exactly the (tool, correlationID) identity SessionOutbox's
         // own coalescing uses.
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [
                 Self.event(tool: "shell", op: "run command", correlationID: "3", kind: .progress, detail: "running"),
                 Self.event(
@@ -421,6 +458,10 @@ struct SessionTreeRestorationLostRunTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.count == 1)
@@ -446,14 +487,20 @@ struct SessionTreeRestorationLostRunTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "dangling"))
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork answer")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         let restoredFork = try #require(restored.children(of: root.id).first)
 
         // Per-node closure: the dangling .progress sits in both nodes'
@@ -480,9 +527,11 @@ struct SessionTreeRestorationLostRunTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "running"))
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork answer")
         // The completion lands in the parent only after the fork's cut point
         // was fixed — it never enters the fork's inherited prefix.
@@ -493,6 +542,10 @@ struct SessionTreeRestorationLostRunTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         let restoredFork = try #require(restored.children(of: root.id).first)
 
         // The parent's own view has the terminal — nothing manufactured. The
@@ -547,11 +600,15 @@ struct SessionTreeRestorationLostRunTests {
         // The restore path: the one recorded event of this run is a progress
         // event that carries the report, and no terminal reached the journal.
         // The manufactured `.lost` terminal carries that report whole.
-        let (restored, _) = try await Self.recordAndRestore(
+        let (restored, _, recorded) = try await Self.recordAndRestore(
             journaled: [Self.event(correlationID: completionToken, kind: .progress, detail: report)],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
+        defer {
+            await restored.root.close()
+            await recorded.close()
+        }
 
         let pending = await restored.root.outbox.pending()
         let manufactured = try #require(pending.events.first?.event)
@@ -589,6 +646,7 @@ struct SessionTreeRestorationLostRunTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "812 lines so far"))
         _ = try await root.respond(to: "hello")
 
@@ -598,6 +656,7 @@ struct SessionTreeRestorationLostRunTests {
             id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let firstRestore = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await firstRestore.root.close() }
         let firstPending = await firstRestore.root.outbox.pending()
         #expect(firstPending.events.map(\.event.outcome) == [.lost])
 
@@ -612,6 +671,7 @@ struct SessionTreeRestorationLostRunTests {
             id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile3 = try await router3.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let secondRestore = try await profile3.standard.restoreSessionTree(root: root.id)
+        defer { await secondRestore.root.close() }
 
         let tree = try TranscriptTree.load(
             under: recordingsDir.appendingPathComponent(router1.id.description, isDirectory: true))

@@ -99,22 +99,29 @@ struct RepetitionStopRestoreTests {
 
     /// Makes a live session and runs one answer that the watch stops once.
     ///
+    /// When a step after the make of the session throws, the session closes
+    /// before the error goes to the caller.
+    ///
     /// - Parameter directories: The cache and recording directories.
-    /// - Returns: The live session and its router.
+    /// - Returns: The live session and its router. The caller closes the
+    ///   session.
     /// - Throws: Whatever the answer throws, or a failed requirement.
     private static func runStoppedAnswer(directories: TestDirectories) async throws -> StoppedSession {
         let (router, profile) = try await resolveProfile(
             routerId: .generate(), script: liveScript, log: RenderProbeLog(), directories: directories)
-        let session = try #require(
-            profile.standard.makeSession(configuration: SessionConfiguration(repetitionDetection: detection))
-                as? RoutedSessionActor)
-        let events = try await collect(session.streamEvents(to: prompt))
-        let stops = events.filter { event in
-            guard case .repetitionStopped = event else { return false }
-            return true
+        let made = profile.standard.makeSession(configuration: SessionConfiguration(repetitionDetection: detection))
+        return try await RouterTestFixtures.removingDirectoryOnThrow(
+            directories.cacheDir, alsoOnThrow: { await made.close() }
+        ) {
+            let session = try #require(made as? RoutedSessionActor)
+            let events = try await collect(session.streamEvents(to: prompt))
+            let stops = events.filter { event in
+                guard case .repetitionStopped = event else { return false }
+                return true
+            }
+            #expect(stops.count == 1)
+            return StoppedSession(router: router, session: session)
         }
-        #expect(stops.count == 1)
-        return StoppedSession(router: router, session: session)
     }
 
     /// Restores the tree that `stopped` recorded, over a model that plays
@@ -229,6 +236,7 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
 
         let fullHistory = try Self.reconstructed(stopped, directories: directories, view: .fullHistory)
         let reasoning = try #require(Self.reasoningText(of: fullHistory).first)
@@ -242,6 +250,7 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
         let fullHistory = try Self.reconstructed(stopped, directories: directories, view: .fullHistory)
 
         try Self.rewriteJournal(of: stopped, directories: directories) { event in
@@ -257,6 +266,7 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
         var cutSeq: Int?
 
         try Self.rewriteJournal(of: stopped, directories: directories) { event in
@@ -287,9 +297,11 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
 
         let restoredLog = RenderProbeLog()
         let (restored, profile) = try await Self.restore(stopped, log: restoredLog, directories: directories)
+        defer { await restored.root.close() }
         _ = try await restored.root.respond(to: Self.nextPrompt)
         withExtendedLifetime(profile) {}
 
@@ -309,9 +321,11 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
         let liveRender = await stopped.session.backend.transcriptEntries()
 
         let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
+        defer { await restored.root.close() }
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         let restoredRender = await restoredRoot.backend.transcriptEntries()
         withExtendedLifetime(profile) {}
@@ -324,9 +338,11 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
         let liveUsage = await stopped.session.usageState
 
         let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
+        defer { await restored.root.close() }
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         let restoredUsage = await restoredRoot.usageState
         withExtendedLifetime(profile) {}
@@ -340,11 +356,18 @@ struct RepetitionStopRestoreTests {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedAnswer(directories: directories)
-        let fork = try #require(try await stopped.session.fork(workingDirectory: nil) as? RoutedSessionActor)
+        defer { await stopped.session.close() }
+        let forked = try await stopped.session.fork(workingDirectory: nil)
+        defer { await forked.close() }
+        let fork = try #require(forked as? RoutedSessionActor)
         let liveForkRender = await fork.backend.transcriptEntries()
         #expect(Self.reasoningText(of: Transcript(entries: liveForkRender)) == [Self.keptReasoning])
 
         let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
         let restoredForkRender = await restoredFork.backend.transcriptEntries()
         withExtendedLifetime(profile) {}

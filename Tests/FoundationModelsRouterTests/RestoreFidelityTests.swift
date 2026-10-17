@@ -161,6 +161,7 @@ struct RestoreFidelityTests {
             instructions: "You are a restore-fidelity test assistant.",
             tools: [MarkerEmittingTool(), StructuredMarkerTool()]
         )
+        defer { await session.close() }
         _ = try await session.respond(to: ScriptedToolFixture.prompt)
 
         let liveBackend = try #require(container.vendedBackends.latest)
@@ -229,6 +230,7 @@ struct RestoreFidelityTests {
         // live context, so the one summarizer call runs — the stub backend's
         // canned response is the scripted summary.
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         try await driveAnswers(Self.compactionWarmupAnswerCount, on: root)
         let firstCompactionBackend = try #require(registry.created.last)
         let firstResult = try await root.compactAndAwait(
@@ -275,6 +277,7 @@ struct RestoreFidelityTests {
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
         #expect(restored.root.id == root.id)
         let restoredBackend = try #require(registry2.created.last)
         #expect(restoredBackend.transcriptEntries() == live)
@@ -322,10 +325,12 @@ struct RestoreFidelityTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
         let parent = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
+        defer { await parent.close() }
         let parentReply = try await parent.respond(to: ScriptedToolFixture.prompt)
         #expect(parentReply == inheritedAnswer)
 
         let fork = try await parent.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         // The marker lives only in the parent's recorded span: the fork's
         // own file records no tool output at all, so a reply carrying the
@@ -353,6 +358,10 @@ struct RestoreFidelityTests {
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: parent.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         let restoredFork = try #require(restored.session(fork.id))
 
         let reply = try await restoredFork.respond(to: "tell me what the tool told you earlier")

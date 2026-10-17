@@ -9,9 +9,10 @@ import Testing
 /// available for replay after a restore, and the transcript that a restore
 /// gives to the model holds no plan.
 ///
-/// A recorded session posts its events and is not closed, as a process that
-/// stops does. A second router over the same recording root restores the
-/// session, as a new process does. Everything runs against stubs, so the
+/// A recorded session posts its events and is not closed before the restore,
+/// as a process that stops does. A second router over the same recording root
+/// restores the session, as a new process does. The fixture closes the two
+/// sessions after the checks of the test. Everything runs against stubs, so the
 /// suite needs no network and no GPU.
 @Suite("The plan of a run across a restore")
 struct PlanRestorationTests {
@@ -59,6 +60,10 @@ struct PlanRestorationTests {
     /// One recorded session, restored by a second router over the same
     /// recording root.
     private struct Restoration {
+        /// The recorded session. It stays open until the checks of the test
+        /// end, as the session of a process that stops does.
+        let recorded: any RoutedSession
+
         /// The restored session.
         let restored: RestoredSession
 
@@ -73,10 +78,13 @@ struct PlanRestorationTests {
     /// Records one session that posts ``postedEvents`` and is not closed,
     /// and restores it with a second router over the same recording root.
     ///
+    /// When a step after the make of the recorded session throws, the
+    /// recorded session closes before the error goes to the caller.
+    ///
     /// - Parameters:
     ///   - cacheDir: The per-test cache directory.
     ///   - recordingsDir: The per-test durable transcripts root.
-    /// - Returns: The restoration.
+    /// - Returns: The restoration. The caller closes its two sessions.
     /// - Throws: What the resolve, the answer or the restore throws.
     private static func recordAndRestore(cacheDir: URL, recordingsDir: URL) async throws -> Restoration {
         let recorder = JSONLRecorder(directory: recordingsDir)
@@ -86,26 +94,32 @@ struct PlanRestorationTests {
         let recordingProfile = try await recordingRouter.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let recorded = recordingProfile.standard.makeSession()
-        _ = try await recorded.respond(to: recordedPrompt)
-        for event in postedEvents {
-            await recorded.outbox.post(event: event)
-        }
+        return try await RouterTestFixtures.removingDirectoryOnThrow(
+            cacheDir, alsoOnThrow: { await recorded.close() }
+        ) {
+            _ = try await recorded.respond(to: recordedPrompt)
+            for event in postedEvents {
+                await recorded.outbox.post(event: event)
+            }
 
-        let resumingRouter = RouterTestFixtures.makeRouter(
-            id: recordingRouter.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder,
-            loader: loader)
-        let resumingProfile = try await resumingRouter.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let restored = try await resumingProfile.standard.restoreSession(id: recorded.id)
-        return Restoration(
-            restored: restored,
-            routerDirectory: RouterTestFixtures.routerDirectory(
-                routerId: recordingRouter.id, recordingsDir: recordingsDir),
-            resumingProfile: resumingProfile)
+            let resumingRouter = RouterTestFixtures.makeRouter(
+                id: recordingRouter.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder,
+                loader: loader)
+            let resumingProfile = try await resumingRouter.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let restored = try await resumingProfile.standard.restoreSession(id: recorded.id)
+            return Restoration(
+                recorded: recorded,
+                restored: restored,
+                routerDirectory: RouterTestFixtures.routerDirectory(
+                    routerId: recordingRouter.id, recordingsDir: recordingsDir),
+                resumingProfile: resumingProfile)
+        }
     }
 
-    /// Runs `body` over a new restoration in new temporary directories, and
-    /// removes the directories after.
+    /// Runs `body` over a new restoration in new temporary directories.
+    /// After `body`, also when it throws, closes the restored session and
+    /// the recorded session, and removes the directories.
     ///
     /// - Parameter body: The checks of the test.
     /// - Throws: What the restoration or `body` throws.
@@ -117,6 +131,10 @@ struct PlanRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
         let restoration = try await recordAndRestore(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        defer {
+            await restoration.restored.session.close()
+            await restoration.recorded.close()
+        }
         try await body(restoration)
         withExtendedLifetime(restoration.resumingProfile) {}
     }

@@ -465,6 +465,7 @@ struct SessionObserverSeedingTests {
 
         // The original run: a live projection mirrors the whole answer stream.
         let session = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
+        defer { await session.close() }
         let liveProjection = SessionObserver()
         try await liveProjection.apply(eventsFrom: session.streamEvents(to: ScriptedToolFixture.prompt))
 
@@ -483,6 +484,7 @@ struct SessionObserverSeedingTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: session.id)
         let restoredSession = restored.root
+        defer { await restoredSession.close() }
 
         let seeded = SessionObserver()
         seeded.seed(from: await restoredSession.transcript)

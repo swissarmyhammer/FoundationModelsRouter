@@ -209,6 +209,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -218,7 +219,8 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let plain = PlainTool()
-        _ = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter, plain])
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter, plain])
+        defer { await restored.root.close() }
 
         #expect(container2.threadedToolsByCall.count == 1)
         let threaded = try #require(container2.threadedToolsByCall.first)
@@ -244,6 +246,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -253,6 +256,7 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
 
         // No per-tool copy step exists: the container receives the caller's
         // original instance inside the restored root's own mount
@@ -289,6 +293,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -298,6 +303,7 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
 
         // The container receives the caller's original instance inside the
         // restored root's own binding-only wrapper — the restore-site
@@ -338,8 +344,10 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork answer")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -349,6 +357,10 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         let restoredFork = try #require(restored.children(of: root.id).first)
 
         #expect(restored.root.outbox !== restoredFork.outbox)
@@ -391,8 +403,10 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork answer")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -402,6 +416,10 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
         let restoredFork = try #require(restored.children(of: root.id).first)
 
         #expect(restored.root.outbox !== restoredFork.outbox)
@@ -451,6 +469,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -459,6 +478,7 @@ struct SessionTreeRestorationToolWiringTests {
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(container2.threadedToolsByCall.first?.isEmpty == true)
         let pending = await restored.root.outbox.pending()
@@ -482,6 +502,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -491,7 +512,9 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
         let child = try await restored.root.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         guard let childActor = child as? RoutedSessionActor,
             let childMounted = failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>
@@ -526,6 +549,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -535,7 +559,9 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
         let child = try await restored.root.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         guard let childActor = child as? RoutedSessionActor,
             let childBound = failureDeliveryPeeled(childActor.tools.first)
@@ -588,6 +614,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -597,7 +624,9 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
         let child = try await restored.root.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         guard
             let rootBound = failureDeliveryPeeled(container2.threadedToolsByCall.first?.first)
@@ -646,6 +675,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -655,6 +685,7 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
 
         let threaded = try #require(failureDeliveryPeeled(container2.threadedToolsByCall.first?.first))
         // Restore applies no capping — deliberately: no budget travels
@@ -691,6 +722,7 @@ struct SessionTreeRestorationToolWiringTests {
         let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let container2 = ToolCapturingRestoreContainer()
@@ -700,6 +732,7 @@ struct SessionTreeRestorationToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        defer { await restored.root.close() }
 
         let threaded = try #require(failureDeliveryPeeled(container2.threadedToolsByCall.first?.first))
         // Restore applies no capping — no budget travels through

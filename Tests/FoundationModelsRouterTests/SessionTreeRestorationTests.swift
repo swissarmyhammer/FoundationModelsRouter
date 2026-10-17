@@ -215,11 +215,15 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "remember 42")
         let forkA = try await root.fork(workingDirectory: nil)
+        defer { await forkA.close() }
         _ = try await forkA.respond(to: "forkA message")
         let forkB = try await root.fork(workingDirectory: nil)
+        defer { await forkB.close() }
         let grandfork = try await forkA.fork(workingDirectory: nil)
+        defer { await grandfork.close() }
         _ = try await grandfork.respond(to: "grandfork message")
 
         // "Tear down": nothing below reaches back into router1/profile1
@@ -234,6 +238,12 @@ struct SessionTreeRestorationTests {
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(forkA.id)?.close()
+            await restored.session(forkB.id)?.close()
+            await restored.session(grandfork.id)?.close()
+        }
 
         #expect(restored.root.id == root.id)
         #expect(restored.root.parentId == nil)
@@ -290,6 +300,7 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession(workingDirectory: overrideDir)
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         #expect(root.workingDirectory == overrideDir)
         // The recording directory is never the override: this is exercising a
@@ -299,6 +310,7 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         // Restoration reassembles the recorded override, not the (also
         // restored, separately-verified-elsewhere) recording directory a
@@ -323,8 +335,10 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = fork
 
         // A sidecar is write-once, so restoring a session must not touch the
@@ -336,6 +350,10 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
 
         #expect(try Data(contentsOf: rootSidecarURL) == bytesBeforeRestore)
         #expect(
@@ -346,6 +364,7 @@ struct SessionTreeRestorationTests {
         // A brand-new fork taken *from a restored session* writes its own
         // sidecar normally, exactly like any other fork.
         let newFork = try await restored.root.fork(workingDirectory: nil)
+        defer { await newFork.close() }
 
         #expect(
             try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir)
@@ -375,13 +394,16 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         await #expect(throws: SessionTreeRestorationError.notARootSession(fork.id)) {
-            _ = try await profile2.standard.restoreSessionTree(root: fork.id)
+            // A restore that does not throw fails the test; its root closes.
+            try await profile2.standard.restoreSessionTree(root: fork.id).root.close()
         }
     }
 
@@ -398,6 +420,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // Restamp the recorded root sidecar with a version this reader does
@@ -415,7 +438,8 @@ struct SessionTreeRestorationTests {
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         await #expect(throws: RecordingSchemaVersionError.self) {
-            _ = try await profile2.standard.restoreSessionTree(root: root.id)
+            // A restore that does not throw fails the test; its root closes.
+            try await profile2.standard.restoreSessionTree(root: root.id).root.close()
         }
     }
 
@@ -432,6 +456,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // A second router resolved against a *different* profile definition —
@@ -449,7 +474,8 @@ struct SessionTreeRestorationTests {
                 resident: "org/std-b"
             )
         ) {
-            _ = try await profile2.standard.restoreSessionTree(root: root.id)
+            // A restore that does not throw fails the test; its root closes.
+            try await profile2.standard.restoreSessionTree(root: root.id).root.close()
         }
     }
 
@@ -517,10 +543,12 @@ struct SessionTreeRestorationTests {
 
         let grammarSource = #"{"type":"object"}"#
         let root = profile1.standard.makeGuidedSession(grammar: .jsonSchema(grammarSource))
+        defer { await root.close() }
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(restored.root.grammar == .jsonSchema(grammarSource))
 
@@ -564,11 +592,13 @@ struct SessionTreeRestorationTests {
 
         let ebnfSource = #"root ::= "yes" | "no""#
         let root = profile1.standard.makeGuidedSession(grammar: .ebnf(ebnfSource))
+        defer { await root.close() }
         #expect(root.grammar == .ebnf(ebnfSource))
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(restored.root.grammar == .jsonSchema(ebnfSource))
         #expect(restored.root.grammar != .ebnf(ebnfSource))
@@ -592,6 +622,7 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "message 1")
         _ = try await root.respond(to: "message 2")
 
@@ -636,6 +667,7 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(restored.root.id == root.id)
 
@@ -826,13 +858,19 @@ struct SessionTreeRestorationTests {
             compactionPrompt: prompt,
             discoveryPriming: priming
         )
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(
             root: root.id, tools: [AmbientEventPostingTool()])
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.autoCompactionBudget == budget)
@@ -865,6 +903,7 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession(tools: [AmbientEventPostingTool()])
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
@@ -872,6 +911,7 @@ struct SessionTreeRestorationTests {
         // Deliberately restored with no tools at all: the recorded name has
         // no supplied instance to match, and the report must say so.
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(
             restored.configurationReport.missingTools == [
@@ -897,6 +937,7 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession(budget: TokenBudget(limit: 100_000))
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // Strip the envelope from the recorded sidecar — the exact bytes a
@@ -910,6 +951,7 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.autoCompactionBudget == nil)
@@ -924,6 +966,9 @@ struct SessionTreeRestorationTests {
     /// Makes a root session with `configuration`, forks it, and restores the
     /// tree on a second router with the same id. Expects that the fork, the
     /// restored root and the restored fork each keep `expected`.
+    ///
+    /// After its checks, also when a step throws, it closes each session that
+    /// it made: the root, the fork and each restored session.
     ///
     /// - Parameters:
     ///   - expected: The value of the setting that each session must keep.
@@ -950,14 +995,20 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession(configuration: configuration)
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
-        let fork = try #require(
-            try await root.fork(workingDirectory: nil) as? RoutedSessionActor, sourceLocation: sourceLocation)
+        let forked = try await root.fork(workingDirectory: nil)
+        defer { await forked.close() }
+        let fork = try #require(forked as? RoutedSessionActor, sourceLocation: sourceLocation)
         #expect(setting(fork) == expected, sourceLocation: sourceLocation)
 
         let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor, sourceLocation: sourceLocation)
         #expect(setting(restoredRoot) == expected, sourceLocation: sourceLocation)
@@ -1032,6 +1083,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession(configuration: SessionConfiguration(userPresence: .headless))
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // A headless session, so a restore that ignores the edit gives a
@@ -1045,6 +1097,7 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.runPlane.userPresence == .interactive)
@@ -1065,6 +1118,9 @@ struct SessionTreeRestorationTests {
     /// Makes a root session with `recorded` as its user presence, forks it,
     /// and restores the tree on a second router with the same id. The
     /// restore gives `override` as its user presence.
+    ///
+    /// After its reads, also when a step throws, it closes each session that
+    /// it made: the root, the fork and each restored session.
     ///
     /// - Parameters:
     ///   - recorded: The user presence that the sidecars record.
@@ -1087,12 +1143,18 @@ struct SessionTreeRestorationTests {
         let router1 = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession(configuration: SessionConfiguration(userPresence: recorded))
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: override)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
@@ -1148,11 +1210,13 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSession(id: root.id, userPresence: .headless)
+        defer { await restored.session.close() }
 
         let restoredRoot = try #require(restored.session as? RoutedSessionActor)
         #expect(restoredRoot.runPlane.userPresence == .headless)
@@ -1180,16 +1244,23 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let overridden = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: .headless)
+        defer { await overridden.root.close() }
         let laterFork = try await overridden.root.fork(workingDirectory: nil)
+        defer { await laterFork.close() }
 
         let router3 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile3 = try await router3.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restoredAgain = try await profile3.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restoredAgain.root.close()
+            await restoredAgain.session(laterFork.id)?.close()
+        }
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
@@ -1246,11 +1317,13 @@ struct SessionTreeRestorationTests {
         let spawn = SessionSidecar.AgentSpawn(
             parentSessionId: ULID.generate(), parentToolCallId: "call-1")
         let root = profile1.standard.makeSession(agentSpawn: spawn)
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
         #expect(restored.root.id == root.id)
 
         // The spawn context is write-once creation metadata: neither
@@ -1280,6 +1353,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
@@ -1287,6 +1361,7 @@ struct SessionTreeRestorationTests {
 
         // Recorded and live contexts match: nothing to report.
         let matching = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await matching.root.close() }
         #expect(matching.contextMismatches.isEmpty)
 
         // Rewrite the recorded context to a figure the live resolution does
@@ -1302,6 +1377,7 @@ struct SessionTreeRestorationTests {
         try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
 
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
         #expect(
             restored.contextMismatches == [
                 RestoredSession.ContextMismatch(
@@ -1363,6 +1439,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
@@ -1385,7 +1462,8 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         do {
-            _ = try await profile2.standard.restoreSessionTree(root: root.id)
+            // A restore that does not throw fails the test; its root closes.
+            try await profile2.standard.restoreSessionTree(root: root.id).root.close()
             Issue.record("restoring a corrupt \(schemaName) segment must throw, not restore silently")
         } catch let error as TranscriptReconstructionError {
             guard case .entryReconstructionFailed(let session, let seq, _) = error else {

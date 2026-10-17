@@ -33,6 +33,9 @@ import Testing
 /// writing into a temp directory — so the suite needs no network and no GPU.
 /// A "fresh process" is a second ``Router`` built over the same recording
 /// root, exactly as the sibling tree-restoration suite builds one.
+///
+/// Each test closes the recorded session and the restored session after its
+/// checks, also when the test throws.
 @Suite("Session restoration: restoreSession(id:)")
 struct SessionRestorationTests {
     // MARK: - Stub container
@@ -164,6 +167,10 @@ struct SessionRestorationTests {
     /// One recorded root session, plus everything a restore of it needs kept
     /// alive for the length of a test.
     private struct Recording {
+        /// The recorded root session. It stays open while the test restores
+        /// it, and the test closes it after its checks.
+        let root: any RoutedSession
+
         /// The recorded root session's span id.
         let sessionId: ULID
 
@@ -184,6 +191,9 @@ struct SessionRestorationTests {
     /// A recording root admits one live writer, and a restore that appends a
     /// divergence marker writes, so both routers share one recorder.
     ///
+    /// When a step after the make of the root session throws, the root
+    /// session closes before the error goes to the caller.
+    ///
     /// - Parameters:
     ///   - cacheDir: The per-test cache directory.
     ///   - recordingsDir: The per-test durable transcripts root.
@@ -197,6 +207,7 @@ struct SessionRestorationTests {
     ///     before the restore. `false` records a session that holds no
     ///     transcript entry at all — a session a caller opened and left.
     /// - Returns: The recorded session and the profile to restore it with.
+    ///   The caller closes ``Recording/root``.
     private static func recordRoot(
         cacheDir: URL,
         recordingsDir: URL,
@@ -215,27 +226,32 @@ struct SessionRestorationTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let root = recordingProfile.standard.makeSession(
             instructions: instructions, workingDirectory: workingDirectory)
-        if answersAPrompt {
-            _ = try await root.respond(to: recordedPrompt)
+        return try await RouterTestFixtures.removingDirectoryOnThrow(
+            cacheDir, alsoOnThrow: { await root.close() }
+        ) {
+            if answersAPrompt {
+                _ = try await root.respond(to: recordedPrompt)
+            }
+
+            let resumingRouter = RouterTestFixtures.makeRouter(
+                id: recordingRouter.id,
+                cacheDir: cacheDir,
+                recordingsDir: recordingsDir,
+                recorder: recorder,
+                loader: loader
+            )
+            let resumingProfile = try await resumingRouter.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+
+            return Recording(
+                root: root,
+                sessionId: root.id,
+                workingDirectory: root.workingDirectory,
+                routerDirectory: RouterTestFixtures.routerDirectory(
+                    routerId: recordingRouter.id, recordingsDir: recordingsDir),
+                resumingProfile: resumingProfile
+            )
         }
-
-        let resumingRouter = RouterTestFixtures.makeRouter(
-            id: recordingRouter.id,
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir,
-            recorder: recorder,
-            loader: loader
-        )
-        let resumingProfile = try await resumingRouter.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-
-        return Recording(
-            sessionId: root.id,
-            workingDirectory: root.workingDirectory,
-            routerDirectory: RouterTestFixtures.routerDirectory(
-                routerId: recordingRouter.id, recordingsDir: recordingsDir),
-            resumingProfile: resumingProfile
-        )
     }
 
     /// Every event of one kind that one session recorded.
@@ -297,6 +313,9 @@ struct SessionRestorationTests {
     /// ``recordedToolDefinition``, then restores it under
     /// ``freshInstructions``.
     ///
+    /// After its reads, also when a step throws, it closes the restored
+    /// session and the recorded session.
+    ///
     /// - Parameters:
     ///   - cacheDir: The per-test cache directory.
     ///   - recordingsDir: The per-test durable transcripts root.
@@ -311,9 +330,11 @@ struct SessionRestorationTests {
         let recording = try await recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: recordedInstructions, container: container)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: freshInstructions)
+        defer { await restored.session.close() }
 
         let recordedEntries = try recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
@@ -324,6 +345,15 @@ struct SessionRestorationTests {
         )
     }
 
+    /// One recording, and the restored session that answered one prompt.
+    private struct AnsweredRestore {
+        /// The recording, so a test can read what it now holds on disk.
+        let recording: Recording
+
+        /// The restored session that answered ``resumedPrompt``.
+        let restored: any RoutedSession
+    }
+
     /// Records a root session whose transcript holds no `.instructions` entry,
     /// restores it under ``freshInstructions``, and runs one answer on it.
     ///
@@ -331,16 +361,20 @@ struct SessionRestorationTests {
     /// against the entries it counts as persisted. A restore that undercounts
     /// them writes recorded entries to disk a second time.
     ///
+    /// When a step after the record throws, the sessions that the steps made
+    /// close before the error goes to the caller.
+    ///
     /// - Parameters:
     ///   - cacheDir: The per-test cache directory.
     ///   - recordingsDir: The per-test durable transcripts root.
     ///   - answersAPrompt: Whether the recording holds one answer of its own
     ///     before the restore.
-    /// - Returns: The recording, so a test can read what it now holds on disk.
+    /// - Returns: The recording and the restored session. The caller closes
+    ///   the recorded session and the restored session.
     @MainActor
     private static func takeOneAnswerAfterRestoring(
         cacheDir: URL, recordingsDir: URL, answersAPrompt: Bool
-    ) async throws -> Recording {
+    ) async throws -> AnsweredRestore {
         let container = SeedCapturingContainer(recordsInstructionsEntry: false)
         let recording = try await recordRoot(
             cacheDir: cacheDir,
@@ -350,10 +384,18 @@ struct SessionRestorationTests {
             answersAPrompt: answersAPrompt
         )
 
-        let restored = try await recording.resumingProfile.standard.restoreSession(
-            id: recording.sessionId, instructions: freshInstructions)
-        _ = try await restored.session.respond(to: resumedPrompt)
-        return recording
+        return try await RouterTestFixtures.removingDirectoryOnThrow(
+            cacheDir, alsoOnThrow: { await recording.root.close() }
+        ) {
+            let restored = try await recording.resumingProfile.standard.restoreSession(
+                id: recording.sessionId, instructions: freshInstructions)
+            try await RouterTestFixtures.removingDirectoryOnThrow(
+                cacheDir, alsoOnThrow: { await restored.session.close() }
+            ) {
+                _ = try await restored.session.respond(to: resumedPrompt)
+            }
+            return AnsweredRestore(recording: recording, restored: restored.session)
+        }
     }
 
     // MARK: - instructions: nil keeps the recorded string
@@ -371,9 +413,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
 
         let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId)
+        defer { await restored.session.close() }
 
         let session = try #require(restored.session as? RoutedSessionActor)
         #expect(session.instructions == Self.recordedInstructions)
@@ -392,8 +436,10 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(id: recording.sessionId)
+        let restored = try await recording.resumingProfile.standard.restoreSession(id: recording.sessionId)
+        defer { await restored.session.close() }
 
         let markers = try Self.recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
@@ -415,9 +461,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.recordedInstructions)
+        defer { await restored.session.close() }
 
         let markers = try Self.recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
@@ -439,9 +487,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
 
         let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
+        defer { await restored.session.close() }
 
         let session = try #require(restored.session as? RoutedSessionActor)
         #expect(session.instructions == Self.freshInstructions)
@@ -460,9 +510,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
+        defer { await restored.session.close() }
 
         let markers = try Self.recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
@@ -482,9 +534,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
+        defer { await restored.session.close() }
 
         let markers = try Self.recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
@@ -512,9 +566,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions, container: container)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
+        defer { await restored.session.close() }
 
         let seed = try #require(container.seedTranscripts.last)
         #expect(TranscriptDiffer.leadingInstructionsText(of: seed) == Self.freshInstructions)
@@ -534,9 +590,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: nil, container: container)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
+        defer { await restored.session.close() }
 
         let seed = try #require(container.seedTranscripts.last)
         #expect(TranscriptDiffer.leadingInstructionsText(of: seed) == Self.freshInstructions)
@@ -556,8 +614,10 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions, container: container)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(id: recording.sessionId)
+        let restored = try await recording.resumingProfile.standard.restoreSession(id: recording.sessionId)
+        defer { await restored.session.close() }
 
         let seed = try #require(container.seedTranscripts.last)
         #expect(TranscriptDiffer.leadingInstructionsText(of: seed) == Self.recordedInstructions)
@@ -577,9 +637,11 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions, container: container)
+        defer { await recording.root.close() }
 
-        _ = try await recording.resumingProfile.standard.restoreSession(
+        let restored = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
+        defer { await restored.session.close() }
 
         let recorded = try Self.recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
@@ -639,8 +701,13 @@ struct SessionRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let recording = try await Self.takeOneAnswerAfterRestoring(
+        let answered = try await Self.takeOneAnswerAfterRestoring(
             cacheDir: cacheDir, recordingsDir: recordingsDir, answersAPrompt: false)
+        let recording = answered.recording
+        defer {
+            await answered.restored.close()
+            await recording.root.close()
+        }
 
         let recorded = try Self.recordedEvents(
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
@@ -657,8 +724,13 @@ struct SessionRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let recording = try await Self.takeOneAnswerAfterRestoring(
+        let answered = try await Self.takeOneAnswerAfterRestoring(
             cacheDir: cacheDir, recordingsDir: recordingsDir, answersAPrompt: true)
+        let recording = answered.recording
+        defer {
+            await answered.restored.close()
+            await recording.root.close()
+        }
 
         let kinds = try Self.recordedEntryKinds(
             session: recording.sessionId, under: recording.routerDirectory)
@@ -680,6 +752,7 @@ struct SessionRestorationTests {
         let recording = try await Self.recordRoot(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             instructions: Self.recordedInstructions)
+        defer { await recording.root.close() }
         let unknownId = ULID.generate()
 
         await #expect(throws: TranscriptTreeError.sessionNotFound(unknownId)) {
@@ -707,6 +780,7 @@ struct SessionRestorationTests {
             instructions: Self.recordedInstructions,
             workingDirectory: overrideDir
         )
+        defer { await recording.root.close() }
         #expect(recording.workingDirectory == overrideDir)
 
         let read = try recording.resumingProfile.standard.recordedWorkingDirectory(

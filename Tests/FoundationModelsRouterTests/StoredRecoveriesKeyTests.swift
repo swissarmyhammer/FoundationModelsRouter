@@ -74,7 +74,8 @@ struct StoredRecoveriesKeyTests {
     /// - Parameter storedRecoveries: A value to write at the stored key of
     ///   the copy before the restore, or `nil` to keep the bytes of the
     ///   fixture.
-    /// - Returns: The restored root session.
+    /// - Returns: The restored root session. The caller closes it. When the
+    ///   root is no ``RoutedSessionActor``, the root closes before the throw.
     /// - Throws: What the copy, the resolve or the restore throws.
     @MainActor
     private static func restoreFixture(storedRecoveries: Int? = nil) async throws -> RoutedSessionActor {
@@ -103,8 +104,10 @@ struct StoredRecoveriesKeyTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(context: fixtureContext), reporting: ResolutionProgress())
         let sessionId = try #require(ULID(ulidString: fixtureSessionId))
-        let restored = try await profile.standard.restoreSessionTree(root: sessionId)
-        return try #require(restored.root as? RoutedSessionActor)
+        let root = try await profile.standard.restoreSessionTree(root: sessionId).root
+        return try await RouterTestFixtures.removingDirectoryOnThrow(cacheDir, alsoOnThrow: { await root.close() }) {
+            try #require(root as? RoutedSessionActor)
+        }
     }
 
     /// Writes `recoveries` at the stored key of the `session.json` in
@@ -131,6 +134,7 @@ struct StoredRecoveriesKeyTests {
     @MainActor
     func recordingWrittenBeforeTheRenameLoads() async throws {
         let restored = try await Self.restoreFixture()
+        defer { await restored.close() }
 
         #expect(restored.repetitionDetection.recoveriesPerAnswer == Self.fixtureRecoveries)
         #expect(await restored.transcript.promptTexts == Self.fixturePrompts)
@@ -142,6 +146,7 @@ struct StoredRecoveriesKeyTests {
         let stored = RepetitionDetection.defaultRecoveriesPerAnswer + 1
 
         let restored = try await Self.restoreFixture(storedRecoveries: stored)
+        defer { await restored.close() }
 
         #expect(restored.repetitionDetection.recoveriesPerAnswer == stored)
     }
@@ -164,6 +169,7 @@ struct StoredRecoveriesKeyTests {
         let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer + 1
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(repetitionDetection: RepetitionDetection(recoveriesPerAnswer: recoveries)))
+        defer { await session.close() }
         _ = try await session.respond(to: Self.newSessionPrompt)
 
         let url = RouterTestFixtures.sidecarURL(of: session.id, routerId: router.id, recordingsDir: recordingsDir)
