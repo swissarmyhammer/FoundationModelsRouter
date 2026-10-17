@@ -84,9 +84,12 @@ struct SummarizerSubmissionTests {
             let flashSession = session.profile.flash.makeSession()
 
             // The flash session's submission runs on the flash worker, and its
-            // pass stays inside the model until the latch opens.
+            // pass stays inside the model until the latch opens. The wait also
+            // ends when that answer ends (rule T1): the latch holds its pass,
+            // so in a test that passes it cannot end first.
             let flashAnswer = Task { try await flashSession.respond(to: flashPrompt) }
-            await flash.observer.waitUntil { $0.entered == 1 }
+            try await RecordedWaitResult.wait(
+                for: { try await flash.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: flashAnswer)
 
             // The next answer of the session over the trigger compacts first, and
             // its flash summarizer call waits behind the flash submission. The

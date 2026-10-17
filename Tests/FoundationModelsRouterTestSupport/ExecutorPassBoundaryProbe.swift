@@ -1,5 +1,4 @@
 import FoundationModels
-import Synchronization
 import Testing
 
 // The probe of task ^8nqkten: does one call of `LanguageModelExecutor.respond`
@@ -44,31 +43,12 @@ public struct PassBoundaryEvent: Sendable {
 /// which cannot `await`.
 ///
 /// A test waits for a state of the log with ``waitUntil(_:)``. Each record is
-/// the event that wakes the wait, so the wait needs no clock and no poll.
+/// the event that wakes the wait, so the wait needs no clock and no poll. A
+/// cancel of the waiting task also ends the wait (rule T1).
 public final class PassBoundaryLog: Sendable, Hashable {
-    /// One task that waits until its condition holds.
-    private struct Waiter {
-        /// The condition the task waits for, over the boundaries so far.
-        let condition: @Sendable ([PassBoundary]) -> Bool
-
-        /// Resumes the task.
-        let continuation: CheckedContinuation<Void, Never>
-    }
-
-    /// The events and the waiting tasks, under one lock.
-    private struct State {
-        /// The events so far, in the order they were recorded.
-        var events: [PassBoundaryEvent] = []
-
-        /// The tasks that wait for a condition that did not hold yet.
-        var waiters: [Waiter] = []
-
-        /// Every boundary so far, in the order it was crossed.
-        var boundaries: [PassBoundary] { events.map(\.boundary) }
-    }
-
-    /// The events and the waiting tasks.
-    private let state = Mutex(State())
+    /// The events so far, in the order they were recorded, and the tasks that
+    /// wait for a condition that did not hold yet.
+    private let events = ConditionWaitList<[PassBoundaryEvent]>([])
 
     /// Creates a log that holds no event.
     public init() {}
@@ -79,42 +59,28 @@ public final class PassBoundaryLog: Sendable, Hashable {
     /// - Parameter boundary: The boundary that was crossed.
     public func record(_ boundary: PassBoundary) {
         let event = PassBoundaryEvent(boundary: boundary, instant: .now)
-        let satisfied = state.withLock { state -> [Waiter] in
-            state.events.append(event)
-            let boundaries = state.boundaries
-            let satisfied = state.waiters.filter { $0.condition(boundaries) }
-            state.waiters.removeAll { $0.condition(boundaries) }
-            return satisfied
-        }
-        for waiter in satisfied {
-            waiter.continuation.resume()
-        }
+        events.update { $0.append(event) }
     }
 
-    /// Waits until `condition` holds for the boundaries of this log.
+    /// Waits until `condition` holds for the boundaries of this log, or until
+    /// the waiting task is cancelled.
     ///
-    /// The wait reads the boundaries at once, and again after each record.
-    /// Nothing else ends the wait: a boundary that never comes keeps the test
-    /// waiting, and a stack of the test process then shows the missing
-    /// boundary.
+    /// The wait reads the boundaries at once, and again after each record. A
+    /// boundary that never comes keeps the wait open until a cancel. Thus a
+    /// test that has a failure event wraps this wait in
+    /// `RecordedWaitResult.wait(for:endingOnEndOf:)`, which cancels it when
+    /// the failure event comes first (rule T1).
     ///
     /// - Parameter condition: Tells whether the boundaries so far are the
     ///   boundaries that the test waits for.
-    public func waitUntil(_ condition: @escaping @Sendable ([PassBoundary]) -> Bool) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let holdsNow = state.withLock { state -> Bool in
-                if condition(state.boundaries) { return true }
-                state.waiters.append(Waiter(condition: condition, continuation: continuation))
-                return false
-            }
-            if holdsNow {
-                continuation.resume()
-            }
-        }
+    /// - Throws: `CancellationError` when the waiting task was cancelled
+    ///   before the condition held.
+    public func waitUntil(_ condition: @escaping @Sendable ([PassBoundary]) -> Bool) async throws {
+        try await events.wait { condition($0.map(\.boundary)) }
     }
 
     /// Every event so far, in the order it was recorded.
-    public var recorded: [PassBoundaryEvent] { state.withLock { $0.events } }
+    public var recorded: [PassBoundaryEvent] { events.value }
 
     /// Every boundary so far, in the order it was crossed.
     public var boundaries: [PassBoundary] { recorded.map(\.boundary) }
@@ -398,20 +364,23 @@ public enum PassBoundaryExpectations {
     /// The wait is on the pass boundaries, not on a clock (task ^v4zh807). A
     /// pass that holds its end until the consumer reads the next element
     /// never ends, so the wait never ends. A pass that a loaded machine makes
-    /// slow only makes the wait longer.
+    /// slow only makes the wait longer. A cancel of the reading task ends the
+    /// wait with `CancellationError`.
     ///
     /// - Parameters:
     ///   - stream: The stream to read.
     ///   - log: The log the executor records each pass into.
     /// - Returns: How many elements the stream gave.
-    /// - Throws: What the stream throws.
+    /// - Throws: What the stream throws, or `CancellationError` when the
+    ///   reading task was cancelled while it waits for a pass end.
     public static func consumeAfterEachOpenPassEnds<Stream: AsyncSequence>(
         _ stream: Stream, log: PassBoundaryLog
     ) async throws -> Int {
         var elementCount = 0
         for try await _ in stream {
             elementCount += 1
-            await log.waitUntil { hasNoOpenPass($0) }
+            // Rule T1, no failure event: the stream cannot end while this loop does not read it.
+            try await log.waitUntil { hasNoOpenPass($0) }
         }
         return elementCount
     }

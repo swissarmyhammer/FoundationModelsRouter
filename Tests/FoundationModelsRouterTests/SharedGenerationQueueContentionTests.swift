@@ -85,7 +85,10 @@ struct SharedGenerationQueueContentionTests {
         defer { waiterFeed.drain.cancel() }
 
         let holderAnswer = Task { try await holder.respond(to: Self.firstPrompt) }
-        await fixture.observer.waitUntil { $0.entered == 1 }
+        // The wait also ends when the holder answer ends (rule T1): the latch
+        // holds its pass, so in a test that passes it cannot end first.
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
 
         // The flash session's submission now waits in the very same queue.
         // This is the contention: two handles, one container, one queue. The

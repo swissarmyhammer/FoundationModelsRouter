@@ -197,7 +197,7 @@ struct QueuedPassStallWatchTests {
         // The tool gate holds the body, so the answer cannot end before the
         // body starts. An answer that ends first did not call the tool.
         try await RecordedWaitResult.wait(
-            for: { await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer)
+            for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer)
         try await Self.waitUntilNoTimeCounts(on: actor)
         toolGate.signal()
         try await answer.value
@@ -278,7 +278,7 @@ struct QueuedPassStallWatchTests {
         // The tool gate holds the body, so the waiting answer cannot end
         // before the body starts.
         try await RecordedWaitResult.wait(
-            for: { await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: waitingAnswer)
+            for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: waitingAnswer)
         // The tool body counts no time while the clock moves.
         try await Self.waitUntilNoTimeCounts(on: waitingActor)
         clock.advance(by: Self.toolBodyTime)

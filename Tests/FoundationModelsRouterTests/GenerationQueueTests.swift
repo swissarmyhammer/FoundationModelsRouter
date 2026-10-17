@@ -64,7 +64,10 @@ struct GenerationQueueTests {
         let secondQueued = AsyncSemaphore(value: 0)
 
         let firstCall = Task { try await Self.submitCall("first", of: first, to: queue) }
-        await fixture.observer.waitUntil { $0.entered == 1 }
+        // The wait also ends when the first call ends (rule T1): the latch
+        // holds its pass, so in a test that passes it cannot end first.
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: firstCall)
         let secondCall = Task {
             try await Self.submitCall("second", of: second, to: queue, onQueued: { secondQueued.signal() })
         }
@@ -122,7 +125,10 @@ struct GenerationQueueTests {
         let waiterQueued = AsyncSemaphore(value: 0)
 
         let holdingCall = Task { try await Self.submitCall("holder", of: holder, to: fixture.queue) }
-        await fixture.observer.waitUntil { $0.entered == 1 }
+        // The wait also ends when the holding call ends (rule T1): the latch
+        // holds its pass, so in a test that passes it cannot end first.
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holdingCall)
         let waitingCall = Task {
             try await Self.submitCall("waiter", of: waiter, to: fixture.queue, onQueued: { waiterQueued.signal() })
         }

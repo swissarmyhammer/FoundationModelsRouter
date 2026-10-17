@@ -185,7 +185,7 @@ struct PoolEntryQueueTests {
             answers.append(answer)
             if index == 0 {
                 try await RecordedWaitResult.wait(
-                    for: { await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
+                    for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
             } else {
                 let log = feeds[index].log
                 try await RecordedWaitResult.wait(
