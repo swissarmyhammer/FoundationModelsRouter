@@ -212,6 +212,54 @@ struct SessionMailQueueTests {
         return (profile.standard.makeSession(tools: tools), dir)
     }
 
+    /// The text that each ``GatedStubBackend`` of a ``GatedFixture`` answers
+    /// with.
+    private static let gatedResponseText = "gated response"
+
+    /// One session over a ``GatedStubBackend``, with what its end needs.
+    private struct GatedFixture {
+        /// The session under test.
+        let session: any RoutedSession
+
+        /// The backend that holds each model call until the test gives a
+        /// permit.
+        let backend: GatedStubBackend
+
+        /// The recorder of the session.
+        let recorder: InMemoryRecorder
+
+        /// The temporary directory the router caches under.
+        let dir: URL
+
+        /// Ends the fixture: gives the gate of the backend one permit, so a
+        /// held model call goes on, then closes the session, and removes the
+        /// directory.
+        ///
+        /// Each test calls it from one `defer`, so the session ends also when
+        /// the test throws (rule T1). The order is the part that matters: the
+        /// close waits for the held model call, so a permit after the close
+        /// holds the close for ever. A permit that no call takes stays unused,
+        /// and the close is idempotent, so a test can also give permits or
+        /// close the session in its body.
+        func end() async {
+            backend.proceed.signal()
+            await session.close()
+            try? FileManager.default.removeItem(at: dir)
+        }
+    }
+
+    /// Makes a session over a new ``GatedStubBackend``.
+    ///
+    /// - Returns: The fixture. The caller ends it with
+    ///   ``GatedFixture/end()`` from a `defer`.
+    /// - Throws: What the resolve of the profile throws.
+    private static func makeGatedSession() async throws -> GatedFixture {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: gatedResponseText)
+        let (session, dir) = try await makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        return GatedFixture(session: session, backend: backend, recorder: recorder, dir: dir)
+    }
+
     // MARK: - Mail helpers
 
     /// The body of a user message in reply mode with the text `text`: the
@@ -286,10 +334,9 @@ struct SessionMailQueueTests {
     @Test("messages sent while a submission runs reach the next submission together, in the order they were sent")
     @MainActor
     func sentMessagesReachTheModelInFIFOOrder() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         _ = try session.send("first")
         await backend.started.wait()
@@ -308,10 +355,9 @@ struct SessionMailQueueTests {
     @Test("send returns its id while the submission of the message still runs")
     @MainActor
     func sendReturnsBeforeItsAnswer() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         // The backend holds the submission, so a send that waited for its
         // answer could never get here.
@@ -371,14 +417,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func pendingMessagesReflectsSendReplaceCancel() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer {
-            backend.proceed.signal()
-            await session.close()
-        }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let feed = await session.streamSessionEvents()
         let blocking = Task { try await session.respond(to: "blocking message") }
@@ -418,10 +459,9 @@ struct SessionMailQueueTests {
     @Test("the recording holds no trace of a message cancelled before its submission")
     @MainActor
     func withdrawnMessageLeavesNoRecordingTrace() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let blocking = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
@@ -593,14 +633,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func cancelOfATakenMessageLeavesItsAnswerRunning() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer {
-            backend.proceed.signal()
-            await session.close()
-        }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let feed = await session.streamSessionEvents()
         let id = try session.send("racing prompt")
@@ -628,10 +663,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func replaceRacingARunningSubmissionReportsAlreadySent() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let id = try session.send("original")
         await backend.started.wait()
@@ -648,10 +682,9 @@ struct SessionMailQueueTests {
     @Test("a message sent while a submission runs is not swept into it, and goes into the next submission")
     @MainActor
     func sendDuringASubmissionGoesIntoTheNextSubmission() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         _ = try session.send("first")
         await backend.started.wait()
@@ -672,14 +705,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func concurrentCancelsOfOneMessageRemoveItOnce() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer {
-            backend.proceed.signal()
-            await session.close()
-        }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let feed = await session.streamSessionEvents()
         let blockingId = try session.send("blocking")
@@ -839,10 +867,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func mailQueueDepthCountsWaitingAndRunningMessages() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend) = (fixture.session, fixture.backend)
 
         let firstId = try session.send("first")
         await backend.started.wait()
@@ -879,14 +906,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func cancelMessageWithdrawsAWaitingMessage() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer {
-            backend.proceed.signal()
-            await session.close()
-        }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let feed = await session.streamSessionEvents()
         let blockingId = try session.send("blocking")
@@ -916,14 +938,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func cancelAllRemovesEachWaitingMessageInQueueOrder() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer {
-            backend.proceed.signal()
-            await session.close()
-        }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let feed = await session.streamSessionEvents()
         let runningId = try session.send("blocking")
@@ -964,10 +981,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func cancelMessageWithdrawsAWaitingRespond() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         // Occupy the pump with a first respond.
         let blockingAnswer = Task { try await session.respond(to: "blocking message") }
@@ -996,14 +1012,9 @@ struct SessionMailQueueTests {
     )
     @MainActor
     func cancelOfARunningRespondLeavesTheAnswerRunning() async throws {
-        let recorder = InMemoryRecorder()
-        let backend = GatedStubBackend(responseText: "gated response")
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer {
-            backend.proceed.signal()
-            await session.close()
-        }
+        let fixture = try await Self.makeGatedSession()
+        defer { await fixture.end() }
+        let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let feed = await session.streamSessionEvents()
         let answer = Task { try await session.respond(to: "racing prompt") }

@@ -151,12 +151,8 @@ struct StagedReasoningSessionFixture {
             loader: StubModelLoader(
                 container: LiveBackendContainer(model: StagedReasoningModel(log: log, scripts: scripts)),
                 dimension: RouterTestFixtures.stubDimension))
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: tools, repetitionDetection: detection))

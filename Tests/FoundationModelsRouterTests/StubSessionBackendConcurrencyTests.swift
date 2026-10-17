@@ -40,6 +40,7 @@ struct StubSessionBackendConcurrencyTests {
         // The end of the producer comes after its last append, so in a test
         // that passes the full count holds when the end is recorded.
         let producerEnd = RecordedWaitResult.recordingEnd(of: producer, reportingTo: ChangeSignal())
+        defer { producerEnd.stopRecording() }
 
         // The reader: what the recording of the failed submission does,
         // repeated until the producer is done. A count that is not a multiple

@@ -47,14 +47,8 @@ struct RejectingSessionFixture {
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension),
             tracer: tracer
         )
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress()
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         return RejectingSessionFixture(session: profile.standard.makeSession(), log: log, directory: directory)
     }

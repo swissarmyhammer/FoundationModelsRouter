@@ -313,8 +313,8 @@ enum AutoCompactionFixtures {
     ///   - flashContainer: The container the `.flash` slot resolves to.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
-    /// When a warm-up answer throws, this helper closes the session first
-    /// (rule T1).
+    /// When a step throws, this helper first closes the session that it made
+    /// and removes the temp directory (rule T1).
     ///
     /// - Returns: The session plus its `standard` container.
     /// - Throws: Whatever profile resolution or a warm-up answer throws.
@@ -333,21 +333,20 @@ enum AutoCompactionFixtures {
             standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir, recorder: recorder, loader: loader, tracer: tracer, samplingMode: samplingMode)
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(context: warmUpContextTokens), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(
+                profile: RouterTestFixtures.profile(context: warmUpContextTokens), reporting: ResolutionProgress())
+        }
 
         let session = profile.standard.makeSession(
             tools: tools, budget: budget)
-        do {
+        try await RouterTestFixtures.removingDirectoryOnThrow(dir, alsoOnThrow: { await session.close() }) {
             let backend = try #require(standardContainer.lastBackend)
 
             for answer in 0..<answerCount {
                 backend.usageIncrement = (input: (answer + 1) * warmUpUsageStepTokens, output: 0)
                 _ = try await session.respond(to: "message \(answer)")
             }
-        } catch {
-            await session.close()
-            throw error
         }
 
         return (session, standardContainer)

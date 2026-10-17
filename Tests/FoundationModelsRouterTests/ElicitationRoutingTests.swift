@@ -237,6 +237,7 @@ struct ElicitationRoutingTests {
         let context = Pending.makeContext(for: session, postingTo: postings)
         let answering = Task { try await context.elicit(request) }
         let ended = RecordedWaitResult.recordingEnd(of: answering, reportingTo: postings.changes)
+        defer { ended.stopRecording() }
         // Rule T1: the wait also ends when the elicit ended. In a test that
         // passes, the elicit does not end before its post: it waits for an
         // answer that the test gives after this wait.
@@ -325,6 +326,10 @@ struct ElicitationRoutingTests {
         let secondAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: secondId)) }
         let firstEnded = RecordedWaitResult.recordingEnd(of: firstAnswering, reportingTo: postings.changes)
         let secondEnded = RecordedWaitResult.recordingEnd(of: secondAnswering, reportingTo: postings.changes)
+        defer {
+            firstEnded.stopRecording()
+            secondEnded.stopRecording()
+        }
         // The run plane posts each request after it made the request pending.
         // Rule T1: the wait also ends when an elicit ended. In a test that
         // passes, no elicit ends before its post: each one waits for an

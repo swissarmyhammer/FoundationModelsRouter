@@ -267,10 +267,7 @@ struct SessionDrainTests {
         let steps = Steps()
         let insideModelCall = AsyncSemaphore(value: 0)
         let hold = CancelledHold()
-        defer {
-            await hold.unwind.open()
-            await session.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [hold.unwind]) }
         fixture.hook.midAnswer = { _ in
             insideModelCall.signal()
             await hold.waitForCancelAndUnwind()
@@ -329,8 +326,7 @@ struct SessionDrainTests {
         let insideModelCall = AsyncSemaphore(value: 0)
         // The close waits for the pass, so the gate opens first.
         defer {
-            await generation.gate.open()
-            await session?.close()
+            await SessionFixtureLifecycle.close(session, opening: [generation.gate])
             await generation.ended()
         }
         hook.midAnswer = { _ in
@@ -341,11 +337,13 @@ struct SessionDrainTests {
         }
 
         let answer = Task { [session] in try await session?.respond(to: "long work") }
-        // Rule T1: the wait also ends when the answer ended. The answer ends
-        // only after the test stops it below.
+        // Rule T1: each wait also ends when the answer ended. The answer ends
+        // only after the test stops it below. The model call starts the
+        // generation before it signals that it runs, so an answer that ends
+        // before the generation started fails the test at one of these waits.
         try await RecordedWaitResult.wait(
             for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
-        try await generation.started.wait()
+        try await RecordedWaitResult.wait(for: { try await generation.started.wait() }, endingOnEndOf: answer)
 
         let closing = Task { [session] in
             await session?.close()
@@ -389,10 +387,7 @@ struct SessionDrainTests {
         (session, hook) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir, runClock: clock)
         weak let profile = session?.profile
         // The close waits for the watchdog, so the gate of the clock opens first.
-        defer {
-            await clock.release.open()
-            await session?.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [clock.release]) }
         let helperTasks = try #require(session?.helperTasks)
         let insideModelCall = AsyncSemaphore(value: 0)
         hook.midAnswer = { _ in
@@ -447,11 +442,7 @@ struct SessionDrainTests {
         let before = HeldSignalWork()
         let after = HeldSignalWork()
         // The close waits for the signal tasks, so their gates open first.
-        defer {
-            await before.gate.open()
-            await after.gate.open()
-            await session?.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [before.gate, after.gate]) }
         session?.submitSignal(SignalID(), { _ in await before.hold() })
         session?.compact()
         session?.submitSignal(SignalID(), { _ in await after.hold() })
@@ -605,10 +596,7 @@ struct SessionDrainTests {
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
         let hold = CancelledHold()
-        defer {
-            await hold.unwind.open()
-            await session.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [hold.unwind]) }
         await session.runPlane.start(
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {

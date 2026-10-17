@@ -75,14 +75,10 @@ struct GuidedPublicSurfaceTests {
             cacheDir: directory,
             loader: StubModelLoader(
                 container: container, dimension: RouterTestFixtures.stubDimension))
-        do {
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            return (profile, directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        return (profile, directory)
     }
 
     /// Resolves a profile over a scripted model answering with ``cannedObject``.

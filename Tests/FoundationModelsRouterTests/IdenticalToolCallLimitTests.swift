@@ -44,13 +44,10 @@ struct IdenticalToolCallLimitTests {
         let fixture = try await RepeatingToolCallSessionFixture.make(
             model: IdenticalToolCallModel(log: log, script: script), log: log, detection: detection,
             tempDirPrefix: tempDirPrefix)
-        do {
-            let events = try await collect(fixture.session.streamEvents(to: prompt))
-            return (fixture, events)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+            try await collect(fixture.session.streamEvents(to: prompt))
         }
+        return (fixture, events)
     }
 
     @Test("the third identical consecutive call stops before its body runs, and the recovery prompt names it")

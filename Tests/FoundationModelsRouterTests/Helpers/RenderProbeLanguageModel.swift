@@ -316,17 +316,14 @@ struct RenderProbeSessionFixture {
             recorder: recorder,
             loader: StubModelLoader(
                 container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
-        do {
-            let profile = try await router.resolve(
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(
                 profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
-            return RenderProbeSessionFixture(
-                session: profile.standard.makeSession(instructions: instructions, tools: [MarkerEmittingTool()]),
-                log: log,
-                recorder: recorder,
-                directory: directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
         }
+        return RenderProbeSessionFixture(
+            session: profile.standard.makeSession(instructions: instructions, tools: [MarkerEmittingTool()]),
+            log: log,
+            recorder: recorder,
+            directory: directory)
     }
 }

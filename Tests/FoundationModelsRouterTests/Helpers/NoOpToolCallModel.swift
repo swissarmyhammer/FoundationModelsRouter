@@ -392,7 +392,7 @@ struct NoOpToolCallSessionFixture {
         restoreCheck: NoOpToolCallCheck?
     ) async throws -> SessionFixtureLifecycle.Started {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        do {
+        return try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             let loader = StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
             let routerId = ULID.generate()
             let recording = try await recordingProfile(id: routerId, under: directory, loader: loader).profile
@@ -409,9 +409,6 @@ struct NoOpToolCallSessionFixture {
                 session = try await restoring.standard.restoreSession(id: recorded.id, tools: tools).session
             }
             return SessionFixtureLifecycle.Started(session: session, router: router, directory: directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
         }
     }
 

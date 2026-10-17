@@ -14,6 +14,10 @@ final class RecordedWaitResult: Sendable {
     /// The result of the wait, or `nil` while it waits.
     private let stored = Mutex<Bool?>(nil)
 
+    /// The task that records the end of an other task, or `nil` for a result
+    /// that ``recordingEnd(of:reportingTo:)`` did not make.
+    private let observer = Mutex<Task<Void, Never>?>(nil)
+
     /// The signal that ``record(_:)`` sends after it records the result.
     let changes: ChangeSignal
 
@@ -50,6 +54,10 @@ extension RecordedWaitResult {
     /// result in the failure event of
     /// ``ChangeSignal/wait(isolation:until:endingOn:sourceLocation:)``.
     ///
+    /// The result keeps the handle of the observer task. The caller calls
+    /// ``stopRecording()`` when its wait returned, in a `defer` right after
+    /// this call, so the observer task records nothing after the wait.
+    ///
     /// - Parameters:
     ///   - task: The task whose end the result records.
     ///   - changes: The signal to send when the end is recorded. Give the
@@ -60,11 +68,24 @@ extension RecordedWaitResult {
         of task: Task<Success, Failure>, reportingTo changes: ChangeSignal
     ) -> RecordedWaitResult {
         let ended = RecordedWaitResult(reportingTo: changes)
-        Task {
+        let observing = Task {
             _ = await task.result
+            guard !Task.isCancelled else { return }
             ended.record(true)
         }
+        ended.observer.withLock { $0 = observing }
         return ended
+    }
+
+    /// Cancels the observer task of ``recordingEnd(of:reportingTo:)``.
+    ///
+    /// After the cancel, the observer task records no end and sends no
+    /// signal. The observer task itself ends when the observed task ends:
+    /// a wait for the result of a task does not end on a cancel. The end of
+    /// the fixture of the test ends the observed task (rule T1). A result
+    /// with no observer task ignores this call.
+    func stopRecording() {
+        observer.withLock { $0?.cancel() }
     }
 
     /// Waits until `wait` returns, or until `task` ended. When `task` ended
@@ -89,6 +110,7 @@ extension RecordedWaitResult {
         let changes = ChangeSignal()
         let waited = RecordedWaitResult(reportingTo: changes)
         let ended = recordingEnd(of: task, reportingTo: changes)
+        defer { ended.stopRecording() }
         let waiting = Task {
             do {
                 try await wait()

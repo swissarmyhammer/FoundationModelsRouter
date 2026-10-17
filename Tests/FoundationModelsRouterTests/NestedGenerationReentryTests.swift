@@ -507,6 +507,7 @@ struct NestedGenerationReentryTests {
         from record: HandedBackRecord, endingOnEndOf answer: Task<AnswerOutcome, Never>
     ) async throws -> String? {
         let answerEnded = RecordedWaitResult.recordingEnd(of: answer, reportingTo: record.changes)
+        defer { answerEnded.stopRecording() }
         try await record.changes.wait(until: { record.value != nil }, endingOn: { answerEnded.value != nil })
         let text = try #require(record.value)
         guard

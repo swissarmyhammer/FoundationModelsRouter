@@ -283,6 +283,12 @@ struct ExtrasPoolResolveTests {
         let trio = Self.uniqueTrio(named: "admission")
         let entrySignal = AsyncSemaphore(value: 0)
         let releaseGate = AsyncSemaphore(value: 0)
+        // The gate opens also when a wait below throws, so the gated load
+        // and the resolve end (rule T1). In a test that passes, the body
+        // opened the gate already. The second permit is then not used: the
+        // gated load takes one permit, and a signal with no waiter only adds
+        // a permit.
+        defer { releaseGate.signal() }
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: LoggingModelLoader(

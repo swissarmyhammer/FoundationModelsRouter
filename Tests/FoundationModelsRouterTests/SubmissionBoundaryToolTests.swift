@@ -208,15 +208,10 @@ struct SubmissionBoundaryToolTests {
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
         // A throw before the return removes the temp directory here, because
         // the caller gets no directory to remove.
-        do {
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            let session = profile.standard.makeSession(tools: tools)
-            return (session, dir)
-        } catch {
-            try? FileManager.default.removeItem(at: dir)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        return (profile.standard.makeSession(tools: tools), dir)
     }
 
     // MARK: - Tests

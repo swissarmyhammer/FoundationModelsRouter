@@ -77,13 +77,10 @@ struct ReasoningStopRecoveryTests {
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await StagedReasoningSessionFixture.make(
             scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
-        do {
-            let events = try await collect(fixture.session.streamEvents(to: prompt))
-            return (fixture, events)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+            try await collect(fixture.session.streamEvents(to: prompt))
         }
+        return (fixture, events)
     }
 
     /// Runs one streamed answer over a ``CeilingProbeSessionFixture`` under
@@ -98,13 +95,10 @@ struct ReasoningStopRecoveryTests {
         ending: CeilingProbeEnding
     ) async throws -> (fixture: CeilingProbeSessionFixture, events: [SessionEvent]) {
         let fixture = try await CeilingProbeSessionFixture.make(ending: ending, tempDirPrefix: tempDirPrefix)
-        do {
-            let events = try await collect(fixture.session.streamEvents(to: prompt, maxTokens: requestedCeiling))
-            return (fixture, events)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+            try await collect(fixture.session.streamEvents(to: prompt, maxTokens: requestedCeiling))
         }
+        return (fixture, events)
     }
 
     /// The watch stops that the journal of `recorder` records, in order.

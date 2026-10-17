@@ -163,21 +163,12 @@ struct NestedRunTerminalForwardingTests {
                 container: UndrivenLanguageModelContainer(),
                 dimension: RouterTestFixtures.stubDimension)
         )
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         let session = profile.standard.makeSession()
-        do {
-            _ = try await session.respond(to: attachingPrompt)
-        } catch {
-            await session.close()
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        _ = try await RouterTestFixtures.removingDirectoryOnThrow(directory, alsoOnThrow: { await session.close() }) {
+            try await session.respond(to: attachingPrompt)
         }
 
         let settledRuns = SettledRunLog()

@@ -82,13 +82,8 @@ struct ScriptedSessionFixture {
                 container: container, dimension: RouterTestFixtures.stubDimension),
             tracer: tracer
         )
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         return ScriptedSessionFixture(
             session: profile.standard.makeSession(tools: tools, budget: budget),

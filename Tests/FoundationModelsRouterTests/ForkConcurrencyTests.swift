@@ -325,6 +325,18 @@ struct ForkConcurrencyTests {
         )
     }
 
+    /// Gives `gate` one permit for each of `callers`, so each held call goes
+    /// on.
+    ///
+    /// - Parameters:
+    ///   - gate: The release gate of the held calls.
+    ///   - callers: The sessions whose calls the gate holds.
+    private static func release(_ gate: AsyncSemaphore, forEachOf callers: [any RoutedSession]) {
+        for _ in callers {
+            gate.signal()
+        }
+    }
+
     // MARK: - Fork seeds the child's backend from the parent + parentId
 
     @Test("fork seeds the child's backend from the parent's prompt history and sets parentId to the parent's id")
@@ -449,6 +461,12 @@ struct ForkConcurrencyTests {
         let fork2 = try await root.fork(workingDirectory: nil)
         let fork3 = try await root.fork(workingDirectory: nil)
         let callers: [any RoutedSession] = [root, fork1, fork2, fork3]
+        // The gate gives one permit for each call also when a wait below
+        // throws, so no call stays held (rule T1). In a test that passes, the
+        // body gave the permits already. These permits are then not used: each
+        // call takes one permit, and a signal with no waiter only adds a
+        // permit.
+        defer { Self.release(releaseGate, forEachOf: callers) }
 
         let queue = container.generationQueue
         var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
@@ -462,6 +480,7 @@ struct ForkConcurrencyTests {
         // The wait also ends when call 0 ends with no entry (rule T1). Call 0
         // cannot end before its entry, because the release gate holds it.
         let call0Ended = RecordedWaitResult.recordingEnd(of: task0, reportingTo: observer.changes)
+        defer { call0Ended.stopRecording() }
         try await observer.changes.wait(
             until: { await observer.entryOrder == [0] }, endingOn: { call0Ended.value != nil })
 
@@ -484,7 +503,7 @@ struct ForkConcurrencyTests {
         #expect(await observer.maxActive == 1)
 
         // Release the chain; FIFO must admit them 1, 2, 3 in that order.
-        for _ in 0..<callers.count { releaseGate.signal() }
+        Self.release(releaseGate, forEachOf: callers)
 
         _ = try await task0.value
         _ = try await task1.value

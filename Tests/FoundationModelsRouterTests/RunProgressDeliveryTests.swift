@@ -61,31 +61,24 @@ struct RunProgressDeliveryTests {
     /// - Throws: What the resolve of the profile or the first answer throws.
     private static func makeFixture() async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "RunProgressDeliveryTests")
-        do {
-            let backend = Backend(script: [:])
-            let recorder = InMemoryRecorder()
-            let router = RouterTestFixtures.makeRouter(
-                cacheDir: directory, recorder: recorder,
-                loader: StubModelLoader(
-                    container: SessionMessagePumpTests.PumpProbeContainer(backend: backend),
-                    dimension: RouterTestFixtures.stubDimension))
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            let session = profile.standard.makeSession()
-            let (events, drain) = await SessionEventLog.watch(session)
-            do {
-                _ = try await session.respond(to: firstPrompt)
-            } catch {
-                drain.cancel()
-                throw error
-            }
-            return Fixture(
-                session: session, backend: backend, recorder: recorder, events: events, drain: drain,
-                profile: profile, directory: directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let backend = Backend(script: [:])
+        let recorder = InMemoryRecorder()
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: directory, recorder: recorder,
+            loader: StubModelLoader(
+                container: SessionMessagePumpTests.PumpProbeContainer(backend: backend),
+                dimension: RouterTestFixtures.stubDimension))
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        let session = profile.standard.makeSession()
+        let (events, drain) = await SessionEventLog.watch(session)
+        _ = try await RouterTestFixtures.removingDirectoryOnThrow(directory, alsoOnThrow: { drain.cancel() }) {
+            try await session.respond(to: firstPrompt)
+        }
+        return Fixture(
+            session: session, backend: backend, recorder: recorder, events: events, drain: drain,
+            profile: profile, directory: directory)
     }
 
     /// Ends the fixture: stops the event drain and removes the directory.

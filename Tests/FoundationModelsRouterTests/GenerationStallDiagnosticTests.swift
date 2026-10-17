@@ -329,13 +329,12 @@ struct GenerationStallDiagnosticTests {
     ) async throws -> (session: any RoutedSession, backend: StallingBackend, clock: ManualRunClock, dir: URL) {
         let container = StallingLLMContainer(fragmentsBeforeStall: fragmentsBeforeStall)
         let (session, clock, dir) = try await makeSession(over: container, reportInterval: reportInterval)
-        do {
-            let backend = try #require(container.lastBackend)
-            return (session, backend, clock, dir)
-        } catch {
-            try? FileManager.default.removeItem(at: dir)
-            throw error
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            dir, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
         }
+        return (session, backend, clock, dir)
     }
 
     /// Builds a fresh router, resolved profile, and vended session over
@@ -361,13 +360,8 @@ struct GenerationStallDiagnosticTests {
         )
         let clock = ManualRunClock()
         await router.useRunClock(clock)
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        } catch {
-            try? FileManager.default.removeItem(at: dir)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         let session = profile.standard.makeSession()
         if let reportInterval {

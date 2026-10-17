@@ -95,13 +95,8 @@ struct SubmissionTracingTests {
             ),
             tracer: tracer
         )
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         return AnswerFixture(
             session: profile.standard.makeSession(),

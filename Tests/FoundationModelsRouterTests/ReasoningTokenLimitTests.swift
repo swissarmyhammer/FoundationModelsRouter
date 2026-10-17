@@ -62,18 +62,15 @@ struct ReasoningTokenLimitTests {
         let fixture = try await RepeatingReasoningSessionFixture.make(
             script: script, repeatsAfterStop: false, detection: detection, tools: tools,
             tempDirPrefix: tempDirPrefix)
+        if let logger {
+            await fixture.session.useCaptureLogger(for: logger)
+        }
         // A throw before the return removes the temp directory here, because
         // the caller gets no fixture to remove it.
-        do {
-            if let logger {
-                await fixture.session.useCaptureLogger(for: logger)
-            }
-            let events = try await fixture.answer(to: prompt)
-            return (fixture, events)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+            try await fixture.answer(to: prompt)
         }
+        return (fixture, events)
     }
 
     /// The finish reason of each ended submission among `events`, in order.
@@ -212,14 +209,10 @@ struct ReasoningEndRecoveryTests {
         let fixture = try await CeilingProbeSessionFixture.make(ending: ending, tempDirPrefix: tempDirPrefix)
         // A throw before the return removes the temp directory here, because
         // the caller gets no fixture to remove it.
-        do {
-            let events = try await collect(
-                fixture.session.streamEvents(to: "fix the bug", maxTokens: requestedCeiling))
-            return (fixture, events)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+            try await collect(fixture.session.streamEvents(to: "fix the bug", maxTokens: requestedCeiling))
         }
+        return (fixture, events)
     }
 
     @Test(

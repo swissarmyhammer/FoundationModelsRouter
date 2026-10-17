@@ -36,20 +36,16 @@ struct SessionRunPlaneTests {
         recorder: any TranscriptRecorder
     ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        do {
-            let router = RouterTestFixtures.makeRouter(
-                cacheDir: dir,
-                recorder: recorder,
-                loader: StubModelLoader(
-                    container: UndrivenLanguageModelContainer(), dimension: RouterTestFixtures.stubDimension)
-            )
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            return (profile.standard.makeSession(), dir)
-        } catch {
-            try? FileManager.default.removeItem(at: dir)
-            throw error
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: dir,
+            recorder: recorder,
+            loader: StubModelLoader(
+                container: UndrivenLanguageModelContainer(), dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        return (profile.standard.makeSession(), dir)
     }
 
     /// Makes a router that records to `recordingsDir` through a
@@ -84,11 +80,7 @@ struct SessionRunPlaneTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        defer {
-            await latchA.open()
-            await latchB.open()
-            await session.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [latchA, latchB]) }
         let tokenA = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
         let tokenB = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
@@ -179,11 +171,7 @@ struct SessionRunPlaneTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        defer {
-            await latchA.open()
-            await latchB.open()
-            await session.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [latchA, latchB]) }
         _ = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
         _ = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
@@ -217,10 +205,7 @@ struct SessionRunPlaneTests {
         let session = profile1.standard.makeSession()
 
         let latch = RunLatch()
-        defer {
-            await latch.open()
-            await session.close()
-        }
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         let token = await trackFakeRun(on: session.runPlane, latch: latch)
         await session.close()
 

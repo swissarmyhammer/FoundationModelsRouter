@@ -80,7 +80,7 @@ struct ToolResultCompactionTests {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         // The caller removes the directory only after this returns. A throw
         // here must remove it, because the caller then has no fixture.
-        do {
+        return try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             let recorder = InMemoryRecorder()
             let tool = LargeResultTool(result: toolResult(length: resultLength))
             let container = LiveBackendContainer(model: ToolResultCompactionModel(toolCallUsage: usage))
@@ -93,9 +93,6 @@ struct ToolResultCompactionTests {
             return Fixture(
                 session: session, tool: tool, recorder: recorder, directory: directory,
                 queue: try #require(profile[keyPath: slot].backendQueue))
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
         }
     }
 

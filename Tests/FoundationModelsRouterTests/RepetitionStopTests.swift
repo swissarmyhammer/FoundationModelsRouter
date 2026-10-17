@@ -78,16 +78,13 @@ struct RepetitionStopTests {
         let fixture = try await RepeatingReasoningSessionFixture.make(
             script: script, repeatsAfterStop: repeatsAfterStop, detection: detection,
             tempDirPrefix: tempDirPrefix)
-        do {
-            if let logger {
-                await fixture.session.useCaptureLogger(for: logger)
-            }
-            let events = try await fixture.answer(to: prompt)
-            return (fixture, events)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
+        if let logger {
+            await fixture.session.useCaptureLogger(for: logger)
         }
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+            try await fixture.answer(to: prompt)
+        }
+        return (fixture, events)
     }
 
     /// The finish reason of each ended submission among `events`, in order.

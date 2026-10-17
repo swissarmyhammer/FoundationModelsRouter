@@ -87,13 +87,10 @@ struct WatchStopUsageTests {
             script: script, repeatsAfterStop: false, detection: detection, tempDirPrefix: tempDirPrefix)
         // The caller removes the directory only after this returns. A throw
         // here must remove it, because the caller then has no answer.
-        do {
+        return try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
             let events = try await collect(fixture.session.streamEvents(to: prompt))
             let contextTokens = try #require(fixture.session as? RoutedSessionActor).contextTokens
             return Answer(fixture: fixture, events: events, contextTokens: contextTokens)
-        } catch {
-            try? FileManager.default.removeItem(at: fixture.directory)
-            throw error
         }
     }
 

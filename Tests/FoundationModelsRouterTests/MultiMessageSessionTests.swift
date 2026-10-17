@@ -445,6 +445,12 @@ struct MultiMessageSessionTests {
         // Starts at 0: the in-flight respond() call suspends on this until the
         // test explicitly signals it, holding the submission open indefinitely.
         let releaseGate = AsyncSemaphore(value: 0)
+        // The gate opens also when a wait below throws, so the suspended
+        // respond() call ends (rule T1). In a test that passes, the body
+        // opened the gate already. The second permit is then not used: the
+        // respond() call takes one permit, and a signal with no waiter only
+        // adds a permit.
+        defer { releaseGate.signal() }
         let container = SuspendableLLMContainer(log: log, releaseGate: releaseGate)
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -458,6 +464,7 @@ struct MultiMessageSessionTests {
         // the backend (rule T1).
         let respondTask = Task { try await session.respond(to: "message") }
         let respondEnded = RecordedWaitResult.recordingEnd(of: respondTask, reportingTo: log.changes)
+        defer { respondEnded.stopRecording() }
         try await log.waitFor("respond-enter", endingOn: respondEnded)
 
         // A fork reads the settled transcript of the session, so it does not
@@ -469,6 +476,7 @@ struct MultiMessageSessionTests {
         // wait also ends when the fork ended with no entry (rule T1).
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
         let forkEnded = RecordedWaitResult.recordingEnd(of: forkTask, reportingTo: log.changes)
+        defer { forkEnded.stopRecording() }
         try await log.waitFor("makeFork", endingOn: forkEnded)
         let eventsWhileTheSubmissionIsSuspended = log.events
 

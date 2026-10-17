@@ -101,6 +101,7 @@ struct ElicitationAnswerValidationTests {
             let context = PendingElicitationFixtures.makeContext(for: session, postingTo: postings)
             let answering = Task { try await context.elicit(request) }
             let runEnd = RecordedWaitResult.recordingEnd(of: answering, reportingTo: postings.changes)
+            defer { runEnd.stopRecording() }
             // Rule T1: the wait also ends when the asking run ended. In a
             // test that passes, the run posts its question before it waits
             // for the answer, and it ends only after the answer below.

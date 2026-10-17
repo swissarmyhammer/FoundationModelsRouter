@@ -62,13 +62,10 @@ struct SessionPromptCacheKeyTests {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = PromptCacheScopeLog()
         let container = LiveBackendContainer(model: PromptCacheScopeRecordingModel(log: log))
-        do {
-            let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
-            return Fixture(log: log, profile: resolved.profile, directory: directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let resolved = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
         }
+        return Fixture(log: log, profile: resolved.profile, directory: directory)
     }
 
     /// The scope of the passes of `session`.

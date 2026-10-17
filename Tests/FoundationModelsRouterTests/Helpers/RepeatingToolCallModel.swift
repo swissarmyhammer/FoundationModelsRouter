@@ -257,21 +257,17 @@ struct RepeatingToolCallSessionFixture {
         model: some LanguageModel, log: RenderProbeLog, detection: RepetitionDetection, tempDirPrefix: String
     ) async throws -> RepeatingToolCallSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        do {
-            let runs = RunCount()
-            let router = RouterTestFixtures.makeRouter(
-                cacheDir: directory,
-                loader: StubModelLoader(
-                    container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            let session = profile.standard.makeSession(
-                configuration: SessionConfiguration(
-                    tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: detection))
-            return RepeatingToolCallSessionFixture(session: session, log: log, runs: runs, directory: directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let runs = RunCount()
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: directory,
+            loader: StubModelLoader(
+                container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        let session = profile.standard.makeSession(
+            configuration: SessionConfiguration(
+                tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: detection))
+        return RepeatingToolCallSessionFixture(session: session, log: log, runs: runs, directory: directory)
     }
 }

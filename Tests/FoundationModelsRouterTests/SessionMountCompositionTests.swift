@@ -387,6 +387,7 @@ struct SessionMountCompositionTests {
         // sink got the terminal.
         let settling = Task { _ = await runPlane.wait(completionToken: token, seconds: nil) }
         let settled = RecordedWaitResult.recordingEnd(of: settling, reportingTo: sink.changes)
+        defer { settled.stopRecording() }
         await gate.open()
         try await sink.changes.wait(until: { await sink.heldTerminal != nil }, endingOn: { settled.value != nil })
 

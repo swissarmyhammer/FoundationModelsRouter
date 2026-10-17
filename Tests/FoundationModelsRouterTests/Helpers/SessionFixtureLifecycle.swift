@@ -45,14 +45,9 @@ enum SessionFixtureLifecycle {
         recordingsDir: URL? = nil
     ) async throws -> Started {
         let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
-        let router: Router
-        let profile: LanguageModelProfile
-        do {
-            (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
+        let (router, profile) = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await RouterTestFixtures.resolveStandardProfile(
                 over: container, cacheDir: directory, recordingsDir: recordingsDir)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
         }
         let session = profile.standard.makeSession(configuration: configuration)
         return Started(session: session, router: router, directory: directory)
@@ -66,11 +61,29 @@ enum SessionFixtureLifecycle {
     ///   - started: The session, its router and its directory.
     ///   - gates: The gates of the runs of the session.
     static func end(_ started: Started, opening gates: [RunLatch]) async {
+        await close(started.session, opening: gates)
+        try? FileManager.default.removeItem(at: started.directory)
+        withExtendedLifetime(started.router) {}
+    }
+
+    /// Opens `gates`, so no work of the session stays held, and then closes
+    /// `session`.
+    ///
+    /// This is the one gate-open-then-close teardown of the tests. A test
+    /// calls it from one `defer`, so the held work ends also when the test
+    /// throws (rule T1). The order is the part that matters: a close waits
+    /// for the end of each held work, so a gate that opens after the close
+    /// holds the close for ever. Each step is idempotent, so a test can also
+    /// open a gate or close the session in its body.
+    ///
+    /// - Parameters:
+    ///   - session: The session to close, or `nil` when the test dropped it.
+    ///     The gates open also then.
+    ///   - gates: The gates of the held work of the session.
+    static func close(_ session: (any RoutedSession)?, opening gates: [RunLatch]) async {
         for gate in gates {
             await gate.open()
         }
-        await started.session.close()
-        try? FileManager.default.removeItem(at: started.directory)
-        withExtendedLifetime(started.router) {}
+        await session?.close()
     }
 }

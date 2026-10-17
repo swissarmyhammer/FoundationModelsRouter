@@ -323,7 +323,7 @@ struct RoutedSessionToolContextBindingTests {
         session: any RoutedSession, backend: ContextProbingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        do {
+        return try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
             let container = ProbingLLMContainer()
             let router = RouterTestFixtures.makeRouter(
                 cacheDir: dir,
@@ -339,9 +339,6 @@ struct RoutedSessionToolContextBindingTests {
                 }
             let backend = try #require(container.lastBackend)
             return (session, backend, dir)
-        } catch {
-            try? FileManager.default.removeItem(at: dir)
-            throw error
         }
     }
 
@@ -353,7 +350,7 @@ struct RoutedSessionToolContextBindingTests {
         session: any RoutedSession, backend: CancellationObservingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        do {
+        return try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
             let container = CancellationObservingLLMContainer()
             let router = RouterTestFixtures.makeRouter(
                 cacheDir: dir,
@@ -364,9 +361,6 @@ struct RoutedSessionToolContextBindingTests {
             let session = profile.standard.makeSession()
             let backend = try #require(container.lastBackend)
             return (session, backend, dir)
-        } catch {
-            try? FileManager.default.removeItem(at: dir)
-            throw error
         }
     }
 

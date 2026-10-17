@@ -104,14 +104,10 @@ struct RunMessageDeliveryTests {
     ) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "RunMessageDeliveryTests")
         let backend = Backend(script: script)
-        let profile: LanguageModelProfile
-        do {
-            profile = try await RouterTestFixtures.resolveStandardProfile(
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await RouterTestFixtures.resolveStandardProfile(
                 over: SessionMessagePumpTests.PumpProbeContainer(backend: backend), cacheDir: directory
             ).profile
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
         }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(mailOnlyAnswerLimit: mailOnlyAnswerLimit))

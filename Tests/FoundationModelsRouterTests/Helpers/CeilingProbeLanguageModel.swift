@@ -470,13 +470,9 @@ struct CeilingProbeSessionFixture {
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
-        let profile: LanguageModelProfile
-        do {
-            profile = try await router.resolve(
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(
                 profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
         }
         return CeilingProbeSessionFixture(
             session: profile.standard.makeSession(

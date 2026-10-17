@@ -297,27 +297,21 @@ enum MailOnlyAnswerFixtures {
             let tool = tool(gates)
             let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
             let container = Container(callsTool: callsTool)
-            let resolved: (router: Router, profile: LanguageModelProfile)
-            do {
-                resolved = try await RouterTestFixtures.resolveStandardProfile(
+            let resolved = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+                try await RouterTestFixtures.resolveStandardProfile(
                     over: container, cacheDir: directory, runClock: ManualRunClock())
-            } catch {
-                try? FileManager.default.removeItem(at: directory)
-                throw error
             }
             let session = resolved.profile.standard.makeSession(
                 configuration: SessionConfiguration(tools: [tool], mailOnlyAnswerLimit: limit))
-            do {
-                let backend = try #require(container.lastBackend)
-                let (events, drain) = await SessionEventLog.watch(session)
-                return Self(
-                    session: session, backend: backend, gates: gates, events: events, drain: drain,
-                    router: resolved.router, directory: directory)
-            } catch {
-                await session.close()
-                try? FileManager.default.removeItem(at: directory)
-                throw error
+            let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+                directory, alsoOnThrow: { await session.close() }
+            ) {
+                try #require(container.lastBackend)
             }
+            let (events, drain) = await SessionEventLog.watch(session)
+            return Self(
+                session: session, backend: backend, gates: gates, events: events, drain: drain,
+                router: resolved.router, directory: directory)
         }
 
         /// Sends `prompt` as a caller message, and waits until the pump ended
@@ -422,6 +416,13 @@ enum MailOnlyAnswerFixtures {
         ///
         /// The close finishes the feed after the last event of the session,
         /// so the drain task ends after it appended that event.
+        ///
+        /// The end is idempotent, so a test can call it in its body to read
+        /// the events and again from a `defer` (rule T1). Each step allows a
+        /// second call: an open gate stays open, ``RoutedSession/close()`` is
+        /// idempotent, the value of the ended drain task comes back at once,
+        /// and the removal of a directory that is not there is a `try?`. A
+        /// second call gives the same events as the first.
         ///
         /// - Returns: Each event of the feed, in delivery order.
         @discardableResult

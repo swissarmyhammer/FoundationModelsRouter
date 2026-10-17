@@ -149,25 +149,22 @@ struct ToolDisplayDeliveryTests {
     @MainActor
     private static func makeFixture(tool: DisplayingBackgroundTool, grace: TimeInterval) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "ToolDisplayDeliveryTests")
-        var session: (any RoutedSession)?
-        do {
-            let container = BackgroundingLLMContainer()
-            let clock = ManualRunClock()
-            let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-                over: container, cacheDir: directory, runClock: clock)
-            let made = profile.standard.makeSession(
-                configuration: SessionConfiguration(tools: [tool], inlineSettleGrace: grace))
-            session = made
-            let backend = try #require(container.lastBackend)
-            let (events, drain) = await SessionEventLog.watch(made)
-            return Fixture(
-                session: made, backend: backend, events: events, drain: drain, router: router, clock: clock,
-                directory: directory)
-        } catch {
-            await session?.close()
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+        let container = BackgroundingLLMContainer()
+        let clock = ManualRunClock()
+        let (router, profile) = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory, runClock: clock)
         }
+        let session = profile.standard.makeSession(
+            configuration: SessionConfiguration(tools: [tool], inlineSettleGrace: grace))
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            directory, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
+        }
+        let (events, drain) = await SessionEventLog.watch(session)
+        return Fixture(
+            session: session, backend: backend, events: events, drain: drain, router: router, clock: clock,
+            directory: directory)
     }
 
     /// Ends the fixture: stops the event drain, closes the session and
