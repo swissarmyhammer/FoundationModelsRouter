@@ -21,7 +21,9 @@ import Testing
 /// - The run of the stopped answer. Its poster is the mail of the stopped
 ///   answer.
 ///
-/// After the stop, each test posts one kind of event from each run. A post
+/// After the stop, each test posts one kind of event from each run. The
+/// question test is different: a cancelled run asks no question, so a third
+/// run of other work starts after the stop and asks the question. A post
 /// to the outbox of the session ends after the session handled it, so the
 /// test then closes the session and reads its feed to the end. The tests read
 /// the order of the work, not a clock.
@@ -68,11 +70,24 @@ struct StoppedAnswerOtherWorkEventTests {
         /// Runs `work` with ``poster`` as the origin of the task.
         ///
         /// - Parameter work: The posts of the run.
+        /// - Returns: What `work` returns.
         /// - Throws: What `work` throws.
-        func post(_ work: () async throws -> Void) async throws {
+        func post<Result>(_ work: () async throws -> Result) async throws -> Result {
             try await OriginContext.$current.withValue(poster) {
                 try await work()
             }
+        }
+
+        /// Asks one form question from this run, with ``poster`` as the
+        /// origin of the task. The question goes to `sink`.
+        ///
+        /// - Parameter sink: Where the context of the question posts.
+        /// - Returns: The task that waits for the answer of the question.
+        /// - Throws: What ``post(_:)`` throws.
+        func askAQuestion(postingTo sink: any OperationEventSink) async throws -> Task<ElicitationResponse, any Error> {
+            let context = context(postingTo: sink)
+            let request = PendingElicitationFixtures.formRequest(elicitationId: ULID.generate())
+            return try await post { Task { try await context.elicit(request) } }
         }
     }
 
@@ -99,11 +114,13 @@ struct StoppedAnswerOtherWorkEventTests {
 
         /// Opens each gate, closes the session, and reads the feed to its end.
         ///
+        /// - Parameter laterGates: The gates of the runs that started after
+        ///   the stop. The default is no gate.
         /// - Returns: Each output of the feed after the `signalDone` of the
         ///   stop, in order.
-        mutating func outputsToTheEnd() async -> [SessionOutput] {
+        mutating func outputsToTheEnd(alsoOpening laterGates: [RunLatch] = []) async -> [SessionOutput] {
             await fixture.outputsToTheEnd(
-                of: &feed, opening: [cancelerHold.release, otherRun.gate, ownRun.gate, answerGate])
+                of: &feed, opening: [cancelerHold.release, otherRun.gate, ownRun.gate, answerGate] + laterGates)
         }
     }
 
@@ -176,12 +193,12 @@ struct StoppedAnswerOtherWorkEventTests {
 
     /// Stops the held answer, runs `post` for the run of the stopped answer
     /// and then for the run of other work, and runs `wait`. Then checks the
-    /// outputs of `kind`: the post of the run of other work comes one time,
-    /// with the origin of its poster, and the post of the run of the stopped
-    /// answer does not come.
+    /// outputs of `kind` with ``postsOfOtherWork(of:from:in:alsoOpening:)``:
+    /// the post of the run of other work comes one time, with the origin of
+    /// its poster.
     ///
-    /// The stopped answer still runs when the posts end: the open answer is
-    /// still the silenced answer.
+    /// The sweep of the stop cancelled the run of other work, so its post
+    /// makes no run mail and keeps the origin of its poster.
     ///
     /// - Parameters:
     ///   - kind: The kind of the live event that the posts make.
@@ -197,14 +214,38 @@ struct StoppedAnswerOtherWorkEventTests {
         try await post(stopped.ownRun)
         try await post(stopped.otherRun)
         try await wait(stopped)
+        let otherRun = stopped.otherRun
+        let otherPosts = try await postsOfOtherWork(of: kind, from: otherRun, in: &stopped)
+        #expect(otherPosts.map(\.origin) == [otherRun.poster])
+    }
+
+    /// Closes the session of `stopped` after the posts, and gives the
+    /// outputs of `kind` from `otherWork`. Checks that the post of the run of
+    /// the stopped answer does not come.
+    ///
+    /// The stopped answer still runs when the posts end: the open answer is
+    /// still the silenced answer.
+    ///
+    /// - Parameters:
+    ///   - kind: The kind of the live event that the posts make.
+    ///   - otherWork: The run of other work that posted.
+    ///   - stopped: The stopped answer. This call closes its session.
+    ///   - laterGates: The gates of the runs that started after the stop.
+    ///     The default is no gate.
+    /// - Returns: Each output of `kind` from `otherWork`, in order.
+    /// - Throws: When the session is not a ``RoutedSessionActor``.
+    private static func postsOfOtherWork(
+        of kind: SessionEventCase, from otherWork: PostingRun, in stopped: inout StoppedAnswer,
+        alsoOpening laterGates: [RunLatch] = []
+    ) async throws -> [SessionOutput] {
         #expect(
             try stopped.fixture.sessionActor().openAnswerMail.isSilenced,
             "the stopped answer must still run when the posts end")
 
-        let outputs = await stopped.outputsToTheEnd().filter { kind.matches($0.event) }
-        let otherPosts = outputs.filter { runToken(of: $0.event) == stopped.otherRun.token }
-        #expect(otherPosts.map(\.origin) == [stopped.otherRun.poster])
-        #expect(!outputs.contains { runToken(of: $0.event) == stopped.ownRun.token })
+        let ownToken = stopped.ownRun.token
+        let outputs = await stopped.outputsToTheEnd(alsoOpening: laterGates).filter { kind.matches($0.event) }
+        #expect(!outputs.contains { runToken(of: $0.event) == ownToken })
+        return outputs.filter { runToken(of: $0.event) == otherWork.token }
     }
 
     // MARK: - Tests
@@ -236,23 +277,35 @@ struct StoppedAnswerOtherWorkEventTests {
     /// the question of another run to the event sink of the answer that
     /// `cancelAll()` stopped. The host then never sees the question.
     ///
-    /// The close of the session ends each question, so the test waits for
-    /// the wait of each run for its answer at the end.
+    /// The sweep of `cancelAll()` cancels each run that is open at the stop,
+    /// and a cancelled run asks no new question: the question ends at once
+    /// with `RunPlane.runCancelledReason`, and nothing is posted. Thus the
+    /// run of other work that asks starts after the stop. The run of the
+    /// stopped answer asks too, and its question posts nothing.
+    ///
+    /// The later run is not stopped, so its question becomes run mail, and
+    /// its output has the origin of that mail, not the origin of its poster
+    /// (`SessionOutbox.post(event:)`). That origin is not the mail of the
+    /// stopped answer.
+    ///
+    /// The close of the session ends the question of the later run, so the
+    /// test waits for each answer at the end.
     @Test("a run of other work that asks a question while the stopped answer winds down gives its elicitationRequested")
     func questionOfOtherWorkWhileTheStoppedAnswerWindsDown() async throws {
-        var answers: [Task<ElicitationResponse, any Error>] = []
-        try await Self.expectOnlyThePostOfOtherWork(of: .elicitationRequested) { run in
-            let postings = ElicitationPostings(forwardingTo: run.session.outbox)
-            let context = run.context(postingTo: postings)
-            let request = PendingElicitationFixtures.formRequest(elicitationId: ULID.generate())
-            try await run.post {
-                answers.append(Task { try await context.elicit(request) })
-            }
-            try await postings.waitForPosts(Self.questionPosts)
-        }
-        for answer in answers {
-            #expect(try await answer.value == PendingElicitationFixtures.runCancelled)
-        }
+        var stopped = try await Self.stopTheHeldAnswer()
+        let laterRun = try await Self.startRun(on: stopped.fixture, startedBy: .mail([MailID()]))
+        let ownAnswer = try await stopped.ownRun.askAQuestion(postingTo: stopped.fixture.session.outbox)
+        let postings = ElicitationPostings(forwardingTo: laterRun.session.outbox)
+        let laterAnswer = try await laterRun.askAQuestion(postingTo: postings)
+        try await postings.waitForPosts(Self.questionPosts)
+
+        let stoppedAnswerOrigin = stopped.ownRun.poster
+        let laterPosts = try await Self.postsOfOtherWork(
+            of: .elicitationRequested, from: laterRun, in: &stopped, alsoOpening: [laterRun.gate])
+        #expect(laterPosts.count == Self.questionPosts)
+        #expect(!laterPosts.contains { $0.origin == stoppedAnswerOrigin })
+        #expect(try await ownAnswer.value == PendingElicitationFixtures.runCancelled)
+        #expect(try await laterAnswer.value == PendingElicitationFixtures.runCancelled)
     }
 
     /// The production change that makes this test fail: a journal that gives
