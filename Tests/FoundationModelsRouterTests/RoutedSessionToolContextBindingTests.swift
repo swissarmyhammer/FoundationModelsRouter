@@ -315,6 +315,44 @@ struct RoutedSessionToolContextBindingTests {
     /// holds until the cancel.
     private static let holdPrompt = "hold until the cancel"
 
+    /// Builds a fresh router over `container`, resolves the profile, and
+    /// vends one session from its `.standard` model.
+    ///
+    /// This is the one setup of ``makeSession(grammar:)`` and
+    /// ``makeCancellationObservingSession()``. The session is open when this
+    /// returns: the caller closes it. When it throws, it closes the session
+    /// that it made and removes the temp directory first (rule T1).
+    ///
+    /// - Parameters:
+    ///   - container: The stub container that vends the backend of the
+    ///     session.
+    ///   - vend: Makes the session from the resolved `.standard` model.
+    ///   - vendedBackend: Reads the backend that `container` vended.
+    /// - Returns: The open session, its backend and the temp directory.
+    /// - Throws: When the resolve fails, or when `container` vended no
+    ///   backend.
+    private static func makeVendedSession<Backend: Sendable>(
+        over container: some LoadedLLMContainer,
+        vend: (RoutedLLM) -> any RoutedSession,
+        vendedBackend: () -> Backend?
+    ) async throws -> (session: any RoutedSession, backend: Backend, dir: URL) {
+        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: dir,
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        }
+        let session = vend(profile.standard)
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            dir, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(vendedBackend())
+        }
+        return (session, backend, dir)
+    }
+
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``ContextProbingBackend`` — guided by `grammar` when supplied.
     ///
@@ -324,27 +362,18 @@ struct RoutedSessionToolContextBindingTests {
     private static func makeSession(grammar: Grammar? = nil) async throws -> (
         session: any RoutedSession, backend: ContextProbingBackend, dir: URL
     ) {
-        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = ProbingLLMContainer()
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        return try await makeVendedSession(
+            over: container,
+            vend: { model in
+                if let grammar {
+                    model.makeGuidedSession(grammar: grammar)
+                } else {
+                    model.makeSession()
+                }
+            },
+            vendedBackend: { container.lastBackend }
         )
-        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
-            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        }
-        let session =
-            if let grammar {
-                profile.standard.makeGuidedSession(grammar: grammar)
-            } else {
-                profile.standard.makeSession()
-            }
-        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
-            dir, alsoOnThrow: { await session.close() }
-        ) {
-            try #require(container.lastBackend)
-        }
-        return (session, backend, dir)
     }
 
     /// Builds a fresh router + resolved profile + vended session over a
@@ -356,22 +385,12 @@ struct RoutedSessionToolContextBindingTests {
     private static func makeCancellationObservingSession() async throws -> (
         session: any RoutedSession, backend: CancellationObservingBackend, dir: URL
     ) {
-        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = CancellationObservingLLMContainer()
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        return try await makeVendedSession(
+            over: container,
+            vend: { model in model.makeSession() },
+            vendedBackend: { container.lastBackend }
         )
-        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
-            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        }
-        let session = profile.standard.makeSession()
-        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
-            dir, alsoOnThrow: { await session.close() }
-        ) {
-            try #require(container.lastBackend)
-        }
-        return (session, backend, dir)
     }
 
     // MARK: - Tests

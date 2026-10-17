@@ -22,6 +22,36 @@ comments:
     - evidence: 17 files under Tests/FoundationModelsRouterTests/ (IdenticalToolCallLimitTests, ToolCallFailureAnswerTests, ToolCallRepetitionStopTests, ToolCallRunJoinTests, ToolContextMountSinkPublicSurfaceTests, ToolInvocationLivenessTests, ToolOutputCappingTests, ToolOutputFeedbackTests, ToolOutputProtectionSessionTests, RejectedToolCallRetryTests, ScriptedToolAnswerComparisonTests, PerCallMountSessionTests, MountedRunAttachmentCarrierTests, RoutedSessionToolContextBindingTests, SessionOutboxToolWiringTests, SubmissionBoundaryToolTests, SubmissionBoundaryToolPublicSurfaceTests); `swift test`: 1827 tests in 224 suites passed (6 known issues), 26 in 14 suites passed, 19 in 3 suites passed
     - next: review
   timestamp: 2026-10-17T09:42:09.943787+00:00
+- actor: claude-code
+  id: 01m54m7hb7084knhf39nyr0552
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 2a876eaa). 3 findings, 3 confirmed, 0 refuted. Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift:361, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift:201, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift:483. The rule that drops findings that ask to refactor tests that already existed does not apply: each finding is on lines that this commit added or wrote again.
+    - next: implement the 3 open items in the "Review Findings (2026-10-17 04:43)" section. The task stays in review.
+  timestamp: 2026-10-17T09:49:00.647045+00:00
+- actor: claude-code
+  id: 01m54m8mfsdcc5fdgkgck8qf74
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 17 test files
+    - test: green — the one full swift test run of the implement step: 1827 tests in 224 suites + 26 + 19 passed
+    - commit: 2a876eaa
+    - review: findings — RoutedSessionToolContextBindingTests.swift:361, ToolInvocationLivenessTests.swift:201, ToolInvocationLivenessTests.swift:483
+  timestamp: 2026-10-17T09:49:36.633641+00:00
+- actor: claude-code
+  id: 01m54mfmhwty15dpc22xqrj1vh
+  text: |-
+    Review findings (2026-10-17 04:43) done:
+    - RoutedSessionToolContextBindingTests: the new `makeVendedSession(over:vend:vendedBackend:)` is now the one setup. It makes the temp directory, builds the router over the container, resolves the profile, makes the session, and reads the vended backend, with `removingDirectoryOnThrow` on each step that can throw. `makeSession(grammar:)` gives it a `vend` closure that holds the grammar branch. `makeCancellationObservingSession()` gives it `{ model in model.makeSession() }`. `Backend` is generic and `Sendable`, so the result can go to the `@MainActor` tests.
+    - ToolInvocationLivenessTests: the new `releaseAndClose(_:_:)` opens the gate of the `GatedMarkerTool` and then closes the session. The two copied defers now call `defer { await Self.releaseAndClose(slowTool, fixture.session) }`. Same cause in the whole file: `backgroundCallReportsItsAttachmentsOnTheSessionStreamWhenItSettles` had a third inline open-then-close defer, on a `RunLatch`. It now calls the shared `SessionFixtureLifecycle.close(fixture.session, opening: [gate])`.
+    - Note: the kanban `move task` and `update task` ops return the full board (about 166 000 characters), so the tool saved each reply to a file. I checked the result in the task `.md` file, not in the reply.
+    - Filtered run: `swift test --filter 'FoundationModelsRouterTests\.(RoutedSessionToolContextBindingTests|ToolInvocationLivenessTests)/'`: 26 tests in 2 suites passed.
+    - Full run (`swift test`, one time): 1827 tests in 224 suites passed with 6 known issues (the `withKnownIssue` cases, not changed); 26 tests in 14 suites passed; 19 tests in 3 suites passed; XCTest: 0 tests. The one build warning is the known mlx-swift bundle warning. No compiler warning.
+
+    ### implement — changed
+    - evidence: 2 files: Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift; `swift test`: 1827 tests in 224 suites passed (6 known issues), 26 in 14 suites passed, 19 in 3 suites passed
+    - next: review
+  timestamp: 2026-10-17T09:53:26.076122+00:00
 depends_on:
 - 01M546YNM74MV9HRDSA7CNP2A0
 position_column: doing
@@ -59,3 +89,14 @@ Suites (file under Tests/FoundationModelsRouterTests/; the tests that never clos
 - [x] SubmissionBoundaryToolTests, SubmissionBoundaryToolTests.swift: all 5.
 - [x] SubmissionBoundaryToolPublicSurfaceTests, SubmissionBoundaryToolPublicSurfaceTests.swift: all 1 (ScriptedSessionFixture.make).
 - [x] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup
+
+## Review Findings (2026-10-17 04:43)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 17 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift:361` `reuse/reuse` — makeCancellationObservingSession repeats the router, resolve, and backend-vend block of makeSession (lines 328-346): the temp directory, the router built over a StubModelLoader, the removingDirectoryOnThrow resolve, and the removingDirectoryOnThrow backend lookup. Only the container type and the session construction differ. Two copies of this setup diverge over time, and the directory-cleanup-on-throw rule must now be kept in step in both. Extract the shared setup into one helper that takes a container and returns the resolved profile, or the vended backend, for both makeSession and makeCancellationObservingSession to call. The grammar branch can stay in makeSession, which passes its session-making step in or calls the shared helper before it.
+- [x] `Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift:201` `duplication/duplication` — The six-line defer that opens the gate, then closes the session, is copied verbatim into a second test in the same file (line 483). Both copies carry the same comment and the same two statements. A later change to the close ordering, such as a missing gate open, would have to be made in both places. Move the gate-then-close into one helper, for example a static func that takes the GatedMarkerTool and the fixture session, and call it from both defers: `defer { await Self.releaseAndClose(slowTool, fixture.session) }`.
+- [x] `Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift:483` `duplication/duplication` — This defer repeats the gate-open-then-close block at line 201 verbatim. The two copies must stay in step, and the same fix belongs at both sites. Replace both defers with one shared helper that opens the gate and closes the session, and call it from each test.

@@ -90,6 +90,23 @@ struct ToolInvocationLivenessTests {
         }
     }
 
+    /// Opens the gate of `tool`, and then closes `session`.
+    ///
+    /// This is the one gate-open-then-close teardown of the tests that hold a
+    /// call in a ``GatedMarkerTool``. A test calls it from one `defer`, so
+    /// the held call ends also when the test throws (rule T1). The order is
+    /// the part that matters: a close waits for the held call, so a gate that
+    /// opens after the close holds the close for ever. Each step is
+    /// idempotent, so a test can also open the gate in its body.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool that holds the call.
+    ///   - session: The session to close.
+    private static func releaseAndClose(_ tool: GatedMarkerTool, _ session: any RoutedSession) async {
+        tool.openGate()
+        await session.close()
+    }
+
     // MARK: - The record itself
 
     @Test("closed(at:) keeps the record's identity and derives the duration")
@@ -198,12 +215,7 @@ struct ToolInvocationLivenessTests {
             mounting: [slowTool],
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        defer {
-            // The gate opens before the close, because a close waits for the
-            // held call. Both also come when the test throws.
-            slowTool.openGate()
-            await fixture.session.close()
-        }
+        defer { await Self.releaseAndClose(slowTool, fixture.session) }
 
         let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
         var events: [SessionEvent] = []
@@ -480,12 +492,7 @@ struct ToolInvocationLivenessTests {
             mounting: [quickTool, slowTool],
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        defer {
-            // The gate opens before the close, because a close waits for the
-            // held call. Both also come when the test throws.
-            slowTool.openGate()
-            await fixture.session.close()
-        }
+        defer { await Self.releaseAndClose(slowTool, fixture.session) }
 
         // Read the answer's stream up to the quick call's close record. The
         // gated call of the second round has not returned, so the submission
@@ -655,10 +662,7 @@ struct ToolInvocationLivenessTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        defer {
-            await gate.open()
-            await fixture.session.close()
-        }
+        defer { await SessionFixtureLifecycle.close(fixture.session, opening: [gate]) }
 
         // The answer returns while the run waits on its gate, so the close
         // record and the report can only arrive on the session stream.
