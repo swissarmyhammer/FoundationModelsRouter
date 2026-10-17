@@ -157,7 +157,9 @@ struct ElicitationCompletedEventTests {
             let id = ULID.generate()
             let request = makeRequest(id)
             let answer = Task { try await context.elicit(request) }
-            try await postings.waitForPosts(questionPosts)
+            // The wait also ends when the question ended (rule T1): no
+            // answer comes before this function returns.
+            try await postings.waitForPosts(questionPosts, endingOnEndOf: answer)
             return AskedQuestion(
                 fixture: fixture, feed: feed, context: context, postings: postings, id: id, answer: answer,
                 runGate: runGate, runToken: token, answerGate: answerGate)
@@ -220,7 +222,7 @@ struct ElicitationCompletedEventTests {
         let context = asked.context
         let token = asked.runToken
         let cancel = Task { _ = await context.cancel(completionToken: token) }
-        try await asked.postings.waitForArrivedEnds(oneEnd)
+        try await asked.postings.waitForArrivedEnds(oneEnd, endingOnEndOf: asked.answer)
         #expect(try await asked.fixture.sessionActor().runPlane.endingElicitations() == [asked.id])
         return (cancel, try openWhenTheStopWaits(gate, for: asked))
     }
@@ -300,7 +302,7 @@ struct ElicitationCompletedEventTests {
         let postings = asked.postings
         let answer = asked.answer
         return try await releaseHeld(gate, openedBy: opener, of: &asked) {
-            try await postings.waitForCompletions(oneCompletion)
+            try await postings.waitForCompletions(oneCompletion, endingOnEndOf: answer)
             #expect(try await answer.value.action == .accept)
         }
     }
@@ -442,7 +444,7 @@ struct ElicitationCompletedEventTests {
         // A flow that did not complete gives no completion post: the test
         // fails here, before it waits (rule T1).
         try #require(completed == .completed)
-        try await asked.postings.waitForCompletions(Self.oneCompletion)
+        try await asked.postings.waitForCompletions(Self.oneCompletion, endingOnEndOf: asked.answer)
         let response = try await asked.answer.value
         let outputs = await asked.outputsToTheEnd()
 
@@ -466,7 +468,7 @@ struct ElicitationCompletedEventTests {
         // A flow that did not complete gives no completion post: the test
         // fails here, before it waits (rule T1).
         try #require(completed == .completed)
-        try await asked.postings.waitForCompletions(Self.oneCompletion)
+        try await asked.postings.waitForCompletions(Self.oneCompletion, endingOnEndOf: asked.answer)
         let response = try await asked.answer.value
         let outputs = await asked.outputsToTheEnd()
 
@@ -487,9 +489,11 @@ struct ElicitationCompletedEventTests {
 
         _ = await asked.accept()
         _ = await asked.fixture.session.complete(elicitationId: asked.id.description)
-        try await asked.postings.waitForCompletions(Self.oneCompletion)
+        try await asked.postings.waitForCompletions(Self.oneCompletion, endingOnEndOf: asked.answer)
         let second = await asked.fixture.session.complete(elicitationId: asked.id.description)
         await asked.postings.post(elicitationCompleted: asked.id)
+        // The post above returned after it counted the completion, so this
+        // wait cannot hang (rule T1).
         try await asked.postings.waitForCompletions(Self.twoCompletions)
         let outputs = await asked.outputsToTheEnd()
 
@@ -506,6 +510,8 @@ struct ElicitationCompletedEventTests {
         defer { await asked.end() }
 
         await asked.postings.post(elicitationCompleted: asked.id)
+        // The post above returned after it counted the completion, so this
+        // wait cannot hang (rule T1).
         try await asked.postings.waitForCompletions(Self.oneCompletion)
         let declined = await asked.fixture.session.respond(elicitationId: asked.id.description, response: .decline)
         let response = try await asked.answer.value
@@ -561,6 +567,8 @@ struct ElicitationCompletedEventTests {
         defer { await asked.end() }
 
         await asked.postings.post(elicitationCompleted: ULID.generate())
+        // The post above returned after it counted the completion, so this
+        // wait cannot hang (rule T1).
         try await asked.postings.waitForCompletions(Self.oneCompletion)
         let outputs = await asked.outputsToTheEnd()
 

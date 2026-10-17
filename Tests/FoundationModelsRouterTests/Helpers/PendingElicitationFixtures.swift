@@ -11,7 +11,8 @@ import Testing
 /// `RunPlane.awaitAnswer(to:runToken:posting:)` makes the elicitation pending
 /// before it runs `posting`. Thus each post that this type counts comes after the
 /// registration of one pending elicitation. A test waits for the post with
-/// ``waitForPosts(_:)`` and then answers the elicitation, with no race.
+/// ``waitForPosts(_:endingOnEndOf:sourceLocation:)`` and then answers the
+/// elicitation, with no race.
 ///
 /// Bind it as the sink of a ``ToolContext`` (each `elicit(_:)` posts one
 /// event), or call ``record()`` from the `posting` closure of
@@ -86,13 +87,54 @@ final class ElicitationPostings: OperationEventSink {
         record()
     }
 
-    /// Waits until at least `expected` posts came.
+    /// Waits until `count` is at least `expected`, or until `asking` ended
+    /// (rule T1). When `asking` ended and the count is still low, the test
+    /// fails by an assertion.
     ///
-    /// - Parameter expected: The number of posts to wait for.
-    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
-    ///   first.
-    func waitForPosts(_ expected: Int) async throws {
-        try await changes.wait(untilAtLeast: expected, of: { postCount })
+    /// The end of `asking` signals ``changes``, so one wait sees the count
+    /// and the end. After the end, the wait reads the count again. Thus a
+    /// count that went up before `asking` ended passes, also when the end
+    /// signal comes first. A wait in a task of its own
+    /// (``RecordedWaitResult/wait(for:endingOnEndOf:sourceLocation:)``) does
+    /// not read the count again, and it fails in that order.
+    ///
+    /// - Parameters:
+    ///   - expected: The smallest count that ends the wait.
+    ///   - count: Reads the count.
+    ///   - asking: The task that asks the question.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `asking` ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    private func wait<Success: Sendable, Failure: Error>(
+        untilAtLeast expected: Int, of count: () -> Int, endingOnEndOf asking: Task<Success, Failure>,
+        sourceLocation: SourceLocation
+    ) async throws {
+        let ended = RecordedWaitResult.recordingEnd(of: asking, reportingTo: changes)
+        defer { ended.stopRecording() }
+        try await changes.wait(
+            until: { count() >= expected }, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
+    }
+
+    /// Waits until at least `expected` posts came, or until `asking` ended
+    /// (rule T1). When `asking` ended first, the test fails by an assertion.
+    ///
+    /// A post does not come when the question fails before the run plane
+    /// posts it. The task that asks then ends, so the wait also ends. In a
+    /// test that passes, no answer comes before the posts, so `asking` does
+    /// not end first.
+    ///
+    /// - Parameters:
+    ///   - expected: The number of posts to wait for.
+    ///   - asking: The task that asks the question.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `asking` ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    func waitForPosts<Success: Sendable, Failure: Error>(
+        _ expected: Int, endingOnEndOf asking: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await wait(
+            untilAtLeast: expected, of: { postCount }, endingOnEndOf: asking, sourceLocation: sourceLocation)
     }
 
     /// The ids of each completion that ``post(elicitationCompleted:)`` got,
@@ -128,6 +170,30 @@ final class ElicitationPostings: OperationEventSink {
         try await changes.wait(untilAtLeast: expected, of: { completionCount })
     }
 
+    /// Waits until at least `expected` completions came, or until `asking`
+    /// ended (rule T1). When `asking` ended first, the test fails by an
+    /// assertion.
+    ///
+    /// The run plane resumes the run of an accepted URL question only after
+    /// its completion post returned. Thus in a test that passes, `asking`
+    /// ends only after this sink counted the completion. A run plane that
+    /// resumes the run with no completion post ends `asking`, so the wait
+    /// also ends.
+    ///
+    /// - Parameters:
+    ///   - expected: The number of completions to wait for.
+    ///   - asking: The task that asks the question.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `asking` ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    func waitForCompletions<Success: Sendable, Failure: Error>(
+        _ expected: Int, endingOnEndOf asking: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await wait(
+            untilAtLeast: expected, of: { completionCount }, endingOnEndOf: asking, sourceLocation: sourceLocation)
+    }
+
     /// The number of end posts that came to this sink so far, also the ones
     /// that the end gate still holds.
     private let arrivedEnds = Mutex(0)
@@ -153,13 +219,26 @@ final class ElicitationPostings: OperationEventSink {
     }
 
     /// Waits until at least `expected` end posts came to this sink, also
-    /// when the end gate still holds them.
+    /// when the end gate still holds them, or until `asking` ended (rule
+    /// T1). When `asking` ended first, the test fails by an assertion.
     ///
-    /// - Parameter expected: The number of end posts to wait for.
-    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
-    ///   first.
-    func waitForArrivedEnds(_ expected: Int) async throws {
-        try await changes.wait(untilAtLeast: expected, of: { arrivedEndCount })
+    /// The run plane gives the run of the question its end only after the
+    /// end post returned. Thus in a test that passes, `asking` ends only
+    /// after this sink counted the end. A run plane that ends the question
+    /// with no end post ends `asking`, so the wait also ends.
+    ///
+    /// - Parameters:
+    ///   - expected: The number of end posts to wait for.
+    ///   - asking: The task that asks the question.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `asking` ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    func waitForArrivedEnds<Success: Sendable, Failure: Error>(
+        _ expected: Int, endingOnEndOf asking: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await wait(
+            untilAtLeast: expected, of: { arrivedEndCount }, endingOnEndOf: asking, sourceLocation: sourceLocation)
     }
 }
 

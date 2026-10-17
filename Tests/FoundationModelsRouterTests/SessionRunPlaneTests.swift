@@ -96,7 +96,7 @@ struct SessionRunPlaneTests {
         // The wait also ends when the wait for the answer ended (rule T1):
         // no answer comes before the close, so in a test that passes that
         // wait cannot end first.
-        try await RecordedWaitResult.wait(for: { try await postings.waitForPosts(1) }, endingOnEndOf: rejected)
+        try await postings.waitForPosts(1, endingOnEndOf: rejected)
         #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         await session.close()

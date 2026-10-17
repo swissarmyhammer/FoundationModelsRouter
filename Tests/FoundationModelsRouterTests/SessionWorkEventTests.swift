@@ -304,7 +304,9 @@ struct SessionWorkEventTests {
         let answering = Task {
             try await context.elicit(PendingElicitationFixtures.formRequest(elicitationId: questionId))
         }
-        try await postings.waitForPosts(1)
+        // The wait also ends when the question ended (rule T1): no answer
+        // comes before the decline at the end of the test.
+        try await postings.waitForPosts(1, endingOnEndOf: answering)
 
         _ = try await fixture.session.respond(to: Self.jobPrompt)
         try await Self.checkWorkEndAfterThePump(of: session)
