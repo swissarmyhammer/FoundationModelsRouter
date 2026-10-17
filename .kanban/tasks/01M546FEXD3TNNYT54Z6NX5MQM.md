@@ -1,10 +1,28 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m54dzymb3bdfn512khv799ah
+  text: |-
+    Implementation done.
+    - MeteredToolLoopSessionFixture.make (Tests/FoundationModelsRouterTests/Helpers/MeteredToolLoopLanguageModel.swift) and RepeatingReasoningSessionFixture.make (Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift) now put `router.resolve` in `RouterTestFixtures.removingDirectoryOnThrow(directory) { ... }`. The `- Throws:` doc of each make now says that it removes the temp directory before it throws. This is the same form as StagedReasoningSessionFixture.make.
+    - No unit test was added for the throw path: each make sets its own StubModelLoader, so a test cannot make `resolve` throw without a new parameter only for that test. The sibling fixtures that got the same change also have no such test.
+    - Caller check (directory): all 7 callers remove the directory on success. GenerationCallUsageTests, CompactionRenderCounterTests, RestoredRenderCounterTests and RouterMetricsTests use `defer { try? FileManager.default.removeItem(at: fixture.directory) }` after make. RepetitionStopTests, ReasoningTokenLimitTests and WatchStopUsageTests put the answer in `removingDirectoryOnThrow(fixture.directory)`, and the test removes the directory after the return. Now a throw in make also removes the directory.
+    - Caller check (session close): no caller closes the session. The group cards already list each caller, so no new note was necessary: b1 `^z5q57fb` (CompactionRenderCounterTests), b2 `^d2har85` (RestoredRenderCounterTests liveJournalRestoresTheLiveCounter), b5 `^6estwce` (ReasoningTokenLimitTests, RepetitionStopTests, WatchStopUsageTests), b6 `^rxnfq5r` (RouterMetricsTests generationCallsRecordTokensAndTimes, GenerationCallUsageTests 6 of 9).
+    - Note: the move to `doing` gives a 166k character result; the move was done.
+  timestamp: 2026-10-17T08:00:00.651908+00:00
+- actor: claude-code
+  id: 01m54e0ehjsr3gakcr6qmn6zs9
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Tests/FoundationModelsRouterTests/Helpers/MeteredToolLoopLanguageModel.swift, Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift. Filter run `swift test --filter 'FoundationModelsRouterTests\.(GenerationCallUsageTests|RepetitionStopTests)/'`: 14 tests in 2 suites passed. Full `swift test` one time, exit 0: swift-testing 1827 tests in 224 suites passed with 6 known issues; 26 tests in 14 suites passed; 19 tests in 3 suites passed; XCTest 0 tests 3 times, 0 failures. One build warning only, from the build system: "missing creator for mutated node" for the mlx-swift_Cmlx.bundle, not from the changed files. IntegrationTests does not compile these files, so it was not built.
+    - next: `/review`.
+  timestamp: 2026-10-17T08:00:16.946348+00:00
 depends_on:
 - 01M546EX6MD5G601R033YHSH6E
-position_column: todo
-position_ordinal: '8580'
+position_column: doing
+position_ordinal: '80'
 title: 'T1 follow-up 6/6: MeteredToolLoopSessionFixture.make and RepeatingReasoningSessionFixture.make remove the temp directory on a throw'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit comment "kinds of waits checked and left" names this helper change as not made: temp-directory cleanup on throw in MeteredToolLoopSessionFixture.make and RepeatingReasoningSessionFixture.make. The later shared helper `RouterTestFixtures.removingDirectoryOnThrow(_:alsoOnThrow:_:)` (Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:156) now makes this a small change.
@@ -24,7 +42,7 @@ Callers (no change needed at the callers; check that each caller still removes t
 - RepeatingReasoningSessionFixture.make: RepetitionStopTests.swift:78, WatchStopUsageTests.swift:86, ReasoningTokenLimitTests.swift:62.
 
 Plan:
-- [ ] Wrap the resolve step of MeteredToolLoopSessionFixture.make in `RouterTestFixtures.removingDirectoryOnThrow(directory) { ... }`.
-- [ ] Wrap the resolve step of RepeatingReasoningSessionFixture.make in the same helper.
-- [ ] Check each caller in the list above: when the caller body throws after make, does the caller close the session and remove the directory (defer)? If a caller does not, add a `defer` that closes the session and removes the directory, or note it on the matching card of the "suites that never close a session" group.
-- [ ] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup
+- [x] Wrap the resolve step of MeteredToolLoopSessionFixture.make in `RouterTestFixtures.removingDirectoryOnThrow(directory) { ... }`.
+- [x] Wrap the resolve step of RepeatingReasoningSessionFixture.make in the same helper.
+- [x] Check each caller in the list above: when the caller body throws after make, does the caller close the session and remove the directory (defer)? If a caller does not, add a `defer` that closes the session and removes the directory, or note it on the matching card of the "suites that never close a session" group.
+- [x] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup

@@ -172,7 +172,8 @@ struct MeteredToolLoopSessionFixture {
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     static func make(
         calls: [MeteredGenerationCall],
         context: Int,
@@ -187,8 +188,10 @@ struct MeteredToolLoopSessionFixture {
             cacheDir: directory,
             recorder: recorder,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(
+                profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
+        }
         return MeteredToolLoopSessionFixture(
             session: profile.standard.makeSession(tools: [tool], budget: budget),
             tool: tool,
