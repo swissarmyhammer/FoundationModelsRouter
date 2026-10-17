@@ -663,8 +663,8 @@ struct SubagentQuestionRelayTests {
 
 /// Exercises the table of the relayed questions of one session
 /// (``RelayedQuestions``): what the task of a relayed question does in the
-/// child when the question ends at this level, and what the end of the feed
-/// of a child ends.
+/// child when the question ends at this level, what the end of the feed of a
+/// child ends, when a relay reads on, and when the child of a relay is work.
 @Suite("The table of the relayed questions decides what each question does in the child")
 struct RelayedQuestionsTableTests {
     /// The cancel that ends a question with no answer.
@@ -672,15 +672,18 @@ struct RelayedQuestionsTableTests {
 
     /// A table with one relay and one relayed question of that relay.
     ///
-    /// - Parameter request: The question. The default is a form-mode
-    ///   question.
+    /// - Parameters:
+    ///   - request: The question. The default is a form-mode question.
+    ///   - childWorks: Whether the child works when the relay opens. The
+    ///     default is `false`.
     /// - Returns: The table, the id of the question and the id of the relay.
     private static func tableWithOneQuestion(
-        _ request: ElicitationRequest = MountFixtures.proceedRequest()
+        _ request: ElicitationRequest = MountFixtures.proceedRequest(),
+        childWorks: Bool = false
     ) -> (table: RelayedQuestions, id: ULID, relay: ULID) {
         var table = RelayedQuestions()
         let relay = ULID.generate()
-        table.openRelay(relay, childWorks: false)
+        table.openRelay(relay, childWorks: childWorks)
         table.noteRelayed(request, by: relay)
         return (table, request.elicitationId, relay)
     }
@@ -776,5 +779,131 @@ struct RelayedQuestionsTableTests {
         #expect(working)
         #expect(stopped == false)
         #expect(table.hasWorkingChild == false)
+    }
+
+    /// The production change that makes this test fail: an `openRelay` that
+    /// does not keep the work state of a child that works when the relay
+    /// opens, or a `closeRelay` that keeps that work.
+    @Test("a relay that opens while its child works is work at once, until the relay closes")
+    func aRelayThatOpensWithAWorkingChildIsWorkAtOnce() {
+        var (table, _, relay) = Self.tableWithOneQuestion(childWorks: true)
+
+        let working = table.hasWorkingChild
+        table.closeRelay(relay)
+
+        #expect(working)
+        #expect(table.hasWorkingChild == false)
+    }
+
+    /// The production change that makes this test fail: a `noteChild` that
+    /// keeps the work state of a relay that did not open, or that closed.
+    @Test("a relay that is not open keeps no work state of its child")
+    func aRelayThatIsNotOpenKeepsNoWorkState() {
+        var (table, _, relay) = Self.tableWithOneQuestion()
+
+        table.noteChild(of: ULID.generate(), works: true)
+        let afterAnUnknownRelay = table.hasWorkingChild
+        table.closeRelay(relay)
+        table.noteChild(of: relay, works: true)
+
+        #expect(afterAnUnknownRelay == false)
+        #expect(table.hasWorkingChild == false)
+    }
+
+    /// The production change that makes this test fail: a table that lets
+    /// the relay read on before the journal recorded the question, or that
+    /// stops the relay after the task of the question settled.
+    @Test("a relay reads on after the record of its question, or after its settle")
+    func aRelayReadsOnAfterTheRecordOrTheSettle() {
+        var (table, id, _) = Self.tableWithOneQuestion()
+        var (settledTable, settledId, _) = Self.tableWithOneQuestion()
+
+        let beforeTheRecord = table.isRecordedOrSettled(id)
+        let recorded = table.noteRecorded(id)
+        _ = settledTable.settle(settledId, resumedWith: Self.ended)
+        let recordedAfterTheSettle = settledTable.noteRecorded(settledId)
+
+        #expect(beforeTheRecord == false)
+        #expect(recorded)
+        #expect(table.isRecordedOrSettled(id))
+        #expect(recordedAfterTheSettle == false)
+        #expect(settledTable.isRecordedOrSettled(settledId))
+    }
+
+    /// The production change that makes this test fail: a lookup that gives
+    /// the relay of a question that did not stay open, or of an id that is
+    /// not in the table.
+    @Test("the relay of a question is known only while the question is open")
+    func theRelayOfAQuestionIsKnownOnlyWhileItIsOpen() {
+        var (table, id, relay) = Self.tableWithOneQuestion()
+
+        let whileOpen = table.relay(ofOpen: id)
+        table.noteEndedHere(id, with: Self.ended)
+
+        #expect(whileOpen == relay)
+        #expect(table.relay(ofOpen: id) == nil)
+        #expect(table.relay(ofOpen: ULID.generate()) == nil)
+    }
+
+    /// The production change that makes this test fail: a `noteEndedHere`
+    /// that changes a question that ended or completed below, so the task
+    /// ends the copy in the child that the child already ended.
+    @Test("an end at this level does not change a question that ended or completed below")
+    func anEndHereDoesNotChangeAQuestionThatEndedOrCompletedBelow() {
+        var (endedBelow, endedId, _) = Self.tableWithOneQuestion()
+        var (completedBelow, completedId, _) = Self.tableWithOneQuestion(
+            ElicitationCompletedEventTests.urlRequest(ULID.generate()))
+        _ = endedBelow.noteEndedBelow(endedId)
+        _ = completedBelow.noteCompletedBelow(completedId)
+
+        endedBelow.noteEndedHere(endedId, with: Self.ended)
+        completedBelow.noteEndedHere(completedId, with: Self.ended)
+
+        #expect(endedBelow.settle(endedId, resumedWith: Self.ended) == .nothing)
+        #expect(completedBelow.settle(completedId, resumedWith: Self.ended) == .nothing)
+    }
+
+    /// The production change that makes this test fail: a table that lets a
+    /// question that completed below complete or end below again, so the
+    /// relay completes or ends the copy of this session two times.
+    @Test("a question completes below one time, and then does not end below")
+    func aQuestionCompletesBelowOneTime() {
+        var (table, id, _) = Self.tableWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
+
+        let firstCompletion = table.noteCompletedBelow(id)
+        let secondCompletion = table.noteCompletedBelow(id)
+        let endAfterTheCompletion = table.noteEndedBelow(id)
+
+        #expect(firstCompletion)
+        #expect(secondCompletion == false)
+        #expect(endAfterTheCompletion == false)
+    }
+
+    /// The production change that makes this test fail: a task that
+    /// completes the copy of a URL-mode question that the user did not
+    /// accept, or a second settle that acts again in the child.
+    @Test("a URL question that the user did not accept gives the answer to the child, and a second settle does nothing")
+    func aURLQuestionWithNoAcceptGivesTheAnswer() {
+        var (table, id, _) = Self.tableWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
+
+        let firstSettle = table.settle(id, resumedWith: .decline)
+        let secondSettle = table.settle(id, resumedWith: .decline)
+
+        #expect(firstSettle == .answer(.decline))
+        #expect(secondSettle == .nothing)
+    }
+
+    /// The production change that makes this test fail: an end of the feed
+    /// that ends a question that the child completed below, so the relay
+    /// ends a copy that it completed.
+    @Test("the end of the feed of a child does not end a question that completed below")
+    func theEndOfTheFeedDoesNotEndAQuestionThatCompletedBelow() {
+        var (table, id, relay) = Self.tableWithOneQuestion(ElicitationCompletedEventTests.urlRequest(ULID.generate()))
+        _ = table.noteCompletedBelow(id)
+
+        let ended = table.endFeed(of: relay)
+
+        #expect(ended.isEmpty)
+        #expect(table.settle(id, resumedWith: .accept(content: nil)) == .nothing)
     }
 }

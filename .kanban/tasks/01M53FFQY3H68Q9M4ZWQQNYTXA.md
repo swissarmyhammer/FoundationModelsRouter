@@ -40,6 +40,38 @@ comments:
     - (a): no code change, reason in the "Decision for (a)" comment. The coordinating session must know this.
     - next: /review. Not committed.
   timestamp: 2026-10-17T01:31:21.834897+00:00
+- actor: claude-code
+  id: 01m53r1ze5ymff0wa0gvndbj4p
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (2117b6ef); 1 finding (1 confirmed, 2 refuted) — Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:683 completeness/inverse-operation-coverage
+    - next: implement the open finding in the "Review Findings (2026-10-16 20:32)" section. The task stays in review.
+  timestamp: 2026-10-17T01:36:38.341631+00:00
+- actor: claude-code
+  id: 01m53r2neby38s6xad48j2kjew
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 9 files ((a) no code change, reason on the card)
+    - test: green — the one full swift test run of the implement step: 1804 tests in 219 suites + 26 + 19 passed, exit 0; IntegrationTests build complete
+    - commit: 2117b6ef
+    - review: findings — Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:683
+  timestamp: 2026-10-17T01:37:00.875425+00:00
+- actor: claude-code
+  id: 01m53rc322an0zxaavafytn961
+  text: |-
+    Finding (2026-10-16 20:32) done, test-only change in Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift (RelayedQuestionsTableTests).
+    - `tableWithOneQuestion` has a new parameter `childWorks: Bool = false`. The default stays `false`.
+    - New test for the finding: `aRelayThatOpensWithAWorkingChildIsWorkAtOnce` (`openRelay(_:childWorks: true)` gives `hasWorkingChild == true` at once; `closeRelay` clears it).
+    - The same cause in the file (a table input that no test exercises), now covered: `noteChild` for a relay that did not open or that closed (`aRelayThatIsNotOpenKeepsNoWorkState`); `noteRecorded` and `isRecordedOrSettled` before the record, after the record, and after the settle (`aRelayReadsOnAfterTheRecordOrTheSettle`); `relay(ofOpen:)` while open, after an end, and for an unknown id (`theRelayOfAQuestionIsKnownOnlyWhileItIsOpen`); `noteEndedHere` on a question that ended or completed below (`anEndHereDoesNotChangeAQuestionThatEndedOrCompletedBelow`); a second `noteCompletedBelow` and a `noteEndedBelow` after the completion (`aQuestionCompletesBelowOneTime`); `settle` of a URL question with a decline, and a second `settle` (`aURLQuestionWithNoAcceptGivesTheAnswer`); `endFeed` with a question that completed below (`theEndOfTheFeedDoesNotEndAQuestionThatCompletedBelow`).
+    - The new tests cover behavior that exists, so they passed at the first run. No production code changed. No RED step is possible for this coverage.
+  timestamp: 2026-10-17T01:42:09.730794+00:00
+- actor: claude-code
+  id: 01m53rc64sb8y6y4s0ghkn17wc
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift. `swift test --filter 'FoundationModelsRouterTests\.RelayedQuestionsTableTests/'`: "Test run with 14 tests in 1 suite passed". Full suite one time, `swift test`, exit 0: "Test run with 1812 tests in 219 suites passed after 3.794 seconds with 1 known issue" (the designed `withKnownIssue` of the harness embedding stub), "Test run with 26 tests in 14 suites passed", "Test run with 19 tests in 3 suites passed"; XCTest "Executed 0 tests" x3. The only warning is the SwiftPM line "missing creator for mutated node ... mlx-swift_Cmlx.bundle". No IntegrationTests build: test-only change.
+    - next: /review. Not committed. The task stays in doing.
+  timestamp: 2026-10-17T01:42:12.889475+00:00
 depends_on:
 - 01M53FFKACCYMAKXPXKK8WKXJ2
 position_column: doing
@@ -54,3 +86,16 @@ Source: elicitation check of 2026-10-16 (elicitation-plan.md section 10), item 3
 - [x] (d) `awaitRelayedQuestionRecorded` (RoutedSessionActorRelayedQuestions.swift ~346-348) can wait forever when P finished its close before the relay sends the question up. End the wait on close. (Result: the wait ends when the close ended, `didEndClose`.)
 - [x] Run the full suite one time. Build IntegrationTests one time.
 #elicitation-fixes
+
+## Review Findings (2026-10-16 20:32)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 6 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+- [x] `Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift:683` `completeness/inverse-operation-coverage` — The helper tableWithOneQuestion always opens the relay with childWorks: false. No test opens a relay with childWorks: true in the table. So the open-while-working input is never exercised, and the openRelay path that starts with a working child has no test. Add a table test that calls openRelay(_:childWorks: true) and checks hasWorkingChild is true at once. Also check that closeRelay then clears it. Keep the helper default as it is, or pass the flag as a parameter.
