@@ -56,10 +56,11 @@ struct SessionConfigurationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let profile = try await Self.makeProfile(cacheDir: dir)
 
-        let configured = try #require(
-            profile.standard.makeSession(configuration: SessionConfiguration())
-                as? RoutedSessionActor)
-        let reference = try #require(profile.standard.makeSession() as? RoutedSessionActor)
+        let configuredSession = profile.standard.makeSession(configuration: SessionConfiguration())
+        let referenceSession = profile.standard.makeSession()
+        defer { await SessionFixtureLifecycle.close([configuredSession, referenceSession]) }
+        let configured = try #require(configuredSession as? RoutedSessionActor)
+        let reference = try #require(referenceSession as? RoutedSessionActor)
 
         #expect(configured.grammar == reference.grammar)
         #expect(configured.instructions == reference.instructions)
@@ -94,18 +95,19 @@ struct SessionConfigurationTests {
             agentSpawn: spawn,
             discoveryPriming: priming
         )
-        let configured = try #require(
-            profile.standard.makeSession(configuration: configuration) as? RoutedSessionActor)
-        let reference = try #require(
-            profile.standard.makeSession(
-                instructions: "system",
-                workingDirectory: workingDirectory,
-                tools: [tool],
-                budget: budget,
-                compactionPrompt: prompt,
-                agentSpawn: spawn,
-                discoveryPriming: priming
-            ) as? RoutedSessionActor)
+        let configuredSession = profile.standard.makeSession(configuration: configuration)
+        let referenceSession = profile.standard.makeSession(
+            instructions: "system",
+            workingDirectory: workingDirectory,
+            tools: [tool],
+            budget: budget,
+            compactionPrompt: prompt,
+            agentSpawn: spawn,
+            discoveryPriming: priming
+        )
+        defer { await SessionFixtureLifecycle.close([configuredSession, referenceSession]) }
+        let configured = try #require(configuredSession as? RoutedSessionActor)
+        let reference = try #require(referenceSession as? RoutedSessionActor)
 
         #expect(configured.instructions == reference.instructions)
         #expect(configured.workingDirectory == reference.workingDirectory)
@@ -125,9 +127,9 @@ struct SessionConfigurationTests {
         let profile = try await Self.makeProfile(cacheDir: dir)
 
         let root = dir.appendingPathComponent("recordings", isDirectory: true)
-        let session = try #require(
-            profile.standard.makeSession(configuration: SessionConfiguration(recordingRoot: root))
-                as? RoutedSessionActor)
+        let vended = profile.standard.makeSession(configuration: SessionConfiguration(recordingRoot: root))
+        defer { await vended.close() }
+        let session = try #require(vended as? RoutedSessionActor)
 
         let expected = root.appendingPathComponent(session.id.description, isDirectory: true)
         #expect(session.recordingDirectory == expected)
@@ -142,11 +144,11 @@ struct SessionConfigurationTests {
         let profile = try await Self.makeProfile(cacheDir: dir)
 
         let grammar = Grammar.jsonSchema(Self.smallSchema)
-        let configured = try #require(
-            profile.standard.makeSession(configuration: SessionConfiguration(grammar: grammar))
-                as? RoutedSessionActor)
-        let guided = try #require(
-            profile.standard.makeGuidedSession(grammar: grammar) as? RoutedSessionActor)
+        let configuredSession = profile.standard.makeSession(configuration: SessionConfiguration(grammar: grammar))
+        let guidedSession = profile.standard.makeGuidedSession(grammar: grammar)
+        defer { await SessionFixtureLifecycle.close([configuredSession, guidedSession]) }
+        let configured = try #require(configuredSession as? RoutedSessionActor)
+        let guided = try #require(guidedSession as? RoutedSessionActor)
 
         #expect(configured.grammar == grammar)
         #expect(configured.grammar == guided.grammar)

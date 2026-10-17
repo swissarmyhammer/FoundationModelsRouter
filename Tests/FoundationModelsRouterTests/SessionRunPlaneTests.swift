@@ -244,12 +244,14 @@ struct SessionRunPlaneTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
 
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
         #expect(session.runPlane !== child.runPlane)
 
         // Tracking on the parent never leaks into the child's run plane.
-        let latch = RunLatch()
         let token = await trackFakeRun(on: session.runPlane, latch: latch)
         #expect(await session.runPlane.backgroundRuns().count == 1)
         #expect(await child.runPlane.backgroundRuns().isEmpty)

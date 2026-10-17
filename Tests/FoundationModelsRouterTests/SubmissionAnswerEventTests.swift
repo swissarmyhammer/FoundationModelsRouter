@@ -39,19 +39,18 @@ struct SubmissionAnswerEventTests {
     /// How many answers the test with two chains waits for.
     private static let twoAnswers = 2
 
-    /// Makes a session over `backend`.
+    /// Makes a session over `backend`, in a new temporary directory.
     ///
-    /// - Parameters:
-    ///   - backend: The backend the session runs on.
-    ///   - dir: The temporary directory the router caches under.
-    /// - Returns: The session and the profile that keeps its models resident.
-    private static func makeSession(
-        over backend: Backend, dir: URL
-    ) async throws -> (session: any RoutedSession, profile: LanguageModelProfile) {
-        let profile = try await RouterTestFixtures.resolveStandardProfile(
-            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend), cacheDir: dir
-        ).profile
-        return (profile.standard.makeSession(), profile)
+    /// - Parameter backend: The backend the session runs on.
+    /// - Returns: The session, its router and its directory. A test ends
+    ///   them with ``SessionDirectoryFixture/end(opening:)`` from one `defer`,
+    ///   so the session closes also when the test throws (rule T1).
+    /// - Throws: What the resolve of the profile throws, after the removal of
+    ///   the directory.
+    private static func makeSession(over backend: Backend) async throws -> SessionFixtureLifecycle.Started {
+        try await SessionFixtureLifecycle.start(
+            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend),
+            configuration: SessionConfiguration(), prefix: tempDirPrefix)
     }
 
     /// Waits until `log` holds `count` events that end an answer:
@@ -67,11 +66,11 @@ struct SubmissionAnswerEventTests {
 
     @Test("one answered event names every message that its chain delivered in one submission")
     func anAnswerNamesEveryMessageOfItsSubmission() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
-        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        let fixture = try await Self.makeSession(over: backend)
+        defer { await fixture.end(opening: [latch]) }
+        let session = fixture.session
         let (log, drain) = await SessionEventLog.watch(session)
 
         let first = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
@@ -88,16 +87,15 @@ struct SubmissionAnswerEventTests {
         #expect(events.submissionStarts.map(\.mailIds) == [[first], [second, third]])
         #expect(events.submissionStarts.map(\.cause) == [.message, .message])
         #expect(events.answerFailures.isEmpty)
-        withExtendedLifetime(profile) {}
     }
 
     @Test("one answered event names the message that joined its chain in a continuation")
     func anAnswerNamesAMessageThatJoinedAContinuation() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let backend = Backend(script: [1: .holdThenReject(latch)])
-        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        let fixture = try await Self.makeSession(over: backend)
+        defer { await fixture.end(opening: [latch]) }
+        let session = fixture.session
         let (log, drain) = await SessionEventLog.watch(session)
 
         let first = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
@@ -115,22 +113,17 @@ struct SubmissionAnswerEventTests {
         #expect(starts.map(\.mailIds) == [[first], [second]])
         #expect(starts.map(\.cause) == [.message, .continuation])
         #expect(events.submissionEnds.map(\.submissionId) == starts.map(\.submissionId))
-        withExtendedLifetime(profile) {}
     }
 
     @Test(
         "a chain that cancelAll() stops sends answerFailed with the reason cancelled at once, no answered, and no later end of its submission"
     )
     func aCancelledChainSendsAnswerFailed() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
-        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
-        defer {
-            await latch.open()
-            await session.close()
-        }
+        let fixture = try await Self.makeSession(over: backend)
+        defer { await fixture.end(opening: [latch]) }
+        let session = fixture.session
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
@@ -154,15 +147,14 @@ struct SubmissionAnswerEventTests {
         // stopped answer, also the end of its submission.
         #expect(events.submissionStarts.map(\.mailIds) == [[id]])
         #expect(events.submissionEnds.isEmpty)
-        withExtendedLifetime(profile) {}
     }
 
     @Test("a chain that fails with an error sends answerFailed with the text of the error")
     func aFailedChainSendsAnswerFailedWithTheError() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [1: .fail])
-        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        let fixture = try await Self.makeSession(over: backend)
+        defer { await fixture.end() }
+        let session = fixture.session
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = try session.send(Self.firstPrompt)
@@ -174,16 +166,15 @@ struct SubmissionAnswerEventTests {
         let reason = AnswerFailure.Reason.error(String(describing: SessionMessagePumpTests.PumpProbeError.refused))
         #expect(events.answerFailures == [AnswerFailure(mailIds: [id], reason: reason)])
         #expect(events.answers.isEmpty)
-        withExtendedLifetime(profile) {}
     }
 
     @Test("a respond whose caller cancels its task throws CancellationError, does not stop the process, and does not stop the running answer")
     func aRespondWhoseCallerCancelsThrowsCancellationError() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
-        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        let fixture = try await Self.makeSession(over: backend)
+        defer { await fixture.end(opening: [latch]) }
+        let session = fixture.session
         let (log, drain) = await SessionEventLog.watch(session)
 
         let run = Task { try await session.respond(to: Self.firstPrompt, observing: nil) }
@@ -203,7 +194,6 @@ struct SubmissionAnswerEventTests {
         let events = await log.events
         #expect(events.answers.map(\.reply) == [Backend.answer(ofCall: 1)])
         #expect(events.answerFailures.isEmpty)
-        withExtendedLifetime(profile) {}
     }
 
     /// The text of the error in the failure that

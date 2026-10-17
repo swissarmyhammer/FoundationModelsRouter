@@ -385,6 +385,7 @@ struct MultiMessageSessionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "first message")
         _ = try await session.respond(to: "second message")
 
@@ -410,6 +411,7 @@ struct MultiMessageSessionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
+        defer { await parent.close() }
         _ = try await parent.respond(to: "one")
         _ = try await parent.respond(to: "two")
 
@@ -417,6 +419,7 @@ struct MultiMessageSessionTests {
         #expect(parentBackend.receivedPrompts == ["one", "two"])
 
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
         let childBackend = try #require(parentBackend.lastFork)
 
         // The child's backend begins holding exactly the parent's history as
@@ -445,17 +448,17 @@ struct MultiMessageSessionTests {
         // Starts at 0: the in-flight respond() call suspends on this until the
         // test explicitly signals it, holding the submission open indefinitely.
         let releaseGate = AsyncSemaphore(value: 0)
-        // The gate opens also when a wait below throws, so the suspended
-        // respond() call ends (rule T1). In a test that passes, the body
-        // opened the gate already. The second permit is then not used: the
-        // respond() call takes one permit, and a signal with no waiter only
-        // adds a permit.
-        defer { releaseGate.signal() }
         let container = SuspendableLLMContainer(log: log, releaseGate: releaseGate)
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        // The gate opens before the close, also when a wait below throws, so
+        // the suspended respond() call ends and the close does not wait for
+        // it (rule T1). In a test that passes, the body opened the gate
+        // already. The second permit is then not used: the respond() call
+        // takes one permit, and a signal with no waiter only adds a permit.
+        defer { await SessionFixtureLifecycle.close([session], releasing: [releaseGate], permits: 1) }
 
         // Start a respond() call; it suspends inside the backend body. The
         // pump of the session reaches the backend on a task of its own, so the
@@ -477,6 +480,14 @@ struct MultiMessageSessionTests {
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
         let forkEnded = RecordedWaitResult.recordingEnd(of: forkTask, reportingTo: log.changes)
         defer { forkEnded.stopRecording() }
+        // The child of the fork closes also when a wait below throws (rule
+        // T1). The fork does not wait for the held submission, so this wait
+        // for its child ends before the gate opens.
+        defer {
+            if let child = try? await forkTask.value {
+                await child.close()
+            }
+        }
         try await log.waitFor("makeFork", endingOn: forkEnded)
         let eventsWhileTheSubmissionIsSuspended = log.events
 

@@ -251,6 +251,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         container.backend.responseChunks = ["hello ", "world"]
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "hi"))])),
@@ -277,6 +278,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         let arguments = try GeneratedContent(json: #"{"query":"weather"}"#)
         let outputSegment = Transcript.TextSegment(content: "72F and sunny")
         container.backend.responseChunks = ["it's sunny"]
@@ -322,6 +324,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         let arguments = try GeneratedContent(json: #"{"query":"weather"}"#)
         let structureContent = try GeneratedContent(json: #"{"tempF":72}"#)
         let noteSegment = TestNoteSegment(id: "s-note", content: TestNote(body: "hello"))
@@ -386,6 +389,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         let argumentsA = try GeneratedContent(json: #"{"city":"NYC"}"#)
         let argumentsB = try GeneratedContent(json: #"{"city":"SF"}"#)
         let outputSegmentA = Transcript.TextSegment(content: "NYC: sunny")
@@ -438,6 +442,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         let argumentsA = try GeneratedContent(json: #"{"city":"NYC"}"#)
         let argumentsB = try GeneratedContent(json: #"{"city":"SF"}"#)
         // macOS 27 FoundationModels gives a `.toolOutput` entry the id of the
@@ -501,6 +506,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         container.backend.entries = [
             .toolCalls(
                 Transcript.ToolCalls(
@@ -531,6 +537,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         container.backend.entries = [
             .reasoning(
                 Transcript.Reasoning(
@@ -561,6 +568,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         container.backend.usageIncrement = (input: Self.usageTokensIn, output: Self.usageTokensOut)
         container.backend.entries = [
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
@@ -591,6 +599,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         container.backend.entries = [
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
         ]
@@ -613,6 +622,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         let outputSegment = Transcript.TextSegment(content: "result")
         container.backend.shouldThrow = true
         container.backend.entries = [
@@ -663,6 +673,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, recorder) = try await Self.makeSession(cacheDir: dir)
+        defer { await session.close() }
         container.backend.responseChunks = ["hello"]
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "hi"))])),

@@ -337,7 +337,7 @@ struct SurfaceParityTests {
             playing: row.script,
             mounting: tools.map { $0 as any Tool },
             tempDirPrefix: tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         var answer = ""
         var failureDescription: String?

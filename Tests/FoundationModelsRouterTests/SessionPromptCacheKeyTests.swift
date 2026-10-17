@@ -84,9 +84,11 @@ struct SessionPromptCacheKeyTests {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let parent = fixture.profile.standard.makeSession()
+        defer { await parent.close() }
 
         _ = try await parent.respond(to: Self.parentPrompt)
         let fork = try await parent.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: Self.forkPrompt)
         _ = try await parent.respond(to: Self.parentAfterForkPrompt)
 
@@ -151,6 +153,7 @@ struct SessionPromptCacheKeyTests {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()
+        defer { await session.close() }
         let fillingPrompt = String(repeating: "x", count: Self.fillingPromptLength)
         _ = try await session.respond(to: fillingPrompt)
         let firstEntryBefore = try #require(Array(await session.transcript).first).id

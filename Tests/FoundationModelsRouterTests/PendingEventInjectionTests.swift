@@ -127,7 +127,9 @@ struct PendingEventInjectionTests {
             loader: StubModelLoader(container: container, dimension: stubDimension),
             pool: pool
         )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        }
         return (profile.standard.makeSession(), dir)
     }
 
@@ -173,6 +175,7 @@ struct PendingEventInjectionTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let text = try await session.respond(to: "hello")
         #expect(text == "stub response")
@@ -205,6 +208,7 @@ struct PendingEventInjectionTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let posted = Self.event(correlationID: "3", kind: .completed, detail: "exit 0, 2481 lines")
         await session.outbox.post(event: posted)
@@ -241,6 +245,7 @@ struct PendingEventInjectionTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         await session.outbox.post(event: Self.event(correlationID: "1", kind: .completed, detail: "first"))
         _ = try await session.respond(to: "first message")
@@ -264,6 +269,7 @@ struct PendingEventInjectionTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         // Two .progress posts for the same correlation coalesce to the
         // latest; the interleaved .completed for a different correlation
@@ -351,6 +357,7 @@ struct PendingEventInjectionTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let posted = Self.event(correlationID: "1", kind: .completed, detail: "first")
         await session.outbox.post(event: posted)

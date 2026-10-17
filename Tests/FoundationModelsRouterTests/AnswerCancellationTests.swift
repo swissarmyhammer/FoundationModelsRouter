@@ -177,6 +177,7 @@ struct AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
@@ -211,6 +212,7 @@ struct AnswerCancellationTests {
             insideTool.signal()
             await release.wait()
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
 
         let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: "caller-cancels") }
@@ -246,6 +248,7 @@ struct AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
@@ -286,6 +289,7 @@ struct AnswerCancellationTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
+        defer { await SessionFixtureLifecycle.close([sessionA, sessionB]) }
 
         // The tool body of the answer waits for a person, directly, when the
         // cancellation arrives: the interaction between the cancel of a running
@@ -325,6 +329,7 @@ struct AnswerCancellationTests {
         // the model before the cancellation landed.
         let fixture = try await Self.makeFixture(cacheDir: dir, appendsPromptBeforeToolCall: true)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)
@@ -356,6 +361,7 @@ struct AnswerCancellationTests {
         // to attach to — it was never durably delivered.
         let fixture = try await Self.makeFixture(cacheDir: dir, appendsPromptBeforeToolCall: false)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)

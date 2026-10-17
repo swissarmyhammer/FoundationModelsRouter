@@ -327,6 +327,7 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         let text = try await session.respond(to: "hello")
         #expect(text == Self.cannedText)
 
@@ -372,6 +373,7 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         var collected = ""
         for try await chunk in await session.streamResponse(to: "hello") {
             collected += chunk
@@ -417,6 +419,7 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         await #expect(throws: (any Error).self) {
             _ = try await session.respond(to: "hello")
         }
@@ -462,6 +465,7 @@ struct SessionChokepointTests {
         // handling, so the same close-on-throw invariant must hold for the
         // stream error path too.
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         await #expect(throws: (any Error).self) {
             for try await _ in await session.streamResponse(to: "hello") {}
         }
@@ -505,6 +509,10 @@ struct SessionChokepointTests {
 
         var profile: LanguageModelProfile? = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         var session: (any RoutedSession)? = profile!.standard.makeSession()
+        // The `defer` reads the variable when the test ends. The test sets it
+        // to `nil` to release the session, so the close runs only when the
+        // test throws before that release (rule T1).
+        defer { await session?.close() }
 
         // Dropping the external profile handle while the session is alive must
         // not evict: the session holds the profile resident. A missing
@@ -537,11 +545,13 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let defaultSession = profile.standard.makeSession()
+        defer { await defaultSession.close() }
         #expect(defaultSession.workingDirectory == defaultSession.recordingDirectory)
 
         let custom = FileManager.default.temporaryDirectory
             .appendingPathComponent("custom-wd-\(UUID().uuidString)", isDirectory: true)
         let overridden = profile.standard.makeSession(workingDirectory: custom)
+        defer { await overridden.close() }
         #expect(overridden.workingDirectory == custom)
         // The override must not move the recording directory.
         #expect(overridden.recordingDirectory != custom)
@@ -567,6 +577,7 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "hello", maxTokens: 4096)
         _ = try await session.respond(to: "hello")
 
@@ -594,6 +605,7 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         for try await _ in await session.streamResponse(to: "hello", maxTokens: 2048) {}
         for try await _ in await session.streamResponse(to: "hello") {}
 

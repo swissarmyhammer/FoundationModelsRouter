@@ -20,6 +20,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "stream-cancel", insideTool: insideTool)
@@ -101,6 +102,7 @@ extension AnswerCancellationTests {
             insideTool.signal()
             await release.wait()
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
 
         // `send` starts the submission, and no other call is necessary.
         let sent = try session.send("send-cancel")
@@ -159,6 +161,7 @@ extension AnswerCancellationTests {
                 throw error
             }
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
         try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
@@ -204,6 +207,7 @@ extension AnswerCancellationTests {
             insideTool.signal()
             await release.wait()
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
 
         let answerTask = Task { try await session.respond(to: "stubborn") }
         try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
@@ -236,6 +240,7 @@ extension AnswerCancellationTests {
             insideFirstAnswer.signal()
             await releaseFirstAnswer.wait()
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [releaseFirstAnswer], permits: 1) }
 
         let firstTask = Task { try await session.respond(to: "holds-the-lock") }
         try await RecordedWaitResult.wait(forPermitOf: insideFirstAnswer, endingOnEndOf: firstTask)
@@ -289,6 +294,7 @@ extension AnswerCancellationTests {
             insideFirstAnswer.signal()
             await releaseFirstAnswer.wait()
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [releaseFirstAnswer], permits: 1) }
 
         let firstTask = Task { try await session.respond(to: "holds-the-pump") }
         try await RecordedWaitResult.wait(forPermitOf: insideFirstAnswer, endingOnEndOf: firstTask)
@@ -338,6 +344,7 @@ extension AnswerCancellationTests {
             insideTool.signal()
             await release.wait()
         }
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
 
         let feed = await session.streamSessionEvents()
 
@@ -394,6 +401,7 @@ extension AnswerCancellationTests {
         // second model call is the regression this test is for.
         Self.overflowAfterRelease(
             fixture, prompt: "overflow-then-cancel", insideTool: insideTool, release: release)
+        defer { await SessionFixtureLifecycle.close([session], releasing: [release], permits: 1) }
 
         let answerTask = Task {
             try await session.respond(to: "overflow-then-cancel")
@@ -429,6 +437,7 @@ extension AnswerCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         // A running submission keeps the session busy, so the next message
         // waits in the queue.

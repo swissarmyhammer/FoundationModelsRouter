@@ -267,11 +267,15 @@ struct RespondRunPlaneDrainTests {
         try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: dir, runClock: runClock).profile
     }
 
-    /// Opens `gates` and waits for every run tracked on `session` to settle, so
-    /// no background work outlives a test.
+    /// Opens `gates`, waits for every run tracked on `session` to settle, and
+    /// then closes `session`, so no background work and no session outlives
+    /// a test (rule T1).
+    ///
+    /// A test calls it from one `defer` right after it makes the session, so
+    /// the session closes also when the test throws.
     ///
     /// - Parameters:
-    ///   - session: The session whose runs settle.
+    ///   - session: The session whose runs settle, and that closes.
     ///   - gates: The latches the background runs' bodies are waiting on.
     private static func releaseBackgroundRuns(on session: any RoutedSession, opening gates: [RunLatch]) async {
         let tokens: [String] = await session.runPlane.backgroundRuns().map(\.completionToken)
@@ -281,6 +285,7 @@ struct RespondRunPlaneDrainTests {
         for token in tokens {
             _ = await session.runPlane.wait(completionToken: token, seconds: nil)
         }
+        await session.close()
     }
 
     /// Thrown by ``settledTerminal(of:on:)`` when the wait of the run plane
@@ -373,7 +378,8 @@ struct RespondRunPlaneDrainTests {
     /// - Parameters:
     ///   - tool: The one tool the session mounts.
     ///   - gate: The tool's latch, opened after the first answer when
-    ///     `opening` is set, and always opened before returning.
+    ///     `opening` is set, and always opened before returning. The session
+    ///     then closes, also when this helper throws (rule T1).
     ///   - opening: Whether the run settles because the latch opens, or on
     ///     its own — by its timeout, when the test advances the clock of the
     ///     run plane.
@@ -387,7 +393,7 @@ struct RespondRunPlaneDrainTests {
         let clock = ManualRunClock()
         let profile = try await makeProfile(container: container, dir: dir, runClock: clock)
         let session = profile.standard.makeSession(tools: [tool])
-        defer { await gate.open() }
+        defer { await SessionFixtureLifecycle.close(session, opening: [gate]) }
         let backend = try #require(container.lastBackend)
         let events = await session.streamSessionEvents().events
         // The settle of the run, or the end of the feed, is the failure event
@@ -526,6 +532,7 @@ struct RespondRunPlaneDrainTests {
         let container = ScriptedBackgroundingLLMContainer(backgroundingSubmissions: Self.backgroundingSubmissionCount)
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         let backend = try #require(container.lastBackend)
         // No background run outlives the test, also when the test throws.
         defer { await backend.releaser.releaseAll() }

@@ -364,6 +364,7 @@ struct SessionMessagePumpTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = PumpProbeBackend(script: [:])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
 
         let id = try session.send(Self.firstPrompt)
 
@@ -387,6 +388,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
         try await backend.waitForPrompts(1, endingOnEndOf: first)
@@ -411,6 +413,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
 
         let id = try await MailQueueFixtures.startHeldAnswer(Self.firstPrompt, on: session, backend: backend)
         #expect(await session.mailQueueDepth().running == [id])
@@ -441,6 +444,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
         try await backend.waitForPrompts(1, endingOnEndOf: first)
@@ -478,6 +482,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .holdThenReject(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
         try await backend.waitForPrompts(1, endingOnEndOf: first)
@@ -512,6 +517,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
@@ -542,6 +548,7 @@ struct SessionMessagePumpTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = PumpProbeBackend(script: [1: .answer, 2: .fail])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         // One answered call attaches the outbox of the session to it, so a
@@ -578,6 +585,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [Self.mailOnlySubmission: .holdThenReject(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         try await Self.startMailOnlyAnswer(on: session, backend: backend)
 
         let joining = Task { try await session.respond(to: Self.secondPrompt) }
@@ -611,6 +619,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [Self.mailOnlySubmission: .holdThenReject(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         try await Self.startMailOnlyAnswer(on: session, backend: backend)
 
         // A named token ceiling is not the ceiling of a mail-only answer.
@@ -644,6 +653,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [Self.mailOnlySubmission: .holdThenReject(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         try await Self.startMailOnlyAnswer(on: session, backend: backend)
 
         let cancelled = Task { try await session.respond(to: Self.secondPrompt) }
@@ -676,6 +686,7 @@ struct SessionMessagePumpTests {
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
         let settledRun = try await Self.settledRunTerminal(on: session)
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }

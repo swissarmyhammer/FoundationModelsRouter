@@ -38,7 +38,8 @@ struct SessionAnswerTests {
     /// pair of scenario tools mounted — fresh per run, because a session
     /// consumes its script and two runs must never read each other's log.
     ///
-    /// - Returns: The fixture whose `directory` the caller must remove.
+    /// - Returns: The fixture. The caller ends it with
+    ///   ``SessionDirectoryFixture/end(opening:)``.
     /// - Throws: Whatever building the session throws.
     private static func makeFixture() async throws -> ScriptedSessionFixture {
         try await ScriptedSessionFixture.make(
@@ -58,6 +59,36 @@ struct SessionAnswerTests {
             tempDirPrefix: tempDirPrefix)
     }
 
+    /// Two fresh fixtures over the same script: one for the `respond(to:)`
+    /// call that gives a `String`, and one for the call that gives a
+    /// ``SessionAnswer``.
+    private struct FixturePair {
+        /// The fixture of the call that gives a `String`.
+        let respond: ScriptedSessionFixture
+
+        /// The fixture of the call that gives a ``SessionAnswer``.
+        let answer: ScriptedSessionFixture
+
+        /// Ends the two fixtures. A test calls it from one `defer` right
+        /// after it gets the pair, so each session closes also when the test
+        /// throws (rule T1).
+        func end() async {
+            await respond.end()
+            await answer.end()
+        }
+    }
+
+    /// Makes the two fixtures of a ``FixturePair``.
+    ///
+    /// - Returns: The pair. The caller ends it with ``FixturePair/end()``.
+    /// - Throws: Whatever building a session throws. When the second make
+    ///   throws, the helper ends the first fixture before it throws.
+    private static func makeFixturePair() async throws -> FixturePair {
+        let respond = try await makeFixture()
+        let answer = try await respond.endingOnThrow { try await makeFixture() }
+        return FixturePair(respond: respond, answer: answer)
+    }
+
     /// The reply the scenario must produce, composed from the two markers
     /// only its tools could have supplied.
     private static var expectedAnswer: String {
@@ -68,13 +99,11 @@ struct SessionAnswerTests {
 
     @Test("the answer's reply is respond(to:)'s return, character for character")
     func answerReplyEqualsRespondForTheSameScriptedToolScript() async throws {
-        let respondFixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: respondFixture.directory) }
-        let answerFixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: answerFixture.directory) }
+        let fixtures = try await Self.makeFixturePair()
+        defer { await fixtures.end() }
 
-        let responded = try await respondFixture.session.respond(to: ScriptedToolFixture.prompt)
-        let answer: SessionAnswer = try await answerFixture.session.respond(to: ScriptedToolFixture.prompt)
+        let responded = try await fixtures.respond.session.respond(to: ScriptedToolFixture.prompt)
+        let answer: SessionAnswer = try await fixtures.answer.session.respond(to: ScriptedToolFixture.prompt)
 
         #expect(responded == Self.expectedAnswer)
         #expect(
@@ -89,7 +118,7 @@ struct SessionAnswerTests {
     @Test("the plain respond(to:) call still resolves to the String overload")
     func plainRespondStillReturnsTheStringAnswer() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         // No type context and no observing argument: Swift must keep selecting
         // the original String-returning overload, so existing callers compile
@@ -104,7 +133,7 @@ struct SessionAnswerTests {
     @Test("the observing callback delivers every raw event live, reset not pre-applied")
     func observingDeliversTheRawEvents() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
         let observed = Mutex<[SessionEvent]>([])
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt) { event in
@@ -135,7 +164,7 @@ struct SessionAnswerTests {
     @Test("the answer carries the diff's tool calls and one closed live record per run")
     func answerCarriesToolCallsAndInvocationRecords() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -173,14 +202,12 @@ struct SessionAnswerTests {
     @Test("the answer's reply is what respond returns and is the projection's last text row for that answer")
     @MainActor
     func answerReplyEqualsRespondAndTheProjectionTextRow() async throws {
-        let respondFixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: respondFixture.directory) }
-        let answerFixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: answerFixture.directory) }
+        let fixtures = try await Self.makeFixturePair()
+        defer { await fixtures.end() }
         let observed = Mutex<[SessionEvent]>([])
 
-        let responded = try await respondFixture.session.respond(to: ScriptedToolFixture.prompt)
-        let answer: SessionAnswer = try await answerFixture.session.respond(to: ScriptedToolFixture.prompt) {
+        let responded = try await fixtures.respond.session.respond(to: ScriptedToolFixture.prompt)
+        let answer: SessionAnswer = try await fixtures.answer.session.respond(to: ScriptedToolFixture.prompt) {
             event in
             observed.withLock { $0.append(event) }
         }
