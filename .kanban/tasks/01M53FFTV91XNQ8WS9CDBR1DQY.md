@@ -94,10 +94,30 @@ comments:
     - evidence: 43 test files in Tests/FoundationModelsRouterTests (no production code, no IntegrationTests file). `swift build --build-tests`: no error, no warning (only the SwiftPM "missing creator ... mlx-swift_Cmlx.bundle" line). Filtered run of the 31 changed suites: "Test run with 222 tests in 31 suites passed". Full suite one time, `swift test`: "Test run with 1812 tests in 219 suites passed after 3.631 seconds with 1 known issue" (the designed withKnownIssue), "Test run with 26 tests in 14 suites passed", "Test run with 19 tests in 3 suites passed"; XCTest "Executed 0 tests" x3. All 33 findings of 2026-10-16 21:52 are checked.
     - next: /review. Not committed. The task stays in doing.
   timestamp: 2026-10-17T03:51:55.116301+00:00
+- actor: claude-code
+  id: 01m540dp5ew41a0dc27nex6vjf
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 8e591b6e). 40 files reviewed. Counts: findings 3, confirmed 3, refuted 6. All 33 items of "Review Findings (2026-10-16 21:52)" are checked.
+    - dropped: the 3 findings ask to refactor test helpers that existed before this task. The review skill rule drops a finding that asks to refactor tests that already existed. The commit changed only the cleanup wrapper in these helpers, not the duplicated body:
+      - `Tests/FoundationModelsRouterTests/Helpers/ScriptedSessionFixture.swift:85` `duplication/duplication` — the resolve statement in ScriptedSessionFixture.make and StagedReasoningSessionFixture.make. Both makers exist since fe0a6459 and f9b8371e.
+      - `Tests/FoundationModelsRouterTests/ReasoningTokenLimitTests.swift:213` `duplication/duplication` — ReasoningEndRecoveryTests.runAnswer and ReasoningStopRecoveryTests.runProbeAnswer. Both exist since fd4ed82b and f9b8371e.
+      - `Tests/FoundationModelsRouterTests/ReasoningTokenLimitTests.swift:213` `reuse/reuse` — the same two helpers.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-17T04:02:50.670110+00:00
+- actor: claude-code
+  id: 01m540ef2ztfb06v38vw9994a5
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 40 test files (33 findings fixed)
+    - test: green — swift test one run: 1812 tests in 219 suites + 26 + 19 passed
+    - commit: 8e591b6e
+    - review: clean — 3 engine findings dropped by the written rule (refactor of tests that existed before: ScriptedSessionFixture.swift:85, ReasoningTokenLimitTests.swift:213 x2); 33/33 prior items checked
+  timestamp: 2026-10-17T04:03:16.191453+00:00
 depends_on:
 - 01M53FFQY3H68Q9M4ZWQQNYTXA
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffff980
 title: 'T1: each test wait also ends on the failure event; fixtures close when the body throws'
 ---
 Source: elicitation check of 2026-10-16 (elicitation-plan.md section 10), item 4, new test rule T1.

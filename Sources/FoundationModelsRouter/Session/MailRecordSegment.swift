@@ -150,17 +150,28 @@ struct MailRecordSegment: PersistableStructuredSegment, Equatable, Sendable {
     /// delivered mail, so the model reads the mail once. Every other entry,
     /// and every other segment, stays as it is.
     ///
+    /// When the read removes each segment of the `.prompt` entry, the entry
+    /// stays in the transcript with the same id, options and response format,
+    /// and no segments.
+    ///
     /// - Parameter entry: An entry of a transcript that goes to a backend.
     /// - Returns: The entry, with the mail records removed.
     static func removingRecords(from entry: Transcript.Entry) -> Transcript.Entry {
         guard case .prompt(let prompt) = entry else { return entry }
-        let kept = prompt.segments.filter { segment in
-            guard case .structure(let structure) = segment else { return true }
-            return structure.schemaName != schemaName
-        }
+        let kept = TranscriptSegmentFilter.keptSegments(of: prompt.segments, dropping: isRecord) ?? []
         guard kept.count != prompt.segments.count else { return entry }
         return .prompt(
             Transcript.Prompt(id: prompt.id, segments: kept, options: prompt.options, responseFormat: prompt.responseFormat))
+    }
+
+    /// Whether `segment` is a `.structure` segment under the schema name of
+    /// ``MailRecordSegment``.
+    ///
+    /// - Parameter segment: A segment of a `.prompt` entry.
+    /// - Returns: `true` when `segment` is a mail record.
+    private static func isRecord(_ segment: Transcript.Segment) -> Bool {
+        guard case .structure(let structure) = segment else { return false }
+        return structure.schemaName == schemaName
     }
 }
 
