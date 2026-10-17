@@ -283,9 +283,12 @@ struct SubagentQuestionRelayTests {
             let target = SubagentQuestionTarget(
                 session: root, context: PendingElicitationFixtures.makeContext(for: root))
             let child = try await root.fork(workingDirectory: nil)
+            defer { await child.close() }
             let relay: SubagentQuestionRelay? = await SubagentQuestionRelay.start(
                 child: child, agentName: Self.reviewer, target: target)
             let relayCount = await root.relayChildren.count
+            // The test closes the child before it finishes the relay. The
+            // `defer` closes the child also when the test throws (rule T1).
             await child.close()
             await relay?.finish()
 

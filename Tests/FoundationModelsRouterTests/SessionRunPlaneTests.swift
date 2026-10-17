@@ -29,12 +29,13 @@ struct SessionRunPlaneTests {
     /// (rule T1).
     ///
     /// - Parameter recorder: The recorder of the router.
-    /// - Returns: The session, and the temp directory that the caller
-    ///   removes.
+    /// - Returns: The session, its router and its temp directory. The caller
+    ///   ends them with ``SessionDirectoryFixture/end(opening:)`` in a
+    ///   `defer`.
     /// - Throws: What the resolve throws.
     private static func makeSession(
         recorder: any TranscriptRecorder
-    ) async throws -> (session: any RoutedSession, dir: URL) {
+    ) async throws -> SessionFixtureLifecycle.Started {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
@@ -45,7 +46,7 @@ struct SessionRunPlaneTests {
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
-        return (profile.standard.makeSession(), dir)
+        return SessionFixtureLifecycle.Started(session: profile.standard.makeSession(), router: router, directory: dir)
     }
 
     /// Makes a router that records to `recordingsDir` through a
@@ -74,13 +75,12 @@ struct SessionRunPlaneTests {
     @MainActor
     func closeSweepsBackgroundRunsAndJournalsTerminalEvents() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        defer { await SessionFixtureLifecycle.close(session, opening: [latchA, latchB]) }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end(opening: [latchA, latchB]) }
+        let session = fixture.session
         let tokenA = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
         let tokenB = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
@@ -149,9 +149,9 @@ struct SessionRunPlaneTests {
     @MainActor
     func closeWithEmptyRunPlaneIsNoOp() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         await session.close()
 
@@ -165,13 +165,12 @@ struct SessionRunPlaneTests {
     @MainActor
     func doubleCloseKeepsExactlyOneTerminalEventPerRun() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        defer { await SessionFixtureLifecycle.close(session, opening: [latchA, latchB]) }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end(opening: [latchA, latchB]) }
+        let session = fixture.session
         _ = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
         _ = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
@@ -216,6 +215,7 @@ struct SessionRunPlaneTests {
         let router2 = Self.makeRecordingRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: session.id)
+        defer { await SessionFixtureLifecycle.close(restored) }
         #expect(restored.root.id == session.id)
 
         // The reconstructed transcript carries the terminal event as a real
@@ -242,10 +242,10 @@ struct SessionRunPlaneTests {
     @MainActor
     func forkGetsFreshRunPlane() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
-        defer { await SessionFixtureLifecycle.close(session, opening: [latch]) }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end(opening: [latch]) }
+        let session = fixture.session
 
         let child = try await session.fork(workingDirectory: nil)
         defer { await child.close() }

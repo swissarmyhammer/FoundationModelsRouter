@@ -392,6 +392,26 @@ struct GenerationStallDiagnosticTests {
         await session.close()
     }
 
+    /// The count of the waits on ``StallingBackend/release`` in one answer:
+    /// the one model call of the answer waits one time.
+    private static let releaseWaitsPerAnswer = 1
+
+    /// Releases the held model call of `backend`, and then closes `session`.
+    ///
+    /// A test calls it from a `defer`, so the session closes also when the
+    /// test throws (rule T1). The hold does not end on a cancel
+    /// (``AsyncSemaphore/wait()``), and a close waits for the end of the
+    /// model call, so the release comes first. A test that released the call
+    /// already leaves a permit that no wait takes, which does nothing.
+    ///
+    /// - Parameters:
+    ///   - session: The session to close.
+    ///   - backend: The backend whose model call to release.
+    private static func close(_ session: any RoutedSession, releasing backend: StallingBackend) async {
+        await SessionFixtureLifecycle.close(
+            [session], releasing: [backend.release], permits: releaseWaitsPerAnswer)
+    }
+
     /// Moves `clock` by `interval` once the model call holds and its watch
     /// sleeps, so the next tick of the watch comes at a point of a fixed
     /// order.
@@ -442,6 +462,7 @@ struct GenerationStallDiagnosticTests {
     func respondAnswerReportsAStallOnTheSessionWideFeed() async throws {
         let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
@@ -465,6 +486,7 @@ struct GenerationStallDiagnosticTests {
     func aStallingAnswerIsStillGiven() async throws {
         let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
@@ -487,6 +509,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, clock, dir) = try await Self.makeStallingSession(
             fragmentsBeforeStall: producedFragments)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         // Read the answer's own stream here, rather than drain it into a log
         // this test then polls: each element is a suspension the answer itself
@@ -542,6 +565,7 @@ struct GenerationStallDiagnosticTests {
         // outrun a short clock.
         let (session, backend, _, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         let (log, drain) = await SessionEventLog.watch(session)
         // Released up front, so the backend never suspends and the answer runs
@@ -561,6 +585,7 @@ struct GenerationStallDiagnosticTests {
     func aSessionWithNoIntervalReportsNothing() async throws {
         let (session, backend, _, dir) = try await Self.makeStallingSession(reportInterval: nil)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         let (log, drain) = await SessionEventLog.watch(session)
         let answerTask = Task { try await session.respond(to: Self.prompt) }
@@ -588,6 +613,7 @@ struct GenerationStallDiagnosticTests {
         let reportInterval: Duration = .seconds(1)
         let (session, backend, clock, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
@@ -623,6 +649,7 @@ struct GenerationStallDiagnosticTests {
     func aStallIsLogged() async throws {
         let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
 
         let logs = try await TelemetryCapture.run(forbidding: []) { context in
             await session.useCaptureLogger(for: context.logger)
@@ -737,6 +764,7 @@ struct GenerationStallDiagnosticTests {
     func aRespondAnswerMeasuresFromTheLastToolInvocation() async throws {
         let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, releasing: backend) }
         let actor = try #require(session as? RoutedSessionActor)
 
         let feed = await session.streamSessionEvents().events

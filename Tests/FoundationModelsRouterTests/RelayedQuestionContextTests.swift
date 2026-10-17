@@ -117,33 +117,12 @@ struct RelayedQuestionContextTests {
             loader: StubModelLoader(container: BackgroundingLLMContainer(), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let tree = try await profile.standard.restoreSessionTree(root: fixture.session.id)
-        do {
-            try await body(tree)
-        } catch {
-            await close(tree)
-            throw error
+        // The router stays alive until each restored session closed.
+        defer {
+            await SessionFixtureLifecycle.close(tree)
+            withExtendedLifetime(router) {}
         }
-        await close(tree)
-        withExtendedLifetime(router) {}
-    }
-
-    /// Closes each session of `tree`.
-    ///
-    /// - Parameter tree: The restored tree.
-    private static func close(_ tree: RestoredSessionTree) async {
-        for session in sessions(of: tree, under: tree.root) {
-            await session.close()
-        }
-    }
-
-    /// `session` and each restored session under it, parents first.
-    ///
-    /// - Parameters:
-    ///   - tree: The restored tree.
-    ///   - session: A restored session of `tree`.
-    /// - Returns: The sessions.
-    private static func sessions(of tree: RestoredSessionTree, under session: any RoutedSession) -> [any RoutedSession] {
-        [session] + tree.children(of: session.id).flatMap { sessions(of: tree, under: $0) }
+        try await body(tree)
     }
 
     // MARK: - Restore
@@ -200,8 +179,8 @@ struct RelayedQuestionContextTests {
             let prompt = try #require(fixture.base.backend.receivedPrompts.last)
             #expect(prompt.contains(try #require(question.elicitation).message) == false)
             let fork = try await fixture.session.fork(workingDirectory: nil)
+            defer { await fork.close() }
             forkID = fork.id
-            await fork.close()
         }
         let question = try #require(asked)
         let restoredForkID = try #require(forkID)
@@ -211,8 +190,8 @@ struct RelayedQuestionContextTests {
             #expect(try Self.holds(question, in: await restoredFork.transcript) == false)
             let root = try #require(tree.session(fixture.session.id))
             let liveFork = try await root.fork(workingDirectory: nil)
+            defer { await liveFork.close() }
             let liveForkContext = await liveFork.transcript
-            await liveFork.close()
             #expect(try Self.holds(question, in: liveForkContext) == false)
         }
     }

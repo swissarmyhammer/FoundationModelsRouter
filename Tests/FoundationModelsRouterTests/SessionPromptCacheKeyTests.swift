@@ -121,6 +121,8 @@ struct SessionPromptCacheKeyTests {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let parent = fixture.profile.standard.makeSession()
+        // The parent stays open until the test reads the released keys.
+        defer { await parent.close() }
         _ = try await parent.respond(to: Self.parentPrompt)
         let fork = try await parent.fork(workingDirectory: nil)
         defer { await fork.close() }

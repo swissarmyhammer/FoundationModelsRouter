@@ -112,11 +112,21 @@ struct PendingEventInjectionTests {
 
     /// Builds a fresh router + resolved profile + vended session over a plain
     /// stub backend, recording through `recorder`.
+    ///
+    /// - Parameters:
+    ///   - recorder: The recorder of the router.
+    ///   - responseText: The text of each answer of the stub backend.
+    ///   - pool: The model pool of the router.
+    /// - Returns: The session, its router and its temp directory. The caller
+    ///   ends them with ``SessionDirectoryFixture/end(opening:)`` in a
+    ///   `defer`.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the temp directory.
     private static func makeSession(
         recorder: any TranscriptRecorder,
         responseText: String = "stub response",
         pool: ModelPool = ModelPool()
-    ) async throws -> (session: any RoutedSession, dir: URL) {
+    ) async throws -> SessionFixtureLifecycle.Started {
         let dir = Self.makeTempDir()
         let container = BasicLLMContainer(responseText: responseText)
         let router = Router(
@@ -130,7 +140,7 @@ struct PendingEventInjectionTests {
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
             try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         }
-        return (profile.standard.makeSession(), dir)
+        return SessionFixtureLifecycle.Started(session: profile.standard.makeSession(), router: router, directory: dir)
     }
 
     /// Builds a canned ``OperationEvent`` for a given tool/correlation/kind.
@@ -173,9 +183,9 @@ struct PendingEventInjectionTests {
     @MainActor
     func emptyOutboxIsNoOp() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let text = try await session.respond(to: "hello")
         #expect(text == "stub response")
@@ -206,9 +216,9 @@ struct PendingEventInjectionTests {
     @MainActor
     func pendingCompletedEventBecomesPreambleAndSegment() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let posted = Self.event(correlationID: "3", kind: .completed, detail: "exit 0, 2481 lines")
         await session.outbox.post(event: posted)
@@ -243,9 +253,9 @@ struct PendingEventInjectionTests {
     @MainActor
     func drainedEventDoesNotReappearNextAnswer() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         await session.outbox.post(event: Self.event(correlationID: "1", kind: .completed, detail: "first"))
         _ = try await session.respond(to: "first message")
@@ -267,9 +277,9 @@ struct PendingEventInjectionTests {
     @MainActor
     func multiplePendingEventsPreserveOutboxOrder() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // Two .progress posts for the same correlation coalesce to the
         // latest; the interleaved .completed for a different correlation

@@ -1039,11 +1039,10 @@ struct NestedGenerationReentryTests {
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
-        defer {
-            await fixture.latch.open()
-            await waiter.close()
-        }
         let next = profile.standard.makeSession()
+        // The latch opens first, so no pass stays held, and then each of the
+        // three sessions closes, also when the test throws (rule T1).
+        defer { await SessionFixtureLifecycle.close([holder, waiter, next], opening: [fixture.latch]) }
         let waiterFeed = await waiter.streamSessionEvents()
         // Second subscriptions, for the waits on `submissionQueued`. The
         // ledger below reads `waiterFeed` whole.

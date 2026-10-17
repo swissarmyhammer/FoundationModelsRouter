@@ -196,11 +196,13 @@ struct SubmissionBoundaryToolTests {
     ///   - tools: The tools the session mounts.
     ///   - rejectedCallCount: How many backend calls throw a rejected tool
     ///     call before they answer.
-    /// - Returns: The session and the temp directory the caller removes.
+    /// - Returns: The session, its router and its temp directory. The caller
+    ///   ends them with ``SessionDirectoryFixture/end(opening:)`` in a
+    ///   `defer`.
     /// - Throws: Whatever profile resolution throws.
     private static func makeSession(
         log: CallOrderLog, tools: [any Tool], rejectedCallCount: Int = 0
-    ) async throws -> (session: any RoutedSession, dir: URL) {
+    ) async throws -> SessionFixtureLifecycle.Started {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = OrderRecordingLLMContainer(log: log, rejectedCallCount: rejectedCallCount)
         let router = RouterTestFixtures.makeRouter(
@@ -211,7 +213,8 @@ struct SubmissionBoundaryToolTests {
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
-        return (profile.standard.makeSession(tools: tools), dir)
+        return SessionFixtureLifecycle.Started(
+            session: profile.standard.makeSession(tools: tools), router: router, directory: dir)
     }
 
     // MARK: - Tests
@@ -221,9 +224,9 @@ struct SubmissionBoundaryToolTests {
     func oneRespondFiresOneCallBeforeTheModelCall() async throws {
         let log = CallOrderLog()
         let probe = SubmissionBoundaryProbeTool(log: log)
-        let (session, dir) = try await Self.makeSession(log: log, tools: [probe])
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(log: log, tools: [probe])
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "hello")
 
@@ -236,9 +239,9 @@ struct SubmissionBoundaryToolTests {
     func twoAnswersFireTwoCalls() async throws {
         let log = CallOrderLog()
         let probe = SubmissionBoundaryProbeTool(log: log)
-        let (session, dir) = try await Self.makeSession(log: log, tools: [probe])
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(log: log, tools: [probe])
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
@@ -253,9 +256,9 @@ struct SubmissionBoundaryToolTests {
         let log = CallOrderLog()
         let probe = SubmissionBoundaryProbeTool(log: log)
         let plain = NonConformingTool()
-        let (session, dir) = try await Self.makeSession(log: log, tools: [plain, probe])
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(log: log, tools: [plain, probe])
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "hello")
 
@@ -268,9 +271,9 @@ struct SubmissionBoundaryToolTests {
     func aContinuationSubmissionFiresItsOwnCall() async throws {
         let log = CallOrderLog()
         let probe = SubmissionBoundaryProbeTool(log: log)
-        let (session, dir) = try await Self.makeSession(log: log, tools: [probe], rejectedCallCount: 1)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(log: log, tools: [probe], rejectedCallCount: 1)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // The first submission throws a rejected tool call. The session sends
         // the rejection back to the model in a continuation submission of the
@@ -286,9 +289,9 @@ struct SubmissionBoundaryToolTests {
     func aSubmissionThatMailStartedFiresACall() async throws {
         let log = CallOrderLog()
         let probe = SubmissionBoundaryProbeTool(log: log)
-        let (session, dir) = try await Self.makeSession(log: log, tools: [probe])
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(log: log, tools: [probe])
+        defer { await fixture.end() }
+        let session = fixture.session
         _ = try await session.respond(to: "hello")
         let latch = RunLatch()
         await latch.open()

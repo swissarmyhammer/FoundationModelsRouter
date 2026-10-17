@@ -68,6 +68,16 @@ struct SummarizerSubmissionTests {
         /// The task that drains the compacting answer. It throws what the
         /// answer throws.
         let compactingAnswer: Task<Void, any Error>
+
+        /// Opens the flash latch, and then closes the flash session and the
+        /// session over the trigger.
+        ///
+        /// A test calls it from one `defer` right after it gets the parts, so
+        /// each session closes also when the test throws (rule T1). A session
+        /// that the test closed already closes again with no effect.
+        func end() async {
+            await SessionFixtureLifecycle.close([flashSession, session], opening: [flash.latch])
+        }
     }
 
     /// Starts a submission of another session on the flash slot, and then an
@@ -124,11 +134,8 @@ struct SummarizerSubmissionTests {
     @Test("a flash summarizer call and a flash submission of another session never overlap")
     func aFlashSummarizerCallAndAFlashSubmissionNeverOverlap() async throws {
         let waiting = try await Self.startSummarizerBehindAFlashSubmission()
+        defer { await waiting.end() }
         let flash = waiting.flash
-        defer {
-            await SessionFixtureLifecycle.close(waiting.flashSession, opening: [flash.latch])
-            await waiting.session.close()
-        }
         let peakWhileTheSummarizerWaits = await flash.observer.maximumActive
 
         await flash.latch.open()
@@ -155,8 +162,8 @@ struct SummarizerSubmissionTests {
     @Test("close while the flash summarizer call waits for the worker takes the call out of the queue and cancels the compaction")
     func closeWhileTheSummarizerWaitsTakesItOutOfTheQueue() async throws {
         let waiting = try await Self.startSummarizerBehindAFlashSubmission()
+        defer { await waiting.end() }
         let flash = waiting.flash
-        defer { await flash.latch.open() }
         let standardCallsBeforeTheClose = waiting.standard.generationLog.calls.count
 
         // No signal and no stop of the answer affects a running compaction:

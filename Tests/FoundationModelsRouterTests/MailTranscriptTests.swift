@@ -570,7 +570,10 @@ struct MailTranscriptTests {
             id: router1.id, over: Backend(script: [:]), cacheDir: cacheDir, recordingsDir: recordingsDir,
             recorder: recorder)
         let profile2 = try await router2.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        // The restored tree is the root alone: the recorded session made no
+        // fork. The live session stays open until the end of the test.
         let restored = try await profile2.standard.restoreSessionTree(root: sessionId).root
+        defer { await restored.close() }
         #expect(try await restored.awaitTerminal(of: held) == .lost(held))
         #expect(try await restored.awaitTerminal(of: queued) == .lost(queued))
         // A lost mail goes back to no queue, so the restore runs nothing.
@@ -582,7 +585,8 @@ struct MailTranscriptTests {
             id: router1.id, over: Backend(script: [:]), cacheDir: cacheDir, recordingsDir: recordingsDir,
             recorder: recorder)
         let profile3 = try await router3.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        _ = try await profile3.standard.restoreSessionTree(root: sessionId)
+        let restoredAgain = try await profile3.standard.restoreSessionTree(root: sessionId).root
+        defer { await restoredAgain.close() }
 
         let events = try TranscriptTree.load(under: routerDirectory).events(forSession: sessionId)
         #expect(Self.records(of: held, in: events) == ["mailQueued", "lost"])

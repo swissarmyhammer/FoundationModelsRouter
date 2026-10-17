@@ -118,6 +118,29 @@ enum SessionFixtureLifecycle {
             await session.close()
         }
     }
+
+    /// Closes each session of `tree`: the root, and each restored session
+    /// under it, each parent before its forks.
+    ///
+    /// A test calls it from one `defer` right after the restore, so each
+    /// restored session closes also when the test throws (rule T1). The
+    /// close of a session does not close its forks, so a close of only the
+    /// root does not close the restored forks.
+    ///
+    /// - Parameter tree: The restored tree.
+    static func close(_ tree: RestoredSessionTree) async {
+        await close(sessions(of: tree, under: tree.root))
+    }
+
+    /// `session` and each restored session under it, parents first.
+    ///
+    /// - Parameters:
+    ///   - tree: The restored tree.
+    ///   - session: A restored session of `tree`.
+    /// - Returns: The sessions.
+    private static func sessions(of tree: RestoredSessionTree, under session: any RoutedSession) -> [any RoutedSession] {
+        [session] + tree.children(of: session.id).flatMap { sessions(of: tree, under: $0) }
+    }
 }
 
 /// A test fixture that owns one session and the temporary directory that the

@@ -29,12 +29,14 @@ struct BackgroundRunTranscriptTests {
     ///
     /// - Parameter recorder: The recorder every vended session records
     ///   through.
-    /// - Returns: The vended session and the temp directory to clean up.
+    /// - Returns: The vended session, its router and its temp directory. The
+    ///   caller ends them with ``SessionDirectoryFixture/end(opening:)`` in a
+    ///   `defer`.
     /// - Throws: What the resolve of the profile throws. Before it throws, it
     ///   removes the temp directory.
     private static func makeSession(
         recorder: any TranscriptRecorder
-    ) async throws -> (session: any RoutedSession, dir: URL) {
+    ) async throws -> SessionFixtureLifecycle.Started {
         let dir = RouterTestFixtures.makeTempDir(prefix: "BackgroundRunTranscriptTests")
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
@@ -45,7 +47,7 @@ struct BackgroundRunTranscriptTests {
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
-        return (profile.standard.makeSession(), dir)
+        return SessionFixtureLifecycle.Started(session: profile.standard.makeSession(), router: router, directory: dir)
     }
 
     /// Builds a canned ``OperationEvent`` for one background run.
@@ -94,9 +96,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func settledRunLandsAsCorrelatedToolOutputEntry() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // One answer, so the session is live and its journal is attached — the
         // state a run can only be tracked from.
@@ -133,9 +135,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func everyPostedEventIsJournaledInPostOrder() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -174,9 +176,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func consecutiveProgressOfOneRunSharesOneRow() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -205,9 +207,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func eventOfAnotherRunClosesTheOpenProgressRow() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -231,9 +233,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func openProgressRowIsWrittenAtClose() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -257,9 +259,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func journaledCompletionStillReachesTheModel() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -286,9 +288,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func publicReadFindsTheTerminalOnBothWritesOfIt() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -320,9 +322,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func eventPostedBeforeTheFirstAnswerIsJournaledByTheAnswerItRides() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // The restore path posts manufactured `.lost` terminals onto a fresh
         // outbox before the session has ever run an answer (see
@@ -362,9 +364,9 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func aRunSettlingInsideTheCancelerWindowIsJournaledOnce() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
@@ -414,8 +416,11 @@ struct BackgroundRunTranscriptTests {
     @MainActor
     func aSweptRunFinishingAfterwardsJournalsNoSecondTerminal() async throws {
         let recorder = SignallingTranscriptRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession(recorder: recorder)
+        // The session closes also when the first answer throws, before the
+        // run starts (rule T1).
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try await session.respond(to: "start the long job")
 
