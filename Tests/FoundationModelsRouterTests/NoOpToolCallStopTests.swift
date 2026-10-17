@@ -65,6 +65,7 @@ struct NoOpToolCallStopTests {
     func aNoOpCallStopsTheGenerationWhileAJobIsPending() async throws {
         let fixture = try await NoOpToolCallSessionFixture.make(
             startsJob: true, codes: [NoOpToolCallSessionFixture.noOpCode], tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -87,20 +88,19 @@ struct NoOpToolCallStopTests {
         #expect(nextPrompt.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt))
         #expect(!Self.holdsRunCodeCall(next))
         #expect(fixture.runs.value == 0)
-        await fixture.end()
     }
 
     @Test("pending job and a real call: the call runs")
     func aRealCallRunsWhileAJobIsPending() async throws {
         let fixture = try await NoOpToolCallSessionFixture.make(
             startsJob: true, codes: [Self.realCode], tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
 
         #expect(fixture.runs.value == 1)
         #expect(answer == NoOpToolCallModel.Executor.answerText)
         #expect(Self.holdsRunCodeCall(await fixture.session.transcript))
-        await fixture.end()
     }
 
     @Test("pending job and one round of a no-op call and a real call: the real call runs, its result is in the context, and the no-op call is not")
@@ -108,6 +108,7 @@ struct NoOpToolCallStopTests {
         let fixture = try await NoOpToolCallSessionFixture.make(
             startsJob: true, codes: [NoOpToolCallSessionFixture.noOpCode, Self.realCode],
             tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
 
@@ -119,24 +120,24 @@ struct NoOpToolCallStopTests {
         #expect(Self.outputs(answering: calls, in: transcript).count == calls.count)
         let lastRender = try #require(fixture.log.renders.last)
         #expect(Self.runCodeCalls(lastRender).compactMap(Self.snippet(of:)) == [Self.realCode])
-        await fixture.end()
     }
 
     /// Takes a fork of the session of `fixture`, expects that the check of
     /// the child marks the no-op arguments as a no-op, then ends the child
-    /// and the fixture.
+    /// and the fixture. The ends come also when this helper throws: the
+    /// child closes first, and then the fixture ends.
     ///
     /// - Parameter fixture: The fixture whose session has the check.
     /// - Throws: Whatever the fork throws, or the failure of `#require` when
     ///   the child is not a ``RoutedSessionActor``.
     private static func expectAForkKeepsTheCheck(of fixture: NoOpToolCallSessionFixture) async throws {
+        defer { await fixture.end() }
         let noOpArguments = GeneratedContent(properties: ["code": NoOpToolCallSessionFixture.noOpCode])
 
         let child = try #require(try await fixture.session.fork(workingDirectory: nil) as? RoutedSessionActor)
+        defer { await child.close() }
 
         #expect(child.isNoOpToolCall(CountingRunCodeTool.toolName, noOpArguments))
-        await child.close()
-        await fixture.end()
     }
 
     @Test("a fork keeps the no-op check of its parent")
@@ -161,13 +162,13 @@ struct NoOpToolCallStopTests {
         let fixture = try await NoOpToolCallSessionFixture.makeRestored(
             startsJob: true, codes: [NoOpToolCallSessionFixture.noOpCode],
             restoreCheck: NoOpToolCallSessionFixture.isNoOp(toolName:arguments:), tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
         #expect(fixture.runs.value == 0)
         #expect(fixture.log.renders.count == Self.callsBeforeTheResult)
         #expect(!Self.holdsRunCodeCall(await fixture.session.transcript))
-        await fixture.end()
     }
 
     @Test("a session restored with no check runs a no-op call while a job is pending, as before")
@@ -175,25 +176,25 @@ struct NoOpToolCallStopTests {
         let fixture = try await NoOpToolCallSessionFixture.makeRestored(
             startsJob: true, codes: [NoOpToolCallSessionFixture.noOpCode], restoreCheck: nil,
             tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
 
         #expect(fixture.runs.value == 1)
         #expect(answer == NoOpToolCallModel.Executor.answerText)
         #expect(Self.holdsRunCodeCall(await fixture.session.transcript))
-        await fixture.end()
     }
 
     @Test("no pending operation and a no-op call: the call runs as before")
     func aNoOpCallRunsWithNoPendingOperation() async throws {
         let fixture = try await NoOpToolCallSessionFixture.make(
             startsJob: false, codes: [NoOpToolCallSessionFixture.noOpCode], tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
 
         #expect(fixture.runs.value == 1)
         #expect(answer == NoOpToolCallModel.Executor.answerText)
         #expect(Self.holdsRunCodeCall(await fixture.session.transcript))
-        await fixture.end()
     }
 }

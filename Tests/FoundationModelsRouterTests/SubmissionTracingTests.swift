@@ -79,7 +79,8 @@ struct SubmissionTracingTests {
     ///   - usageIncrement: The token counts the backend meters on each
     ///     successful submission, or `nil` to report no usage at all.
     /// - Returns: The fixture the test drives and reads back.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory (rule T1).
     private static func makeFixture(
         tracer: (any Tracer)?,
         usageIncrement: (input: Int, output: Int)? = submissionUsage
@@ -94,8 +95,14 @@ struct SubmissionTracingTests {
             ),
             tracer: tracer
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         return AnswerFixture(
             session: profile.standard.makeSession(),
             backend: backend,

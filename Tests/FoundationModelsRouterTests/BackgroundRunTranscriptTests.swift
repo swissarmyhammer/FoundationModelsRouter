@@ -226,6 +226,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -353,6 +354,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -412,6 +414,12 @@ struct BackgroundRunTranscriptTests {
         // requests it, so the body is still running when the sweep synthesizes
         // its terminal.
         let bodyMayEnd = AsyncSemaphore(value: 0)
+        // The close waits for the body of the run, so the deferred close
+        // first lets the body end. A second signal does no harm.
+        defer {
+            bodyMayEnd.signal()
+            await session.close()
+        }
         let settling = Task { () -> OperationEvent in
             await bodyMayEnd.wait()
             return OperationEvent(

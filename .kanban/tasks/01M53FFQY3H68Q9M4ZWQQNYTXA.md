@@ -72,10 +72,26 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift. `swift test --filter 'FoundationModelsRouterTests\.RelayedQuestionsTableTests/'`: "Test run with 14 tests in 1 suite passed". Full suite one time, `swift test`, exit 0: "Test run with 1812 tests in 219 suites passed after 3.794 seconds with 1 known issue" (the designed `withKnownIssue` of the harness embedding stub), "Test run with 26 tests in 14 suites passed", "Test run with 19 tests in 3 suites passed"; XCTest "Executed 0 tests" x3. The only warning is the SwiftPM line "missing creator for mutated node ... mlx-swift_Cmlx.bundle". No IntegrationTests build: test-only change.
     - next: /review. Not committed. The task stays in doing.
   timestamp: 2026-10-17T01:42:12.889475+00:00
+- actor: claude-code
+  id: 01m53rnzt2pcatqjr6btgj8twf
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (aeb2f341). 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 1 file reviewed: Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift. 2 .kanban files are not reviewed (ignore rule). The item in "Review Findings (2026-10-16 20:32)" is fixed: the test aRelayThatOpensWithAWorkingChildIsWorkAtOnce opens the relay with childWorks: true, checks hasWorkingChild at once, and checks that closeRelay clears it.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-17T01:47:34.082250+00:00
+- actor: claude-code
+  id: 01m53rpwz3wk9mrwmsvhzdr9pv
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 test file (finding :683 fixed, 7 more table tests)
+    - test: green — swift test one run: 1812 tests in 219 suites + 26 + 19 passed, exit 0
+    - commit: aeb2f341
+    - review: clean — 0 findings, 1 file reviewed; prior item :683 fixed
+  timestamp: 2026-10-17T01:48:03.939155+00:00
 depends_on:
 - 01M53FFKACCYMAKXPXKK8WKXJ2
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffff880
 title: 'Group D: paused event on requeue, idle after cancelAll, relay presence guard, end the relay wait on close'
 ---
 Source: elicitation check of 2026-10-16 (elicitation-plan.md section 10), item 3, group D. Each fix starts with a test that fails before the fix.

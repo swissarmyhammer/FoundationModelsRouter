@@ -39,7 +39,9 @@ struct BackgroundingSessionFixture: Sendable {
     ///   - recordingsDir: The durable transcripts root of the router, or
     ///     `nil` (the default) for a router that records only in memory.
     /// - Returns: The fixture.
-    /// - Throws: What the resolve of the profile throws.
+    /// - Throws: What the resolve of the profile throws, or when the
+    ///   container vended no backend. Before it throws for the backend, it
+    ///   ends the session that it started.
     static func make(
         prefix: String,
         tools: [any Tool],
@@ -53,8 +55,14 @@ struct BackgroundingSessionFixture: Sendable {
             configuration: SessionConfiguration(
                 tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit, userPresence: userPresence),
             prefix: prefix, recordingsDir: recordingsDir)
-        let backend = try #require(container.lastBackend)
-        return Self(session: started.session, backend: backend, router: started.router, directory: started.directory)
+        do {
+            let backend = try #require(container.lastBackend)
+            return Self(
+                session: started.session, backend: backend, router: started.router, directory: started.directory)
+        } catch {
+            await SessionFixtureLifecycle.end(started, opening: [])
+            throw error
+        }
     }
 
     /// The session as its one concrete type, whose internal state a test

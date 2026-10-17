@@ -262,7 +262,15 @@ struct EnterRecordTests {
             let session = profile.standard.makeSession()
             await session.useCaptureLogger(for: context.logger)
 
-            let answer = Task { try await session.respond(to: Self.prompt) }
+            // The wait for the backend also ends when the answer ends (rule
+            // T1): an answer that never reaches the backend then ends with no
+            // open span, and the checks below fail. In a test that passes,
+            // the answer cannot end before it enters the backend, because the
+            // backend holds it until the release.
+            let answer = Task {
+                defer { backend.entered.signal() }
+                return try await session.respond(to: Self.prompt)
+            }
             try await backend.entered.wait()
 
             // The submission waits in the backend: its span is open, and its

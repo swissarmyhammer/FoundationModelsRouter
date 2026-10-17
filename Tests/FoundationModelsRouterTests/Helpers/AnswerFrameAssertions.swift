@@ -80,6 +80,13 @@ extension SessionEvent {
         }
     }
 
+    /// Whether this event ends the work of the session:
+    /// ``SessionEvent/workEnded``.
+    var isWorkEnd: Bool {
+        if case .workEnded = self { return true }
+        return false
+    }
+
     /// Whether this event ends an answer: ``SessionEvent/answered(_:)`` or
     /// ``SessionEvent/answerFailed(_:)``.
     var isAnswerEnd: Bool {

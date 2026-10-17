@@ -102,6 +102,7 @@ struct RunMailOriginTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let (session, keep) = try await makeSession(over: Backend(script: [:]), dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
         await session.attachOutboxJournal()
 
@@ -229,6 +230,7 @@ struct RunMailOriginTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let (session, keep) = try await Self.makeSession(over: Backend(script: [:]), dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
         await session.attachOutboxJournal()
         let message = Self.runEvent(.message, detail: "late message of a stopped run")
@@ -257,14 +259,20 @@ struct RunMailOriginTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let (session, keep) = try await Self.makeSession(over: Backend(script: [1: .hold(latch)]), dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
         var reader = feed.makeAsyncIterator()
         let stopped = try session.send(Self.stoppedPrompt)
-        var outputs: [SessionOutput] = []
-        while let output = await reader.next() {
-            outputs.append(output)
-            if MailQueueFixtures.isSubmissionStart(output.event) { break }
-        }
+        // Rule T1: the read also ends at the next end of the work. The work
+        // starts with the message, so in a test that passes no work end comes
+        // before the start of the submission. A message that starts no
+        // submission ends the work, and the test then fails here.
+        var outputs = await SessionWorkEventTests.outputs(
+            from: &reader, through: { MailQueueFixtures.isSubmissionStart($0) || $0 == .workEnded })
+        try #require(firstPosition(in: outputs, where: MailQueueFixtures.isSubmissionStart) != nil)
         let stop = session.cancelAll()
         #expect(try await session.awaitTerminal(of: stop) == .signalDone(stop))
         #expect(await session.isIdleOnceThePumpEnds())
@@ -300,15 +308,29 @@ struct RunMailOriginTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let recorder = RunRowGateRecorder()
         let (session, keep) = try await Self.makeSession(over: Backend(script: [:]), dir: dir, recorder: recorder)
+        defer {
+            await recorder.gate.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
         await session.attachOutboxJournal()
         let message = Self.runEvent(.message, detail: "a message that the journal holds")
 
         let posting = Task { await session.outbox.post(event: message) }
+        // Rule T1: the wait also ends when the post ended. The post returns
+        // after the journal wrote the row, so in a test that passes the post
+        // cannot end before the held row opens `entered`. A post that wrote
+        // no held row ends, and the test then fails here.
+        let postEnd = Task {
+            await posting.value
+            await recorder.entered.open()
+        }
         await recorder.entered.waitUntilOpen()
+        try #require(await recorder.didHoldARow)
         _ = try await session.respond(to: Self.prompt)
         await recorder.gate.open()
         await posting.value
+        await postEnd.value
         await session.close()
 
         let outputs = await Self.collectOutputs(feed)
@@ -336,7 +358,7 @@ private actor RunRowGateRecorder: TranscriptRecorder {
     private let inner = InMemoryRecorder()
 
     /// Whether a run event row was held.
-    private var didHoldARow = false
+    private(set) var didHoldARow = false
 
     /// Keeps `partial` in ``inner``. The first run event row waits at
     /// ``gate`` first, after it opened ``entered``.

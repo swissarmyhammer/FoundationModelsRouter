@@ -320,14 +320,22 @@ struct GenerationStallDiagnosticTests {
     ///     vended session, or `nil` to install none.
     /// - Returns: The session, its backend, the clock of its run plane, and
     ///   the temp directory to remove.
+    /// - Throws: What ``makeSession(over:reportInterval:)`` throws, or when
+    ///   the container vended no backend. Before it throws, it removes the
+    ///   temp directory.
     private static func makeStallingSession(
         fragmentsBeforeStall: Int = 0,
         reportInterval: Duration? = testReportInterval
     ) async throws -> (session: any RoutedSession, backend: StallingBackend, clock: ManualRunClock, dir: URL) {
         let container = StallingLLMContainer(fragmentsBeforeStall: fragmentsBeforeStall)
         let (session, clock, dir) = try await makeSession(over: container, reportInterval: reportInterval)
-        let backend = try #require(container.lastBackend)
-        return (session, backend, clock, dir)
+        do {
+            let backend = try #require(container.lastBackend)
+            return (session, backend, clock, dir)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
     }
 
     /// Builds a fresh router, resolved profile, and vended session over
@@ -340,6 +348,8 @@ struct GenerationStallDiagnosticTests {
     ///     vended session, or `nil` to install none.
     /// - Returns: The session, the clock of its run plane, and the temp
     ///   directory to remove.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the temp directory.
     private static func makeSession(
         over container: some LoadedLLMContainer,
         reportInterval: Duration?
@@ -351,8 +361,14 @@ struct GenerationStallDiagnosticTests {
         )
         let clock = ManualRunClock()
         await router.useRunClock(clock)
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
         let session = profile.standard.makeSession()
         if let reportInterval {
             await session.setGenerationStallReportInterval(reportInterval)

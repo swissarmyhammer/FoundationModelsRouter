@@ -66,14 +66,18 @@ struct SharedGenerationQueueContentionTests {
     /// - Parameters:
     ///   - profile: The profile whose two generation handles wrap one
     ///     container.
-    ///   - fixture: The parts the container's passes report to.
+    ///   - fixture: The parts the container's passes report to. The caller
+    ///     opens the latch also when this helper throws.
     private static func expectPassesSerialize(
         over profile: LanguageModelProfile, fixture: PassObservingFixture
     ) async throws {
         // Identity, not equality: only one queue instance can serialize the one
         // resident container, and a second queue would let both submissions in.
+        // Rule T1: with a second queue, the latch holds the flash submission
+        // in the model, and no submission queues. Thus the test fails here,
+        // before it waits.
         let queue = try Self.queue(of: profile.standard)
-        #expect(queue === (try Self.queue(of: profile.flash)))
+        try #require(queue === (try Self.queue(of: profile.flash)))
 
         let holder = profile.standard.makeSession()
         let waiter = profile.flash.makeSession()
@@ -86,9 +90,12 @@ struct SharedGenerationQueueContentionTests {
         // The flash session's submission now waits in the very same queue.
         // This is the contention: two handles, one container, one queue. The
         // session sends `submissionQueued` when its submission joins the
-        // queue behind the other job.
+        // queue behind the other job. The wait also ends when the work of the
+        // flash session ends (rule T1): the latch holds the standard pass, so
+        // in a test that passes that work cannot end before its submission
+        // queues.
         let waiterAnswer = Task { try await waiter.respond(to: Self.secondPrompt) }
-        try await waiterFeed.log.waitForQueuedSubmissions(1)
+        try await waiterFeed.log.waitForQueuedSubmissionsOrWorkEnd(1)
         #expect(await queue.waitingCount == 1)
 
         // The waiting submission never reached the model, so one pass is in
@@ -111,6 +118,7 @@ struct SharedGenerationQueueContentionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = PassObservingFixture()
+        defer { await fixture.latch.open() }
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: SpyingModelLoader(
@@ -133,7 +141,6 @@ struct SharedGenerationQueueContentionTests {
         // queues show two pool entries.
         #expect(try Self.queue(of: profile.standard) !== Self.queue(of: profile.flash))
 
-        await fixture.latch.open()
         withExtendedLifetime((router, profile)) {}
     }
 
@@ -147,6 +154,7 @@ struct SharedGenerationQueueContentionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = PassObservingFixture()
+        defer { await fixture.latch.open() }
         let container = fixture.container
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,

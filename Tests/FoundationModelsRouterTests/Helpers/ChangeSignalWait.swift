@@ -1,3 +1,5 @@
+import Testing
+
 @testable import FoundationModelsRouter
 
 /// Thrown by ``ChangeSignal/wait(until:)`` when the waiting task was cancelled
@@ -15,9 +17,14 @@ struct ConditionNeverHeld: Error {}
 /// ``RoutedSessionActor/stateChanges``) through `SessionPlumbingAccess`.
 ///
 /// No clock, no poll and no limit ends the wait. The wait ends when the state
-/// holds, or when the waiting task is cancelled. A state that never comes
-/// keeps the test waiting: a stack of the test process then shows the open
-/// wait, and the missing event is the defect to find.
+/// holds, or when the waiting task is cancelled.
+///
+/// Rule T1: each wait of a test also ends on the failure event — the event
+/// that comes also when the state never comes, for example the settle of the
+/// run under test. ``wait(isolation:until:endingOn:sourceLocation:)`` waits
+/// for both, and the test then fails by an assertion. Use the wait with one
+/// condition only when no such event exists, or when the test failed before
+/// it waits.
 extension ChangeSignal {
     /// Waits until `condition` holds.
     ///
@@ -68,5 +75,41 @@ extension ChangeSignal {
         of value: () async throws -> Int
     ) async throws {
         try await wait(until: { try await value() >= count })
+    }
+
+    /// Waits until `condition` holds, or until `failureEvent` holds (rule
+    /// T1). When the failure event came and `condition` does not hold, the
+    /// test fails by an assertion.
+    ///
+    /// The failure event is an event that comes also when the state of
+    /// `condition` never comes: a run that settles, a session that closes, a
+    /// feed that ends. In a test that passes, the failure event must not come
+    /// before the state, or the state must hold at the time of the failure
+    /// event. Else the test fails in a run that the program passes.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `condition` and `failureEvent` can read the state of the caller.
+    ///   - condition: Reads the state, and tells whether it is the state that
+    ///     the test wants.
+    ///   - failureEvent: Tells whether the failure event came.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the failure event came first;
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
+    ///   otherwise what `condition` or `failureEvent` throws.
+    func wait(
+        isolation: isolated (any Actor)? = #isolation,
+        until condition: () async throws -> Bool,
+        endingOn failureEvent: () async throws -> Bool,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await wait(until: {
+            if try await condition() { return true }
+            return try await failureEvent()
+        })
+        let stateHeld = try await condition()
+        try #require(
+            stateHeld, "the failure event came before the state that the test waits for",
+            sourceLocation: sourceLocation)
     }
 }

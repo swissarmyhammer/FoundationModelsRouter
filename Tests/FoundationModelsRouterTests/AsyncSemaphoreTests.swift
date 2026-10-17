@@ -135,6 +135,10 @@ struct AsyncSemaphoreTests {
         let hold = AsyncSemaphore(value: 0)
 
         try await withThrowingTaskGroup(of: Void.self) { group in
+            // The group waits for each body before it returns, also when the
+            // test throws. Each body waits on `hold`, so the defer releases
+            // `hold` also then (rule T1). A second release does no harm.
+            defer { for _ in 0..<Self.serializedBodies { hold.signal() } }
             for _ in 0..<Self.serializedBodies {
                 group.addTask {
                     await semaphore.withPermit {
@@ -167,6 +171,10 @@ struct AsyncSemaphoreTests {
         let hold = AsyncSemaphore(value: 0)
 
         try await withThrowingTaskGroup(of: Void.self) { group in
+            // The group waits for each body before it returns, also when the
+            // test throws. Each body waits on `hold`, so the defer releases
+            // `hold` also then (rule T1). A second release does no harm.
+            defer { for _ in 0..<total { hold.signal() } }
             for _ in 0..<total {
                 group.addTask {
                     await gate.withPermit {
@@ -203,6 +211,9 @@ struct AsyncSemaphoreTests {
 
         // The test task takes the only permit; every waiter must suspend.
         await semaphore.wait()
+        // The release of the permit of the test, also when the test throws
+        // before it (rule T1). A second release does no harm.
+        defer { semaphore.signal() }
 
         // Each waiter joins the queue before the test starts the next one, so
         // the arrival order is 0, 1, 2, ...
@@ -245,6 +256,9 @@ struct AsyncSemaphoreTests {
 
         // The test task takes the only permit; both waiters must suspend.
         await semaphore.wait()
+        // The release of the permit of the test, also when the test throws
+        // before it (rule T1). A second release does no harm.
+        defer { semaphore.signal() }
 
         let first = try await Self.startQueuedWaiter(on: semaphore, recording: 0, into: probe)
         let second = try await Self.startQueuedWaiter(on: semaphore, recording: 1, into: probe)
@@ -275,6 +289,9 @@ struct AsyncSemaphoreTests {
 
         // The test task takes the only permit, so the waiter must suspend.
         await semaphore.wait()
+        // The release of the permit of the test, also when the test throws
+        // before it (rule T1). A second release does no harm.
+        defer { semaphore.signal() }
 
         let waiter = try await Self.startQueuedCancellableWaiter(on: semaphore, recording: 0, into: probe)
 
@@ -297,6 +314,9 @@ struct AsyncSemaphoreTests {
 
         // The test task takes the only permit; both waiters must suspend.
         await semaphore.wait()
+        // The release of the permit of the test, also when the test throws
+        // before it (rule T1). A second release does no harm.
+        defer { semaphore.signal() }
 
         let cancelled = try await Self.startQueuedCancellableWaiter(on: semaphore, recording: 0, into: probe)
         let remaining = try await Self.startQueuedWaiter(on: semaphore, recording: 1, into: probe)
@@ -342,6 +362,9 @@ struct AsyncSemaphoreTests {
         let probe = OrderProbe()
 
         await semaphore.wait()
+        // The release of the permit of the test, also when the test throws
+        // before it (rule T1). A second release does no harm.
+        defer { semaphore.signal() }
 
         let first = try await Self.startQueuedWaiter(on: semaphore, recording: 0, into: probe)
         let second = try await Self.startQueuedCancellableWaiter(on: semaphore, recording: 1, into: probe)

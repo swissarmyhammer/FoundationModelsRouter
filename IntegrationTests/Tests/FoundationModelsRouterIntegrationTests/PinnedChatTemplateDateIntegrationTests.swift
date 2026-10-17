@@ -148,6 +148,7 @@ struct PinnedChatTemplateDateIntegrationTests {
     @Test("the render of the real template carries the pinned date, and not the clock's")
     func pinnedDateReachesTheRealTemplate() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
 
         let modelContainer = try await loaded.container.model.loadContainer()
         let rendered = try await modelContainer.perform { context in
@@ -158,8 +159,6 @@ struct PinnedChatTemplateDateIntegrationTests {
 
         #expect(rendered.contains("\(currentDateHeaderPrefix)\(pinnedDate)."))
         #expect(!rendered.contains("\(currentDateHeaderPrefix)\(Self.clockDate())."))
-
-        await loaded.container.model.evict()
     }
 
     @Test("a submission with no instructions answers the pinned date rather than today's")
@@ -174,6 +173,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         let loadStarted = ContinuousClock.now
         let loaded = try await Self.makeContainer()
         loadDuration = ContinuousClock.now - loadStarted
+        defer { await loaded.container.model.evict() }
 
         // `instructions: nil` is what puts no system message into the
         // conversation, and the date branch of the template fires only then. A
@@ -199,7 +199,5 @@ struct PinnedChatTemplateDateIntegrationTests {
         // answer with it, which is what makes the assertion a measurement of
         // the pin rather than of the model.
         #expect(answer == pinnedDate)
-
-        await loaded.container.model.evict()
     }
 }

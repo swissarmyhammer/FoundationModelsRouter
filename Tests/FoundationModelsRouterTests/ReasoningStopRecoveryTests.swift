@@ -62,6 +62,9 @@ struct ReasoningStopRecoveryTests {
 
     /// Runs one streamed answer over a ``StagedReasoningSessionFixture``.
     ///
+    /// When the answer throws, this helper removes the temp directory of the
+    /// fixture first (rule T1).
+    ///
     /// - Parameters:
     ///   - scripts: The script of each call, in call order.
     ///   - detection: The repetition detection of the session.
@@ -74,12 +77,20 @@ struct ReasoningStopRecoveryTests {
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await StagedReasoningSessionFixture.make(
             scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
-        let events = try await collect(fixture.session.streamEvents(to: prompt))
-        return (fixture, events)
+        do {
+            let events = try await collect(fixture.session.streamEvents(to: prompt))
+            return (fixture, events)
+        } catch {
+            try? FileManager.default.removeItem(at: fixture.directory)
+            throw error
+        }
     }
 
     /// Runs one streamed answer over a ``CeilingProbeSessionFixture`` under
     /// ``requestedCeiling``.
+    ///
+    /// When the answer throws, this helper removes the temp directory of the
+    /// fixture first (rule T1).
     ///
     /// - Parameter ending: How each generation call of the probe ends.
     /// - Returns: The fixture and the events of the answer, in order.
@@ -87,8 +98,13 @@ struct ReasoningStopRecoveryTests {
         ending: CeilingProbeEnding
     ) async throws -> (fixture: CeilingProbeSessionFixture, events: [SessionEvent]) {
         let fixture = try await CeilingProbeSessionFixture.make(ending: ending, tempDirPrefix: tempDirPrefix)
-        let events = try await collect(fixture.session.streamEvents(to: prompt, maxTokens: requestedCeiling))
-        return (fixture, events)
+        do {
+            let events = try await collect(fixture.session.streamEvents(to: prompt, maxTokens: requestedCeiling))
+            return (fixture, events)
+        } catch {
+            try? FileManager.default.removeItem(at: fixture.directory)
+            throw error
+        }
     }
 
     /// The watch stops that the journal of `recorder` records, in order.

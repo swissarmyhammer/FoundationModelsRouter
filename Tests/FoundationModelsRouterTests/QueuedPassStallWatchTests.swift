@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -128,9 +129,14 @@ struct QueuedPassStallWatchTests {
         let (holdingLog, holdingDrain) = await SessionEventLog.watch(holding)
 
         let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
-        try await fixture.passes.waitForPasses(1)
+        // The latch holds each pass, so neither answer can end before the
+        // event that the test waits for.
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: holdingAnswer)
         let (waitingLog, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
-        try await waitingLog.wait(until: { !Self.queuedIds(in: $0).isEmpty })
+        try await RecordedWaitResult.wait(
+            for: { try await waitingLog.wait(until: { !Self.queuedIds(in: $0).isEmpty }) },
+            endingOnEndOf: waitingAnswer)
         // The holding pass keeps the worker until the test opens the latch, so
         // the submission still waits. The watch of its call counts no time
         // now, so no tick of the watch can report a stall.
@@ -188,7 +194,10 @@ struct QueuedPassStallWatchTests {
         await session.setGenerationStallReportInterval(Self.reportInterval)
 
         let (_, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
-        await toolLog.waitUntil { $0.contains(.toolBodyStarted) }
+        // The tool gate holds the body, so the answer cannot end before the
+        // body starts. An answer that ends first did not call the tool.
+        try await RecordedWaitResult.wait(
+            for: { await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer)
         try await Self.waitUntilNoTimeCounts(on: actor)
         toolGate.signal()
         try await answer.value
@@ -208,8 +217,9 @@ struct QueuedPassStallWatchTests {
 
         let (log, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
         // The pass started, and holds until the test opens the latch. The
-        // watch sleeps for its first interval.
-        try await fixture.passes.waitForPasses(1)
+        // watch sleeps for its first interval. An answer that ends first did
+        // not start the pass.
+        try await RecordedWaitResult.wait(for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: answer)
         await clock.waitForSleepers(atLeast: 1)
         clock.advance(by: Self.reportInterval)
         try await log.wait(until: { !Self.stalls(in: $0).isEmpty })
@@ -244,9 +254,13 @@ struct QueuedPassStallWatchTests {
         await waiting.setGenerationStallReportInterval(Self.reportInterval)
 
         let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
-        try await fixture.passes.waitForPasses(1)
+        // The step holds each pass, so neither answer can end before the
+        // event that the test waits for.
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: holdingAnswer)
         let (log, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
-        try await log.wait(until: { !Self.queuedIds(in: $0).isEmpty })
+        try await RecordedWaitResult.wait(
+            for: { try await log.wait(until: { !Self.queuedIds(in: $0).isEmpty }) }, endingOnEndOf: waitingAnswer)
         // The call of the waiting session started before it reported its
         // wait, and its watch sleeps for its first interval. The holding pass
         // waits for its step, so the submission still waits while the clock
@@ -261,14 +275,20 @@ struct QueuedPassStallWatchTests {
         // waiting session then generates until the last step.
         step.signal()
         step.signal()
-        await toolLog.waitUntil { $0.contains(.toolBodyStarted) }
+        // The tool gate holds the body, so the waiting answer cannot end
+        // before the body starts.
+        try await RecordedWaitResult.wait(
+            for: { await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: waitingAnswer)
         // The tool body counts no time while the clock moves.
         try await Self.waitUntilNoTimeCounts(on: waitingActor)
         clock.advance(by: Self.toolBodyTime)
         toolGate.signal()
         // The second pass started and holds for its step, and the watch noted
         // the tool result. Only then does the clock move past the interval.
-        try await fixture.passes.waitForPasses(Self.passesBeforeTheHeldPass)
+        // Because the second pass holds, the waiting answer cannot end first.
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.passes.waitForPasses(Self.passesBeforeTheHeldPass) },
+            endingOnEndOf: waitingAnswer)
         try await waitingActor.generationProgressChanges.wait(until: {
             await waitingActor.appliedStallWatch()?.lastProgressKind == .toolResult
         })

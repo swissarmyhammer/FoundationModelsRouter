@@ -268,6 +268,7 @@ struct SessionTreeRestorationIntegrationTests {
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
         let loaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
+        defer { await loaded.container.model.evict() }
         let profile = Self.makeProfile(
             model: sessionTreeForkTreeModel, loaded: loaded, cacheDir: cacheDir, recordingsDir: recordingsDir)
         // The router's own id, read off the handle it stamped. The harness
@@ -304,8 +305,6 @@ struct SessionTreeRestorationIntegrationTests {
 
         let rootSidecarBytes = try Data(contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: root.id))
 
-        await loaded.container.model.evict()
-
         return OriginalTree(
             routerId: routerId,
             rootId: root.id,
@@ -337,6 +336,7 @@ struct SessionTreeRestorationIntegrationTests {
         // same recording root, with a freshly (re-)loaded model container.
         let reloaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
+        defer { await reloaded.container.model.evict() }
         let profile2 = Self.makeProfile(
             model: sessionTreeForkTreeModel,
             loaded: reloaded,
@@ -385,8 +385,6 @@ struct SessionTreeRestorationIntegrationTests {
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(reply.contains("42"))
-
-        await reloaded.container.model.evict()
     }
 
     // MARK: - Tools threaded through restoration (task jkdae4b)
@@ -418,12 +416,12 @@ struct SessionTreeRestorationIntegrationTests {
         let (routerId, rootId): (ULID, ULID) = try await {
             let loaded = try await RealModelContainer.load(
                 ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
+            defer { await loaded.container.model.evict() }
             let profile = Self.makeProfile(
                 model: sessionTreeToolCallingModel, loaded: loaded, cacheDir: cacheDir,
                 recordingsDir: recordingsDir)
             let root = profile.standard.makeSession()
             _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-            await loaded.container.model.evict()
             return (profile.standard.routerId, root.id)
         }()
 
@@ -431,6 +429,7 @@ struct SessionTreeRestorationIntegrationTests {
         // a real tool this time — the seam that used to hardcode `tools: []`.
         let reloaded = try await RealModelContainer.load(
             ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
+        defer { await reloaded.container.model.evict() }
         let profile2 = Self.makeProfile(
             model: sessionTreeToolCallingModel, loaded: reloaded, cacheDir: cacheDir,
             recordingsDir: recordingsDir, routerId: routerId)
@@ -449,7 +448,5 @@ struct SessionTreeRestorationIntegrationTests {
         let events = try Self.recordedEvents(in: routerDirectory.appendingPathComponent(rootId.description, isDirectory: true))
         #expect(events.contains { $0.kind == .toolCalls })
         #expect(events.contains { $0.kind == .toolOutput })
-
-        await reloaded.container.model.evict()
     }
 }

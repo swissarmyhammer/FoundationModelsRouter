@@ -38,14 +38,22 @@ enum SessionFixtureLifecycle {
     ///     end of the session does not remove this directory: the test owns
     ///     it.
     /// - Returns: The session, its router and its directory.
-    /// - Throws: What the resolve of the profile throws.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the directory.
     static func start(
         over container: any LoadedLLMContainer, configuration: SessionConfiguration, prefix: String,
         recordingsDir: URL? = nil
     ) async throws -> Started {
         let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory, recordingsDir: recordingsDir)
+        let router: Router
+        let profile: LanguageModelProfile
+        do {
+            (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
+                over: container, cacheDir: directory, recordingsDir: recordingsDir)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         let session = profile.standard.makeSession(configuration: configuration)
         return Started(session: session, router: router, directory: directory)
     }

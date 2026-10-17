@@ -82,6 +82,10 @@ struct MailOnlyAnswerCountTests {
     func manyMessagesOfOneRunDoNotPause() async throws {
         let fixture = try await Fixtures.Session.make(prefix: Self.directoryPrefix, callsTool: { _ in false })
         let messaging = await Fixtures.MessagingRun.start(on: fixture.session)
+        defer {
+            await messaging.gate.open()
+            await fixture.end()
+        }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         await Self.sendMessages(Self.messageCount, from: messaging)
@@ -102,6 +106,10 @@ struct MailOnlyAnswerCountTests {
             tool: { Fixtures.GatedJob(name: Fixtures.jobName, gates: $0, settlePeriod: Self.neverEndingSettlePeriod) },
             callsTool: { _ in true })
         let messaging = await Fixtures.MessagingRun.start(on: fixture.session)
+        defer {
+            await messaging.gate.open()
+            await fixture.end()
+        }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         await Self.sendMessages(Self.inlineAnswerCount, from: messaging)
@@ -129,6 +137,10 @@ struct MailOnlyAnswerCountTests {
         let fixture = try await Fixtures.Session.make(
             prefix: Self.directoryPrefix, callsTool: { runStartingCalls.contains($0) })
         let messaging = await Fixtures.MessagingRun.start(on: fixture.session)
+        defer {
+            await messaging.gate.open()
+            await fixture.end()
+        }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         await messaging.send(Self.message(1))
@@ -139,12 +151,15 @@ struct MailOnlyAnswerCountTests {
         let pausingMessage = Self.message(4)
         await messaging.send(pausingMessage)
 
-        try await fixture.waitForPauses(1)
         // The caller answer, the answers of three messages, and the answers
-        // of the terminals of two runs.
+        // of the terminals of two runs. The send waited until the pump
+        // handled the fourth message, so the count is final here. A count
+        // that does not pause delivers the fourth message, and the test fails
+        // here, before it waits for a pause that never comes (rule T1).
         let deliveredMessages = 3
         let deliveredTerminals = 2
-        #expect(fixture.backend.prompts.count == 1 + deliveredMessages + deliveredTerminals)
+        try #require(fixture.backend.prompts.count == 1 + deliveredMessages + deliveredTerminals)
+        try await fixture.waitForPauses(1)
         let held = await fixture.waitingMail()
         #expect(held.allSatisfy { $0.isHeld })
         #expect(held.contains { $0.event.kind == .message && $0.event.detail == pausingMessage })
@@ -160,6 +175,7 @@ struct MailOnlyAnswerCountTests {
             prefix: Self.directoryPrefix,
             tool: { Fixtures.InnerJobStarter(job: Fixtures.GatedJob(name: Fixtures.jobName, gates: $0)) },
             callsTool: { _ in true })
+        defer { await fixture.end() }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         // The run of the caller answer, then the run of each of the `limit`
@@ -167,8 +183,12 @@ struct MailOnlyAnswerCountTests {
         // the last run.
         try await fixture.settleTheRunsOfOneChain()
 
+        // The settle waited until the pump handled the last terminal, so the
+        // count is final here. A count that misses the inner run delivers
+        // that terminal, and the test fails here, before it waits for a pause
+        // that never comes (rule T1).
+        try #require(fixture.backend.prompts.count == Fixtures.promptsOfOneChain)
         try await fixture.waitForPauses(1)
-        #expect(fixture.backend.prompts.count == Fixtures.promptsOfOneChain)
         let held = await fixture.waitingMail()
         #expect(held.allSatisfy { $0.isHeld })
         #expect(held.contains { $0.event.kind == .completed && $0.event.detail.contains(Fixtures.GatedJob.output) })

@@ -313,6 +313,9 @@ enum AutoCompactionFixtures {
     ///   - flashContainer: The container the `.flash` slot resolves to.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
+    /// When a warm-up answer throws, this helper closes the session first
+    /// (rule T1).
+    ///
     /// - Returns: The session plus its `standard` container.
     /// - Throws: Whatever profile resolution or a warm-up answer throws.
     static func makeTriggeredSession(
@@ -335,11 +338,16 @@ enum AutoCompactionFixtures {
 
         let session = profile.standard.makeSession(
             tools: tools, budget: budget)
-        let backend = try #require(standardContainer.lastBackend)
+        do {
+            let backend = try #require(standardContainer.lastBackend)
 
-        for answer in 0..<answerCount {
-            backend.usageIncrement = (input: (answer + 1) * warmUpUsageStepTokens, output: 0)
-            _ = try await session.respond(to: "message \(answer)")
+            for answer in 0..<answerCount {
+                backend.usageIncrement = (input: (answer + 1) * warmUpUsageStepTokens, output: 0)
+                _ = try await session.respond(to: "message \(answer)")
+            }
+        } catch {
+            await session.close()
+            throw error
         }
 
         return (session, standardContainer)

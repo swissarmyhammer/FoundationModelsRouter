@@ -60,6 +60,9 @@ struct GuidedPublicSurfaceTests {
     /// holds its owning profile weakly, and a call on a handle whose profile was
     /// already released traps.
     ///
+    /// When the resolve throws, this helper removes the temp directory first
+    /// (rule T1).
+    ///
     /// - Parameter container: The resident model every slot of the profile
     ///   resolves to.
     /// - Returns: The resolved profile and the temp directory the caller removes.
@@ -72,9 +75,14 @@ struct GuidedPublicSurfaceTests {
             cacheDir: directory,
             loader: StubModelLoader(
                 container: container, dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return (profile, directory)
+        do {
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            return (profile, directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Resolves a profile over a scripted model answering with ``cannedObject``.

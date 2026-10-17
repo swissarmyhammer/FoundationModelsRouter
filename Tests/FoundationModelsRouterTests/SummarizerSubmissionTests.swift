@@ -71,33 +71,40 @@ struct SummarizerSubmissionTests {
     /// that answer calls the flash summarizer, and the call waits for the
     /// flash worker, which the other submission holds until the latch opens.
     ///
+    /// When this helper throws, it opens the flash latch first (rule T1).
+    ///
     /// - Returns: The parts that the test reads and releases.
     /// - Throws: Whatever the warm-up of the triggered session throws.
     private static func startSummarizerBehindAFlashSubmission() async throws -> WaitingSummarizer {
         let flash = PassObservingFixture()
-        let (session, standard) = try await AutoCompactionFixtures.makeTriggeredSession(
-            budget: AutoCompactionFixtures.fixedBudget, flash: flash.container, tempDirPrefix: tempDirPrefix)
-        let flashQueue = try #require(session.profile.flash.backendQueue)
-        let flashSession = session.profile.flash.makeSession()
+        do {
+            let (session, standard) = try await AutoCompactionFixtures.makeTriggeredSession(
+                budget: AutoCompactionFixtures.fixedBudget, flash: flash.container, tempDirPrefix: tempDirPrefix)
+            let flashQueue = try #require(session.profile.flash.backendQueue)
+            let flashSession = session.profile.flash.makeSession()
 
-        // The flash session's submission runs on the flash worker, and its
-        // pass stays inside the model until the latch opens.
-        let flashAnswer = Task { try await flashSession.respond(to: flashPrompt) }
-        await flash.observer.waitUntil { $0.entered == 1 }
+            // The flash session's submission runs on the flash worker, and its
+            // pass stays inside the model until the latch opens.
+            let flashAnswer = Task { try await flashSession.respond(to: flashPrompt) }
+            await flash.observer.waitUntil { $0.entered == 1 }
 
-        // The next answer of the session over the trigger compacts first, and
-        // its flash summarizer call waits behind the flash submission. The
-        // summarizer call sends no event of the session. The task of the
-        // compaction inherits the metrics factory of the session, so the
-        // flash queue records the depth meter of the job of the call through
-        // the probe.
-        let probe = QueueDepthProbe(model: session.profile.flash.chosen)
-        await session.useCaptureMetrics(for: probe)
-        let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: triggeringPrompt))
-        await probe.enqueued.wait()
-        return WaitingSummarizer(
-            flash: flash, flashQueue: flashQueue, session: session, standard: standard,
-            flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
+            // The next answer of the session over the trigger compacts first, and
+            // its flash summarizer call waits behind the flash submission. The
+            // summarizer call sends no event of the session. The task of the
+            // compaction inherits the metrics factory of the session, so the
+            // flash queue records the depth meter of the job of the call through
+            // the probe.
+            let probe = QueueDepthProbe(model: session.profile.flash.chosen)
+            await session.useCaptureMetrics(for: probe)
+            let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: triggeringPrompt))
+            await probe.enqueued.wait()
+            return WaitingSummarizer(
+                flash: flash, flashQueue: flashQueue, session: session, standard: standard,
+                flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
+        } catch {
+            await flash.latch.open()
+            throw error
+        }
     }
 
     @Test("a flash summarizer call and a flash submission of another session never overlap")
@@ -131,6 +138,7 @@ struct SummarizerSubmissionTests {
     func closeWhileTheSummarizerWaitsTakesItOutOfTheQueue() async throws {
         let waiting = try await Self.startSummarizerBehindAFlashSubmission()
         let flash = waiting.flash
+        defer { await flash.latch.open() }
         let standardCallsBeforeTheClose = waiting.standard.generationLog.calls.count
 
         // No signal and no stop of the answer affects a running compaction:

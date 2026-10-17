@@ -90,6 +90,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         Self.overflowOnTheOverflowPrompt(fixture)
 
         let id = try session.send(Self.overflowPrompt)
@@ -98,7 +99,6 @@ struct AwaitAnswerTests {
         }
 
         #expect(Self.isContextOverflow(caught), "the wait threw \(String(describing: caught))")
-        await session.close()
     }
 
     @Test("a call after the failed answer ended, also after close(), still gets the typed error")
@@ -106,6 +106,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         Self.overflowOnTheOverflowPrompt(fixture)
 
         let id = try session.send(Self.overflowPrompt)
@@ -130,6 +131,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
 
         let id = try session.send(Self.plainPrompt)
         let answer = try await session.awaitAnswer(of: id)
@@ -137,7 +139,6 @@ struct AwaitAnswerTests {
         #expect(answer.mailIds == [id])
         #expect(answer.reply == "ok-\(Self.plainPrompt)")
         #expect(try await session.awaitTerminal(of: id) == .answered(answer))
-        await session.close()
     }
 
     @Test("two mails that one answer delivers each give that one SessionAnswer, with both ids")
@@ -147,6 +148,10 @@ struct AwaitAnswerTests {
         let (fixture, session) = try await Self.makeSession(dir: dir)
         let insideModelCall = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
+        defer {
+            release.signal()
+            await session.close()
+        }
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
@@ -163,7 +168,6 @@ struct AwaitAnswerTests {
         #expect(firstAnswer.mailIds == [first, second])
         #expect(secondAnswer == firstAnswer)
         #expect(try await session.awaitAnswer(of: held).mailIds == [held])
-        await session.close()
     }
 
     // MARK: - cancelled and lost
@@ -175,6 +179,10 @@ struct AwaitAnswerTests {
         let (fixture, session) = try await Self.makeSession(dir: dir)
         let insideModelCall = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
+        defer {
+            release.signal()
+            await session.close()
+        }
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
@@ -188,7 +196,6 @@ struct AwaitAnswerTests {
         }
         release.signal()
         #expect(try await session.awaitAnswer(of: held).mailIds == [held])
-        await session.close()
     }
 
     @Test("a mail that a restore reports as lost makes awaitAnswer(of:) throw CancellationError")
@@ -196,6 +203,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         let sessionActor = try #require(session as? RoutedSessionActor)
         let lost = MailID()
 
@@ -205,7 +213,6 @@ struct AwaitAnswerTests {
         await #expect(throws: CancellationError.self) {
             _ = try await session.awaitAnswer(of: lost)
         }
-        await session.close()
     }
 
     // MARK: - close() and the bound of the ledger
@@ -248,6 +255,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         Self.overflowOnTheOverflowPrompt(fixture)
 
         let id = try session.send(Self.overflowPrompt)
@@ -260,7 +268,6 @@ struct AwaitAnswerTests {
         await #expect(throws: TerminalLookupError.unknownMail(id)) {
             _ = try await session.awaitTerminal(of: id)
         }
-        await session.close()
     }
 
     @Test("a signal id that left the ledger makes awaitTerminal(of:) throw TerminalLookupError.unknownSignal at once")
@@ -268,6 +275,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
 
         let first = session.cancel(MailID())
         #expect(try await session.awaitTerminal(of: first) == .signalDone(first))
@@ -276,7 +284,6 @@ struct AwaitAnswerTests {
         await #expect(throws: TerminalLookupError.unknownSignal(first)) {
             _ = try await session.awaitTerminal(of: first)
         }
-        await session.close()
     }
 
     @Test("an id that the session never knew makes each wait throw TerminalLookupError at once")
@@ -284,6 +291,7 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         let unknownMail = MailID()
         let unknownSignal = SignalID()
 
@@ -296,7 +304,6 @@ struct AwaitAnswerTests {
         await #expect(throws: TerminalLookupError.unknownSignal(unknownSignal)) {
             _ = try await session.awaitTerminal(of: unknownSignal)
         }
-        await session.close()
     }
 
     // MARK: - Waits for live ids
@@ -308,6 +315,10 @@ struct AwaitAnswerTests {
         let (fixture, session) = try await Self.makeSession(dir: dir)
         let insideModelCall = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
+        defer {
+            release.signal()
+            await session.close()
+        }
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
@@ -324,7 +335,6 @@ struct AwaitAnswerTests {
         #expect(answer.mailIds == [queued])
         #expect(try await terminalWait.value == .answered(answer))
         #expect(try await session.awaitAnswer(of: held).mailIds == [held])
-        await session.close()
     }
 
     @Test("a wait for the mail of the answer that runs waits, and then gets that answer")
@@ -334,6 +344,10 @@ struct AwaitAnswerTests {
         let (fixture, session) = try await Self.makeSession(dir: dir)
         let insideModelCall = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
+        defer {
+            release.signal()
+            await session.close()
+        }
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
@@ -348,7 +362,6 @@ struct AwaitAnswerTests {
         let answer = try await answerWait.value
         #expect(answer.mailIds == [held])
         #expect(try await terminalWait.value == .answered(answer))
-        await session.close()
     }
 
     @Test("a wait for a signal that the session runs waits, and then gets its signalDone")
@@ -356,12 +369,12 @@ struct AwaitAnswerTests {
         let dir = AnswerCancellationTests.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
 
         // The wait starts before or after the end of the signal; both orders
         // give its signalDone.
         let signal = session.cancel(MailID())
 
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
-        await session.close()
     }
 }

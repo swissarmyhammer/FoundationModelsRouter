@@ -139,6 +139,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test("a second respond() call on the same backend sees the first answer's content in context")
     func secondRespondSeesPriorAnswer() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         let backend = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -162,8 +163,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         // And the same session accumulated a second answer on top of the first,
         // rather than starting over.
         #expect(backend.session.transcript.count > entriesAfterFirstAnswer)
-
-        await loaded.container.model.evict()
     }
 
     @Test("makeFork() seeds the child's transcript from the parent's at fork time")
@@ -189,6 +188,10 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let loadStarted = ContinuousClock.now
         let loaded = try await Self.makeContainer()
+        // The timed eviction below stays for the phase print. This deferred
+        // eviction comes also when the test throws (rule T1); a second
+        // eviction does no harm.
+        defer { await loaded.container.model.evict() }
         loadDuration = ContinuousClock.now - loadStarted
         let parent = try #require(
             loaded.container.makeSession(
@@ -244,6 +247,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         let prior = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -267,8 +271,6 @@ struct LanguageModelSessionBackendIntegrationTests {
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(reply.contains("42"))
-
-        await loaded.container.model.evict()
     }
 
     // MARK: - Transcript growth and fork seeding (per-answer entry kinds)
@@ -312,6 +314,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func eachAnswerLeavesOnePromptAndOneResponse() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which no answer owes. Omitting
         // instructions leaves only the entries that the answers made.
@@ -325,13 +328,12 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let drivenAnswers = 2
         Self.expectTranscriptHolds(backend, answers: drivenAnswers)
-
-        await loaded.container.model.evict()
     }
 
     @Test("a fork taken after one answer begins holding exactly that answer's entries")
     func forkAfterOneAnswerHoldsThatAnswersEntries() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         let parent = try #require(
             loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
@@ -343,8 +345,6 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let drivenAnswers = 1
         Self.expectTranscriptHolds(child, answers: drivenAnswers)
-
-        await loaded.container.model.evict()
     }
 
     // MARK: - transcriptEntries() matches the test-only transcript accessor
@@ -352,6 +352,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test("transcriptEntries().count equals session.transcript.count and grows across answers")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         let backend = try #require(
             loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
@@ -369,8 +370,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         let countAfterSecondAnswer = backend.transcriptEntries().count
         #expect(countAfterSecondAnswer == backend.session.transcript.count)
         #expect(countAfterSecondAnswer > countAfterFirstAnswer)
-
-        await loaded.container.model.evict()
     }
 
     // MARK: - Chokepoint fidelity: recorded entry kinds match the real transcript
@@ -409,12 +408,21 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// recorded into a real directory; the harness always hands the router that
     /// directory. Nothing in this suite reads the field, so the move corrects
     /// an inconsistency and changes no assertion.
+    ///
+    /// When this helper throws, it evicts the model that it loaded first
+    /// (rule T1).
     private func makeChokepointHarness() async throws -> ChokepointHarness {
         let loaded = try await Self.makeContainer()
-        let backend = try #require(
-            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
-                as? MLXFoundationModelsSessionBackend
-        )
+        let backend: MLXFoundationModelsSessionBackend
+        do {
+            backend = try #require(
+                loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                    as? MLXFoundationModelsSessionBackend
+            )
+        } catch {
+            await loaded.container.model.evict()
+            throw error
+        }
 
         let recordingsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -505,6 +513,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
         let harness = try await makeChokepointHarness()
         defer {
+            await harness.container.model.evict()
             try? FileManager.default.removeItem(at: harness.recordingsDir)
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
@@ -525,8 +534,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
-
-        await harness.container.model.evict()
     }
 
     /// Mirrors ``recordedEntryKindsMatchSessionTranscriptKinds()`` but drives
@@ -540,6 +547,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     func recordedEntryKindsMatchSessionTranscriptKindsStreaming() async throws {
         let harness = try await makeChokepointHarness()
         defer {
+            await harness.container.model.evict()
             try? FileManager.default.removeItem(at: harness.recordingsDir)
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
@@ -561,8 +569,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
-
-        await harness.container.model.evict()
     }
 
     // MARK: - Token usage metering (task v22nv1g)
@@ -586,6 +592,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     func recordedTokenUsageMatchesLiveBackendDelta() async throws {
         let harness = try await makeChokepointHarness()
         defer {
+            await harness.container.model.evict()
             try? FileManager.default.removeItem(at: harness.recordingsDir)
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
@@ -618,8 +625,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         print(
             "[recordedTokenUsageMatchesLiveBackendDelta] tokensIn=\(expectedTokensIn) tokensOut=\(expectedTokensOut)"
         )
-
-        await harness.container.model.evict()
     }
 
     // MARK: - KV cache reuse across answers (the hard proof)
@@ -629,6 +634,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func secondAnswerReusesFirstAnswersKVCache() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         let backend = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -714,8 +720,6 @@ struct LanguageModelSessionBackendIntegrationTests {
             processed (\(answer1ProcessedTokenCount)); more is an over-report
             """
         )
-
-        await loaded.container.model.evict()
     }
 
     // MARK: - The prompt cache keyed by the session id (task ^cc2tezn)
@@ -730,6 +734,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func sessionKeyedCacheIsReusedUntilItsRelease() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         let backend = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -756,8 +761,6 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         #expect(cachedAfterAnswer2 > 0, "answer 2 must reuse the cache that answer 1 left under the session id")
         #expect(cachedByAnswer3 == 0, "answer 3 must reuse nothing: the release removed the entry of the session id")
-
-        await loaded.container.model.evict()
     }
 
     // MARK: - Timing signal (best-effort, non-fatal)
@@ -767,6 +770,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func secondAnswerTendsToBeFasterThanFirst() async throws {
         let loaded = try await Self.makeContainer()
+        defer { await loaded.container.model.evict() }
         // A long instruction makes the fixed, cacheable prefix answer 2 should
         // reuse a much larger share of the input than a short one would, so a
         // real speed-up (if the cache is working) is more likely to be
@@ -798,7 +802,5 @@ struct LanguageModelSessionBackendIntegrationTests {
         print(
             "[secondAnswerTendsToBeFasterThanFirst] answer1=\(answer1Duration)s answer2=\(answer2Duration)s ratio=\(ratio)"
         )
-
-        await loaded.container.model.evict()
     }
 }

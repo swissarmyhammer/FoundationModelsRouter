@@ -143,21 +143,31 @@ struct ToolDisplayDeliveryTests {
     ///   - grace: The ``SessionConfiguration/inlineSettleGrace`` of the
     ///     session.
     /// - Returns: The fixture.
-    /// - Throws: What the resolve of the profile throws.
+    /// - Throws: What the resolve of the profile throws, or when the
+    ///   container vended no backend. When this helper throws, it closes the
+    ///   session that it made and removes the directory first (rule T1).
     @MainActor
     private static func makeFixture(tool: DisplayingBackgroundTool, grace: TimeInterval) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "ToolDisplayDeliveryTests")
-        let container = BackgroundingLLMContainer()
-        let clock = ManualRunClock()
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory, runClock: clock)
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(tools: [tool], inlineSettleGrace: grace))
-        let backend = try #require(container.lastBackend)
-        let (events, drain) = await SessionEventLog.watch(session)
-        return Fixture(
-            session: session, backend: backend, events: events, drain: drain, router: router, clock: clock,
-            directory: directory)
+        var session: (any RoutedSession)?
+        do {
+            let container = BackgroundingLLMContainer()
+            let clock = ManualRunClock()
+            let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
+                over: container, cacheDir: directory, runClock: clock)
+            let made = profile.standard.makeSession(
+                configuration: SessionConfiguration(tools: [tool], inlineSettleGrace: grace))
+            session = made
+            let backend = try #require(container.lastBackend)
+            let (events, drain) = await SessionEventLog.watch(made)
+            return Fixture(
+                session: made, backend: backend, events: events, drain: drain, router: router, clock: clock,
+                directory: directory)
+        } catch {
+            await session?.close()
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Ends the fixture: stops the event drain, closes the session and
@@ -180,6 +190,30 @@ struct ToolDisplayDeliveryTests {
     /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
     private static func waitForDisplayTexts(_ count: Int, on fixture: Fixture) async throws {
         try await fixture.events.wait(until: { $0.displayTexts.count >= count })
+    }
+
+    /// Waits until the feed of the session gave `count` display events that
+    /// add a text, or until the feed gave ``SessionEvent/workEnded`` (rule
+    /// T1). When the work ended first, the test fails by an assertion.
+    ///
+    /// Use this wait only when each display event comes before the end of
+    /// the work: a post of the tool returns after the session sent its
+    /// output event, and the work ends only after the call of the tool.
+    ///
+    /// - Parameters:
+    ///   - count: How many display events to wait for.
+    ///   - fixture: The fixture whose events are watched.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the work ended first, or
+    ///   ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func waitForDisplayTexts(
+        _ count: Int, orWorkEndOn fixture: Fixture, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let log = fixture.events
+        try await log.changes.wait(
+            until: { await log.events.displayTexts.count >= count },
+            endingOn: { await log.events.contains(where: \.isWorkEnd) },
+            sourceLocation: sourceLocation)
     }
 
     /// Every event of the answer to `prompt` on `session`, in delivery order.
@@ -211,13 +245,13 @@ struct ToolDisplayDeliveryTests {
         // The test never advances the clock, so the settle period never ends.
         let fixture = try await Self.makeFixture(
             tool: DisplayingBackgroundTool(steps: steps), grace: MountFixtures.manualClockGrace)
+        defer { await Self.end(fixture) }
 
         let events = try await Self.streamedEvents(answering: Self.jobPrompt, on: fixture.session)
 
         // The background runner also posts a progress event of its own, with
         // the pending envelope of the run. Only the posts of the tool count.
         #expect(events.compactMap(\.displayingToolStep).filter(steps.contains) == steps)
-        await Self.end(fixture)
     }
 
     // MARK: - The input of the model
@@ -232,6 +266,10 @@ struct ToolDisplayDeliveryTests {
         // envelope, and the run stays open on its gate.
         let fixture = try await Self.makeFixture(
             tool: DisplayingBackgroundTool(steps: [.progress(progress), .display(display)], gate: gate), grace: 0)
+        defer {
+            await gate.open()
+            await Self.end(fixture)
+        }
         _ = try await fixture.session.respond(to: Self.jobPrompt)
         try await Self.waitForDisplayTexts(1, on: fixture)
         #expect(await fixture.events.events.displayTexts == [display])
@@ -241,8 +279,6 @@ struct ToolDisplayDeliveryTests {
         let input = try #require(fixture.backend.receivedPrompts.last)
         #expect(input.contains(progress))
         #expect(input.contains(display) == false)
-        await gate.open()
-        await Self.end(fixture)
     }
 
     // MARK: - The settle period
@@ -254,6 +290,7 @@ struct ToolDisplayDeliveryTests {
         // The test never advances the clock, so the settle period never ends.
         let fixture = try await Self.makeFixture(
             tool: DisplayingBackgroundTool(steps: [.display(display)]), grace: MountFixtures.manualClockGrace)
+        defer { await Self.end(fixture) }
 
         let answer = try await fixture.session.respond(to: Self.jobPrompt)
 
@@ -262,9 +299,8 @@ struct ToolDisplayDeliveryTests {
         // withdrawn. The display event stays with the host.
         #expect(answer == Self.runOutput)
         #expect(await fixture.session.outbox.pending().events.isEmpty)
-        try await Self.waitForDisplayTexts(1, on: fixture)
+        try await Self.waitForDisplayTexts(1, orWorkEndOn: fixture)
         #expect(await fixture.events.events.displayTexts == [display])
-        await Self.end(fixture)
     }
 
     // MARK: - The timeout of the run
@@ -279,6 +315,12 @@ struct ToolDisplayDeliveryTests {
         // The settle period is zero, so the call answers with a pending
         // envelope, and the run goes on in the background.
         let fixture = try await Self.makeFixture(tool: tool, grace: 0)
+        defer {
+            // One permit for each post, so a tool that still waits for a
+            // beat goes on when the test throws.
+            for _ in texts { beat.signal() }
+            await Self.end(fixture)
+        }
         let answer = try await fixture.session.respond(to: Self.jobPrompt)
         let envelope = try #require(PendingRunEnvelope.makeDecoded(fromRendered: answer))
 
@@ -298,7 +340,6 @@ struct ToolDisplayDeliveryTests {
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == Self.runOutput)
         #expect(await fixture.events.events.displayTexts == texts)
-        await Self.end(fixture)
     }
 }
 

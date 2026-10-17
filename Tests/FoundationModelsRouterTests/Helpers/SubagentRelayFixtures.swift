@@ -97,6 +97,12 @@ final class SubagentRelayBox: Sendable {
         /// The count of the relays whose ``SubagentQuestionRelay/finish()``
         /// returned.
         var finishedRelays = 0
+
+        /// The count of the relaying runs that ended, also with an error.
+        var endedRelays = 0
+
+        /// The count of the asking runs that ended, also with an error.
+        var endedAsks = 0
     }
 
     /// The fields, behind one lock.
@@ -191,6 +197,16 @@ final class SubagentRelayBox: Sendable {
         change { $0.finishedRelays += 1 }
     }
 
+    /// Records that a relaying run ended, also with an error.
+    func noteRelayEnded() {
+        change { $0.endedRelays += 1 }
+    }
+
+    /// Records that an asking run ended, also with an error.
+    func noteAskEnded() {
+        change { $0.endedAsks += 1 }
+    }
+
     /// The session `id`, as the box recorded it.
     ///
     /// - Parameter id: The id of a session.
@@ -211,51 +227,70 @@ final class SubagentRelayBox: Sendable {
     /// The targets of the relaying runs so far, in order.
     var targets: [SubagentQuestionTarget] { state.withLock { $0.targets } }
 
-    /// Waits until at least `count` children exist.
+    /// Waits until at least `count` children exist. The wait also ends when
+    /// a relaying run ended (rule T1): that run makes no more children, and
+    /// in a test that passes no relaying run ends before its children exist.
     ///
     /// - Parameter count: The count to wait for.
     /// - Returns: The children.
-    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    /// - Throws: The error of `#require` when a relaying run ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForChildren(_ count: Int) async throws -> [Child] {
-        try await waitUntil(atLeast: count, of: { children }, counted: \.count)
+        try await waitUntil(atLeast: count, of: { children }, counted: \.count, endingOn: { endedRelays > 0 })
     }
 
     /// The count of the relays whose ``SubagentQuestionRelay/finish()``
     /// returned so far.
     var finishedRelays: Int { state.withLock { $0.finishedRelays } }
 
+    /// The count of the relaying runs that ended so far.
+    private var endedRelays: Int { state.withLock { $0.endedRelays } }
+
+    /// The count of the asking runs that ended so far.
+    private var endedAsks: Int { state.withLock { $0.endedAsks } }
+
     /// Waits until the ``SubagentQuestionRelay/finish()`` of at least `count`
-    /// relays returned.
+    /// relays returned. The wait also ends when `count` relaying runs ended
+    /// (rule T1): a relaying run records the finish of its relay before it
+    /// ends.
     ///
     /// - Parameter count: The count to wait for.
     /// - Returns: The count of the relays that finished.
-    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    /// - Throws: The error of `#require` when the relaying runs ended first,
+    ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForFinishedRelays(_ count: Int) async throws -> Int {
-        try await waitUntil(atLeast: count, of: { finishedRelays }, counted: { $0 })
+        try await waitUntil(atLeast: count, of: { finishedRelays }, counted: { $0 }, endingOn: { endedRelays >= count })
     }
 
-    /// Waits until at least `count` asking runs got an answer.
+    /// Waits until at least `count` asking runs got an answer. The wait also
+    /// ends when `count` asking runs ended (rule T1): an asking run records
+    /// its answer before it ends.
     ///
     /// - Parameter count: The count to wait for.
     /// - Returns: The answers.
-    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    /// - Throws: The error of `#require` when the asking runs ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForAnswers(_ count: Int) async throws -> [ElicitationResponse] {
-        try await waitUntil(atLeast: count, of: { answers }, counted: \.count)
+        try await waitUntil(atLeast: count, of: { answers }, counted: \.count, endingOn: { endedAsks >= count })
     }
 
     /// The one wait of the box for a count: waits until the count of a field
-    /// is at least `count`, and then reads the field again.
+    /// is at least `count`, or until the failure event came (rule T1), and
+    /// then reads the field again.
     ///
     /// - Parameters:
     ///   - count: The count to wait for.
     ///   - read: Reads the field.
     ///   - counted: Gives the count of a value of the field.
+    ///   - failureEvent: Tells whether the event came that ends the wait
+    ///     also when the count never comes.
     /// - Returns: The field, read after the wait.
-    /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
+    /// - Throws: The error of `#require` when the failure event came first,
+    ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     private func waitUntil<Value>(
-        atLeast count: Int, of read: () -> Value, counted: (Value) -> Int
+        atLeast count: Int, of read: () -> Value, counted: (Value) -> Int, endingOn failureEvent: () -> Bool
     ) async throws -> Value {
-        try await changes.wait(untilAtLeast: count, of: { counted(read()) })
+        try await changes.wait(until: { counted(read()) >= count }, endingOn: failureEvent)
         return read()
     }
 
@@ -317,7 +352,8 @@ struct SubagentJobTool: Tool, BackgroundTool {
     /// Makes a child, relays its questions, mails it one message, waits on
     /// the gate of `step` or for a cancel, and then on the close gate of
     /// `step` when it has one. Then it closes the child, waits for the end
-    /// of the relay, and records that end in the box.
+    /// of the relay, and records that end in the box. The box also records
+    /// the end of the run, also when the run throws.
     ///
     /// - Parameters:
     ///   - step: The relaying level.
@@ -326,6 +362,7 @@ struct SubagentJobTool: Tool, BackgroundTool {
     ///   target.
     /// - Throws: What the child maker or the mail throws.
     private func relay(_ step: SubagentRelayStep, in context: ToolContext) async throws -> String {
+        defer { box.noteRelayEnded() }
         guard let target = SubagentQuestionTarget.current else { return Self.idleOutput }
         box.noteTarget(target)
         let child = try await box.makeNextChild(of: context.sessionID)
@@ -359,7 +396,8 @@ struct SubagentJobTool: Tool, BackgroundTool {
     }
 
     /// Asks the user one question, records the answer in the box, and
-    /// returns it.
+    /// returns it. The box also records the end of the run, also when the
+    /// run throws.
     ///
     /// - Parameters:
     ///   - step: The question.
@@ -367,6 +405,7 @@ struct SubagentJobTool: Tool, BackgroundTool {
     /// - Returns: The action of the answer.
     /// - Throws: What `ToolContext.elicit(_:)` throws.
     private func ask(_ step: SubagentAskStep, in context: ToolContext) async throws -> String {
+        defer { box.noteAskEnded() }
         if let besideRun = step.besideRun, let session = box.session(of: context.sessionID) as? RoutedSessionActor {
             _ = await trackFakeRun(on: session.runPlane, latch: besideRun)
         }

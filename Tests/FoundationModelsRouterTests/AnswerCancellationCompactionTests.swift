@@ -129,7 +129,7 @@ extension AnswerCancellationTests {
         let feed = await session.streamSessionEvents()
 
         let answerTask = Task { try await session.respond(to: prompt) }
-        await held.inside.wait()
+        try await waitUntilSummarizerInside(held.inside, orEndOf: answerTask, fixture)
         let stop = await requestStop(of: session, by: route)
         if let stop {
             // The signal waits behind the compaction: it has no terminal event
@@ -200,6 +200,90 @@ extension AnswerCancellationTests {
     /// - Returns: The count.
     static func summarizerCallCount(_ fixture: Fixture) async -> Int {
         await fixture.observer.entered.filter(isSummarizerCall).count
+    }
+
+    /// Waits until a model call signals `inside`, or until the failure event
+    /// came (rule T1). Then the test fails by an assertion when `isInside`
+    /// does not hold.
+    ///
+    /// The failure event is the end of the work that makes the model call:
+    /// an answer that ends, or a compaction that has its terminal event. In
+    /// a test that passes, the hold of the model call keeps that work open,
+    /// so the failure event never comes before `inside`. See
+    /// ``RecordedWaitResult/wait(for:endingOnEndOf:sourceLocation:)``.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `isInside` can read the state of the caller.
+    ///   - inside: Signalled once the model call is inside its hold.
+    ///   - failureEvent: Returns when the work that makes the model call
+    ///     ended.
+    ///   - isInside: Tells whether the model call came.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the work ended before the model
+    ///   call came, or ``ConditionNeverHeld`` when the test was cancelled
+    ///   first.
+    static func waitUntilInside(
+        isolation: isolated (any Actor)? = #isolation,
+        _ inside: AsyncSemaphore,
+        endingOn failureEvent: @escaping @Sendable () async -> Void,
+        isInside: () async -> Bool,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let ending = Task { await failureEvent() }
+        try await RecordedWaitResult.wait(
+            for: { try await inside.waitUnlessCancelled() }, endingOnEndOf: ending, sourceLocation: sourceLocation)
+        let modelCallCame = await isInside()
+        try #require(
+            modelCallCame, "the work ended before its model call came to the hold", sourceLocation: sourceLocation)
+    }
+
+    /// Waits until the first summarizer call of the answer `answerTask` is
+    /// inside its hold, or until the answer ended (rule T1). See
+    /// ``waitUntilInside(_:endingOn:isInside:sourceLocation:)``.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there.
+    ///   - inside: Signalled once the summarizer call is inside its hold.
+    ///   - answerTask: The task of the answer that compacts.
+    ///   - fixture: The fixture whose observer counts the summarizer calls.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the answer ended first.
+    static func waitUntilSummarizerInside<Value: Sendable>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ inside: AsyncSemaphore,
+        orEndOf answerTask: Task<Value, Error>,
+        _ fixture: Fixture,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await waitUntilInside(
+            inside, endingOn: { _ = await answerTask.result },
+            isInside: { await summarizerCallCount(fixture) > 0 }, sourceLocation: sourceLocation)
+    }
+
+    /// Waits until the first summarizer call of the requested compaction `id`
+    /// is inside its hold, or until the compaction has its terminal event
+    /// (rule T1). See ``waitUntilInside(_:endingOn:isInside:sourceLocation:)``.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there.
+    ///   - inside: Signalled once the summarizer call is inside its hold.
+    ///   - id: The signal of the requested compaction.
+    ///   - session: The session of the compaction.
+    ///   - fixture: The fixture whose observer counts the summarizer calls.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the compaction ended first.
+    static func waitUntilSummarizerInside(
+        isolation: isolated (any Actor)? = #isolation,
+        _ inside: AsyncSemaphore,
+        orEndOfCompaction id: SignalID,
+        on session: any RoutedSession,
+        _ fixture: Fixture,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await waitUntilInside(
+            inside, endingOn: { _ = try? await session.awaitTerminal(of: id) },
+            isInside: { await summarizerCallCount(fixture) > 0 }, sourceLocation: sourceLocation)
     }
 
     /// Whether the own model call of the answer with `prompt` entered the
@@ -309,7 +393,7 @@ extension AnswerCancellationTests {
         let held = Self.holdFirstSummarizerCall(fixture, throwing: ProbeError.summarizerFailed)
         let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: "compacts-first") }
-        await held.inside.wait()
+        try await Self.waitUntilSummarizerInside(held.inside, orEndOf: answerTask, fixture)
         #expect(await session.stopRunningWork())
         held.release.signal()
 
@@ -353,9 +437,13 @@ extension AnswerCancellationTests {
         // test can observe (see ``RoutedSessionActor``'s abandoned-compaction
         // report).
         let held = Self.holdFirstSummarizerCall(fixture, throwing: ProbeError.summarizerFailed)
+        defer {
+            held.release.signal()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: "compacts-first") }
-        await held.inside.wait()
+        try await Self.waitUntilSummarizerInside(held.inside, orEndOf: answerTask, fixture)
 
         let outputs = try await Self.close(session, readingTo: feed) {
             try await Self.awaitCompactionCancelled(on: session)
@@ -398,10 +486,11 @@ extension AnswerCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let id = session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
-        await insideSummarizer.wait()
+        try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOfCompaction: id, on: session, fixture)
 
         // The summarizer call runs in the task of the compaction, and only
         // the close cancels that task.
@@ -441,9 +530,13 @@ extension AnswerCancellationTests {
         let actor = try #require(session as? RoutedSessionActor)
 
         let held = Self.holdFirstSummarizerCall(fixture)
+        defer {
+            held.release.signal()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
         let id = session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
-        await held.inside.wait()
+        try await Self.waitUntilSummarizerInside(held.inside, orEndOfCompaction: id, on: session, fixture)
 
         // The signal returns at once, and its work waits behind the
         // compaction: neither has a terminal event while the summarizer holds.
@@ -491,9 +584,13 @@ extension AnswerCancellationTests {
         // second. Only the abandon rule of the compaction keeps the fault of
         // the flash tier from going on to the own model.
         let held = Self.holdFirstSummarizerCall(fixture, throwing: ProbeError.summarizerFailed)
+        defer {
+            held.release.signal()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
         let id = session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
-        await held.inside.wait()
+        try await Self.waitUntilSummarizerInside(held.inside, orEndOfCompaction: id, on: session, fixture)
 
         _ = try await Self.close(session, readingTo: feed) {
             try await Self.awaitCompactionCancelled(on: session)
@@ -542,7 +639,9 @@ extension AnswerCancellationTests {
             fixture, suspendingOn: { !Self.isSummarizerCall($0) && $0.hasSuffix(holdingPrompt) },
             insideTool: insideTool)
         let answerTask = Task { try await session.respond(to: holdingPrompt) }
-        await insideTool.wait()
+        try await Self.waitUntilInside(
+            insideTool, endingOn: { _ = await answerTask.result },
+            isInside: { await Self.ownCallEntered(fixture, prompt: holdingPrompt) })
 
         // The compaction does not wait for the answer: its summarizer call
         // runs to its reply while the answer still holds its submission. The
@@ -600,7 +699,9 @@ extension AnswerCancellationTests {
             // in it: the run mail gets the `answerFailed(.cancelled)` of the
             // answer as its terminal event. Thus the stopped answer does not
             // put it back in the queue.
-            #expect(pending.events.isEmpty)
+            // A run mail that waits in the queue again gets no terminal
+            // event, so the test fails here, before it waits (rule T1).
+            try #require(pending.events.isEmpty)
             let terminal = try await session.awaitTerminal(of: postedId)
             #expect([terminal].answerFailures.map(\.reason) == [.cancelled])
             #expect([terminal].answerFailures.first?.mailIds.contains(postedId) == true)
@@ -629,11 +730,12 @@ extension AnswerCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        defer { await session.close() }
         let recordedBefore = await fixture.recorder.events.withoutMailRecords.count
         let feed = await session.streamSessionEvents()
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
-        await insideSummarizer.wait()
+        try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOf: answerTask, fixture)
         let outputs = try await Self.close(session, readingTo: feed) {
             try await sawCancellation.wait()
         }
@@ -679,10 +781,11 @@ extension AnswerCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
-        await insideSummarizer.wait()
+        try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOf: answerTask, fixture)
         _ = try await Self.close(session, readingTo: feed) {
             try await sawCancellation.wait()
         }
@@ -735,7 +838,7 @@ extension AnswerCancellationTests {
         let answerTask = Task {
             try await session.respond(to: Self.overflowingCompactionPrompt)
         }
-        await held.inside.wait()
+        try await Self.waitUntilSummarizerInside(held.inside, orEndOf: answerTask, fixture)
         #expect(await session.stopRunningWork())
         held.release.signal()
 
@@ -822,10 +925,11 @@ extension AnswerCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
-        await insideSummarizer.wait()
+        try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOf: answerTask, fixture)
         let outputs = try await Self.close(session, readingTo: feed) {
             try await sawCancellation.wait()
         }

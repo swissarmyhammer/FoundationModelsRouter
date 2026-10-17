@@ -46,6 +46,7 @@ struct MailOnlyAnswerLimitTests {
     @Test("an endless chain of mail-only answers stops at the limit, and the session sends the pause event")
     func anEndlessChainStopsAtTheLimit() async throws {
         let fixture = try await Fixtures.Session.make(prefix: Self.directoryPrefix, callsTool: Self.everyCall)
+        defer { await fixture.end() }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         // The caller answer, then `limit` answers that mail alone started.
@@ -70,6 +71,7 @@ struct MailOnlyAnswerLimitTests {
         // bound holds its mail, and the next caller answer starts no run.
         let fixture = try await Fixtures.Session.make(
             prefix: Self.directoryPrefix, callsTool: { $0 <= Fixtures.promptsOfOneChain })
+        defer { await fixture.end() }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
         try await fixture.settleTheRunsOfOneChain()
         try await fixture.waitForPauses(1)
@@ -87,6 +89,7 @@ struct MailOnlyAnswerLimitTests {
     @Test("a caller message starts the count again, so mail again starts answers up to the limit")
     func aCallerMessageStartsTheCountAgain() async throws {
         let fixture = try await Fixtures.Session.make(prefix: Self.directoryPrefix, callsTool: Self.everyCall)
+        defer { await fixture.end() }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
         try await fixture.settleTheRunsOfOneChain()
         try await fixture.waitForPauses(1)
@@ -107,6 +110,7 @@ struct MailOnlyAnswerLimitTests {
     func aChainUpToTheLimitRunsWhole() async throws {
         let fixture = try await Fixtures.Session.make(
             prefix: Self.directoryPrefix, callsTool: { $0 <= Fixtures.limit })
+        defer { await fixture.end() }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         // Each of the first `limit` calls started a run, and the mail of each
@@ -126,6 +130,7 @@ struct MailOnlyAnswerLimitTests {
     func aLimitOfZeroHoldsAllMail() async throws {
         let fixture = try await Fixtures.Session.make(
             prefix: Self.directoryPrefix, limit: 0, callsTool: Self.everyCall)
+        defer { await fixture.end() }
         try await fixture.answerCallerPrompt(Self.firstPrompt)
 
         try await fixture.settleTheOpenRun()

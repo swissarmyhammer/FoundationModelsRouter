@@ -56,12 +56,21 @@ struct TranscriptReconstructionIntegrationTests {
     /// and the session is assembled over its `.standard` handle. The hand-built
     /// copy this replaced named its profile `"test"`; the harness stamps its own
     /// name, and nothing reads the field.
+    ///
+    /// When the backend is not an MLX backend, this helper evicts the loaded
+    /// model before it throws (rule T1).
     private func makeHarness() async throws -> Harness {
         let loaded = try await RealModelContainer.load(ref: transcriptReconstructionTinyModel)
-        let backend = try #require(
-            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
-                as? MLXFoundationModelsSessionBackend
-        )
+        let backend: MLXFoundationModelsSessionBackend
+        do {
+            backend = try #require(
+                loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                    as? MLXFoundationModelsSessionBackend
+            )
+        } catch {
+            await loaded.container.model.evict()
+            throw error
+        }
 
         let recordingsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -152,6 +161,7 @@ struct TranscriptReconstructionIntegrationTests {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
+        defer { await harness.container.model.evict() }
 
         _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
@@ -167,7 +177,5 @@ struct TranscriptReconstructionIntegrationTests {
         #expect(reconstructedKinds == liveKinds)
         #expect(reconstructedEntries.count == liveEntries.count)
         #expect(!reconstructedEntries.isEmpty)
-
-        await harness.container.model.evict()
     }
 }

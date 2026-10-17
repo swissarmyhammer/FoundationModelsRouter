@@ -242,6 +242,10 @@ struct OriginAndTerminalEventTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let first = try session.send(Self.firstPrompt)
@@ -269,6 +273,7 @@ struct OriginAndTerminalEventTests {
     func automaticCompactionEventsCarryASignal() async throws {
         let (session, _, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tempDirPrefix: Self.tempDirPrefix)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         _ = try await session.respond(to: Self.laterPrompt)
@@ -306,6 +311,7 @@ struct OriginAndTerminalEventTests {
     func requestedCompactionEventsHaveTheReturnedSignal() async throws {
         let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
         let answerCalls = standard.generationLog.calls
         #expect(answerCalls.count == AutoCompactionFixtures.answerCount)
@@ -357,6 +363,10 @@ struct OriginAndTerminalEventTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let first = try session.send(Self.firstPrompt)
@@ -399,6 +409,10 @@ struct OriginAndTerminalEventTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let running = try session.send(Self.firstPrompt)
@@ -443,6 +457,10 @@ struct OriginAndTerminalEventTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let stopped = try session.send(Self.firstPrompt)
@@ -475,6 +493,10 @@ struct OriginAndTerminalEventTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .holdThenReject(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let first = try session.send(Self.firstPrompt)

@@ -61,7 +61,8 @@ struct ScriptedSessionFixture {
     ///     time.
     /// - Returns: The vended session, its scripted model's log, and the temp
     ///   directory the caller must remove.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     static func make(
         playing script: ScriptedAnswerScript,
         mounting tools: [any Tool],
@@ -81,8 +82,14 @@ struct ScriptedSessionFixture {
                 container: container, dimension: RouterTestFixtures.stubDimension),
             tracer: tracer
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         return ScriptedSessionFixture(
             session: profile.standard.makeSession(tools: tools, budget: budget),
             log: log,

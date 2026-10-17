@@ -178,9 +178,12 @@ struct GenerationQueueSubmissionTests {
         await entered.wait()
 
         // The other submission waits behind the submission whose tool body
-        // waits: the tool body is a step of that submission.
+        // waits: the tool body is a step of that submission. The wait also
+        // ends when the work of the other session ended (rule T1): a
+        // submission that does not wait runs at once and ends that work, and
+        // a submission that waits ends no work before the tool latch opens.
         let otherAnswerTask = Task { try await other.respond(to: Self.secondPrompt) }
-        try await otherFeed.log.waitForQueuedSubmissions(1)
+        try await otherFeed.log.waitForQueuedSubmissionsOrWorkEnd(1)
         let passesDuringTheToolBody = fixture.passes.recorded.map(\.prompt)
 
         await toolLatch.open()

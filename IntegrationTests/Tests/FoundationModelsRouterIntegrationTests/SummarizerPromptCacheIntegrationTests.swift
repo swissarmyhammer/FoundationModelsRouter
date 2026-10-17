@@ -90,7 +90,8 @@ struct SummarizerPromptCacheIntegrationTests {
     /// ``summarizerPromptCacheInstructions``.
     ///
     /// - Returns: The fixture.
-    /// - Throws: What the load throws.
+    /// - Throws: What the load throws, or when the profile vends no session
+    ///   actor. Before it throws for the session, it evicts the model.
     private static func makeFixture() async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("SummarizerPromptCacheIntegrationTests-\(UUID().uuidString)", isDirectory: true)
@@ -98,13 +99,19 @@ struct SummarizerPromptCacheIntegrationTests {
         let recordingsDir = root.appendingPathComponent("recordings", isDirectory: true)
         let loaded = try await RealModelContainer.load(
             ref: summarizerPromptCacheModel, context: CompactionRoundTripFixture.context, samplingMode: samplingMode)
-        let profile = RealModelHarness.make(
-            model: summarizerPromptCacheModel, context: CompactionRoundTripFixture.context,
-            container: loaded.container, samplingMode: loaded.samplingMode,
-            cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let session = try #require(
-            profile.standard.makeSession(instructions: summarizerPromptCacheInstructions) as? RoutedSessionActor)
-        return Fixture(loaded: loaded, session: session, directory: root)
+        do {
+            let profile = RealModelHarness.make(
+                model: summarizerPromptCacheModel, context: CompactionRoundTripFixture.context,
+                container: loaded.container, samplingMode: loaded.samplingMode,
+                cacheDir: cacheDir, recordingsDir: recordingsDir)
+            let session = try #require(
+                profile.standard.makeSession(instructions: summarizerPromptCacheInstructions) as? RoutedSessionActor)
+            return Fixture(loaded: loaded, session: session, directory: root)
+        } catch {
+            await loaded.container.model.evict()
+            try? FileManager.default.removeItem(at: root)
+            throw error
+        }
     }
 
     /// Answers ``fillingPrompt`` and compacts, and requires that the summary
@@ -150,6 +157,7 @@ struct SummarizerPromptCacheIntegrationTests {
     func aCompactionAddsNoKeyToThePromptCache() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.loaded.container.model.evict() }
         _ = try await fixture.session.respond(to: fillingPrompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let before = await Self.settledPromptCacheState()
 
@@ -159,8 +167,6 @@ struct SummarizerPromptCacheIntegrationTests {
         #expect(result.stagesApplied == [Summarization.stageName])
         #expect(before.keyCount > 0, "the answer before the compaction must leave the entry of the session")
         #expect(after == before, "the compaction must add no key and no byte: before \(before), after \(after)")
-
-        await fixture.loaded.container.model.evict()
     }
 
     /// The production change that makes this test fail: a summarizer backend
@@ -172,6 +178,7 @@ struct SummarizerPromptCacheIntegrationTests {
     func theNextAnswerAfterACompactionReusesItsOwnCache() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.loaded.container.model.evict() }
         try await Self.fillAndCompact(fixture.session)
 
         _ = try await fixture.session.respond(
@@ -186,7 +193,5 @@ struct SummarizerPromptCacheIntegrationTests {
             cachedTokens >= instructionTokens,
             "the answer after the compaction reused \(cachedTokens) tokens; the instructions alone are \(instructionTokens)"
         )
-
-        await fixture.loaded.container.model.evict()
     }
 }

@@ -455,7 +455,8 @@ struct CeilingProbeSessionFixture {
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The session, its log, and the temp directory.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. This helper then removes
+    ///   the temp directory first (rule T1).
     static func make(
         ending: CeilingProbeEnding,
         context: Int = ScriptedSessionContext.tokens,
@@ -469,8 +470,14 @@ struct CeilingProbeSessionFixture {
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         return CeilingProbeSessionFixture(
             session: profile.standard.makeSession(
                 configuration: SessionConfiguration(tools: tools, repetitionDetection: repetitionDetection)),

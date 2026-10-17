@@ -212,6 +212,7 @@ struct MailQueueBatchTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let event = MailQueueFixtures.progressEvent(detail: "half of the work is done")
@@ -240,6 +241,10 @@ struct MailQueueBatchTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -264,6 +269,10 @@ struct MailQueueBatchTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -297,6 +306,10 @@ struct MailQueueBatchTests {
         // continuation of the same answer.
         let backend = Backend(script: [1: .holdThenReject(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -348,6 +361,7 @@ struct MailQueueBatchTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let runMail = try await MailQueueFixtures.post(

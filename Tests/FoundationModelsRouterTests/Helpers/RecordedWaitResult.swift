@@ -1,4 +1,5 @@
 import Synchronization
+import Testing
 
 @testable import FoundationModelsRouter
 
@@ -35,5 +36,70 @@ final class RecordedWaitResult: Sendable {
     func record(_ result: Bool) {
         stored.withLock { $0 = result }
         changes.signal()
+    }
+}
+
+/// Rule T1: a wait of a test also ends on the failure event. The end of a
+/// task is such an event: a task that runs the work under test ends also
+/// when the state that the test waits for never comes.
+extension RecordedWaitResult {
+    /// Starts a task that waits for the end of `task`, and then records
+    /// `true`.
+    ///
+    /// The end is an end with a value or with an error. A test reads the
+    /// result in the failure event of
+    /// ``ChangeSignal/wait(isolation:until:endingOn:sourceLocation:)``.
+    ///
+    /// - Parameters:
+    ///   - task: The task whose end the result records.
+    ///   - changes: The signal to send when the end is recorded. Give the
+    ///     signal of the state that the test waits for, so that one wait
+    ///     sees the state and the end.
+    /// - Returns: The result: `nil` while `task` runs, `true` after it ended.
+    static func recordingEnd<Success: Sendable, Failure: Error>(
+        of task: Task<Success, Failure>, reportingTo changes: ChangeSignal
+    ) -> RecordedWaitResult {
+        let ended = RecordedWaitResult(reportingTo: changes)
+        Task {
+            _ = await task.result
+            ended.record(true)
+        }
+        return ended
+    }
+
+    /// Waits until `wait` returns, or until `task` ended. When `task` ended
+    /// first, or when `wait` threw, the test fails by an assertion.
+    ///
+    /// `wait` runs in a task of its own. Thus a wait that has no failure
+    /// event of its own (a permit of a semaphore, a count of an observer, a
+    /// log of a feed) also ends on the end of `task`. In a test that passes,
+    /// `task` must not end before `wait` returns.
+    ///
+    /// - Parameters:
+    ///   - wait: The wait for the state that the test wants.
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `task` ended first or `wait`
+    ///   threw, or ``ConditionNeverHeld`` when the test was cancelled first.
+    static func wait<Success: Sendable, Failure: Error>(
+        for wait: @escaping @Sendable () async throws -> Void,
+        endingOnEndOf task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let changes = ChangeSignal()
+        let waited = RecordedWaitResult(reportingTo: changes)
+        let ended = recordingEnd(of: task, reportingTo: changes)
+        let waiting = Task {
+            do {
+                try await wait()
+                waited.record(true)
+            } catch {
+                waited.record(false)
+            }
+        }
+        defer { waiting.cancel() }
+        try await changes.wait(
+            until: { waited.value != nil }, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
+        try #require(waited.value == true, "the wait threw before the state came", sourceLocation: sourceLocation)
     }
 }

@@ -32,6 +32,11 @@ struct SubagentQuestionRelayTests {
     /// The count of an event that comes one time.
     private static let once = 1
 
+    /// The count of the prompts of a leaf up to its first prompt of mail:
+    /// the message of its parent, and then the first prompt that mail
+    /// starts.
+    private static let leafPromptsThroughTheFirstMail = 2
+
     /// The accepted answer to the form question of the leaf.
     private static let acceptedForm = ElicitationResponse.accept(content: ["ok": .boolean(true)])
 
@@ -79,32 +84,46 @@ struct SubagentQuestionRelayTests {
     /// - Parameters:
     ///   - step: The question of the child.
     ///   - rootStep: The relaying level of the root.
+    /// When this helper throws, it ends the fixture first, and opens each
+    /// gate of `step` and `rootStep` (rule T1).
+    ///
     /// - Returns: The root, its child and the feeds.
     /// - Throws: What the fixture throws, or when a feed has no question.
     private static func askOneLevel(
         _ step: SubagentAskStep = SubagentAskStep(), rootStep: SubagentRelayStep = SubagentRelayStep(agentName: reviewer)
     ) async throws -> OneLevel {
         let fixture = try await SubagentRelayFixture.make(root: rootStep, children: [.ask(step)])
-        var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        try await fixture.start()
-        let child = try #require(try await fixture.box.waitForChildren(once).first)
-        var childFeed = child.feed.makeAsyncIterator()
-        let childOutputs = await outputsThroughQuestion(&childFeed)
-        let rootOutputs = await outputsThroughQuestion(&rootFeed)
-        return OneLevel(
-            fixture: fixture, rootStep: rootStep, child: child.session, rootFeed: rootFeed, childFeed: childFeed,
-            rootOutputs: rootOutputs, rootQuestion: try firstQuestion(in: rootOutputs),
-            childQuestion: try firstQuestion(in: childOutputs))
+        do {
+            var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+            try await fixture.start()
+            let child = try #require(try await fixture.box.waitForChildren(once).first)
+            var childFeed = child.feed.makeAsyncIterator()
+            let childOutputs = await outputsThroughQuestion(&childFeed)
+            let rootOutputs = await outputsThroughQuestion(&rootFeed)
+            return OneLevel(
+                fixture: fixture, rootStep: rootStep, child: child.session, rootFeed: rootFeed, childFeed: childFeed,
+                rootOutputs: rootOutputs, rootQuestion: try firstQuestion(in: rootOutputs),
+                childQuestion: try firstQuestion(in: childOutputs))
+        } catch {
+            await fixture.end(opening: [rootStep.gate] + [rootStep.closeGate, step.besideRun].compactMap { $0 })
+            throw error
+        }
     }
 
-    /// Reads `feed` up to and including the next question.
+    /// Reads `feed` up to and including the next question. The read also
+    /// ends at the next settle of a run (rule T1): in the tests of this
+    /// suite, no run settles before the question of the feed, so a feed
+    /// whose run settled with no question then holds no question, and
+    /// ``firstQuestion(in:)`` fails the test.
     ///
     /// - Parameter feed: The iterator of a feed.
     /// - Returns: The outputs read.
     private static func outputsThroughQuestion(_ feed: inout AsyncStream<SessionOutput>.Iterator) async
         -> [SessionOutput]
     {
-        await SessionWorkEventTests.outputs(from: &feed, through: SessionEventCase.elicitationRequested.matches)
+        await SessionWorkEventTests.outputs(
+            from: &feed,
+            through: { SessionEventCase.elicitationRequested.matches($0) || SessionEventCase.runSettled.matches($0) })
     }
 
     /// Reads `feed` until each of `conditions` accepted one output, or until
@@ -195,6 +214,7 @@ struct SubagentQuestionRelayTests {
     @Test("a question of a child shows on the root one time, with the same id, the path, the source and the relaying run")
     func aChildQuestionGoesUpOneTimeWithThePathAndTheSameId() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
         let rest = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.rootFeed)
 
         let request = try #require(level.rootQuestion.elicitation)
@@ -205,7 +225,6 @@ struct SubagentQuestionRelayTests {
         #expect(request.source == SubagentJobTool.toolName)
         #expect(relayingRuns == [level.rootQuestion.correlationID])
         #expect(rest.last?.event == .workEnded)
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     /// The production change that makes this test fail: a relay that does
@@ -216,6 +235,7 @@ struct SubagentQuestionRelayTests {
         let middleStep = SubagentRelayStep(agentName: Self.linter)
         let fixture = try await SubagentRelayFixture.make(
             root: rootStep, children: [.relay(middleStep), .ask(SubagentAskStep())])
+        defer { await fixture.end(opening: [rootStep.gate, middleStep.gate]) }
         var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         try await fixture.start()
         let children = try await fixture.box.waitForChildren(Self.twoLevels)
@@ -232,7 +252,6 @@ struct SubagentQuestionRelayTests {
         #expect(try #require(rootQuestion.elicitation).source == SubagentJobTool.toolName)
         #expect(try #require(middleQuestion.elicitation).elicitationId == leafId)
         #expect(try #require(rootQuestion.elicitation).elicitationId == leafId)
-        await fixture.end(opening: [rootStep.gate, middleStep.gate])
     }
 
     /// The production change that makes this test fail: an outbox that makes
@@ -241,12 +260,12 @@ struct SubagentQuestionRelayTests {
     @Test("a relaying level keeps the question in its feed but out of the prompt of its model")
     func aRelayingLevelKeepsTheQuestionOutOfThePromptOfItsModel() async throws {
         let level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
 
         let rootOrigin = try #require(level.rootOutputs.last).origin
         let waitingQuestions = await level.root.pendingMessages().filter { $0.runEvent?.kind == .elicitation }
         #expect(rootOrigin == .system)
         #expect(waitingQuestions.isEmpty)
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     /// The production change that makes this test fail: a relay that starts
@@ -288,6 +307,7 @@ struct SubagentQuestionRelayTests {
         let fixture = try await SubagentRelayFixture.make(
             root: rootStep, children: [.relay(middleStep), .ask(SubagentAskStep())],
             container: BackgroundingLLMContainer(holdLaterAnswers: laterAnswers))
+        defer { await fixture.end(opening: [laterAnswers, rootStep.gate, middleStep.gate]) }
         var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         try await fixture.start()
         let children = try await fixture.box.waitForChildren(Self.twoLevels)
@@ -304,7 +324,15 @@ struct SubagentQuestionRelayTests {
         let leafBackend = try #require(await leafActor.backend as? BackgroundingBackend)
         let answerText = try #require(
             Mail(sender: .elicitation(id), body: .elicitationAnswer(id: id, response: Self.acceptedForm)).promptText)
-        try await leafBackend.changes.wait(until: { leafBackend.receivedPrompts.contains { $0.contains(answerText) } })
+        // The wait also ends on the next prompt of the leaf (rule T1). The
+        // prompt of the answer mail comes before the prompt of the terminal
+        // of the asking run, or in the same prompt. The backend holds that
+        // first later prompt, so no other prompt can come after it, and a
+        // leaf that does not mail the answer to its model gives the terminal
+        // prompt only.
+        try await leafBackend.changes.wait(
+            until: { leafBackend.receivedPrompts.contains { $0.contains(answerText) } },
+            endingOn: { leafBackend.receivedPrompts.count >= Self.leafPromptsThroughTheFirstMail })
         let rootDepth = await fixture.session.mailQueueDepth()
         let middleDepth = await middle.session.mailQueueDepth()
         await fixture.end(opening: [laterAnswers, rootStep.gate, middleStep.gate])
@@ -331,11 +359,15 @@ struct SubagentQuestionRelayTests {
     @Test("a URL accept at the root goes down at once, and the completion of the leaf comes up one time at each level")
     func aURLAcceptGoesDownAtOnceAndTheLeafCompletionComesUp() async throws {
         var level = try await Self.askOneLevel(SubagentAskStep(asksForURL: true))
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
         let id = try level.questionId
 
         let accepted = await level.root.respond(elicitationId: id.description, response: .accept(content: nil))
         let leafContext = try #require(level.fixture.box.askContexts.first)
         let completed = await leafContext.complete(elicitationId: id)
+        // A leaf with no accepted question gets no completion, and its run
+        // then waits on: the test fails here, before it waits (rule T1).
+        try #require(completed == .completed)
         let answers = try await level.fixture.box.waitForAnswers(Self.once)
         let rootOutputs = await SessionWorkEventTests.outputs(
             from: &level.rootFeed, through: SessionEventCase.elicitationCompleted.matches)
@@ -344,7 +376,6 @@ struct SubagentQuestionRelayTests {
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
 
         #expect(accepted == .acceptedAwaitingCompletion)
-        #expect(completed == .completed)
         #expect(answers == [.accept(content: nil)])
         #expect(Self.completionCount(in: rootOutputs + rootRest) == Self.once)
         #expect(Self.completionCount(in: childOutputs) == Self.once)
@@ -359,6 +390,7 @@ struct SubagentQuestionRelayTests {
     @Test("a cancel of the asking run in the child ends the question one time at each level")
     func aRunCancelInTheChildEndsTheQuestionOneTimeAtEachLevel() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
         let childActor = try #require(level.child as? RoutedSessionActor)
         let cancelling = Origin.mail([MailID()])
 
@@ -374,7 +406,6 @@ struct SubagentQuestionRelayTests {
             of: level, rootOutputs: rootOutputs, childOutputs: childOutputs, childOrigin: cancelling)
         #expect(ends.child < (try position(ofFirst: .runSettled, in: childOutputs)))
         #expect(firstPosition(in: rootOutputs, where: SessionEventCase.runSettled.matches) == nil)
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     /// The production change that makes this test fail: a relaying level
@@ -384,6 +415,7 @@ struct SubagentQuestionRelayTests {
     @Test("cancelAll() of the root ends the question one time at each level, before its signalDone")
     func cancelAllOfTheParentEndsEachLevelOneTime() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
 
         let signal = level.root.cancelAll()
         let rootOutputs = await Self.outputs(
@@ -394,7 +426,6 @@ struct SubagentQuestionRelayTests {
             of: level, rootOutputs: rootOutputs, childOutputs: childOutputs, rootOrigin: .signal(signal))
         #expect(ends.root < (try position(of: .signalDone(signal), in: rootOutputs)))
         #expect(ends.root < (try position(ofFirst: .runSettled, in: rootOutputs)))
-        await level.fixture.end()
     }
 
     /// The production change that makes this test fail: a close of the root
@@ -402,13 +433,13 @@ struct SubagentQuestionRelayTests {
     @Test("close() of the root ends the question one time at each level, before each feed ends")
     func closeOfTheParentEndsEachLevelBeforeEachFeedEnds() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
 
         await level.root.close()
         let rootOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.rootFeed)
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
 
         try await Self.expectOneEndAtEachLevel(of: level, rootOutputs: rootOutputs, childOutputs: childOutputs)
-        await level.fixture.end()
     }
 
     /// The production change that makes this test fail: a relaying level
@@ -426,10 +457,18 @@ struct SubagentQuestionRelayTests {
         let closeGate = RunLatch()
         var level = try await Self.askOneLevel(
             rootStep: SubagentRelayStep(agentName: Self.reviewer, closeGate: closeGate))
+        defer { await level.fixture.end(opening: [closeGate, level.rootStep.gate]) }
         let childActor = try #require(level.child as? RoutedSessionActor)
         let root = level.root
 
         let closing = Task { await root.close() }
+        // Rule T1: the wait for the answer ends also when the asking run
+        // ended with no answer. A relay that does not end the copy in the
+        // child gives no event that this wait can also end on: the root
+        // feed ends and the root question settles also in a test that
+        // passes, and the end in the child comes after them from a task of
+        // the relay. The close gate holds the child open on purpose, and the
+        // deferred end opens the gate when the test throws.
         let answers = try await level.fixture.box.waitForAnswers(Self.once)
         let childWasClosed = await childActor.isClosed
         let childOpen = await level.child.openElicitationIds()
@@ -446,7 +485,6 @@ struct SubagentQuestionRelayTests {
         #expect(childOpen.isEmpty)
         #expect(finishedBeforeTheChildClosed == 0)
         #expect(finished == Self.once)
-        await level.fixture.end()
     }
 
     /// The production change that makes this test fail: a relay that waits
@@ -490,6 +528,7 @@ struct SubagentQuestionRelayTests {
     @Test("a cancel of the relaying run ends the root question with the origin of the cancel, before its runSettled")
     func aCancelOfTheRelayingRunEndsTheParentQuestionBeforeItsRunSettled() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
         let rootActor = try level.fixture.sessionActor()
         let cancelling = Origin.mail([MailID()])
 
@@ -503,7 +542,6 @@ struct SubagentQuestionRelayTests {
         let ends = try await Self.expectOneEndAtEachLevel(
             of: level, rootOutputs: rootOutputs, childOutputs: childOutputs, rootOrigin: cancelling)
         #expect(ends.root < (try position(ofFirst: .runSettled, in: rootOutputs)))
-        await level.fixture.end()
     }
 
     /// The production change that makes this test fail: a relay that does
@@ -512,6 +550,7 @@ struct SubagentQuestionRelayTests {
     @Test("a close of the child ends its question, and the root copy ends before the relaying run settles")
     func closeOfTheChildEndsTheParentCopyBeforeTheRunSettled() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
 
         await level.rootStep.gate.open()
         let childOutputs = await SessionWorkEventTests.remainingOutputs(of: &level.childFeed)
@@ -521,7 +560,6 @@ struct SubagentQuestionRelayTests {
         let ends = try await Self.expectOneEndAtEachLevel(
             of: level, rootOutputs: rootOutputs, childOutputs: childOutputs)
         #expect(ends.root < (try position(ofFirst: .runSettled, in: rootOutputs)))
-        await level.fixture.end()
     }
 
     // MARK: - Waiting only for the user
@@ -531,13 +569,13 @@ struct SubagentQuestionRelayTests {
     @Test("a parent is idle while its child waits only for the user")
     func aParentIsIdleWhileItsChildWaitsOnlyForTheUser() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
 
         let rest = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.rootFeed)
         let isIdle = await level.root.awaitIdle()
 
         #expect(rest.last?.event == .workEnded)
         #expect(isIdle)
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     /// The production change that makes this test fail: "an open question
@@ -546,6 +584,7 @@ struct SubagentQuestionRelayTests {
     func aParentIsNotIdleWhileItsChildWorksWithAnOpenQuestion() async throws {
         let besideRun = RunLatch()
         var level = try await Self.askOneLevel(SubagentAskStep(besideRun: besideRun))
+        defer { await level.fixture.end(opening: [besideRun, level.rootStep.gate]) }
 
         let isIdleWhileTheChildWorks = try await level.fixture.sessionActor().isIdle()
         await besideRun.open()
@@ -553,7 +592,6 @@ struct SubagentQuestionRelayTests {
 
         #expect(isIdleWhileTheChildWorks == false)
         #expect(rest.last?.event == .workEnded)
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     /// The production change that makes this test fail: a relay in a mounted
@@ -565,6 +603,7 @@ struct SubagentQuestionRelayTests {
         var level = try await Self.askOneLevel(
             SubagentAskStep(besideRun: besideRun),
             rootStep: SubagentRelayStep(agentName: Self.reviewer, relaysThroughAMount: true))
+        defer { await level.fixture.end(opening: [besideRun, level.rootStep.gate]) }
         let target = try #require(level.fixture.box.targets.first)
 
         let isIdleWhileTheChildWorks = try await level.fixture.sessionActor().isIdle()
@@ -576,7 +615,6 @@ struct SubagentQuestionRelayTests {
         #expect(isIdleWhileTheChildWorks == false)
         #expect(rest.last?.event == .workEnded)
         #expect(isIdleWhileTheChildWaits)
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     /// The production change that makes this test fail: an idle rule that
@@ -614,6 +652,7 @@ struct SubagentQuestionRelayTests {
     @Test("a root answer starts the work of the root first, and then of the child")
     func aRootAnswerStartsTheWorkOfEachLevel() async throws {
         var level = try await Self.askOneLevel()
+        defer { await level.fixture.end(opening: [level.rootStep.gate]) }
         _ = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.rootFeed)
         _ = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.childFeed)
 
@@ -625,7 +664,6 @@ struct SubagentQuestionRelayTests {
         #expect(delivery == .delivered)
         #expect(rootNext == SessionOutput(origin: .system, event: .workStarted))
         #expect(childNext == SessionOutput(origin: .system, event: .workStarted))
-        await level.fixture.end(opening: [level.rootStep.gate])
     }
 
     // MARK: - The open questions
@@ -638,6 +676,7 @@ struct SubagentQuestionRelayTests {
         let relayedId = try level.questionId
         let rootActor = try level.fixture.sessionActor()
         let fakeRunGate = RunLatch()
+        defer { await level.fixture.end(opening: [level.rootStep.gate, fakeRunGate]) }
         let token = await trackFakeRun(on: rootActor.runPlane, latch: fakeRunGate)
         let context = PendingElicitationFixtures.makeContext(
             for: level.root, postingTo: rootActor.outbox, completionToken: token)
@@ -657,7 +696,6 @@ struct SubagentQuestionRelayTests {
         #expect(childOpen == [relayedId.description])
         #expect(rootOpenAfter.isEmpty)
         #expect(try await asking.value == PendingElicitationFixtures.runCancelled)
-        await level.fixture.end(opening: [fakeRunGate])
     }
 }
 

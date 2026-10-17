@@ -67,10 +67,29 @@ struct RunMessageDeliveryTests {
     /// starts, after the answer that the message started.
     private static let terminalAnswerSubmission = 3
 
+    /// The count of the answers of the session through the answer of the
+    /// message: the caller answer, and then the answer that the message
+    /// starts.
+    private static let answersThroughTheMessageAnswer = 2
+
     // MARK: - Fixtures
+
+    /// Tells whether the feed in `log` holds the end of the answer of the
+    /// message. A wait for an event of the message also ends on this end
+    /// (rule T1): the answer of the message ends also when the session does
+    /// not send the event that the test waits for.
+    ///
+    /// - Parameter log: The log of the session feed.
+    /// - Returns: `true` when the feed holds the answer of the message.
+    private static func holdsTheMessageAnswer(_ log: SessionEventLog) async -> Bool {
+        await log.events.answers.count >= answersThroughTheMessageAnswer
+    }
 
     /// Makes a session over a new backend that follows `script`, and watches
     /// its events.
+    ///
+    /// When the resolve throws, this helper removes the temp directory first
+    /// (rule T1).
     ///
     /// - Parameters:
     ///   - script: What each call of the backend does, by its one-based
@@ -85,9 +104,15 @@ struct RunMessageDeliveryTests {
     ) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "RunMessageDeliveryTests")
         let backend = Backend(script: script)
-        let profile = try await RouterTestFixtures.resolveStandardProfile(
-            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend), cacheDir: directory
-        ).profile
+        let profile: LanguageModelProfile
+        do {
+            profile = try await RouterTestFixtures.resolveStandardProfile(
+                over: SessionMessagePumpTests.PumpProbeContainer(backend: backend), cacheDir: directory
+            ).profile
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(mailOnlyAnswerLimit: mailOnlyAnswerLimit))
         let (events, drain) = await SessionEventLog.watch(session)
@@ -140,6 +165,7 @@ struct RunMessageDeliveryTests {
         let fixture = try await Self.makeFixture()
         defer { Self.tearDown(fixture) }
         let latch = RunLatch()
+        defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
         _ = try await fixture.session.respond(to: Self.firstPrompt)
 
@@ -151,7 +177,6 @@ struct RunMessageDeliveryTests {
         #expect(prompt.hasSuffix(RoutedSessionActor.runMessageDeliveryPrompt))
         #expect(await fixture.session.pumpEnds())
         #expect(await Self.isOpen(token, on: fixture.session))
-        await latch.open()
     }
 
     @Test("a later terminal of the same run settles the run and starts an answer of its own")
@@ -159,6 +184,7 @@ struct RunMessageDeliveryTests {
         let fixture = try await Self.makeFixture()
         defer { Self.tearDown(fixture) }
         let latch = RunLatch()
+        defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
         _ = try await fixture.session.respond(to: Self.firstPrompt)
         await fixture.session.outbox.post(event: Self.message(of: token))
@@ -182,6 +208,10 @@ struct RunMessageDeliveryTests {
         let fixture = try await Self.makeFixture(script: [1: .hold(holdFirstAnswer)])
         defer { Self.tearDown(fixture) }
         let latch = RunLatch()
+        defer {
+            await latch.open()
+            await holdFirstAnswer.open()
+        }
         let token = await Self.openRun(on: fixture.session, until: latch)
         let firstAnswer = Task { try await fixture.session.respond(to: Self.firstPrompt) }
         try await fixture.backend.waitForPrompts(1)
@@ -196,7 +226,6 @@ struct RunMessageDeliveryTests {
         let prompt = try #require(fixture.backend.prompts.last)
         #expect(prompt.contains(OperationEventSegment.renderedLine(for: Self.message(of: token))))
         #expect(prompt.hasSuffix(RoutedSessionActor.runMessageDeliveryPrompt))
-        await latch.open()
     }
 
     @Test("a message of a run that is no background run starts no answer, and rides the next caller message")
@@ -224,18 +253,23 @@ struct RunMessageDeliveryTests {
         let fixture = try await Self.makeFixture(mailOnlyAnswerLimit: 0)
         defer { Self.tearDown(fixture) }
         let latch = RunLatch()
+        defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
         _ = try await fixture.session.respond(to: Self.firstPrompt)
 
         await fixture.session.outbox.post(event: Self.message(of: token))
 
-        try await fixture.events.wait(until: { $0.mailDeliveryPauses.count == 1 })
+        // The wait also ends on the answer of the message (rule T1). A held
+        // message starts no answer, so in a test that passes that answer
+        // never comes.
+        try await fixture.events.changes.wait(
+            until: { await fixture.events.events.mailDeliveryPauses.count == 1 },
+            endingOn: { await Self.holdsTheMessageAnswer(fixture.events) })
         #expect(await fixture.session.pumpEnds())
         #expect(fixture.backend.prompts == [Self.firstPrompt])
         let held = await fixture.session.outbox.pending().events
         #expect(held.map(\.event) == [Self.message(of: token)])
         #expect(held.allSatisfy { $0.isHeld })
-        await latch.open()
     }
 
     @Test("a message of a background run arrives on streamSessionEvents() as runMessage")
@@ -243,15 +277,20 @@ struct RunMessageDeliveryTests {
         let fixture = try await Self.makeFixture()
         defer { Self.tearDown(fixture) }
         let latch = RunLatch()
+        defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
         _ = try await fixture.session.respond(to: Self.firstPrompt)
 
         await fixture.session.outbox.post(event: Self.message(of: token))
 
         let expected = Self.message(of: token)
-        try await fixture.events.wait(until: { !$0.runMessages.isEmpty })
+        // The wait also ends on the answer of the message (rule T1). The
+        // session sends runMessage when the transcript holds the message,
+        // and that is before the answer that delivers the message ends.
+        try await fixture.events.changes.wait(
+            until: { await !fixture.events.events.runMessages.isEmpty },
+            endingOn: { await Self.holdsTheMessageAnswer(fixture.events) })
         #expect(await fixture.events.events.runMessages == [expected])
-        await latch.open()
     }
 }
 

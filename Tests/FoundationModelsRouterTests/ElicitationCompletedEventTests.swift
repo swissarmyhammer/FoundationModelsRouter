@@ -90,6 +90,17 @@ struct ElicitationCompletedEventTests {
         mutating func outputsToTheEnd() async -> [SessionOutput] {
             await fixture.outputsToTheEnd(of: &feed, opening: [runGate, answerGate].compactMap { $0 })
         }
+
+        /// Ends the fixture: opens `gates`, the gate of the run and the gate
+        /// of the answer, and closes the session. A test calls it in a
+        /// `defer`, so that the end comes also when the test throws (rule
+        /// T1). A second end does no harm.
+        ///
+        /// - Parameter gates: The other gates that can hold work of the
+        ///   session.
+        func end(opening gates: [RunLatch] = []) async {
+            await fixture.end(opening: gates + [runGate, answerGate].compactMap { $0 })
+        }
     }
 
     /// Makes a session with a fake background run whose context asks a
@@ -126,29 +137,37 @@ struct ElicitationCompletedEventTests {
     ) async throws -> AskedQuestion {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: prefix, tools: [], container: BackgroundingLLMContainer(holdFirstAnswer: answerGate))
-        let session = try fixture.sessionActor()
-        await session.attachOutboxJournalIfNeeded()
-        let feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        if answerGate != nil {
-            try await MailQueueFixtures.startHeldAnswer(heldPrompt, on: fixture.session, backend: fixture.backend)
-        }
-        if let slowRun {
-            _ = await trackFakeRun(
-                on: session.runPlane, latch: slowRun.release, kind: .process, holdingCancelerAt: slowRun)
-        }
         let runGate = RunLatch()
-        let token = await trackFakeRun(on: session.runPlane, latch: runGate, kind: runKind)
-        let postings = ElicitationPostings(
-            forwardingTo: fixture.session.outbox, holdingCompletionsAt: completionGate, holdingEndsAt: endGate)
-        let context = PendingElicitationFixtures.makeContext(
-            for: fixture.session, postingTo: postings, completionToken: token)
-        let id = ULID.generate()
-        let request = makeRequest(id)
-        let answer = Task { try await context.elicit(request) }
-        try await postings.waitForPosts(questionPosts)
-        return AskedQuestion(
-            fixture: fixture, feed: feed, context: context, postings: postings, id: id, answer: answer,
-            runGate: runGate, runToken: token, answerGate: answerGate)
+        do {
+            let session = try fixture.sessionActor()
+            await session.attachOutboxJournalIfNeeded()
+            let feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+            if answerGate != nil {
+                try await MailQueueFixtures.startHeldAnswer(heldPrompt, on: fixture.session, backend: fixture.backend)
+            }
+            if let slowRun {
+                _ = await trackFakeRun(
+                    on: session.runPlane, latch: slowRun.release, kind: .process, holdingCancelerAt: slowRun)
+            }
+            let token = await trackFakeRun(on: session.runPlane, latch: runGate, kind: runKind)
+            let postings = ElicitationPostings(
+                forwardingTo: fixture.session.outbox, holdingCompletionsAt: completionGate, holdingEndsAt: endGate)
+            let context = PendingElicitationFixtures.makeContext(
+                for: fixture.session, postingTo: postings, completionToken: token)
+            let id = ULID.generate()
+            let request = makeRequest(id)
+            let answer = Task { try await context.elicit(request) }
+            try await postings.waitForPosts(questionPosts)
+            return AskedQuestion(
+                fixture: fixture, feed: feed, context: context, postings: postings, id: id, answer: answer,
+                runGate: runGate, runToken: token, answerGate: answerGate)
+        } catch {
+            // Rule T1: a throw after the make ends the fixture, and opens each
+            // gate that can hold work of the session.
+            await fixture.end(
+                opening: [runGate, answerGate, completionGate, endGate, slowRun?.release].compactMap { $0 })
+            throw error
+        }
     }
 
     /// The prompt of the answer that runs while the question is asked.
@@ -251,12 +270,16 @@ struct ElicitationCompletedEventTests {
     ///   - gate: The gate that holds the completion post.
     /// - Returns: The task that opens `gate` when the stop of the session
     ///   waits (``openWhenTheStopWaits(_:for:)``).
-    /// - Throws: When the session is not a ``RoutedSessionActor``.
+    /// - Throws: When the session is not a ``RoutedSessionActor``, or when
+    ///   the tool did not complete the flow. A flow that did not complete
+    ///   gives no completion post, and the later wait for that post would
+    ///   not end: the test fails here, before it waits (rule T1).
     private static func completeThroughTheTool(_ asked: AskedQuestion, holdingAt gate: RunLatch) async throws
         -> Task<Void, any Error>
     {
         #expect(await asked.accept() == .acceptedAwaitingCompletion)
-        #expect(await asked.context.complete(elicitationId: asked.id) == .completed)
+        let completed = await asked.context.complete(elicitationId: asked.id)
+        try #require(completed == .completed)
         let completing = try await asked.fixture.sessionActor().runPlane.completingElicitations()
         #expect(completing == [asked.id])
         return try openWhenTheStopWaits(gate, for: asked)
@@ -412,15 +435,18 @@ struct ElicitationCompletedEventTests {
     @Test("a completion through the session gives one event with the id and the origin of the question, and no end")
     func aCompletionThroughTheSessionGivesOneEvent() async throws {
         var asked = try await Self.ask(Self.urlRequest)
+        defer { await asked.end() }
 
         let accepted = await asked.accept()
         let completed = await asked.fixture.session.complete(elicitationId: asked.id.description)
+        // A flow that did not complete gives no completion post: the test
+        // fails here, before it waits (rule T1).
+        try #require(completed == .completed)
         try await asked.postings.waitForCompletions(Self.oneCompletion)
         let response = try await asked.answer.value
         let outputs = await asked.outputsToTheEnd()
 
         #expect(accepted == .acceptedAwaitingCompletion)
-        #expect(completed == .completed)
         #expect(response.action == .accept)
         _ = try Self.soleCompletion(in: outputs, of: asked)
         Self.expectNoEnd(in: outputs)
@@ -433,15 +459,18 @@ struct ElicitationCompletedEventTests {
     @Test("a completion through the tool that asked gives one event after the work start, and no end")
     func aCompletionThroughTheToolGivesOneEvent() async throws {
         var asked = try await Self.ask(Self.urlRequest)
+        defer { await asked.end() }
 
         let accepted = await asked.accept()
         let completed = await asked.context.complete(elicitationId: asked.id)
+        // A flow that did not complete gives no completion post: the test
+        // fails here, before it waits (rule T1).
+        try #require(completed == .completed)
         try await asked.postings.waitForCompletions(Self.oneCompletion)
         let response = try await asked.answer.value
         let outputs = await asked.outputsToTheEnd()
 
         #expect(accepted == .acceptedAwaitingCompletion)
-        #expect(completed == .completed)
         #expect(response.action == .accept)
         let completion = try Self.soleCompletion(in: outputs, of: asked)
         #expect(try position(of: .workStarted, in: outputs) < completion)
@@ -454,6 +483,7 @@ struct ElicitationCompletedEventTests {
     @Test("a second completion of the same question gives no second event")
     func aSecondCompletionGivesNoEvent() async throws {
         var asked = try await Self.ask(Self.urlRequest)
+        defer { await asked.end() }
 
         _ = await asked.accept()
         _ = await asked.fixture.session.complete(elicitationId: asked.id.description)
@@ -473,6 +503,7 @@ struct ElicitationCompletedEventTests {
     @Test("a completion post for a form question gives no event")
     func aFormQuestionGivesNoEvent() async throws {
         var asked = try await Self.ask { PendingElicitationFixtures.formRequest(elicitationId: $0) }
+        defer { await asked.end() }
 
         await asked.postings.post(elicitationCompleted: asked.id)
         try await asked.postings.waitForCompletions(Self.oneCompletion)
@@ -501,6 +532,7 @@ struct ElicitationCompletedEventTests {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: Self.prefix,
             tools: [SessionWorkEventTests.AskingTool(asksForURL: true, askGate: askGate, returnGate: returnGate)])
+        defer { await fixture.end(opening: [askGate, returnGate]) }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         let asking = try await SessionWorkEventTests.outputsUpToTheQuestion(
             of: fixture, askGate: askGate, feed: &feed)
@@ -508,15 +540,16 @@ struct ElicitationCompletedEventTests {
 
         let accepted = await fixture.session.respond(elicitationId: id.description, response: .accept(content: nil))
         let completed = await fixture.session.complete(elicitationId: id.description)
+        // A flow that did not complete keeps the run waiting, so no
+        // runSettled comes: the test fails here, before it reads (rule T1).
+        try #require(completed == .completed)
         let resumed = await SessionWorkEventTests.outputs(
             from: &feed, through: { SessionEventCase.runSettled.matches($0) })
 
         #expect(accepted == .acceptedAwaitingCompletion)
-        #expect(completed == .completed)
         let completion = try position(ofFirst: .elicitationCompleted, in: resumed)
         #expect(resumed[completion].event == .elicitationCompleted(ElicitationCompletion(elicitationId: id)))
         #expect(completion < (try position(ofFirst: .runSettled, in: resumed)))
-        await fixture.end(opening: [askGate, returnGate])
     }
 
     /// The production change that makes this test fail: a journal that sends
@@ -525,6 +558,7 @@ struct ElicitationCompletedEventTests {
     @Test("a completion post for an unknown id gives no event")
     func anUnknownIdGivesNoEvent() async throws {
         var asked = try await Self.ask(Self.urlRequest)
+        defer { await asked.end() }
 
         await asked.postings.post(elicitationCompleted: ULID.generate())
         try await asked.postings.waitForCompletions(Self.oneCompletion)
@@ -565,7 +599,9 @@ struct ElicitationCompletedEventTests {
     ) async throws {
         let gate = RunLatch()
         var asked = try await ask(holdingCompletionsAt: gate, duringAnAnswerHeldAt: answerGate, urlRequest)
+        defer { await asked.end(opening: [gate]) }
         let opener = try await completeThroughTheTool(asked, holdingAt: gate)
+        defer { opener.cancel() }
 
         let signal = asked.fixture.session.cancelAll()
         let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
@@ -616,7 +652,9 @@ struct ElicitationCompletedEventTests {
     ) async throws {
         let gate = RunLatch()
         var asked = try await ask(holdingCompletionsAt: gate, duringAnAnswerHeldAt: answerGate, urlRequest)
+        defer { await asked.end(opening: [gate]) }
         let opener = try await completeThroughTheTool(asked, holdingAt: gate)
+        defer { opener.cancel() }
         let session = asked.fixture.session
 
         let close = Task { await session.close() }
@@ -638,6 +676,7 @@ struct ElicitationCompletedEventTests {
     @Test("cancelAll() after a run cancel took an accepted URL question gives one end before the signalDone, and no completion")
     func cancelAllAfterARunCancelGivesOneEnd() async throws {
         var asked = try await Self.ask(runKind: .process, Self.urlRequest)
+        defer { await asked.end() }
         try await Self.cancelTheRunAfterTheAccept(of: asked)
 
         let signal = asked.fixture.session.cancelAll()
@@ -657,7 +696,9 @@ struct ElicitationCompletedEventTests {
     func cancelAllWhileARunCancelEndIsOnItsWayGivesTheEnd() async throws {
         let gate = RunLatch()
         var asked = try await Self.ask(holdingEndsAt: gate, Self.urlRequest)
+        defer { await asked.end(opening: [gate]) }
         let held = try await Self.cancelTheRunWhileTheEndWaits(asked, at: gate)
+        defer { held.opener.cancel() }
 
         let signal = asked.fixture.session.cancelAll()
         let stopped = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
@@ -675,7 +716,9 @@ struct ElicitationCompletedEventTests {
     func closeWhileARunCancelEndIsOnItsWayGivesTheEnd() async throws {
         let gate = RunLatch()
         var asked = try await Self.ask(holdingEndsAt: gate, Self.urlRequest)
+        defer { await asked.end(opening: [gate]) }
         let held = try await Self.cancelTheRunWhileTheEndWaits(asked, at: gate)
+        defer { held.opener.cancel() }
         let session = asked.fixture.session
 
         let close = Task { await session.close() }
@@ -698,6 +741,7 @@ struct ElicitationCompletedEventTests {
     @Test("close() after a run cancel took an accepted URL question gives one end before the feed ends, and no completion")
     func closeAfterARunCancelGivesOneEnd() async throws {
         var asked = try await Self.ask(runKind: .process, Self.urlRequest)
+        defer { await asked.end() }
         try await Self.cancelTheRunAfterTheAccept(of: asked)
         let session = asked.fixture.session
 
@@ -722,6 +766,7 @@ struct ElicitationCompletedEventTests {
     func cancelAllWithASlowCancelerGivesTheEndThatTheRunGot() async throws {
         let hold = CancelerHold()
         var asked = try await Self.ask(startingFirst: hold, Self.urlRequest)
+        defer { await asked.end(opening: [hold.release]) }
         #expect(await asked.accept() == .acceptedAwaitingCompletion)
 
         let signal = asked.fixture.session.cancelAll()
@@ -748,6 +793,7 @@ struct ElicitationCompletedEventTests {
     func closeWithASlowCancelerGivesTheEndThatTheRunGot() async throws {
         let hold = CancelerHold()
         var asked = try await Self.ask(startingFirst: hold, Self.urlRequest)
+        defer { await asked.end(opening: [hold.release]) }
         #expect(await asked.accept() == .acceptedAwaitingCompletion)
         let session = asked.fixture.session
 

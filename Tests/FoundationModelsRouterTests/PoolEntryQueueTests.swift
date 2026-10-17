@@ -169,7 +169,9 @@ struct PoolEntryQueueTests {
         // The first call holds the model. The next two wait in the one queue,
         // in the order they are submitted. A session sends
         // `submissionQueued` when its submission joins the queue behind
-        // another job.
+        // another job. Each wait also ends when its answer ended (rule T1):
+        // the latch holds the first answer in the model and the next answers
+        // in the queue, so in a test that passes no answer ends first.
         let sessions = [fromFirst, fromSecond, fromFirst].map { $0.standard.makeSession() }
         var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
         for session in sessions {
@@ -179,11 +181,15 @@ struct PoolEntryQueueTests {
         var answers: [Task<String, any Error>] = []
         for (index, session) in sessions.enumerated() {
             let prompt = Self.prompts[index]
-            answers.append(Task { try await session.respond(to: prompt) })
+            let answer = Task { try await session.respond(to: prompt) }
+            answers.append(answer)
             if index == 0 {
-                await fixture.observer.waitUntil { $0.entered == 1 }
+                try await RecordedWaitResult.wait(
+                    for: { await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
             } else {
-                try await feeds[index].log.waitForQueuedSubmissions(1)
+                let log = feeds[index].log
+                try await RecordedWaitResult.wait(
+                    for: { try await log.waitForQueuedSubmissions(1) }, endingOnEndOf: answer)
             }
             #expect(await fixture.observer.enteredCount == 1)
             #expect(await queue.waitingCount == index)
@@ -227,8 +233,12 @@ struct PoolEntryQueueTests {
         // The direct call holds the model. The router call waits in the queue
         // of the pool entry, so it never enters the model at the same time.
         let directEmbedder = try PooledEmbedder(hold: directHold)
+        // Each wait also ends when its call ended (rule T1): the gate holds
+        // the direct call in the model and the router call in the queue, so
+        // in a test that passes no call ends first.
         let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
-        await directLoader.embedding.entered.wait()
+        let entered = directLoader.embedding.entered
+        try await RecordedWaitResult.wait(for: { await entered.wait() }, endingOnEndOf: directCall)
         // The queue of the pool entry records its depth metric when it makes
         // the job of the router call, on the task of that call, with the
         // factory that the task binds. The same `submit` call then puts the
@@ -237,7 +247,7 @@ struct PoolEntryQueueTests {
         let routerCall = Task {
             try await withMetricsFactory(probe) { try await profile.embedding.embed(texts: Self.texts) }
         }
-        await probe.enqueued.wait()
+        try await RecordedWaitResult.wait(for: { await probe.enqueued.wait() }, endingOnEndOf: routerCall)
 
         directLoader.embedding.gate.signal()
         directLoader.embedding.gate.signal()

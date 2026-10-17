@@ -210,6 +210,7 @@ struct RegisteredJournalOpTests {
   @Test("a registration site's op reaches BackgroundRun.op, while the tool name stays the tool's own")
   func aRegisteredOpReachesTheRunPlane() async throws {
     let gate = RunLatch()
+    defer { await gate.open() }
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
@@ -220,18 +221,18 @@ struct RegisteredJournalOpTests {
       postingTo: sink
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
+    defer { await Self.settle(run, gate: gate, on: host) }
 
     // The two fields really differ, which is the whole point: no route into
     // this module could make them differ before.
     #expect(run.op == Self.registeredOp)
     #expect(run.tool == Self.verbToolName)
-
-    await Self.settle(run, gate: gate, on: host)
   }
 
   @Test("a registration site's op reaches the ToolInvocationRecord of the run")
   func aRegisteredOpReachesTheInvocationRecord() async throws {
     let gate = RunLatch()
+    defer { await gate.open() }
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
@@ -242,6 +243,7 @@ struct RegisteredJournalOpTests {
       postingTo: sink
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
+    defer { await Self.settle(run, gate: gate, on: host) }
 
     // The run is still running, so the open record stands alone; it is
     // self-attributed by the background run's own completion token.
@@ -249,8 +251,6 @@ struct RegisteredJournalOpTests {
     #expect(records.map(\.op) == [Self.registeredOp])
     #expect(records.map(\.tool) == [Self.verbToolName])
     #expect(records.map(\.correlationID) == [run.completionToken])
-
-    await Self.settle(run, gate: gate, on: host)
   }
 
   @Test(
@@ -291,6 +291,7 @@ struct RegisteredJournalOpTests {
   @Test("a tool whose registration site names no op still reports op equal to its tool name")
   func aMountThatNamesNoOpKeepsTheOneStringStamp() async throws {
     let gate = RunLatch()
+    defer { await gate.open() }
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
@@ -302,12 +303,11 @@ struct RegisteredJournalOpTests {
       postingTo: sink
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
+    defer { await Self.settle(run, gate: gate, on: host) }
 
     #expect(run.op == Self.verbToolName)
     #expect(run.tool == Self.verbToolName)
     #expect(await sink.invocations.map(\.op) == [Self.verbToolName])
-
-    await Self.settle(run, gate: gate, on: host)
   }
 
   // MARK: - The plane the pair appears on
@@ -317,6 +317,7 @@ struct RegisteredJournalOpTests {
   )
   func anInnerCallReportsTheEnclosingOpInItsEventJournal() async throws {
     let gate = RunLatch()
+    defer { await gate.open() }
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
@@ -327,6 +328,7 @@ struct RegisteredJournalOpTests {
       postingTo: EnclosingRunSink(enclosing: host, upstream: sink)
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
+    defer { await Self.settle(run, gate: gate, on: host) }
 
     // The run plane carries the pair the registration site gave.
     let records = await sink.invocations
@@ -341,7 +343,5 @@ struct RegisteredJournalOpTests {
     #expect(events.map(\.op) == [Self.enclosingOp])
     #expect(events.map(\.tool) == [Self.enclosingToolName])
     #expect(events.map(\.correlationID) == [host.completionToken])
-
-    await Self.settle(run, gate: gate, on: host)
   }
 }

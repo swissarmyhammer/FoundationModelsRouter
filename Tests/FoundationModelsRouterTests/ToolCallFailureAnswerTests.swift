@@ -64,6 +64,27 @@ struct ToolCallFailureAnswerTests {
         return error is CancellationError
     }
 
+    /// Waits until `tool` sent ``CancellingMarkerTool/entered``, or until
+    /// `answering` ended (rule T1), and then requires that the call of `tool`
+    /// ran.
+    ///
+    /// The answer ends only after the cancel of the test when the call runs,
+    /// so in a test that passes the answer does not end first. An answer that
+    /// ends with no call of the tool then fails the test here.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool whose call the test stops.
+    ///   - answering: The task of the answer.
+    /// - Throws: The error of `#require` when the answer ended before the call
+    ///   of `tool` ran, or ``ConditionNeverHeld`` when the test was cancelled
+    ///   first.
+    private static func waitForEntry(
+        of tool: CancellingMarkerTool, orEndOf answering: Task<String, any Error>
+    ) async throws {
+        try await RecordedWaitResult.wait(for: { try await tool.entered.wait() }, endingOnEndOf: answering)
+        try #require(tool.calledSteps == [Step.failing])
+    }
+
     @Test("an answer with one failed call and three good calls completes the three and answers", arguments: FailingToolRow.everyMountRoute)
     func goodCallsBesideAFailedCallComplete(_ row: FailingToolRow) async throws {
         let failingTool = row.makeTool()
@@ -127,7 +148,7 @@ struct ToolCallFailureAnswerTests {
         // The stop comes when the tool call runs, as a stop of a user does.
         // It cancels the model call, so the task of the tool call is
         // cancelled, and the tool ends at that cancel.
-        try await cancellingTool.entered.wait()
+        try await Self.waitForEntry(of: cancellingTool, orEndOf: answering)
         fixture.session.cancelAll()
         let error = await #expect(throws: (any Error).self) {
             _ = try await answering.value
@@ -138,7 +159,6 @@ struct ToolCallFailureAnswerTests {
         #expect(await fixture.session.pumpEnds())
 
         #expect(error.map(Self.isCancellation) == true, "the answer ended with \(String(describing: error))")
-        #expect(cancellingTool.calledSteps == [Step.failing])
         // Only the round that asked for the call generated: the answering
         // generation never ran.
         #expect(fixture.log.generationPassCount == 1)

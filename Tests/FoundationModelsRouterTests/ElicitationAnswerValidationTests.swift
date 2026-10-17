@@ -86,7 +86,7 @@ struct ElicitationAnswerValidationTests {
     ///   - response: The answer of the user.
     /// - Returns: The answer that the run got, and the prompts of the backend.
     /// - Throws: When a step of the session throws, or the answer is not
-    ///   delivered.
+    ///   delivered. Before it throws, it closes the session (rule T1).
     private static func answer(
         _ request: ElicitationRequest, with response: ElicitationResponse
     ) async throws -> AnsweredQuestion {
@@ -94,20 +94,30 @@ struct ElicitationAnswerValidationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = MailQueueFixtures.Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
-        _ = try await session.respond(to: firstPrompt)
+        do {
+            _ = try await session.respond(to: firstPrompt)
 
-        let postings = ElicitationPostings(forwardingTo: session.outbox)
-        let context = PendingElicitationFixtures.makeContext(for: session, postingTo: postings)
-        let answering = Task { try await context.elicit(request) }
-        try await postings.waitForPosts(1)
+            let postings = ElicitationPostings(forwardingTo: session.outbox)
+            let context = PendingElicitationFixtures.makeContext(for: session, postingTo: postings)
+            let answering = Task { try await context.elicit(request) }
+            let runEnd = RecordedWaitResult.recordingEnd(of: answering, reportingTo: postings.changes)
+            // Rule T1: the wait also ends when the asking run ended. In a
+            // test that passes, the run posts its question before it waits
+            // for the answer, and it ends only after the answer below.
+            try await postings.changes.wait(until: { postings.postCount >= 1 }, endingOn: { runEnd.value != nil })
 
-        let delivery = await session.respond(elicitationId: request.elicitationId.description, response: response)
-        try #require(delivery == .delivered)
-        let run = try await answering.value
-        #expect(await session.becomesIdle())
-        await session.close()
-        withExtendedLifetime(profile) {}
-        return AnsweredQuestion(run: run, prompts: backend.prompts.joined(separator: "\n"))
+            let delivery = await session.respond(elicitationId: request.elicitationId.description, response: response)
+            try #require(delivery == .delivered)
+            let run = try await answering.value
+            #expect(await session.becomesIdle())
+            await session.close()
+            withExtendedLifetime(profile) {}
+            return AnsweredQuestion(run: run, prompts: backend.prompts.joined(separator: "\n"))
+        } catch {
+            await session.close()
+            withExtendedLifetime(profile) {}
+            throw error
+        }
     }
 
     /// Checks that the run got a decline for a content that is not valid,

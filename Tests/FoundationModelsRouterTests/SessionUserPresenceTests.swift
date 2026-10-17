@@ -107,12 +107,12 @@ struct SessionUserPresenceTests {
     func theConfiguredPresenceReachesTheRunPlane() async throws {
         let headless = try await BackgroundingSessionFixture.make(
             prefix: Self.prefix, tools: [], userPresence: .headless)
+        defer { await headless.end() }
         let interactive = try await BackgroundingSessionFixture.make(prefix: Self.prefix, tools: [])
+        defer { await interactive.end() }
 
         #expect(try headless.sessionActor().runPlane.userPresence == .headless)
         #expect(try interactive.sessionActor().runPlane.userPresence == .interactive)
-        await headless.end()
-        await interactive.end()
     }
 
     /// The production change that makes this test fail: a session that
@@ -126,6 +126,7 @@ struct SessionUserPresenceTests {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: Self.prefix, tools: [RecordingAskingTool(askGate: askGate, answers: answers)],
             userPresence: .headless)
+        defer { await fixture.end(opening: [askGate]) }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
 
         _ = try await fixture.session.respond(to: Self.jobPrompt)
@@ -140,7 +141,6 @@ struct SessionUserPresenceTests {
         #expect(SessionWorkEventTests.workEvents(of: outputs) == [.workStarted, .workEnded])
         let settled = try position(ofFirst: .runSettled, in: untilWorkEnd)
         #expect(settled < untilWorkEnd.count - 1)
-        await fixture.end(opening: [askGate])
     }
 
     /// The production change that makes this test fail: a session that
@@ -154,6 +154,7 @@ struct SessionUserPresenceTests {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: Self.prefix,
             tools: [SessionWorkEventTests.AskingTool(asksForURL: false, askGate: askGate, returnGate: returnGate)])
+        defer { await fixture.end(opening: [askGate, returnGate]) }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
 
         let asking = try await SessionWorkEventTests.outputsUpToTheQuestion(
@@ -161,7 +162,6 @@ struct SessionUserPresenceTests {
 
         let question = try firstQuestion(in: asking)
         #expect(question.kind == .elicitation)
-        await fixture.end(opening: [askGate, returnGate])
     }
 
     /// The production change that makes this test fail: a fork that makes
@@ -170,11 +170,13 @@ struct SessionUserPresenceTests {
     func aForkOfAHeadlessSessionIsHeadless() async throws {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: Self.prefix, tools: [], userPresence: .headless)
+        defer { await fixture.end() }
 
         let fork = try #require(try await fixture.session.fork(workingDirectory: nil) as? RoutedSessionActor)
+        // The defers run in reverse order: the fork closes before the end of
+        // the fixture.
+        defer { await fork.close() }
 
         #expect(fork.runPlane.userPresence == .headless)
-        await fork.close()
-        await fixture.end()
     }
 }

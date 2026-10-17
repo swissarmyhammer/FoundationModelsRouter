@@ -78,6 +78,23 @@ struct RouterMetricsTests {
         }
     }
 
+    /// Waits until the holding answer started its pass in the model of
+    /// `fixture`, or until `holding` ended (rule T1).
+    ///
+    /// In a test that passes, the latch of `fixture` holds the pass in the
+    /// model, so the holding answer cannot end before its pass started.
+    ///
+    /// - Parameters:
+    ///   - fixture: The fixture whose model records the pass.
+    ///   - holding: The task of the holding answer.
+    /// - Throws: The error of `#require` when the holding answer ended first,
+    ///   or ``ConditionNeverHeld`` when the test was cancelled first.
+    private static func waitForTheHoldingPass(
+        of fixture: PassObservingFixture, endingOnEndOf holding: Task<String, any Error>
+    ) async throws {
+        try await RecordedWaitResult.wait(for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: holding)
+    }
+
     /// The dimensions of a metric of one session: its model and its slot.
     ///
     /// - Parameter session: The session.
@@ -235,7 +252,7 @@ struct RouterMetricsTests {
             context in
             await session.useCaptureMetrics(for: context.metricsFactory)
             let holding = Task { try await session.respond(to: Self.holdingPrompt) }
-            try await fixture.passes.waitForPasses(1)
+            try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holding)
             for prompt in Self.waitingPrompts {
                 _ = try session.send(prompt)
             }
@@ -276,7 +293,7 @@ struct RouterMetricsTests {
             context in
             await session.useCaptureMetrics(for: context.metricsFactory)
             let holding = Task { try await session.respond(to: Self.holdingPrompt) }
-            try await fixture.passes.waitForPasses(1)
+            try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holding)
             let waiting = try session.send(Self.waitingPrompts[0])
             let cancel = session.cancel(waiting)
             #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
@@ -334,14 +351,21 @@ struct RouterMetricsTests {
                 feeds.append(await SessionEventLog.watch(session))
             }
             let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
-            try await fixture.passes.waitForPasses(1)
+            try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holdingAnswer)
             var waitingAnswers: [Task<String, any Error>] = []
             for (index, session) in waiting.enumerated() {
                 let prompt = Self.waitingPrompts[index]
-                waitingAnswers.append(Task { try await session.respond(to: prompt) })
+                let answer = Task { try await session.respond(to: prompt) }
+                waitingAnswers.append(answer)
                 // The queue counts the submission before it reports the wait,
                 // and the holding answer keeps each submission in the queue.
-                try await feeds[index].log.wait(until: { Self.containsQueuedSubmission($0) })
+                // The wait also ends when the answer ended (rule T1): the
+                // latch holds the answer in the queue, so in a test that
+                // passes it cannot end first.
+                let log = feeds[index].log
+                try await RecordedWaitResult.wait(
+                    for: { try await log.wait(until: { Self.containsQueuedSubmission($0) }) },
+                    endingOnEndOf: answer)
                 #expect(await queue.waitingCount == index + 1)
             }
             await fixture.latch.open()

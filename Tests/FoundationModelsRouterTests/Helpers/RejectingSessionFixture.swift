@@ -30,7 +30,8 @@ struct RejectingSessionFixture {
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
     /// - Returns: The session, its log, and the temp directory.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory (rule T1).
     static func make(
         rejectionCount: Int,
         tempDirPrefix: String,
@@ -46,9 +47,15 @@ struct RejectingSessionFixture {
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension),
             tracer: tracer
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress()
-        )
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress()
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         return RejectingSessionFixture(session: profile.standard.makeSession(), log: log, directory: directory)
     }
 }

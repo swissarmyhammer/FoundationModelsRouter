@@ -267,6 +267,10 @@ struct SessionDrainTests {
         let steps = Steps()
         let insideModelCall = AsyncSemaphore(value: 0)
         let hold = CancelledHold()
+        defer {
+            await hold.unwind.open()
+            await session.close()
+        }
         fixture.hook.midAnswer = { _ in
             insideModelCall.signal()
             await hold.waitForCancelAndUnwind()
@@ -275,7 +279,10 @@ struct SessionDrainTests {
         }
 
         let answer = Task { try await session.respond(to: "long work") }
-        await insideModelCall.wait()
+        // Rule T1: the wait also ends when the answer ended. The answer ends
+        // only after the test stops it below.
+        try await RecordedWaitResult.wait(
+            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
 
         // The close cancels the model call, and then waits for its end. The
         // model call ends only after the test opens the gate.
@@ -319,13 +326,25 @@ struct SessionDrainTests {
         let generation = DetachedGeneration(
             keeping: ModelHandleLease(handle: try #require(session?.profile.standard)), steps: steps)
         weak let lease = generation.keptLease
+        let insideModelCall = AsyncSemaphore(value: 0)
+        // The close waits for the pass, so the gate opens first.
+        defer {
+            await generation.gate.open()
+            await session?.close()
+            await generation.ended()
+        }
         hook.midAnswer = { _ in
             generation.start(reportingTo: observer)
+            insideModelCall.signal()
             await Self.waitForCancel()
             throw CancellationError()
         }
 
         let answer = Task { [session] in try await session?.respond(to: "long work") }
+        // Rule T1: the wait also ends when the answer ended. The answer ends
+        // only after the test stops it below.
+        try await RecordedWaitResult.wait(
+            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
         try await generation.started.wait()
 
         let closing = Task { [session] in
@@ -337,6 +356,7 @@ struct SessionDrainTests {
             try await passEndWaiters.wait(until: { observer.passEnds.waiterCount > 0 })
             await generation.gate.open()
         }
+        defer { gateOpener.cancel() }
         await closing.value
 
         #expect(steps.values == ["generation ended", "closed"])
@@ -347,10 +367,6 @@ struct SessionDrainTests {
         }
         session = nil
         #expect(profile == nil)
-
-        gateOpener.cancel()
-        await generation.gate.open()
-        await generation.ended()
     }
 
     /// Each model call starts helper tasks: the stall watchdog and the reader
@@ -372,6 +388,11 @@ struct SessionDrainTests {
         let hook: AnswerHook
         (session, hook) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir, runClock: clock)
         weak let profile = session?.profile
+        // The close waits for the watchdog, so the gate of the clock opens first.
+        defer {
+            await clock.release.open()
+            await session?.close()
+        }
         let helperTasks = try #require(session?.helperTasks)
         let insideModelCall = AsyncSemaphore(value: 0)
         hook.midAnswer = { _ in
@@ -382,13 +403,17 @@ struct SessionDrainTests {
         await session?.setGenerationStallReportInterval(Self.heldWatchdogInterval)
 
         let answer = Task { [session] in try await session?.respond(to: "long work") }
-        await insideModelCall.wait()
+        // Rule T1: the wait also ends when the answer ended. The answer ends
+        // only after the test stops it below.
+        try await RecordedWaitResult.wait(
+            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
 
         let taskEndWaiters = try #require(helperTasks.taskEnds.waiterChanges)
         let releaseOpener = Task {
             try await taskEndWaiters.wait(until: { helperTasks.taskEnds.waiterCount > 0 })
             await clock.release.open()
         }
+        defer { releaseOpener.cancel() }
         await session?.close()
         await #expect(throws: CancellationError.self) {
             try await answer.value
@@ -397,9 +422,6 @@ struct SessionDrainTests {
 
         #expect(profile == nil)
         #expect(helperTasks.liveTaskCount == 0)
-
-        releaseOpener.cancel()
-        await clock.release.open()
     }
 
     /// A compaction resumes the mail queue and wakes the pump only when no
@@ -424,6 +446,12 @@ struct SessionDrainTests {
         let signals = try #require(session?.signals)
         let before = HeldSignalWork()
         let after = HeldSignalWork()
+        // The close waits for the signal tasks, so their gates open first.
+        defer {
+            await before.gate.open()
+            await after.gate.open()
+            await session?.close()
+        }
         session?.submitSignal(SignalID(), { _ in await before.hold() })
         session?.compact()
         session?.submitSignal(SignalID(), { _ in await after.hold() })
@@ -437,14 +465,12 @@ struct SessionDrainTests {
             try await taskEndWaiters.wait(until: { signals.taskEnds.waiterCount > 0 })
             await after.gate.open()
         }
+        defer { gateOpener.cancel() }
         await session?.close()
         #expect(await session?.isPumpRunning == false)
         session = nil
 
         #expect(profile == nil)
-
-        gateOpener.cancel()
-        await after.gate.open()
     }
 
     /// A mail wakes the pump from a task of its own after its put, and that
@@ -459,6 +485,7 @@ struct SessionDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         var session: RoutedSessionActor?
         (session, _) = try await Self.makeSessionThatAloneKeepsItsProfile(cacheDir: dir)
+        defer { await session?.close() }
         weak let profile = session?.profile
         let helperTasks = try #require(session?.helperTasks)
 
@@ -531,7 +558,10 @@ struct SessionDrainTests {
         }
 
         let answer = Task { try await session.respond(to: "stubborn work") }
-        await insideModelCall.wait()
+        // Rule T1: the wait also ends when the answer ended. The answer ends
+        // only after the test stops it below.
+        try await RecordedWaitResult.wait(
+            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
 
         // The signal ends while the model call still holds: the caller gets
         // the end of the answer at once.
@@ -575,6 +605,10 @@ struct SessionDrainTests {
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
         let hold = CancelledHold()
+        defer {
+            await hold.unwind.open()
+            await session.close()
+        }
         await session.runPlane.start(
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
@@ -608,6 +642,7 @@ struct SessionDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = try await AnswerCancellationTests.makeFixture(cacheDir: dir)
         let session = try #require(fixture.model.makeSession() as? RoutedSessionActor)
+        defer { await session.close() }
         let steps = Steps()
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
@@ -642,6 +677,7 @@ struct SessionDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = try await AnswerCancellationTests.makeFixture(cacheDir: dir)
         let session = try #require(fixture.model.makeSession() as? RoutedSessionActor)
+        defer { await session.close() }
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
         let terminalPosted = AwaitedEvent()
@@ -673,6 +709,5 @@ struct SessionDrainTests {
         // A stopped run makes no more mail: the terminal that it posts after
         // the stop is not queued.
         #expect(await outbox.pending().events.isEmpty)
-        await session.close()
     }
 }

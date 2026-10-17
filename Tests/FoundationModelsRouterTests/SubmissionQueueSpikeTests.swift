@@ -179,12 +179,18 @@ struct SubmissionQueueSpikeTests {
 
         // The mail: the terminal of the background run, whose detail is the
         // answer of the child. The subscription opens before the first
-        // submission, so it cannot miss the terminal.
+        // submission, so it cannot miss the terminal. The read also ends at
+        // the end of the work of the parent (rule T1): an open run is work,
+        // so the work ends only after the terminal, and a tool that starts
+        // no run ends the work with no terminal.
         let sessionEvents = await parent.streamSessionEvents().events
         let settledRun = Task { () -> OperationEvent? in
             for await event in sessionEvents {
                 if case .runSettled(let terminal) = event {
                     return terminal
+                }
+                if case .workEnded = event {
+                    return nil
                 }
             }
             return nil
@@ -198,8 +204,9 @@ struct SubmissionQueueSpikeTests {
         }
 
         // The terminal of the background run comes after the submission of
-        // the child.
-        let terminal = await settledRun.value
+        // the child. With no terminal, no mail wakes the pump, so the test
+        // fails here, before it waits for the delivery (rule T1).
+        let terminal = try #require(await settledRun.value)
 
         // The pump of the parent: the waiting mail causes the next submission,
         // with no caller call (task ^3qx0mpt).
@@ -209,8 +216,8 @@ struct SubmissionQueueSpikeTests {
         let childAnswer = PassObservingModel.answer(to: Self.childPrompt)
         let prompts = fixture.passes.recorded.map(\.prompt)
         let deliveryPrompt = try #require(prompts.dropFirst(Self.passesBeforeDelivery).first)
-        #expect(terminal?.outcome == .succeeded)
-        #expect(terminal?.detail == childAnswer)
+        #expect(terminal.outcome == .succeeded)
+        #expect(terminal.detail == childAnswer)
         #expect(await worker.startedLabels == [Self.parentLabel, Self.childLabel])
         #expect(
             Array(prompts.prefix(Self.passesBeforeDelivery))

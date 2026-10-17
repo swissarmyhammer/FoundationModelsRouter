@@ -99,6 +99,9 @@ struct ElicitationEndedEventTests {
     /// Makes a session with one ``SessionWorkEventTests/AskingTool`` whose
     /// return gate is open, and reads its feed up to the question of the run.
     ///
+    /// When this helper throws, it ends the fixture first, and opens the
+    /// ask gate of the tool (rule T1).
+    ///
     /// - Returns: The session, its feed and the question.
     /// - Throws: What the fixture or the first answer throws.
     private static func askQuestion() async throws -> AskedQuestion {
@@ -108,10 +111,16 @@ struct ElicitationEndedEventTests {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: prefix,
             tools: [SessionWorkEventTests.AskingTool(asksForURL: false, askGate: askGate, returnGate: returnGate)])
-        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        let asking = try await SessionWorkEventTests.outputsUpToTheQuestion(
-            of: fixture, askGate: askGate, feed: &feed)
-        return AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), gates: [askGate])
+        do {
+            var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+            let asking = try await SessionWorkEventTests.outputsUpToTheQuestion(
+                of: fixture, askGate: askGate, feed: &feed)
+            return AskedQuestion(
+                fixture: fixture, feed: feed, question: try firstQuestion(in: asking), gates: [askGate])
+        } catch {
+            await fixture.end(opening: [askGate])
+            throw error
+        }
     }
 
     /// Makes a session with one ``InAnswerURLAskingTool``, mails
@@ -119,17 +128,28 @@ struct ElicitationEndedEventTests {
     /// asks inside the answer to that prompt. The answer then runs, and its
     /// tool waits on the question.
     ///
+    /// The read also ends at the end of the answer (rule T1): in a test that
+    /// passes, the answer waits on the question, so the answer cannot end
+    /// before the question. An answer that ended with no question gives a
+    /// read with no question, and ``firstQuestion(in:)`` fails the test. When
+    /// this helper throws, it ends the fixture first.
+    ///
     /// - Returns: The question and the id of the prompt mail.
     /// - Throws: What the fixture throws, or when the feed has no question.
     private static func askQuestionInsideAnAnswer() async throws -> QuestionInsideAnAnswer {
         let fixture = try await BackgroundingSessionFixture.make(prefix: prefix, tools: [InAnswerURLAskingTool()])
-        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        let prompt = try fixture.sessionActor().mail(
-            RoutedSessionActor.userMessage(askingPrompt, maxTokens: nil, mode: .reply))
-        let asking = await SessionWorkEventTests.outputs(
-            from: &feed, through: SessionEventCase.elicitationRequested.matches)
-        let asked = AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), gates: [])
-        return QuestionInsideAnAnswer(asked: asked, promptMail: prompt.id)
+        do {
+            var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+            let prompt = try fixture.sessionActor().mail(
+                RoutedSessionActor.userMessage(askingPrompt, maxTokens: nil, mode: .reply))
+            let asking = await SessionWorkEventTests.outputs(
+                from: &feed, through: { SessionEventCase.elicitationRequested.matches($0) || $0.isAnswerEnd })
+            let asked = AskedQuestion(fixture: fixture, feed: feed, question: try firstQuestion(in: asking), gates: [])
+            return QuestionInsideAnAnswer(asked: asked, promptMail: prompt.id)
+        } catch {
+            await fixture.end()
+            throw error
+        }
     }
 
     /// Checks that the session takes no answer and no completion to the
@@ -153,6 +173,7 @@ struct ElicitationEndedEventTests {
     @Test("a cancel of the run gives the end with the origin of the work that cancelled it, before the runSettled")
     func aRunCancelGivesTheEndWithTheOriginOfTheCancelBeforeTheTerminal() async throws {
         var asked = try await Self.askQuestion()
+        defer { await asked.end() }
         let session = try asked.fixture.sessionActor()
         let cancelling = Origin.mail([MailID()])
 
@@ -166,7 +187,6 @@ struct ElicitationEndedEventTests {
         #expect(end.origin == cancelling)
         #expect(end.position < (try position(ofFirst: .runSettled, in: outputs)))
         try await Self.expectNoPendingQuestion(asked)
-        await asked.end()
     }
 
     /// The production change that makes this test fail: a `cancelAll()` that
@@ -175,6 +195,7 @@ struct ElicitationEndedEventTests {
     @Test("cancelAll() gives the end with the origin of its signal, before the signalDone of that signal")
     func cancelAllGivesTheEndBeforeItsSignalDone() async throws {
         var asked = try await Self.askQuestion()
+        defer { await asked.end() }
 
         let signal = asked.fixture.session.cancelAll()
         let outputs = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
@@ -183,7 +204,6 @@ struct ElicitationEndedEventTests {
         #expect(end.origin == .signal(signal))
         #expect(end.position < (try position(of: .signalDone(signal), in: outputs)))
         try await Self.expectNoPendingQuestion(asked)
-        await asked.end()
     }
 
     /// The production change that makes this test fail: a `close()` that
@@ -192,6 +212,7 @@ struct ElicitationEndedEventTests {
     @Test("close() gives the end with the origin system, before the feed ends")
     func closeGivesTheEndBeforeTheFeedEnds() async throws {
         var asked = try await Self.askQuestion()
+        defer { await asked.end() }
 
         await asked.fixture.session.close()
         let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
@@ -199,7 +220,6 @@ struct ElicitationEndedEventTests {
         let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
         #expect(end.origin == .system)
         try await Self.expectNoPendingQuestion(asked)
-        await asked.end()
     }
 
     /// The production change that makes this test fail: a session that sends
@@ -207,16 +227,19 @@ struct ElicitationEndedEventTests {
     @Test("a question that the client answered gives no end, also when the session closes later")
     func anAnsweredQuestionGivesNoEnd() async throws {
         var asked = try await Self.askQuestion()
+        defer { await asked.end() }
 
         let delivery = await asked.fixture.session.respond(
             elicitationId: try asked.questionId.description, response: .decline)
+        // A question that the session does not take gives no more work, and
+        // the read then waits on: the test fails here, before it reads (rule
+        // T1).
+        try #require(delivery == .delivered)
         let resumed = await SessionWorkEventTests.outputs(throughNextWorkEnd: &asked.feed)
         await asked.fixture.session.close()
         let rest = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
 
-        #expect(delivery == .delivered)
         #expect(PendingElicitationFixtures.ends(in: resumed + rest).isEmpty)
-        await asked.end()
     }
 
     /// The production change that makes this test fail: a journal that gives
@@ -228,6 +251,7 @@ struct ElicitationEndedEventTests {
     func cancelAllDuringAnAnswerGivesTheEndBeforeItsSignalDone() async throws {
         let inside = try await Self.askQuestionInsideAnAnswer()
         var asked = inside.asked
+        defer { await asked.end() }
 
         let signal = asked.fixture.session.cancelAll()
         let outputs = await SessionWorkEventTests.outputs(from: &asked.feed, through: { $0 == .signalDone(signal) })
@@ -239,7 +263,6 @@ struct ElicitationEndedEventTests {
         #expect(failed < end.position)
         #expect(end.position < (try position(of: .signalDone(signal), in: outputs)))
         try await Self.expectNoPendingQuestion(asked)
-        await asked.end()
     }
 
     /// The production change that makes this test fail: a journal that drops
@@ -248,6 +271,7 @@ struct ElicitationEndedEventTests {
     @Test("close() during an answer whose tool waits on a question gives the end with the origin system, before the feed ends")
     func closeDuringAnAnswerGivesTheEndBeforeTheFeedEnds() async throws {
         var asked = try await Self.askQuestionInsideAnAnswer().asked
+        defer { await asked.end() }
 
         await asked.fixture.session.close()
         let outputs = await SessionWorkEventTests.remainingOutputs(of: &asked.feed)
@@ -255,7 +279,6 @@ struct ElicitationEndedEventTests {
         let end = try PendingElicitationFixtures.soleEnd(in: outputs, of: try asked.questionId)
         #expect(end.origin == .system)
         try await Self.expectNoPendingQuestion(asked)
-        await asked.end()
     }
 
     /// The production change that makes this test fail: a `close()` that

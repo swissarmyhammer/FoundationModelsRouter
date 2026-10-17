@@ -122,6 +122,7 @@ struct CompactionSpikeIntegrationTests {
     @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and a kept tool output completes one submission without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesASubmission() async throws {
         let loaded = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
+        defer { await loaded.container.model.evict() }
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
         let synthesizedIds = Array(synthesizedTranscript).map(\.id)
@@ -153,7 +154,5 @@ struct CompactionSpikeIntegrationTests {
         // of the transcript after the submission — the live session only ever appends.
         let idsAfterSubmission = Array(backend.session.transcript).map(\.id)
         #expect(Array(idsAfterSubmission.prefix(synthesizedIds.count)) == synthesizedIds)
-
-        await loaded.container.model.evict()
     }
 }

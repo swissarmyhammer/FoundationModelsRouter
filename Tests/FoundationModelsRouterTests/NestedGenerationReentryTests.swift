@@ -491,11 +491,23 @@ struct NestedGenerationReentryTests {
     /// submission that made the call is still open when this returns: the
     /// backend records the handle before it waits on its answer hold.
     ///
-    /// - Parameter record: Where the backend records what the call handed back.
+    /// The wait also ends when `answer` ended (rule T1): a tool call that
+    /// throws ends the answer with no record. In a test that passes, the
+    /// answer hold keeps the answer open after the record, so the answer
+    /// cannot end first.
+    ///
+    /// - Parameters:
+    ///   - record: Where the backend records what the call handed back.
+    ///   - answer: The task of the answer whose tool call hands back the
+    ///     record.
     /// - Returns: The token the pending envelope names, or `nil`.
-    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
-    private static func handedBackToken(from record: HandedBackRecord) async throws -> String? {
-        try await record.changes.wait(until: { record.value != nil })
+    /// - Throws: The error of `#require` when the answer ended first, or
+    ///   ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func handedBackToken(
+        from record: HandedBackRecord, endingOnEndOf answer: Task<AnswerOutcome, Never>
+    ) async throws -> String? {
+        let answerEnded = RecordedWaitResult.recordingEnd(of: answer, reportingTo: record.changes)
+        try await record.changes.wait(until: { record.value != nil }, endingOn: { answerEnded.value != nil })
         let text = try #require(record.value)
         guard
             let envelope = try? JSONDecoder().decode(PendingRunEnvelope.self, from: Data(text.utf8))
@@ -695,6 +707,7 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [SendingTool(target: target)])
+        defer { await caller.close() }
         // The tool sends to the very session whose submission invoked it. A
         // send waits for nothing, so it returns at once, with no refusal.
         target.set(caller)
@@ -880,7 +893,8 @@ struct NestedGenerationReentryTests {
         harness.target.set(nested)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(
+            try await Self.handedBackToken(from: harness.handedBack, endingOnEndOf: answer))
 
         // The submission is still open, and the run it started settles all the
         // same: the submission holds nothing that the answer of the run on the
@@ -911,7 +925,8 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(
+            try await Self.handedBackToken(from: harness.handedBack, endingOnEndOf: answer))
 
         // The submission that started the run ends with the handle it was
         // handed. The pump then submits the message of the run, and the run
@@ -940,7 +955,8 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(
+            try await Self.handedBackToken(from: harness.handedBack, endingOnEndOf: answer))
         // The submission that started the run is still open. The fork reads
         // the settled transcript, so the run settles all the same, and its
         // child names the session it forked (task ^dpn2ytt).
@@ -964,7 +980,8 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
-        let token = try #require(try await Self.handedBackToken(from: harness.handedBack))
+        let token = try #require(
+            try await Self.handedBackToken(from: harness.handedBack, endingOnEndOf: answer))
         // The submission that started the run is still open. The read takes
         // the settled transcript, so the run settles all the same, with the
         // entries of the last settled point (task ^dpn2ytt).
@@ -995,6 +1012,10 @@ struct NestedGenerationReentryTests {
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
+        defer {
+            await fixture.latch.open()
+            await waiter.close()
+        }
         let next = profile.standard.makeSession()
         let waiterFeed = await waiter.streamSessionEvents()
         // Second subscriptions, for the waits on `submissionQueued`. The
@@ -1008,16 +1029,24 @@ struct NestedGenerationReentryTests {
 
         // The holder's submission runs on the worker, and its pass stays
         // inside the model until the latch opens.
+        // Each wait also ends when its answer ended (rule T1): the latch
+        // holds the holder in the model and the other answers in the queue,
+        // so in a test that passes no answer ends first.
         let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
-        await fixture.observer.waitUntil { $0.entered == 1 }
+        try await RecordedWaitResult.wait(
+            for: { await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
 
         // The pump of the waiter runs its answer, which has an identity; only
         // its submission waits, in the queue of the model.
         let waiterAnswer = Task { try await waiter.respond(to: Self.nestedPrompt) }
-        try await waiterQueue.log.waitForQueuedSubmissions(1)
+        let waiterLog = waiterQueue.log
+        try await RecordedWaitResult.wait(
+            for: { try await waiterLog.waitForQueuedSubmissions(1) }, endingOnEndOf: waiterAnswer)
         // A third submission joins the queue behind the waiter's.
         let nextAnswer = Task { try await next.respond(to: Self.nextPrompt) }
-        try await nextQueue.log.waitForQueuedSubmissions(1)
+        let nextLog = nextQueue.log
+        try await RecordedWaitResult.wait(
+            for: { try await nextLog.waitForQueuedSubmissions(1) }, endingOnEndOf: nextAnswer)
         #expect(await queue.waitingCount == 2)
 
         // The cancelAll() signal stops the running answer of the waiter. So

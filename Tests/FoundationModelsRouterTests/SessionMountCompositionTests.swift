@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Synchronization
 import Testing
 
 @testable import FoundationModelsExtras
@@ -85,7 +86,7 @@ struct SessionMountCompositionTests {
         // The body of the tool runs now. The mount does its work before it
         // calls the body, so a token that the mount handed out is on the run
         // plane already. None is: the call is still in band.
-        await entered.waitUntilOpen()
+        try await RecordedWaitResult.wait(for: { await entered.waitUntilOpen() }, endingOnEndOf: calling)
         #expect(await runPlane.backgroundRuns().isEmpty)
         await gate.open()
 
@@ -111,7 +112,7 @@ struct SessionMountCompositionTests {
         }
         // The run is in the body of the tool and posts no progress. The test
         // ends the quiet run when it opens the gate.
-        await entered.waitUntilOpen()
+        try await RecordedWaitResult.wait(for: { await entered.waitUntilOpen() }, endingOnEndOf: calling)
         await gate.open()
         let rendered = try await calling.value
 
@@ -178,7 +179,7 @@ struct SessionMountCompositionTests {
         // The body of the blocking tool runs now. The mount does its work
         // before it calls the body, so a token that the mount handed out is
         // on the run plane already.
-        await blockingEntered.waitUntilOpen()
+        try await RecordedWaitResult.wait(for: { await blockingEntered.waitUntilOpen() }, endingOnEndOf: discovering)
 
         // One run is tracked, and it is the background tool's.
         let runs = await runPlane.backgroundRuns()
@@ -381,8 +382,13 @@ struct SessionMountCompositionTests {
         #expect(envelope.pending)
         let token = envelope.completionToken
 
+        // The wait also ends when the run settles (rule T1). In a test that
+        // passes, the run settles only after the latch opens, so after the
+        // sink got the terminal.
+        let settling = Task { _ = await runPlane.wait(completionToken: token, seconds: nil) }
+        let settled = RecordedWaitResult.recordingEnd(of: settling, reportingTo: sink.changes)
         await gate.open()
-        try await sink.changes.wait(until: { await sink.heldTerminal != nil })
+        try await sink.changes.wait(until: { await sink.heldTerminal != nil }, endingOn: { settled.value != nil })
 
         // The latch is closed: the sink holds the terminal. The funnel of the
         // run settles the run on the run plane only after the post of the

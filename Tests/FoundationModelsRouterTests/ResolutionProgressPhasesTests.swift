@@ -64,16 +64,18 @@ struct ResolutionProgressPhasesTests {
         let progress = ResolutionProgress()
         let log = startConsumer(of: progress)
 
-        try await log.changes.wait(until: { log.transitions.count == 1 })
+        // Each wait for a count also ends when the sequence finished (rule
+        // T1). In a test that passes, the sequence finishes only at .ready.
+        try await log.changes.wait(until: { log.transitions.count == 1 }, endingOn: { log.finished })
 
         progress.phase = .downloading
-        try await log.changes.wait(until: { log.transitions.count == 2 })
+        try await log.changes.wait(until: { log.transitions.count == 2 }, endingOn: { log.finished })
 
         // A write of the same phase again is not a transition, so it must
         // yield nothing: the next element the consumer sees is .loading.
         progress.phase = .downloading
         progress.phase = .loading
-        try await log.changes.wait(until: { log.transitions.count == 3 })
+        try await log.changes.wait(until: { log.transitions.count == 3 }, endingOn: { log.finished })
 
         progress.fraction = 1.0
         progress.phase = .ready
@@ -90,7 +92,7 @@ struct ResolutionProgressPhasesTests {
         let progress = ResolutionProgress()
         let log = startConsumer(of: progress)
 
-        try await log.changes.wait(until: { log.transitions.count == 1 })
+        try await log.changes.wait(until: { log.transitions.count == 1 }, endingOn: { log.finished })
 
         progress.phase = .failed("no candidate fit the budget")
         try await log.changes.wait(until: { log.finished })

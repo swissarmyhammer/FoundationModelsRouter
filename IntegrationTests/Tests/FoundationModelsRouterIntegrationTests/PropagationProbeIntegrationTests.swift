@@ -589,6 +589,14 @@ struct PropagationProbeIntegrationTests {
         }
 
         let loaded = try await makeUncontaminatedContainer()
+        // The evict runs also when the test throws (rule T1). This defer
+        // runs before the defer of the phase line, so the line still holds
+        // the wall clock of the evict.
+        defer {
+            let evictStarted = ContinuousClock.now
+            await loaded.container.model.evict()
+            evictDuration = ContinuousClock.now - evictStarted
+        }
         dropDuration = loaded.dropDuration
         loadDuration = loaded.loadDuration
         let log = ProbeObservationLog()
@@ -606,10 +614,6 @@ struct PropagationProbeIntegrationTests {
         // propagates on the MLX path. A future toolchain that starts
         // dispatching tools on a detached task must break this loudly.
         #expect(propagated, "MLX path: the ToolContext task local must survive respond()")
-
-        let evictStarted = ContinuousClock.now
-        await loaded.container.model.evict()
-        evictDuration = ContinuousClock.now - evictStarted
     }
 
     @Test(

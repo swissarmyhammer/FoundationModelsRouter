@@ -1,6 +1,8 @@
 import FoundationModels
 import Testing
 
+@testable import FoundationModelsRouter
+
 /// Holds ``StubSessionBackend`` to the one concurrency contract the session
 /// needs from a backend: a read of ``StubSessionBackend/transcriptEntries()``
 /// is safe beside a stream producer that is still writing, and it sees a
@@ -35,14 +37,19 @@ struct StubSessionBackendConcurrencyTests {
                 for try await _ in backend.streamResponse(to: "submission \(submission)", maxTokens: nil) {}
             }
         }
+        // The end of the producer comes after its last append, so in a test
+        // that passes the full count holds when the end is recorded.
+        let producerEnd = RecordedWaitResult.recordingEnd(of: producer, reportingTo: ChangeSignal())
 
         // The reader: what the recording of the failed submission does,
         // repeated until the producer is done. A count that is not a multiple
         // of the entries one submission appends is a submission seen
-        // half-written.
+        // half-written. The loop also stops when the producer ended (rule
+        // T1): a producer that ended before the full count stops the loop,
+        // and the count check then fails the test.
         var tornReads = 0
         var lastCount = 0
-        while lastCount < expectedEntryCount {
+        while lastCount < expectedEntryCount && producerEnd.value == nil {
             lastCount = backend.transcriptEntries().count
             if lastCount % Self.entriesPerSubmission != 0 {
                 tornReads += 1

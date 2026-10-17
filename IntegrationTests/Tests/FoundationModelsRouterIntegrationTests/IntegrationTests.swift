@@ -511,13 +511,13 @@ struct IntegrationTests {
         let loader = Self.makeLiveLoader()
         let embedder = try await loader.loadEmbedder(
             ref: RealModels.embedding, slot: .embedding, reporting: { _ in })
+        defer { await loader.evict(container: embedder) }
 
         let batchVectors = try await embedder.embed(texts: Self.differentLengthTexts)
         var aloneVectors: [[Float]] = []
         for text in Self.differentLengthTexts {
             aloneVectors.append(contentsOf: try await embedder.embed(texts: [text]))
         }
-        await loader.evict(container: embedder)
 
         try #require(batchVectors.count == Self.differentLengthTexts.count)
         try #require(aloneVectors.count == Self.differentLengthTexts.count)

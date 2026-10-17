@@ -21,9 +21,11 @@ struct AwaitedEventTests {
     func aLaterSignalResumesTheWaiter() async throws {
         let event = AwaitedEvent()
         let waiterFinished = AwaitedEvent()
+        // The waiter signals its end also when its wait throws (rule T1), so
+        // the wait below ends, and the check of `waiter.value` fails the test.
         let waiter = Task {
+            defer { waiterFinished.signal() }
             try await event.wait()
-            waiterFinished.signal()
         }
 
         event.signal()

@@ -387,6 +387,7 @@ struct RespondRunPlaneDrainTests {
         let clock = ManualRunClock()
         let profile = try await makeProfile(container: container, dir: dir, runClock: clock)
         let session = profile.standard.makeSession(tools: [tool])
+        defer { await gate.open() }
         let backend = try #require(container.lastBackend)
         let events = await session.streamSessionEvents().events
 
@@ -401,7 +402,6 @@ struct RespondRunPlaneDrainTests {
         }
         let terminal = try #require(await firstSettledTerminal(in: events))
         let delivery = try #require(try await prompts(atLeast: 2, reaching: backend).last)
-        await gate.open()
         return (delivery, terminal)
     }
 
@@ -423,6 +423,7 @@ struct RespondRunPlaneDrainTests {
             LatchedBackgroundToolRunner(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
             LatchedBackgroundToolRunner(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
         ])
+        defer { await Self.releaseBackgroundRuns(on: session, opening: [firstGate, secondGate]) }
         let backend = try #require(container.lastBackend)
 
         // The answer is the answer of the first submission: the pending
@@ -433,6 +434,10 @@ struct RespondRunPlaneDrainTests {
 
         // Both runs were backgrounded inside the first submission. Releasing
         // them one at a time makes the pump deliver each one on its own.
+        // The respond returned, so the first submission recorded each tool
+        // output that it will record: with fewer outputs the test fails
+        // here, before it waits (rule T1).
+        try #require(backend.toolOutputs.count >= 2)
         let tokens = try await Self.backgroundTokens(atLeast: 2, on: session, reportedBy: backend)
         #expect(tokens.count == 2)
         let firstToken = try #require(tokens.first)
@@ -517,6 +522,8 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession()
         let backend = try #require(container.lastBackend)
+        // No background run outlives the test, also when the test throws.
+        defer { await backend.releaser.releaseAll() }
         await backend.releaser.deliverTerminals(to: session.outbox)
 
         // The caller gets the answer of its own submission at once.
@@ -538,10 +545,6 @@ struct RespondRunPlaneDrainTests {
         })
         #expect(backend.receivedPrompts.count == submissionCount)
         #expect(backend.receivedPrompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
-
-        // No background run outlives the test, even when an expectation above
-        // failed.
-        await backend.releaser.releaseAll()
     }
 
     // MARK: - streamEvents(to:) still backgrounds
@@ -560,6 +563,9 @@ struct RespondRunPlaneDrainTests {
             LatchedBackgroundToolRunner(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
             LatchedBackgroundToolRunner(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
         ])
+        // Settle the background runs so no background work outlives the test,
+        // also when the test throws.
+        defer { await Self.releaseBackgroundRuns(on: session, opening: [firstGate, secondGate]) }
         let backend = try #require(container.lastBackend)
 
         for try await _ in await session.streamEvents(to: "run both jobs") {}
@@ -568,14 +574,6 @@ struct RespondRunPlaneDrainTests {
         // the feature on this surface — and no delivery submission ran.
         #expect(await session.runPlane.backgroundRuns().count == 2)
         #expect(backend.receivedPrompts.count == 1)
-
-        // Settle the background runs so no background work outlives the test.
-        let tokens: [String] = await session.runPlane.backgroundRuns().map(\.completionToken)
-        await firstGate.open()
-        await secondGate.open()
-        for token in tokens {
-            _ = await session.runPlane.wait(completionToken: token, seconds: nil)
-        }
     }
 
     @Test("streamEvents(to:) emits runSettled for a run that settles before the stream ends")
@@ -593,6 +591,7 @@ struct RespondRunPlaneDrainTests {
         let session = profile.standard.makeSession(tools: [
             LatchedBackgroundToolRunner(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
+        defer { await Self.releaseBackgroundRuns(on: session, opening: [gate, holdFirstSubmission]) }
         let backend = try #require(container.lastBackend)
 
         let collecting = Task { () -> [SessionEvent] in
@@ -628,6 +627,7 @@ struct RespondRunPlaneDrainTests {
         let session = profile.standard.makeSession(tools: [
             LatchedBackgroundToolRunner(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
+        defer { await Self.releaseBackgroundRuns(on: session, opening: [gate]) }
         let backend = try #require(container.lastBackend)
 
         // The run holds nothing: the call returns with its own submission's
@@ -641,8 +641,6 @@ struct RespondRunPlaneDrainTests {
         #expect(await session.pumpEnds())
         #expect(await session.stopRunningWork() == false)
         #expect(await session.runPlane.backgroundRuns().count == 1)
-
-        await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
 
     @Test(
@@ -662,6 +660,7 @@ struct RespondRunPlaneDrainTests {
         let session = profile.standard.makeSession(tools: [
             LatchedBackgroundToolRunner(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
+        defer { await Self.releaseBackgroundRuns(on: session, opening: [gate, holdFirstSubmission]) }
         let backend = try #require(container.lastBackend)
 
         let feed = await session.streamSessionEvents()
@@ -689,7 +688,5 @@ struct RespondRunPlaneDrainTests {
         // sweep. The run that the submission started is still running,
         // exactly as it was.
         #expect(await session.runPlane.backgroundRuns().count == 1)
-
-        await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
 }

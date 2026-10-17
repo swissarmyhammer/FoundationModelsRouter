@@ -229,27 +229,34 @@ extension AnswerCancellationTests {
     ///     at `0` and the proactive gate never fires.
     /// - Returns: The session, warmed up, and over its trigger unless metering was
     ///   declined.
+    /// - Throws: What the warm-up answers throw. The helper then closes the
+    ///   session first (rule T1).
     static func makeCompactionTriggeredSession(
         _ fixture: Fixture,
         budget: TokenBudget,
         metersTriggeringFill: Bool = true
     ) async throws -> any RoutedSession {
         let session = fixture.model.makeSession(budget: budget, compactionPrompt: compactionSummarizerPrompt)
-        let backend = try #require(fixture.container.lastVendedBackend)
-        let contextTokens = try #require(session as? RoutedSessionActor).contextTokens
+        do {
+            let backend = try #require(fixture.container.lastVendedBackend)
+            let contextTokens = try #require(session as? RoutedSessionActor).contextTokens
 
-        for index in 0..<(compactionWarmUpAnswerCount - 1) {
-            _ = try await session.respond(to: warmUpPrompt(index))
+            for index in 0..<(compactionWarmUpAnswerCount - 1) {
+                _ = try await session.respond(to: warmUpPrompt(index))
+            }
+            // Only the last warm-up answer measures, and its delta between the snapshots
+            // taken either side of it is what `contextFill` then reports — see
+            // ``HookedSessionBackend/startMetering(inputTokensPerSubmission:)`` for why not
+            // from the first answer.
+            if metersTriggeringFill {
+                backend.startMetering(
+                    inputTokensPerSubmission: Int(Double(contextTokens) * compactionTriggeringFillFraction))
+            }
+            _ = try await session.respond(to: warmUpPrompt(compactionWarmUpAnswerCount - 1))
+        } catch {
+            await session.close()
+            throw error
         }
-        // Only the last warm-up answer measures, and its delta between the snapshots
-        // taken either side of it is what `contextFill` then reports — see
-        // ``HookedSessionBackend/startMetering(inputTokensPerSubmission:)`` for why not
-        // from the first answer.
-        if metersTriggeringFill {
-            backend.startMetering(
-                inputTokensPerSubmission: Int(Double(contextTokens) * compactionTriggeringFillFraction))
-        }
-        _ = try await session.respond(to: warmUpPrompt(compactionWarmUpAnswerCount - 1))
 
         #expect((await session.contextFill >= budget.trigger) == metersTriggeringFill)
         return session

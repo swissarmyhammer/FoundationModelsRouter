@@ -136,7 +136,8 @@ struct StagedReasoningSessionFixture {
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     static func make(
         scripts: [RepeatingReasoningScript], detection: RepetitionDetection, tools: [any Tool] = [],
         tempDirPrefix: String
@@ -150,7 +151,13 @@ struct StagedReasoningSessionFixture {
             loader: StubModelLoader(
                 container: LiveBackendContainer(model: StagedReasoningModel(log: log, scripts: scripts)),
                 dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: tools, repetitionDetection: detection))
         return StagedReasoningSessionFixture(session: session, log: log, recorder: recorder, directory: directory)

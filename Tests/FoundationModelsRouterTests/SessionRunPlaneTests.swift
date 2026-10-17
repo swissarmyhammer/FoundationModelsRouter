@@ -25,6 +25,9 @@ struct SessionRunPlaneTests {
     /// Makes a router over the stub fixtures, resolves the standard profile,
     /// and makes a session.
     ///
+    /// When the resolve throws, this helper removes the temp directory first
+    /// (rule T1).
+    ///
     /// - Parameter recorder: The recorder of the router.
     /// - Returns: The session, and the temp directory that the caller
     ///   removes.
@@ -33,14 +36,20 @@ struct SessionRunPlaneTests {
         recorder: any TranscriptRecorder
     ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            recorder: recorder,
-            loader: StubModelLoader(
-                container: UndrivenLanguageModelContainer(), dimension: RouterTestFixtures.stubDimension)
-        )
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return (profile.standard.makeSession(), dir)
+        do {
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: dir,
+                recorder: recorder,
+                loader: StubModelLoader(
+                    container: UndrivenLanguageModelContainer(), dimension: RouterTestFixtures.stubDimension)
+            )
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            return (profile.standard.makeSession(), dir)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
     }
 
     /// Makes a router that records to `recordingsDir` through a
@@ -75,6 +84,11 @@ struct SessionRunPlaneTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
+        defer {
+            await latchA.open()
+            await latchB.open()
+            await session.close()
+        }
         let tokenA = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
         let tokenB = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
@@ -87,7 +101,10 @@ struct SessionRunPlaneTests {
                 posting: { postings.record() })
         }
         // The run plane makes the elicitation pending before it posts it.
-        try await postings.waitForPosts(1)
+        // The wait also ends when the wait for the answer ended (rule T1):
+        // no answer comes before the close, so in a test that passes that
+        // wait cannot end first.
+        try await RecordedWaitResult.wait(for: { try await postings.waitForPosts(1) }, endingOnEndOf: rejected)
         #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         await session.close()
@@ -142,6 +159,7 @@ struct SessionRunPlaneTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         await session.close()
 
@@ -161,6 +179,11 @@ struct SessionRunPlaneTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
+        defer {
+            await latchA.open()
+            await latchB.open()
+            await session.close()
+        }
         _ = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
         _ = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
@@ -194,6 +217,10 @@ struct SessionRunPlaneTests {
         let session = profile1.standard.makeSession()
 
         let latch = RunLatch()
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let token = await trackFakeRun(on: session.runPlane, latch: latch)
         await session.close()
 

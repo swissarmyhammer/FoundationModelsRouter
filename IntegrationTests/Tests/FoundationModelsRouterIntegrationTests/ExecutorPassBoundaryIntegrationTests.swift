@@ -61,18 +61,19 @@ struct ExecutorPassBoundaryIntegrationTests {
     func respondPassEndsBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
+        defer { await loaded.container.model.evict() }
 
         _ = try await session.respond(to: Self.prompt, options: Self.answerOptions)
 
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
         try PassBoundaryExpectations.expectNextPassStartsAfterToolBody(in: log)
-        await loaded.container.model.evict()
     }
 
     @Test("stream: the MLX pass that emits a tool call ends before the SDK runs the tool body")
     func streamPassEndsBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
+        defer { await loaded.container.model.evict() }
 
         let snapshotCount = try await PassBoundaryExpectations.consume(
             session.streamResponse(to: Self.prompt, options: Self.answerOptions))
@@ -80,7 +81,6 @@ struct ExecutorPassBoundaryIntegrationTests {
         #expect(snapshotCount > 0)
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
         try PassBoundaryExpectations.expectNextPassStartsAfterToolBody(in: log)
-        await loaded.container.model.evict()
     }
 
     /// The slow consumer reads the next snapshot only after each pass that
@@ -97,6 +97,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func slowStreamConsumerStillEndsPassBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
+        defer { await loaded.container.model.evict() }
 
         let consumeStarted = ContinuousClock.now
         let snapshotCount = try await PassBoundaryExpectations.consumeAfterEachOpenPassEnds(
@@ -116,6 +117,5 @@ struct ExecutorPassBoundaryIntegrationTests {
                 + "consumeTotal=\(consumeStarted.duration(to: consumeEnded)) "
                 + "consumerLagAfterLastPass=\(lastPassEnd.instant.duration(to: consumeEnded))"
         )
-        await loaded.container.model.evict()
     }
 }

@@ -521,6 +521,7 @@ struct ToolInvocationLivenessTests {
             mounting: [MarkerEmittingTool()],
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         // One answer first: the session installs itself as the outbox's
         // observer at the start of its first submission. A report posted
@@ -640,6 +641,10 @@ struct ToolInvocationLivenessTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer {
+            await gate.open()
+            await fixture.session.close()
+        }
 
         // The answer returns while the run waits on its gate, so the close
         // record and the report can only arrive on the session stream.

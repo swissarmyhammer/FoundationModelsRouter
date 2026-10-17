@@ -1212,6 +1212,7 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
+        defer { await gate.open() }
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
         let backend = try #require(container.lastBackend)
         let mounted = try #require(
@@ -1262,6 +1263,7 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
+        defer { await gate.open() }
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
         let child = try await session.fork(workingDirectory: nil)
 
@@ -1294,6 +1296,7 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
+        defer { await gate.open() }
         // toolOutputLimit 5 is far below the envelope's own estimated size:
         // real tool output at this cap is truncated, but the envelope —
         // control-plane data whose completionToken the model must keep —
@@ -1338,6 +1341,10 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
+        defer {
+            await answerHold.open()
+            await gate.open()
+        }
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
         let backend = try #require(container.lastBackend)
 
@@ -1346,10 +1353,19 @@ struct SessionOutboxToolWiringTests {
         // tool declared background, so the call is handed back as a token
         // with or without the stop. This test proves what the stop does NOT
         // do: it does not kill the background run.
-        let answer = Task { try await session.respond(to: "cancel me") }
+        let answerEnds = RunCount()
+        let answer = Task {
+            defer {
+                answerEnds.increment()
+                backend.changes.signal()
+            }
+            return try await session.respond(to: "cancel me")
+        }
         // The backend signals its change after the tool call handed back
-        // its envelope.
-        try await backend.changes.wait(until: { backend.toolCallReturned })
+        // its envelope. Rule T1: the wait also ends when the answer ended.
+        // The answer hold keeps the answer open after the tool call
+        // returned, so in a test that passes the answer cannot end first.
+        try await backend.changes.wait(until: { backend.toolCallReturned }, endingOn: { answerEnds.value > 0 })
         #expect(backend.toolCallStarted)
         // Only the stop of the running answer: a cancelAll would also sweep
         // the background runs, and this test proves that the stop of the
@@ -1429,6 +1445,7 @@ struct SessionOutboxToolWiringTests {
         let gate = RunLatch()
         let (session, backend) = try await Self.makeBackgroundingSession(
             tools: [LatchedBackgroundToolRunner(name: "job", gate: gate, output: "job done")], dir: dir)
+        defer { await Self.settleBackgroundRuns(on: session, opening: gate) }
 
         for try await _ in await session.streamEvents(to: "start the job") {}
 
@@ -1436,8 +1453,6 @@ struct SessionOutboxToolWiringTests {
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
         #expect(await session.runPlane.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
-
-        await Self.settleBackgroundRuns(on: session, opening: gate)
     }
 
     @Test("signal 2, I am making progress: a progress report updates the run's latest detail and rides the next submission's preamble")
@@ -1450,12 +1465,24 @@ struct SessionOutboxToolWiringTests {
         let reported = RunLatch()
         let (session, backend) = try await Self.makeBackgroundingSession(
             tools: [ProgressReportingBackgroundToolRunner(gate: gate, reported: reported)], dir: dir)
+        defer { await Self.settleBackgroundRuns(on: session, opening: gate) }
 
         for try await _ in await session.streamEvents(to: "start the job") {}
 
         // The report lands on the run plane and in the staging area. The
         // post of the report returns only after both, and the tool opens
         // `reported` after the post returned.
+        //
+        // Rule T1: the wait also ends when the run settled. The tool waits
+        // on its gate after it opened `reported`, so in a test that passes
+        // the run cannot settle first. A run that settles with no report
+        // ends the wait, and the checks below then fail.
+        let envelope = try JSONDecoder().decode(
+            PendingRunEnvelope.self, from: Data(try #require(backend.toolOutputs.first).utf8))
+        let runEnd = Task {
+            _ = await session.runPlane.wait(completionToken: envelope.completionToken, seconds: nil)
+            await reported.open()
+        }
         await reported.waitUntilOpen()
         #expect(await session.outbox.pending().events.contains { $0.event.kind == .progress })
         let run = try #require(await session.runPlane.backgroundRuns().first)
@@ -1468,8 +1495,8 @@ struct SessionOutboxToolWiringTests {
             kind: .progress, detail: ProgressReportingBackgroundToolRunner.progressDetail)
         let composed = try #require(backend.receivedPrompts.last)
         #expect(composed.contains(OperationEventSegment.renderedLine(for: progress)))
-
-        await Self.settleBackgroundRuns(on: session, opening: gate)
+        await gate.open()
+        await runEnd.value
     }
 
     @Test(
@@ -1491,10 +1518,15 @@ struct SessionOutboxToolWiringTests {
         // The question is staged for the model, addressed by its own id. The
         // outbox stages the question before the session sends
         // `.elicitationRequested` on its feed.
+        //
+        // Rule T1: the wait also ends at the settle of a run. The run waits
+        // for the answer of its question, so in a test that passes no run
+        // settles before the question. A run that settles with no question
+        // ends the wait, and the `#require` of the staged question then
+        // fails.
         try await feed.log.wait(until: { events in
             events.contains { event in
-                if case .elicitationRequested = event { return true }
-                return false
+                SessionEventCase.elicitationRequested.matches(event) || SessionEventCase.runSettled.matches(event)
             }
         })
         let staged = try #require(await session.outbox.pending().events.first { $0.event.kind == .elicitation }?.event)

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Synchronization
 import Testing
 
 @testable import FoundationModelsExtras
@@ -254,7 +255,9 @@ struct PerCallMountSessionTests {
         defer { try? FileManager.default.removeItem(at: harness.directory) }
 
         let answering = Task { try await harness.session.respond(to: "run it in band") }
-        await entered.waitUntilOpen()
+        // The gate holds the body, so the answer cannot end before the body
+        // starts. An answer that ends first did not call the tool.
+        try await RecordedWaitResult.wait(for: { await entered.waitUntilOpen() }, endingOnEndOf: answering)
         // The body is held, and the run plane has no run: a background call
         // starts its run before its body runs, so this call runs in band.
         #expect(await harness.session.runPlane.backgroundRuns().isEmpty)

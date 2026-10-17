@@ -629,6 +629,7 @@ struct DiscoveryPrimingTests {
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.session.close() }
 
         let sessionEvents = await fixture.session.streamSessionEvents().events
         let response = try await fixture.session.respond(to: Self.prompt)
@@ -655,6 +656,7 @@ struct DiscoveryPrimingTests {
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.session.close() }
 
         let sessionEvents = await fixture.session.streamSessionEvents().events
         try fixture.session.send(Self.prompt)

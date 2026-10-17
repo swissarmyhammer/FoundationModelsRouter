@@ -317,43 +317,57 @@ struct RoutedSessionToolContextBindingTests {
 
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``ContextProbingBackend`` — guided by `grammar` when supplied.
+    ///
+    /// When it throws, it removes the temp directory first.
     private static func makeSession(grammar: Grammar? = nil) async throws -> (
         session: any RoutedSession, backend: ContextProbingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let container = ProbingLLMContainer()
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-        )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session =
-            if let grammar {
-                profile.standard.makeGuidedSession(grammar: grammar)
-            } else {
-                profile.standard.makeSession()
-            }
-        let backend = try #require(container.lastBackend)
-        return (session, backend, dir)
+        do {
+            let container = ProbingLLMContainer()
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: dir,
+                loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+            )
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let session =
+                if let grammar {
+                    profile.standard.makeGuidedSession(grammar: grammar)
+                } else {
+                    profile.standard.makeSession()
+                }
+            let backend = try #require(container.lastBackend)
+            return (session, backend, dir)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
     }
 
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``CancellationObservingBackend``.
+    ///
+    /// When it throws, it removes the temp directory first.
     private static func makeCancellationObservingSession() async throws -> (
         session: any RoutedSession, backend: CancellationObservingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let container = CancellationObservingLLMContainer()
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-        )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession()
-        let backend = try #require(container.lastBackend)
-        return (session, backend, dir)
+        do {
+            let container = CancellationObservingLLMContainer()
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: dir,
+                loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+            )
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let session = profile.standard.makeSession()
+            let backend = try #require(container.lastBackend)
+            return (session, backend, dir)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
     }
 
     // MARK: - Tests

@@ -459,18 +459,24 @@ struct ForkConcurrencyTests {
 
         // Launch call 0; its submission runs on the worker and suspends.
         let task0 = Task { try await callers[0].respond(to: "0") }
-        try await observer.changes.wait(until: { await observer.entryOrder == [0] })
+        // The wait also ends when call 0 ends with no entry (rule T1). Call 0
+        // cannot end before its entry, because the release gate holds it.
+        let call0Ended = RecordedWaitResult.recordingEnd(of: task0, reportingTo: observer.changes)
+        try await observer.changes.wait(
+            until: { await observer.entryOrder == [0] }, endingOn: { call0Ended.value != nil })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous
         // submission has actually joined the queue — establishing a
         // deterministic FIFO arrival order without sleeping. The session
-        // sends `submissionQueued` when its submission joins the queue.
+        // sends `submissionQueued` when its submission joins the queue. Each
+        // wait also ends when the work of that session ends (rule T1). A call
+        // cannot end before the release gate opens.
         let task1 = Task { try await callers[1].respond(to: "1") }
-        try await feeds[0].log.waitForQueuedSubmissions(1)
+        try await feeds[0].log.waitForQueuedSubmissionsOrWorkEnd(1)
         let task2 = Task { try await callers[2].respond(to: "2") }
-        try await feeds[1].log.waitForQueuedSubmissions(1)
+        try await feeds[1].log.waitForQueuedSubmissionsOrWorkEnd(1)
         let task3 = Task { try await callers[3].respond(to: "3") }
-        try await feeds[2].log.waitForQueuedSubmissions(1)
+        try await feeds[2].log.waitForQueuedSubmissionsOrWorkEnd(1)
         #expect(await queue.waitingCount == callers.count - 1)
 
         // Only one pass has entered so far — the queue held the rest out.

@@ -331,6 +331,27 @@ struct CancelAllSignalTests {
             try await changes.wait(until: { condition(self.outputs) })
         }
 
+        /// Waits until the outputs so far satisfy `condition`, or until they
+        /// hold the failure event (rule T1). When the failure event came and
+        /// `condition` does not hold, the test fails by an assertion.
+        ///
+        /// - Parameters:
+        ///   - condition: The condition on the outputs so far.
+        ///   - failureEvent: Tells whether the outputs so far hold the event
+        ///     that comes also when `condition` never holds.
+        ///   - sourceLocation: The place of the call, for the failure.
+        /// - Throws: The error of `#require` when the failure event came
+        ///   first, or ``ConditionNeverHeld`` when the waiting task is
+        ///   cancelled first.
+        func waitFor(
+            _ condition: ([SessionOutput]) -> Bool, endingOn failureEvent: ([SessionOutput]) -> Bool,
+            sourceLocation: SourceLocation = #_sourceLocation
+        ) async throws {
+            try await changes.wait(
+                until: { condition(self.outputs) }, endingOn: { failureEvent(self.outputs) },
+                sourceLocation: sourceLocation)
+        }
+
         /// Sends a probe signal to `session`, and waits until the recorder
         /// kept the end of the probe. A cancel of an unknown id sends only its
         /// ``SessionEvent/signalDone(_:)``.
@@ -431,9 +452,14 @@ struct CancelAllSignalTests {
     ) async throws -> (mail: Mail, subscription: MailSubscription<SessionOutput>) {
         let mail = RoutedSessionActor.userMessage(streamPrompt, maxTokens: nil, mode: .stream)
         let subscription = try session.mail(mail)
-        try await recorder.waitFor { outputs in
-            outputs.contains { $0.event == .textDelta(GatedStreamBackend.earlyText) }
-        }
+        // The wait also ends on the terminal event of the mail (rule T1). In
+        // a test that passes, the gate holds the answer open, so its terminal
+        // event never comes before the early text.
+        try await recorder.waitFor(
+            { outputs in outputs.contains { $0.event == .textDelta(GatedStreamBackend.earlyText) } },
+            endingOn: { outputs in
+                outputs.contains { TerminalEventLedger.mailIdsEnded(by: $0.event)?.contains(mail.id) == true }
+            })
         try await backend.changes.wait(until: { backend.isLateFragmentWaiting })
         return (mail, subscription)
     }
@@ -560,6 +586,10 @@ struct CancelAllSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = GatedStreamBackend()
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await backend.gate.open()
+            await session.close()
+        }
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
         let (stopped, subscription) = try await Self.startGatedStream(
             on: session, backend: backend, recorder: recorder)
@@ -623,6 +653,10 @@ struct CancelAllSignalTests {
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
         let run = await Self.startSlowCancelRun(on: session)
+        defer {
+            await run.cancelerGate.open()
+            await session.close()
+        }
 
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
@@ -666,6 +700,10 @@ struct CancelAllSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = GatedStreamBackend()
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await backend.gate.open()
+            await session.close()
+        }
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
         let (stopped, _) = try await Self.startGatedStream(on: session, backend: backend, recorder: recorder)
         let stop = session.cancelAll()
@@ -683,8 +721,11 @@ struct CancelAllSignalTests {
 
         let cancel = session.cancel(cancelled.id)
         #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
+        // A mail that the cancel left in the queue gets no terminal event
+        // while the gate holds the stopped work, so the test fails here,
+        // before it waits (rule T1).
+        try #require(await session.pendingMessages().map(\.id) == [replaced])
         #expect(try await session.awaitTerminal(of: cancelled.id) == .cancelled(cancelled.id))
-        #expect(await session.pendingMessages().map(\.id) == [replaced])
 
         // The stopped work ends, and the pump answers the queued mail.
         await backend.gate.open()
@@ -716,6 +757,10 @@ struct CancelAllSignalTests {
         let backend = ProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let first = try session.send(Self.firstPrompt)
         let second = RoutedSessionActor.userMessage(Self.secondPrompt, maxTokens: Self.namedCeiling, mode: .reply)
@@ -777,6 +822,10 @@ struct CancelAllSignalTests {
         let backend = ProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
         let recorder = OutputRecorder.record(await session.streamSessionEvents())
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
 
         let delivered = session.cancel(held)
@@ -816,6 +865,7 @@ struct CancelAllSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = ProbeBackend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let actor = try #require(session as? RoutedSessionActor)
         await session.close()
         let sweepOfClose = await actor.sweepTask

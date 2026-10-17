@@ -162,6 +162,7 @@ struct MailTranscriptTests {
         let recorder = InMemoryRecorder()
         let backend = Backend(script: [:])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
 
         let id = try session.send(Self.firstPrompt)
         _ = try await session.awaitTerminal(of: id)
@@ -189,6 +190,10 @@ struct MailTranscriptTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer {
+            await latch.open()
+            await session.close()
+        }
 
         let held = try session.send(Self.firstPrompt)
         try await backend.waitForPrompts(1)
@@ -228,6 +233,10 @@ struct MailTranscriptTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer {
+            await latch.open()
+            await session.close()
+        }
 
         let held = try session.send(Self.firstPrompt)
         try await backend.waitForPrompts(1)
@@ -271,6 +280,7 @@ struct MailTranscriptTests {
         let recorder = InMemoryRecorder()
         let backend = Backend(script: [1: .fail])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let event = MailQueueFixtures.progressEvent(detail: "a step that rides two submissions")
@@ -316,6 +326,7 @@ struct MailTranscriptTests {
         await latch.open()
         let backend = Backend(script: [1: .holdThenReject(latch)])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
 
         let id = try session.send(Self.firstPrompt)
         _ = try await session.awaitTerminal(of: id)
@@ -345,6 +356,10 @@ struct MailTranscriptTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .holdThenReject(latch)])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer {
+            await latch.open()
+            await session.close()
+        }
 
         let first = try session.send(Self.firstPrompt)
         try await backend.waitForPrompts(1)
@@ -441,6 +456,7 @@ struct MailTranscriptTests {
         let recorder = InMemoryRecorder()
         let backend = Backend(script: [1: .failAfterPrompt], seedEntries: Self.seedEntries())
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
 
         let id = try session.send(Self.firstPrompt)
         #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
@@ -470,6 +486,7 @@ struct MailTranscriptTests {
         let recorder = InMemoryRecorder()
         let backend = Backend(script: [1: .fail], seedEntries: Self.seedEntries())
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
 
         let id = try session.send(Self.firstPrompt)
         #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
@@ -497,6 +514,7 @@ struct MailTranscriptTests {
         let recorder = InMemoryRecorder()
         let backend = Backend(script: [:])
         let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
 
         _ = try await session.respond(to: Self.firstPrompt)
         let before = try ContextRenderer.context(of: await recorder.events)
@@ -532,6 +550,10 @@ struct MailTranscriptTests {
             over: backend, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile1 = try await router1.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile1.standard.makeSession()
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
 
         // The held answer and the mail behind it have no terminal record when
@@ -572,8 +594,6 @@ struct MailTranscriptTests {
         #expect(!events.contains { $0.kind == .prompt })
         #expect(backend.prompts == [Self.firstPrompt])
 
-        await latch.open()
-        await session.close()
         withExtendedLifetime((router1, profile1, router2, profile2, router3, profile3)) {}
     }
 

@@ -431,7 +431,12 @@ struct AutoCompactionTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         _ = try await session.respond(to: "keep going")
-        try await log.wait(until: { !$0.answers.isEmpty })
+        // Rule T1: the wait also ends when the work of the session ends. The
+        // answer event comes from the pump while it works, so it comes on the
+        // feed before the work end.
+        try await log.changes.wait(
+            until: { !(await log.events).answers.isEmpty },
+            endingOn: { (await log.events).contains(where: \.isWorkEnd) })
         drain.cancel()
 
         let events = await log.events
@@ -477,6 +482,7 @@ struct AutoCompactionTests {
         let prompt = "keep going"
         let recorder = InMemoryRecorder()
         let (session, standardContainer, profile) = try await Self.makeOverflowSession(recorder: recorder)
+        defer { await session.close() }
 
         let id = try session.send(prompt)
         _ = try await session.awaitTerminal(of: id)

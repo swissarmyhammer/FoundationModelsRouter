@@ -119,8 +119,23 @@ struct StoppedAnswerOtherWorkEventTests {
         /// - Returns: Each output of the feed after the `signalDone` of the
         ///   stop, in order.
         mutating func outputsToTheEnd(alsoOpening laterGates: [RunLatch] = []) async -> [SessionOutput] {
-            await fixture.outputsToTheEnd(
-                of: &feed, opening: [cancelerHold.release, otherRun.gate, ownRun.gate, answerGate] + laterGates)
+            await fixture.outputsToTheEnd(of: &feed, opening: gates + laterGates)
+        }
+
+        /// Opens each gate and ends the fixture. A test defers this call, so
+        /// the end comes also when the test throws (rule T1). A second end
+        /// after ``outputsToTheEnd(alsoOpening:)`` does no harm.
+        ///
+        /// - Parameter laterGates: The gates of the runs that started after
+        ///   the stop. The default is no gate.
+        func end(alsoOpening laterGates: [RunLatch] = []) async {
+            await fixture.end(opening: gates + laterGates)
+        }
+
+        /// The gates of the stopped answer and of its two runs, and the hold
+        /// of the canceler of ``otherRun``.
+        private var gates: [RunLatch] {
+            [cancelerHold.release, otherRun.gate, ownRun.gate, answerGate]
         }
     }
 
@@ -150,25 +165,39 @@ struct StoppedAnswerOtherWorkEventTests {
     /// `signalDone`. Returns when the sweep of the stop runs the canceler of
     /// the run of other work, which waits at its hold.
     ///
+    /// When this helper throws, it ends the fixture first, and opens the gate
+    /// of the answer, the gate of each run that it started, and the hold of
+    /// the canceler (rule T1).
+    ///
     /// - Returns: The stopped answer and its session.
     /// - Throws: What the fixture throws, or ``ConditionNeverHeld``.
     private static func stopTheHeldAnswer() async throws -> StoppedAnswer {
         let answerGate = RunLatch()
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: prefix, tools: [], container: BackgroundingLLMContainer(holdFirstAnswer: answerGate))
-        try await fixture.sessionActor().attachOutboxJournalIfNeeded()
-        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        let heldMail = try await MailQueueFixtures.startHeldAnswer(heldPrompt, on: fixture.session, backend: fixture.backend)
         let cancelerHold = CancelerHold()
-        let otherRun = try await startRun(on: fixture, startedBy: .mail([MailID()]), holdingCancelerAt: cancelerHold)
-        let ownRun = try await startRun(on: fixture, startedBy: .mail([heldMail]))
+        var runGates: [RunLatch] = []
+        do {
+            try await fixture.sessionActor().attachOutboxJournalIfNeeded()
+            var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+            let heldMail = try await MailQueueFixtures.startHeldAnswer(
+                heldPrompt, on: fixture.session, backend: fixture.backend)
+            let otherRun = try await startRun(
+                on: fixture, startedBy: .mail([MailID()]), holdingCancelerAt: cancelerHold)
+            runGates.append(otherRun.gate)
+            let ownRun = try await startRun(on: fixture, startedBy: .mail([heldMail]))
+            runGates.append(ownRun.gate)
 
-        let signal = fixture.session.cancelAll()
-        _ = await SessionWorkEventTests.outputs(from: &feed, through: { $0 == .signalDone(signal) })
-        await cancelerHold.entered.waitUntilOpen()
-        return StoppedAnswer(
-            fixture: fixture, feed: feed, otherRun: otherRun, ownRun: ownRun, answerGate: answerGate,
-            cancelerHold: cancelerHold)
+            let signal = fixture.session.cancelAll()
+            _ = await SessionWorkEventTests.outputs(from: &feed, through: { $0 == .signalDone(signal) })
+            await cancelerHold.entered.waitUntilOpen()
+            return StoppedAnswer(
+                fixture: fixture, feed: feed, otherRun: otherRun, ownRun: ownRun, answerGate: answerGate,
+                cancelerHold: cancelerHold)
+        } catch {
+            await fixture.end(opening: [cancelerHold.release, answerGate] + runGates)
+            throw error
+        }
     }
 
     /// The completion token of the run of `event`, when `event` is a live
@@ -211,6 +240,7 @@ struct StoppedAnswerOtherWorkEventTests {
         thenWaiting wait: (StoppedAnswer) async throws -> Void = { _ in }
     ) async throws {
         var stopped = try await stopTheHeldAnswer()
+        defer { await stopped.end() }
         try await post(stopped.ownRun)
         try await post(stopped.otherRun)
         try await wait(stopped)
@@ -293,11 +323,26 @@ struct StoppedAnswerOtherWorkEventTests {
     @Test("a run of other work that asks a question while the stopped answer winds down gives its elicitationRequested")
     func questionOfOtherWorkWhileTheStoppedAnswerWindsDown() async throws {
         var stopped = try await Self.stopTheHeldAnswer()
+        var laterGates: [RunLatch] = []
+        defer { await stopped.end(alsoOpening: laterGates) }
         let laterRun = try await Self.startRun(on: stopped.fixture, startedBy: .mail([MailID()]))
+        laterGates.append(laterRun.gate)
         let ownAnswer = try await stopped.ownRun.askAQuestion(postingTo: stopped.fixture.session.outbox)
         let postings = ElicitationPostings(forwardingTo: laterRun.session.outbox)
         let laterAnswer = try await laterRun.askAQuestion(postingTo: postings)
-        try await postings.waitForPosts(Self.questionPosts)
+        // Rule T1: the wait also ends when the question of the later run
+        // ended. In a test that passes, the question waits for its answer
+        // until the close of the session, so it posts before it ends. A
+        // question that ends with no post ends the wait, and the test then
+        // fails here.
+        let laterAnswerEnds = RunCount()
+        let laterAnswerEnd = Task {
+            _ = await laterAnswer.result
+            laterAnswerEnds.increment()
+            postings.changes.signal()
+        }
+        try await postings.changes.wait(
+            until: { postings.postCount >= Self.questionPosts }, endingOn: { laterAnswerEnds.value > 0 })
 
         let stoppedAnswerOrigin = stopped.ownRun.poster
         let laterPosts = try await Self.postsOfOtherWork(
@@ -306,6 +351,7 @@ struct StoppedAnswerOtherWorkEventTests {
         #expect(!laterPosts.contains { $0.origin == stoppedAnswerOrigin })
         #expect(try await ownAnswer.value == PendingElicitationFixtures.runCancelled)
         #expect(try await laterAnswer.value == PendingElicitationFixtures.runCancelled)
+        await laterAnswerEnd.value
     }
 
     /// The production change that makes this test fail: a journal that gives

@@ -62,19 +62,25 @@ struct ChangeSignalTests {
     /// Starts one wait for a change after `seen` in a task of its own, and
     /// returns when the wait is registered.
     ///
+    /// The wait for the registration also ends when the wait got a result
+    /// (rule T1): the result reports to `waiters`, and in a test that passes
+    /// no wait gets a result before the test signals or cancels it.
+    ///
     /// - Parameters:
     ///   - signal: The signal to wait on.
     ///   - waiters: The ``ChangeSignal/waiterChanges`` of `signal`.
     ///   - seen: The change count that the wait starts from.
     ///   - registered: How many waits are registered when this wait is.
     /// - Returns: The wait.
-    /// - Throws: ``ConditionNeverHeld`` when the test task is cancelled
-    ///   before the wait is registered.
+    /// - Throws: The error of `#require` when the wait got a result before it
+    ///   was registered, or ``ConditionNeverHeld`` when the test task is
+    ///   cancelled before the wait is registered.
     private static func startRegisteredWait(
         on signal: ChangeSignal, observedBy waiters: ChangeSignal, after seen: UInt64, registered: Int = 1
     ) async throws -> StartedWait {
         let wait = startWait(on: signal, after: seen, reportingTo: waiters)
-        try await waiters.wait(until: { signal.waiterCount == registered })
+        try await waiters.wait(
+            until: { signal.waiterCount == registered }, endingOn: { wait.result.value != nil })
         return wait
     }
 

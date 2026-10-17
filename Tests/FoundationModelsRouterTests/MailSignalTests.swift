@@ -115,6 +115,7 @@ struct MailSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let runMail = try await Self.postHeldRunMail(to: session)
@@ -136,6 +137,7 @@ struct MailSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let runMail = try await Self.postHeldRunMail(to: session)
@@ -160,6 +162,7 @@ struct MailSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let runMail = try await Self.postHeldRunMail(to: session)
@@ -191,6 +194,7 @@ struct MailSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
 
         let runMail = try await MailQueueFixtures.post(
             MailQueueFixtures.progressEvent(detail: "a queued step"), to: session)
@@ -219,6 +223,10 @@ struct MailSignalTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -255,6 +263,10 @@ struct MailSignalTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -292,6 +304,10 @@ struct MailSignalTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -340,6 +356,10 @@ struct MailSignalTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -377,6 +397,10 @@ struct MailSignalTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -406,6 +430,7 @@ struct MailSignalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
 
         #expect(throws: PromptRefusal.noTextSegment) {
             try session.send(Transcript.Prompt(segments: []))

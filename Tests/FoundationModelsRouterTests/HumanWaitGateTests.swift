@@ -380,7 +380,8 @@ struct HumanWaitGateTests {
     }
 
     /// Thrown by the run of ``submissionQueued(on:)`` when the event stream of
-    /// the session ended with no ``SessionEvent/submissionQueued(_:)``.
+    /// the session ended, or an answer of the session ended, with no
+    /// ``SessionEvent/submissionQueued(_:)``.
     private struct SubmissionNeverQueued: Error {}
 
     /// A run that ends when `session` reports that a submission of it waits
@@ -391,13 +392,24 @@ struct HumanWaitGateTests {
     /// of this run is the signal of that moment. The subscription is open when
     /// this function returns, so start the answer after the call.
     ///
+    /// The run also ends at the end of an answer of `session` (rule T1): a
+    /// submission that waits sends the report before its answer ends, so an
+    /// answer that ends first had no submission that waited.
+    ///
     /// - Parameter session: The session whose submission is to wait.
     /// - Returns: The run that ends on the report.
     private static func submissionQueued(on session: any RoutedSession) async -> ObservedRun<Void> {
         let events = await session.streamSessionEvents().events
         return ObservedRun {
             for await event in events {
-                if case .submissionQueued = event { return }
+                switch event {
+                case .submissionQueued:
+                    return
+                case .answered, .answerFailed:
+                    throw SubmissionNeverQueued()
+                default:
+                    continue
+                }
             }
             throw SubmissionNeverQueued()
         }
@@ -480,6 +492,9 @@ struct HumanWaitGateTests {
         // the wait, so the test resumes at a point where A is provably in the
         // wait.
         let humanGate = AsyncSemaphore(value: 0)
+        // The release of the gate, also when the test throws before it (rule
+        // T1). A second release does no harm.
+        defer { humanGate.signal() }
         let waitStarted = AwaitedEvent()
         fixture.hook.midAnswer = { prompt in
             guard prompt == "a-wait" else { return }
@@ -523,6 +538,9 @@ struct HumanWaitGateTests {
         let session = fixture.model.makeSession()
 
         let humanGate = AsyncSemaphore(value: 0)
+        // The release of the gate, also when the test throws before it (rule
+        // T1). A second release does no harm.
+        defer { humanGate.signal() }
         let waitStarted = AwaitedEvent()
         fixture.hook.midAnswer = { prompt in
             guard prompt == "first" else { return }
@@ -563,6 +581,9 @@ struct HumanWaitGateTests {
         let backend = try #require(fixture.container.backends.first)
 
         let humanGate = AsyncSemaphore(value: 0)
+        // The release of the gate, also when the test throws before it (rule
+        // T1). A second release does no harm.
+        defer { humanGate.signal() }
         let waitStarted = AwaitedEvent()
         fixture.hook.midAnswer = { prompt in
             guard prompt == "answer" else { return }
@@ -649,6 +670,13 @@ struct HumanWaitGateTests {
         // awaiting a reply has, rather than a poll of `Task.isCancelled`.
         let insideWait = AwaitedEvent()
         let suspended = AsyncSemaphore(value: 0)
+        // The release of the body and the close of the session, also when the
+        // test throws before them (rule T1). A second release and a second
+        // close do no harm.
+        defer {
+            suspended.signal()
+            await session.close()
+        }
         fixture.hook.midAnswer = { prompt in
             guard prompt == "cancelled" else { return }
             await withTaskCancellationHandler {
@@ -715,6 +743,12 @@ struct HumanWaitGateTests {
         let releaseFirst = AsyncSemaphore(value: 0)
         let secondEntered = AwaitedEvent()
         let releaseSecond = AsyncSemaphore(value: 0)
+        // The release of both waits, also when the test throws before it
+        // (rule T1). A second release does no harm.
+        defer {
+            releaseFirst.signal()
+            releaseSecond.signal()
+        }
         fixture.hook.midAnswer = { prompt in
             guard prompt == "nested" else { return }
             firstEntered.signal()
@@ -767,6 +801,9 @@ struct HumanWaitGateTests {
         // permanent.
         let inAnswer = AwaitedEvent()
         let releaseAnswer = AsyncSemaphore(value: 0)
+        // The release of the answer, also when the test throws before it
+        // (rule T1). A second release does no harm.
+        defer { releaseAnswer.signal() }
         fixture.hook.midAnswer = { prompt in
             guard prompt == "answer" else { return }
             inAnswer.signal()
@@ -782,6 +819,9 @@ struct HumanWaitGateTests {
         // whole exit of the wait.
         let waitEntered = AwaitedEvent()
         let releaseWait = AsyncSemaphore(value: 0)
+        // The release of the wait, also when the test throws before it (rule
+        // T1). A second release does no harm.
+        defer { releaseWait.signal() }
         let wait = ObservedRun {
             waitEntered.signal()
             await releaseWait.wait()
@@ -832,6 +872,12 @@ struct HumanWaitGateTests {
         let releaseAnswerA = AsyncSemaphore(value: 0)
         let inAnswerB = AwaitedEvent()
         let releaseAnswerB = AsyncSemaphore(value: 0)
+        // The release of both answers, also when the test throws before it
+        // (rule T1). A second release does no harm.
+        defer {
+            releaseAnswerA.signal()
+            releaseAnswerB.signal()
+        }
         fixture.hook.midAnswer = { prompt in
             switch prompt {
             case "answer-a":
@@ -854,6 +900,9 @@ struct HumanWaitGateTests {
         // ends, so the end of the run shows the end of the wait.
         let waitEntered = AwaitedEvent()
         let releaseWait = AsyncSemaphore(value: 0)
+        // The release of the wait, also when the test throws before it (rule
+        // T1). A second release does no harm.
+        defer { releaseWait.signal() }
         let wait = ObservedRun {
             waitEntered.signal()
             await releaseWait.wait()
@@ -904,6 +953,9 @@ struct HumanWaitGateTests {
         // the session while the wait is open.
         #expect(await session.isIdleOnceThePumpEnds())
         let personAnswers = AsyncSemaphore(value: 0)
+        // The answer of the person, also when the test throws before it (rule
+        // T1). A second answer does no harm.
+        defer { personAnswers.signal() }
         let waitEntered = AwaitedEvent()
         let wait = ObservedRun { () -> Int in
             waitEntered.signal()

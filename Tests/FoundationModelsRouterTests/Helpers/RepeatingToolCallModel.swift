@@ -251,20 +251,27 @@ struct RepeatingToolCallSessionFixture {
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. When this helper throws,
+    ///   it removes the temp directory first.
     static func make(
         model: some LanguageModel, log: RenderProbeLog, detection: RepetitionDetection, tempDirPrefix: String
     ) async throws -> RepeatingToolCallSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let runs = RunCount()
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory,
-            loader: StubModelLoader(
-                container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(
-                tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: detection))
-        return RepeatingToolCallSessionFixture(session: session, log: log, runs: runs, directory: directory)
+        do {
+            let runs = RunCount()
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: directory,
+                loader: StubModelLoader(
+                    container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let session = profile.standard.makeSession(
+                configuration: SessionConfiguration(
+                    tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: detection))
+            return RepeatingToolCallSessionFixture(session: session, log: log, runs: runs, directory: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 }

@@ -54,25 +54,38 @@ struct RunProgressDeliveryTests {
     /// Makes a session over a new backend, answers ``firstPrompt``, and
     /// watches the events of the session.
     ///
+    /// When a step throws, this helper first stops the event drain and
+    /// removes the directory (rule T1).
+    ///
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile or the first answer throws.
     private static func makeFixture() async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "RunProgressDeliveryTests")
-        let backend = Backend(script: [:])
-        let recorder = InMemoryRecorder()
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory, recorder: recorder,
-            loader: StubModelLoader(
-                container: SessionMessagePumpTests.PumpProbeContainer(backend: backend),
-                dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession()
-        let (events, drain) = await SessionEventLog.watch(session)
-        _ = try await session.respond(to: firstPrompt)
-        return Fixture(
-            session: session, backend: backend, recorder: recorder, events: events, drain: drain,
-            profile: profile, directory: directory)
+        do {
+            let backend = Backend(script: [:])
+            let recorder = InMemoryRecorder()
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: directory, recorder: recorder,
+                loader: StubModelLoader(
+                    container: SessionMessagePumpTests.PumpProbeContainer(backend: backend),
+                    dimension: RouterTestFixtures.stubDimension))
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let session = profile.standard.makeSession()
+            let (events, drain) = await SessionEventLog.watch(session)
+            do {
+                _ = try await session.respond(to: firstPrompt)
+            } catch {
+                drain.cancel()
+                throw error
+            }
+            return Fixture(
+                session: session, backend: backend, recorder: recorder, events: events, drain: drain,
+                profile: profile, directory: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Ends the fixture: stops the event drain and removes the directory.

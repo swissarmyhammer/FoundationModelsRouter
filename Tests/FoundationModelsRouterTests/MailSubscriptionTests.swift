@@ -95,6 +95,10 @@ struct MailSubscriptionTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -123,6 +127,10 @@ struct MailSubscriptionTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let running = Self.reply(Self.heldPrompt)
@@ -175,6 +183,10 @@ struct MailSubscriptionTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let feed = await session.streamSessionEvents()
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
@@ -211,19 +223,29 @@ struct MailSubscriptionTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let hub = (session as! RoutedSessionActor).outputHub
 
         let held = try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: session, backend: backend)
         let mark = EndMark()
         let waiting = Task {
-            defer { mark.mark() }
+            defer {
+                mark.mark()
+                hub.waiterChanges.signal()
+            }
             return try await session.awaitTerminal(of: held)
         }
         // The latch is shut, so no terminal can come. After the wait is in
         // the hub, only a terminal event, a cancel or a close can end it, and
         // none of them comes before the latch opens. So the check below reads
-        // a wait that is open.
-        try await hub.waiterChanges.wait(until: { hub.waiterCount == 1 })
+        // a wait that is open. The wait for the waiter also ends when the
+        // waiting task ended (rule T1): a wait that never goes into the hub
+        // ends its task, and in a test that passes the task cannot end
+        // before the latch opens.
+        try await hub.waiterChanges.wait(until: { hub.waiterCount == 1 }, endingOn: { mark.isMarked })
         #expect(!mark.isMarked)
         #expect(hub.terminal(for: .mail(held)) == nil)
         await latch.open()
@@ -244,6 +266,7 @@ struct MailSubscriptionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let actor = session as! RoutedSessionActor
 
         // The id of a compaction signal that the session runs: it waits for
@@ -270,6 +293,7 @@ struct MailSubscriptionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        defer { await session.close() }
         let feed = await session.streamSessionEvents()
 
         let elicitationId = ULID.generate()
@@ -281,14 +305,24 @@ struct MailSubscriptionTests {
             sessionID: session.id, runPlane: session.runPlane, sink: postings,
             tool: MailQueueFixtures.runTool, op: MailQueueFixtures.runOp,
             completionToken: RunPlane.makeCompletionToken(), isCancelled: { false })
+        let mark = EndMark()
         let answering = Task {
-            try await context.elicit(PendingElicitationFixtures.formRequest(elicitationId: elicitationId))
+            defer {
+                mark.mark()
+                postings.changes.signal()
+            }
+            return try await context.elicit(PendingElicitationFixtures.formRequest(elicitationId: elicitationId))
         }
-        try await postings.waitForPosts(1)
+        // The wait for the post also ends when the elicit ended (rule T1): an
+        // elicit that ends with no post fails the test here. In a test that
+        // passes, the elicit waits for the answer that the test gives later.
+        try await postings.changes.wait(until: { postings.postCount >= 1 }, endingOn: { mark.isMarked })
         #expect(backend.prompts.isEmpty)
 
+        // Rule T1: an answer that is not delivered leaves the elicit
+        // suspended, so the test fails here, before it waits.
         let response = ElicitationResponse.accept(content: ["name": .string("Ada")])
-        #expect(await session.respond(elicitationId: elicitationId.description, response: response) == .delivered)
+        try #require(await session.respond(elicitationId: elicitationId.description, response: response) == .delivered)
         #expect(try await answering.value == response)
         #expect(await session.becomesIdle())
         await session.close()
@@ -313,6 +347,7 @@ struct MailSubscriptionTests {
         let backend = Backend(script: [:])
         let (session, profile) = try await MailQueueFixtures.makeSession(
             over: backend, dir: dir, grammar: Self.grammar)
+        defer { await session.close() }
 
         let events = try await collect(session.streamEvents(to: Self.firstPrompt))
         #expect(events.streamedText.isEmpty)

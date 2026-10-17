@@ -296,6 +296,7 @@ struct SessionCloseFromOwnWorkTests {
     func aRunBodyThatClosesItsSessionGetsTheReturnAtOnce(route: CloseRoute) async throws {
         let probe = CloseProbe()
         let fixture = try await Self.makeFixture(probe: probe, route: route, mount: Self.backgroundMount)
+        defer { await fixture.end(opening: [probe.mayStartClose, probe.mayReturn]) }
         let events = await fixture.session.streamSessionEvents()
 
         // The answer hands back the pending envelope of the run, and only
@@ -312,7 +313,6 @@ struct SessionCloseFromOwnWorkTests {
 
         #expect(probe.steps == [Self.closeReturnedStep])
         await Self.expectClosed(fixture.session)
-        await fixture.end()
     }
 
     /// The production change that makes this test hang: a close that does
@@ -326,6 +326,7 @@ struct SessionCloseFromOwnWorkTests {
     func aToolCallThatClosesItsSessionGetsTheReturnAtOnce(route: CloseRoute) async throws {
         let probe = CloseProbe()
         let fixture = try await Self.makeFixture(probe: probe, route: route, mount: nil)
+        defer { await fixture.end(opening: [probe.mayStartClose, probe.mayReturn]) }
         let events = await fixture.session.streamSessionEvents()
         await probe.mayStartClose.open()
 
@@ -342,7 +343,6 @@ struct SessionCloseFromOwnWorkTests {
 
         #expect(probe.steps == [Self.closeReturnedStep])
         await Self.expectClosed(fixture.session)
-        await fixture.end()
     }
 
     // MARK: - The work of another session
@@ -361,11 +361,17 @@ struct SessionCloseFromOwnWorkTests {
     func aForkToolThatClosesTheParentWaitsForTheParent() async throws {
         let probe = CloseProbe()
         let fixture = try await Self.makeFixture(probe: probe, route: .direct, mount: nil)
+        // The deferred ends run in the reverse order of these lines: the
+        // close of the child, the gate of the held run, and then the end of
+        // the fixture, as the test ended them before.
+        defer { await fixture.end(opening: [probe.mayStartClose, probe.mayReturn]) }
         let parent = try fixture.sessionActor()
         await probe.mayStartClose.open()
         await probe.mayReturn.open()
         let hold = try await Self.startHeldRun(on: parent, recordingTo: probe)
+        defer { await hold.unwind.open() }
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         // The fork runs on its own: no tool call of the parent waits for it.
         let answering = Task { try await child.respond(to: Self.prompt) }
@@ -376,8 +382,6 @@ struct SessionCloseFromOwnWorkTests {
         #expect(answer == Self.toolOutput)
         #expect(probe.steps == [Self.parentRunEndedStep, Self.closeReturnedStep])
         await Self.expectClosed(parent)
-        await child.close()
-        await fixture.end()
     }
 
     /// A tool of the parent asks its fork one question and waits for the
@@ -400,8 +404,12 @@ struct SessionCloseFromOwnWorkTests {
         let fixture = try await BackgroundingSessionFixture.make(
             prefix: "SessionCloseFromOwnWorkTests",
             tools: [ChildClosingTheParentTool(parentProbe: parentProbe, childProbe: childProbe)])
+        // The deferred ends run in the reverse order of these lines: the
+        // close of the child, and then the end of the fixture.
+        defer { await fixture.end() }
         let parent = try fixture.sessionActor()
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
         parentProbe.setTarget(parent)
         childProbe.setTarget(child)
         let events = await parent.streamSessionEvents()
@@ -423,8 +431,6 @@ struct SessionCloseFromOwnWorkTests {
         #expect(childProbe.steps == [Self.closeReturnedStep])
         #expect(parentProbe.steps == [Self.parentSawCancelStep, Self.toolOutput])
         await Self.expectClosed(parent)
-        await child.close()
-        await fixture.end()
     }
 
     /// A run body that waits for its cancel, and then holds until the test

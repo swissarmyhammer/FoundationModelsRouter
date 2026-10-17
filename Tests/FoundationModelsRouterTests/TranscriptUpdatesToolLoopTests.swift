@@ -40,11 +40,14 @@ struct TranscriptUpdatesToolLoopTests {
                 for await _ in updates {}
             }
         }
-        for try await _ in backend.streamResponseFragments(to: prompt, maxTokens: nil) {}
-        for reader in readers {
-            reader.cancel()
-            await reader.value
+        // The readers stop also when the stream of the call throws.
+        defer {
+            for reader in readers {
+                reader.cancel()
+                await reader.value
+            }
         }
+        for try await _ in backend.streamResponseFragments(to: prompt, maxTokens: nil) {}
     }
 
     /// Makes a live backend over a model that asks for one tool, then answers.

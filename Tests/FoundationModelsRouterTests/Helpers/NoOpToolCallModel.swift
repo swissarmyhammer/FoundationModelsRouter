@@ -374,6 +374,9 @@ struct NoOpToolCallSessionFixture {
     /// a temp directory, records a session with no check on one router,
     /// closes it, and restores it on a second router with the same id.
     ///
+    /// When a step throws, this helper removes the temp directory first
+    /// (rule T1).
+    ///
     /// - Parameters:
     ///   - container: The container that runs the model, on both routers.
     ///   - tools: The tools of the recorded and of the restored session.
@@ -389,22 +392,27 @@ struct NoOpToolCallSessionFixture {
         restoreCheck: NoOpToolCallCheck?
     ) async throws -> SessionFixtureLifecycle.Started {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let loader = StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-        let routerId = ULID.generate()
-        let recording = try await recordingProfile(id: routerId, under: directory, loader: loader).profile
-        let recorded = recording.standard.makeSession(configuration: SessionConfiguration(tools: tools))
-        await recorded.close()
+        do {
+            let loader = StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+            let routerId = ULID.generate()
+            let recording = try await recordingProfile(id: routerId, under: directory, loader: loader).profile
+            let recorded = recording.standard.makeSession(configuration: SessionConfiguration(tools: tools))
+            await recorded.close()
 
-        let (router, restoring) = try await recordingProfile(id: routerId, under: directory, loader: loader)
-        let session: any RoutedSession
-        if let restoreCheck {
-            session = try await restoring.standard.restoreSession(
-                id: recorded.id, tools: tools, isNoOpToolCall: restoreCheck
-            ).session
-        } else {
-            session = try await restoring.standard.restoreSession(id: recorded.id, tools: tools).session
+            let (router, restoring) = try await recordingProfile(id: routerId, under: directory, loader: loader)
+            let session: any RoutedSession
+            if let restoreCheck {
+                session = try await restoring.standard.restoreSession(
+                    id: recorded.id, tools: tools, isNoOpToolCall: restoreCheck
+                ).session
+            } else {
+                session = try await restoring.standard.restoreSession(id: recorded.id, tools: tools).session
+            }
+            return SessionFixtureLifecycle.Started(session: session, router: router, directory: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
         }
-        return SessionFixtureLifecycle.Started(session: session, router: router, directory: directory)
     }
 
     /// Resolves the test profile over a router that records to disk under

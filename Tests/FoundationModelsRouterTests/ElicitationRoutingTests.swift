@@ -41,9 +41,13 @@ struct ElicitationRoutingTests {
     /// A test waits *on* the first request with ``waitForFirst()`` — a
     /// suspension the producer ends, so a loaded machine makes the test slower
     /// and never red — and reads every request back with ``requests`` once the
-    /// stream has ended. The wait ends when the first request arrives.
+    /// stream has ended. The wait ends when the first request arrives. The
+    /// wait also ends when the stream ends, or when the test calls
+    /// ``noteSourceEnded()`` (rule T1). Then ``waitForFirst()`` fails the
+    /// test when no request came.
     private final class ElicitationWatch: Sendable {
-        /// Sent when the first request arrives.
+        /// Sent when the first request arrives, when the stream ends, or when
+        /// the source of the requests ended.
         private let firstArrived = AwaitedEvent()
 
         /// Every request seen so far, in stream order, behind a lock: the
@@ -54,22 +58,34 @@ struct ElicitationRoutingTests {
         /// carried, in stream order.
         var requests: [OperationEvent] { seen.withLock { $0 } }
 
-        /// Waits until the stream has carried at least one request.
+        /// Waits until the stream has carried at least one request, or until
+        /// the stream or the source of the requests ended (rule T1).
         ///
         /// - Returns: The first request.
-        /// - Throws: ``EventNeverArrived`` when the test was cancelled first.
+        /// - Throws: ``EventNeverArrived`` when the test was cancelled first,
+        ///   or the error of `#require` when the wait ended with no request.
         func waitForFirst() async throws -> OperationEvent {
             try await firstArrived.wait()
             return try #require(requests.first)
         }
 
-        /// Drains `stream` on a background task, recording each request.
+        /// Records that the source of the requests ended: the work that
+        /// raises the request can raise no more. This ends the wait of
+        /// ``waitForFirst()``.
+        func noteSourceEnded() {
+            firstArrived.signal()
+        }
+
+        /// Drains `stream` on a background task, recording each request. The
+        /// end of the stream, also with an error, ends the wait of
+        /// ``waitForFirst()``.
         ///
         /// - Parameter stream: The stream to drain.
         /// - Returns: The draining task. It ends when the stream ends.
         func drain<Events: AsyncSequence & Sendable>(_ stream: Events) -> Task<Void, Error>
         where Events.Element == SessionEvent {
             Task {
+                defer { firstArrived.signal() }
                 for try await event in stream {
                     guard case .elicitationRequested(let request) = event else { continue }
                     seen.withLock { $0.append(request) }
@@ -210,6 +226,7 @@ struct ElicitationRoutingTests {
     ///     session.
     /// - Returns: The task that resumes with the answer.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled before the
+    ///   post, or the error of `#require` when the elicit ended before its
     ///   post.
     private static func suspendOnElicitation(
         _ request: ElicitationRequest,
@@ -219,7 +236,11 @@ struct ElicitationRoutingTests {
         let postings = ElicitationPostings(forwardingTo: downstream)
         let context = Pending.makeContext(for: session, postingTo: postings)
         let answering = Task { try await context.elicit(request) }
-        try await postings.waitForPosts(1)
+        let ended = RecordedWaitResult.recordingEnd(of: answering, reportingTo: postings.changes)
+        // Rule T1: the wait also ends when the elicit ended. In a test that
+        // passes, the elicit does not end before its post: it waits for an
+        // answer that the test gives after this wait.
+        try await postings.changes.wait(until: { postings.postCount >= 1 }, endingOn: { ended.value != nil })
         #expect(await session.runPlane.pendingElicitationIds().contains(request.elicitationId))
         return answering
     }
@@ -235,8 +256,10 @@ struct ElicitationRoutingTests {
         let elicitationId = ULID.generate()
         let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
 
+        // Rule T1: an answer that is not delivered leaves the elicit
+        // suspended, so the test fails here, before it waits.
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
-        #expect(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
+        try #require(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
         #expect(try await answering.value == answer)
         #expect(await session.runPlane.pendingElicitationIds().isEmpty)
 
@@ -253,7 +276,9 @@ struct ElicitationRoutingTests {
         let elicitationId = ULID.generate()
         let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
 
-        #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
+        // Rule T1: an answer that is not delivered leaves the elicit
+        // suspended, so the test fails here, before it waits.
+        try #require(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
         #expect(try await answering.value == .decline)
     }
 
@@ -273,8 +298,10 @@ struct ElicitationRoutingTests {
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .acceptedAwaitingCompletion)
         #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
-        // The out-of-band flow's completion is what resumes the run.
-        #expect(await session.complete(elicitationId: elicitationId.description) == .completed)
+        // The out-of-band flow's completion is what resumes the run. A
+        // completion that does not come leaves the elicit suspended, so the
+        // test fails here, before it waits (rule T1).
+        try #require(await session.complete(elicitationId: elicitationId.description) == .completed)
         #expect(try await answering.value == .accept(content: nil))
         #expect(await session.runPlane.pendingElicitationIds().isEmpty)
 
@@ -296,18 +323,27 @@ struct ElicitationRoutingTests {
         let context = Pending.makeContext(for: session, postingTo: postings)
         let firstAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: firstId)) }
         let secondAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: secondId)) }
+        let firstEnded = RecordedWaitResult.recordingEnd(of: firstAnswering, reportingTo: postings.changes)
+        let secondEnded = RecordedWaitResult.recordingEnd(of: secondAnswering, reportingTo: postings.changes)
         // The run plane posts each request after it made the request pending.
-        try await postings.waitForPosts(2)
+        // Rule T1: the wait also ends when an elicit ended. In a test that
+        // passes, no elicit ends before its post: each one waits for an
+        // answer that the test gives after this wait.
+        try await postings.changes.wait(
+            until: { postings.postCount >= 2 },
+            endingOn: { firstEnded.value != nil || secondEnded.value != nil })
         #expect(await session.runPlane.pendingElicitationIds().count == 2)
 
+        // Rule T1: an answer that is not delivered leaves the elicit
+        // suspended, so the test fails here, before it waits.
         let firstAnswer = ElicitationResponse.accept(content: ["name": .string("Ada")])
-        #expect(await session.respond(elicitationId: firstId.description, response: firstAnswer) == .delivered)
+        try #require(await session.respond(elicitationId: firstId.description, response: firstAnswer) == .delivered)
         #expect(try await firstAnswering.value == firstAnswer)
 
         // The other elicitation is untouched: still running, still pending.
         #expect(await session.runPlane.pendingElicitationIds() == [secondId])
 
-        #expect(await session.respond(elicitationId: secondId.description, response: .decline) == .delivered)
+        try #require(await session.respond(elicitationId: secondId.description, response: .decline) == .delivered)
         #expect(try await secondAnswering.value == .decline)
     }
 
@@ -344,7 +380,9 @@ struct ElicitationRoutingTests {
                 response: .accept(content: nil)
             ) == .acceptedAwaitingCompletion
         )
-        #expect(await session.complete(elicitationId: upperRespondId.description.lowercased()) == .completed)
+        // Rule T1: a completion that does not come leaves the elicit
+        // suspended, so the test fails here, before it waits.
+        try #require(await session.complete(elicitationId: upperRespondId.description.lowercased()) == .completed)
         #expect(try await upperAnswering.value == .accept(content: nil))
 
         let lowerRespondId = ULID.generate()
@@ -355,7 +393,7 @@ struct ElicitationRoutingTests {
                 response: .accept(content: nil)
             ) == .acceptedAwaitingCompletion
         )
-        #expect(await session.complete(elicitationId: lowerRespondId.description.uppercased()) == .completed)
+        try #require(await session.complete(elicitationId: lowerRespondId.description.uppercased()) == .completed)
         #expect(try await lowerAnswering.value == .accept(content: nil))
     }
 
@@ -376,8 +414,10 @@ struct ElicitationRoutingTests {
         #expect(await sessionA.complete(elicitationId: elicitationId.description) == .noPendingElicitation)
         #expect(await sessionB.runPlane.pendingElicitationIds() == [elicitationId])
 
-        // The same answer through session B resumes it.
-        #expect(await sessionB.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
+        // The same answer through session B resumes it. An answer that is
+        // not delivered leaves the elicit suspended, so the test fails here,
+        // before it waits (rule T1).
+        try #require(await sessionB.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
         #expect(try await answering.value == .decline)
     }
 
@@ -411,6 +451,7 @@ struct ElicitationRoutingTests {
         let fixture = try await Self.makeElicitingFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.session
+        defer { await session.close() }
 
         // Subscribed before the answer starts, so the subscription sees the
         // request whenever the answer raises it. Each task is cancelled at exit
@@ -418,7 +459,11 @@ struct ElicitationRoutingTests {
         let watch = Self.ElicitationWatch()
         let draining = watch.drain(await session.streamSessionEvents().events)
         defer { draining.cancel() }
-        let answer = Task { try await session.respond(to: ScriptedToolFixture.prompt) }
+        // The end of the answer also ends the wait for the request (rule T1).
+        let answer = Task {
+            defer { watch.noteSourceEnded() }
+            return try await session.respond(to: ScriptedToolFixture.prompt)
+        }
         defer { answer.cancel() }
 
         // The request arrives while the tool is still suspended: nothing has
@@ -429,8 +474,12 @@ struct ElicitationRoutingTests {
         #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         // The id the event carries is the id the reply surface takes, and the
-        // answer resumes the tool with it.
-        #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
+        // answer resumes the tool with it. An answer that is not delivered
+        // leaves the tool suspended, so the test fails here, before it waits
+        // (rule T1).
+        try #require(
+            await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil))
+                == .delivered)
         #expect(try await answer.value == ScriptedToolFixture.answer(fromToolOutputs: [Self.acceptedToolOutput]))
 
         await session.close()
@@ -446,6 +495,7 @@ struct ElicitationRoutingTests {
         let fixture = try await Self.makeElicitingFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.session
+        defer { await session.close() }
 
         let sessionWatch = Self.ElicitationWatch()
         let sessionDraining = sessionWatch.drain(await session.streamSessionEvents().events)
@@ -458,7 +508,11 @@ struct ElicitationRoutingTests {
         let elicitationId = try #require(request.elicitation?.elicitationId)
         #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
-        #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
+        // Rule T1: an answer that is not delivered leaves the tool
+        // suspended, so the test fails here, before it waits.
+        try #require(
+            await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil))
+                == .delivered)
         try await answerDraining.value
         #expect(answerWatch.requests == [request])
         // The answer reached the tool, and the tool's output reached the model.
@@ -476,6 +530,7 @@ struct ElicitationRoutingTests {
     func elicitationRequestedBetweenSubmissionsReachesTheSessionStream() async throws {
         let (session, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         // The session installs its journal on the outbox at its first
         // submission. A real tool always runs inside or after a submission, so
@@ -491,7 +546,9 @@ struct ElicitationRoutingTests {
 
         let request = try await watch.waitForFirst()
         #expect(request.elicitation?.elicitationId == elicitationId)
-        #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
+        // Rule T1: an answer that is not delivered leaves the elicit
+        // suspended, so the test fails here, before it waits.
+        try #require(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
         #expect(try await answering.value == .decline)
 
         await session.close()

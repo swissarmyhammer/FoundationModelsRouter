@@ -144,13 +144,24 @@ struct MultiMessageSessionTests {
             changes.signal()
         }
 
-        /// Waits until the log holds `event`.
+        /// Waits until the log holds `event`, or until `ended` holds the end
+        /// of a test task (rule T1). The task records `event` before it can
+        /// end, so in a test that passes the end never comes first.
         ///
-        /// - Parameter event: The entry to wait for.
-        /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
-        ///   first.
-        func waitFor(_ event: String) async throws {
-            try await changes.wait(until: { self.events.contains(event) })
+        /// - Parameters:
+        ///   - event: The entry to wait for.
+        ///   - ended: The end of the task whose end also ends the wait. Its
+        ///     signal must be ``changes``.
+        ///   - sourceLocation: The place of the call, for the failure.
+        /// - Throws: The error of `#require` when the task ended first, or
+        ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
+        func waitFor(
+            _ event: String, endingOn ended: RecordedWaitResult,
+            sourceLocation: SourceLocation = #_sourceLocation
+        ) async throws {
+            try await changes.wait(
+                until: { self.events.contains(event) },
+                endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
         }
 
         var events: [String] {
@@ -443,17 +454,22 @@ struct MultiMessageSessionTests {
         // Start a respond() call; it suspends inside the backend body. The
         // pump of the session reaches the backend on a task of its own, so the
         // test waits for the entry that the backend records.
+        // The wait also ends when the respond() call ended before it reached
+        // the backend (rule T1).
         let respondTask = Task { try await session.respond(to: "message") }
-        try await log.waitFor("respond-enter")
+        let respondEnded = RecordedWaitResult.recordingEnd(of: respondTask, reportingTo: log.changes)
+        try await log.waitFor("respond-enter", endingOn: respondEnded)
 
         // A fork reads the settled transcript of the session, so it does not
         // wait for the submission above (task ^dpn2ytt). It makes the child's
         // backend while that submission is still suspended. Only the test
         // opens the gate of the submission, and it does so after this wait.
         // Thus a fork that waited for the submission never records its entry,
-        // and the test stops here: a stack of the test process shows it.
+        // and the test stops here: a stack of the test process shows it. The
+        // wait also ends when the fork ended with no entry (rule T1).
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        try await log.waitFor("makeFork")
+        let forkEnded = RecordedWaitResult.recordingEnd(of: forkTask, reportingTo: log.changes)
+        try await log.waitFor("makeFork", endingOn: forkEnded)
         let eventsWhileTheSubmissionIsSuspended = log.events
 
         releaseGate.signal()

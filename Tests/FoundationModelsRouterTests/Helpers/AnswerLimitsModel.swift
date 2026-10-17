@@ -283,7 +283,8 @@ struct AnswerLimitsSessionFixture {
     /// - Parameter tempDirPrefix: The calling suite's name, so a leaked temp
     ///   directory is attributable.
     /// - Returns: The fixture.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     static func make(tempDirPrefix: String) async throws -> AnswerLimitsSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let script = AnswerLimitsScript()
@@ -292,7 +293,13 @@ struct AnswerLimitsSessionFixture {
             loader: StubModelLoader(
                 container: LiveBackendContainer(model: AnswerLimitsModel(script: script)),
                 dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(
                 compaction: CompactionSettings(budget: budget), repetitionDetection: detection))

@@ -69,6 +69,8 @@ struct RepetitionStopTests {
     ///   - logger: The explicit logger of the session, or `nil` for the
     ///     loggers of the module.
     /// - Returns: The fixture and the events of the answer, in order.
+    /// - Throws: What the fixture or the answer throws. Before it throws for
+    ///   the answer, it removes the directory of the fixture (rule T1).
     private static func runAnswer(
         script: RepeatingReasoningScript, repeatsAfterStop: Bool, detection: RepetitionDetection,
         logger: Logger? = nil
@@ -76,11 +78,16 @@ struct RepetitionStopTests {
         let fixture = try await RepeatingReasoningSessionFixture.make(
             script: script, repeatsAfterStop: repeatsAfterStop, detection: detection,
             tempDirPrefix: tempDirPrefix)
-        if let logger {
-            await fixture.session.useCaptureLogger(for: logger)
+        do {
+            if let logger {
+                await fixture.session.useCaptureLogger(for: logger)
+            }
+            let events = try await fixture.answer(to: prompt)
+            return (fixture, events)
+        } catch {
+            try? FileManager.default.removeItem(at: fixture.directory)
+            throw error
         }
-        let events = try await fixture.answer(to: prompt)
-        return (fixture, events)
     }
 
     /// The finish reason of each ended submission among `events`, in order.

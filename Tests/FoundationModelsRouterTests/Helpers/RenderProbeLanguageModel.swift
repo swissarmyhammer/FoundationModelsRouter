@@ -289,6 +289,9 @@ struct RenderProbeSessionFixture {
     /// Builds a router, resolves a profile at `context`, and vends a session
     /// with `instructions` over a ``RenderProbeLanguageModel``.
     ///
+    /// When the resolve throws, this helper removes the temp directory first
+    /// (rule T1).
+    ///
     /// - Parameters:
     ///   - instructions: The instructions of the session.
     ///   - toolRoundsPerAnswer: The count of the tool calls that each answer
@@ -313,12 +316,17 @@ struct RenderProbeSessionFixture {
             recorder: recorder,
             loader: StubModelLoader(
                 container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
-        return RenderProbeSessionFixture(
-            session: profile.standard.makeSession(instructions: instructions, tools: [MarkerEmittingTool()]),
-            log: log,
-            recorder: recorder,
-            directory: directory)
+        do {
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
+            return RenderProbeSessionFixture(
+                session: profile.standard.makeSession(instructions: instructions, tools: [MarkerEmittingTool()]),
+                log: log,
+                recorder: recorder,
+                directory: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 }

@@ -286,7 +286,9 @@ enum MailOnlyAnswerFixtures {
         ///   - callsTool: Whether the backend call with a one-based ordinal
         ///     calls the fixture tool.
         /// - Returns: The fixture.
-        /// - Throws: What the resolve of the profile throws.
+        /// - Throws: What the resolve of the profile throws, or when the
+        ///   container vended no backend. Before it throws, it closes the
+        ///   session that it made and removes the directory.
         static func make(
             prefix: String, limit: Int = MailOnlyAnswerFixtures.limit, gates: RunGates = RunGates(),
             tool: (RunGates) -> any Tool = { GatedJob(name: MailOnlyAnswerFixtures.jobName, gates: $0) },
@@ -295,15 +297,27 @@ enum MailOnlyAnswerFixtures {
             let tool = tool(gates)
             let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
             let container = Container(callsTool: callsTool)
-            let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-                over: container, cacheDir: directory, runClock: ManualRunClock())
-            let session = profile.standard.makeSession(
+            let resolved: (router: Router, profile: LanguageModelProfile)
+            do {
+                resolved = try await RouterTestFixtures.resolveStandardProfile(
+                    over: container, cacheDir: directory, runClock: ManualRunClock())
+            } catch {
+                try? FileManager.default.removeItem(at: directory)
+                throw error
+            }
+            let session = resolved.profile.standard.makeSession(
                 configuration: SessionConfiguration(tools: [tool], mailOnlyAnswerLimit: limit))
-            let backend = try #require(container.lastBackend)
-            let (events, drain) = await SessionEventLog.watch(session)
-            return Self(
-                session: session, backend: backend, gates: gates, events: events, drain: drain, router: router,
-                directory: directory)
+            do {
+                let backend = try #require(container.lastBackend)
+                let (events, drain) = await SessionEventLog.watch(session)
+                return Self(
+                    session: session, backend: backend, gates: gates, events: events, drain: drain,
+                    router: resolved.router, directory: directory)
+            } catch {
+                await session.close()
+                try? FileManager.default.removeItem(at: directory)
+                throw error
+            }
         }
 
         /// Sends `prompt` as a caller message, and waits until the pump ended

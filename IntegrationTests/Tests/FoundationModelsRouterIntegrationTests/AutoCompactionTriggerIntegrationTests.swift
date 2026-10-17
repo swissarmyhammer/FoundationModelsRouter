@@ -379,6 +379,10 @@ struct AutoCompactionTriggerIntegrationTests {
             chatTemplateDate: autoCompactionTriggerChatTemplateDate
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
+        // The eviction of the model, also when an answer throws (rule T1). No
+        // statement after the answers reads the model, so the eviction runs
+        // at the end of the test, before the removal of the directories.
+        defer { await loaded.container.model.evict() }
 
         let profile = RealModelHarness.make(
             model: autoCompactionTriggerModel,
@@ -412,8 +416,6 @@ struct AutoCompactionTriggerIntegrationTests {
         let contextFillBeforeTheAnswer = await session.contextFill
         let answer = try await Self.drive(session, prompt: Self.triggeringPrompt)
         let contextFillAfterTheAnswer = await session.contextFill
-
-        await loaded.container.model.evict()
 
         // The run's own numbers, on the record before any assertion reads them
         // — so a red run states what it went red on rather than only which

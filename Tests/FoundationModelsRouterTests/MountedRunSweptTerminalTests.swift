@@ -148,6 +148,10 @@ struct MountedRunSweptTerminalTests {
 
         let sink = MountFixtures.RecordingSink()
         let gate = RunLatch()
+        defer {
+            await gate.open()
+            await session.close()
+        }
         let mounted = Self.mountingContext(on: session).mount(
             MountFixtures.GatedTool(gate: gate),
             as: ToolMount(mode: .background, timeout: nil),
@@ -217,6 +221,7 @@ struct MountedRunSweptTerminalTests {
         let recorder = SignallingTranscriptRecorder()
         let (session, directory) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: directory) }
+        defer { await session.close() }
 
         let sink = MountFixtures.RecordingSink()
         let mounted = Self.mountingContext(on: session).mount(

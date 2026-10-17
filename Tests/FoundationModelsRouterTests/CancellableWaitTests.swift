@@ -36,17 +36,28 @@ struct CancellableWaitTests {
         // download in flight.
         let workReached = AwaitedEvent()
         let releaseWork = AwaitedEvent()
-        let workFinished = AwaitedEvent()
+        // The work records `true` when it finishes, and `false` when its wait
+        // throws. Thus the work records a result also when it is cancelled
+        // (rule T1).
+        let workResult = RecordedWaitResult()
 
         let caller = Task {
             try await CancellableWait.value {
                 workReached.signal()
-                try await releaseWork.wait()
-                workFinished.signal()
+                do {
+                    try await releaseWork.wait()
+                } catch {
+                    workResult.record(false)
+                    throw error
+                }
+                workResult.record(true)
                 return 1
             }
         }
-        try await workReached.wait()
+        // Rule T1: the wait also ends when the caller ends before the work
+        // starts. In a test that passes, the caller ends only after the
+        // cancel below.
+        try await RecordedWaitResult.wait(for: { try await workReached.wait() }, endingOnEndOf: caller)
 
         // The caller stops waiting although the work is still in flight.
         caller.cancel()
@@ -55,7 +66,8 @@ struct CancellableWaitTests {
         // And the work was never cancelled: it finishes, so a download's part
         // files keep filling the cache instead of being thrown away.
         releaseWork.signal()
-        try await workFinished.wait()
+        try await workResult.changes.wait(until: { workResult.value != nil })
+        #expect(workResult.value == true, "the work was cancelled before it finished")
     }
 
     @Test("a caller cancelled before the call throws and never starts the work")

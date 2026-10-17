@@ -353,6 +353,7 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         #expect(throws: PromptRefusal.noTextSegment) { try session.send(Transcript.Prompt(segments: [])) }
         #expect(await session.pendingMessages().isEmpty)
@@ -374,6 +375,10 @@ struct SessionMailQueueTests {
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer {
+            backend.proceed.signal()
+            await session.close()
+        }
 
         let feed = await session.streamSessionEvents()
         let blocking = Task { try await session.respond(to: "blocking message") }
@@ -439,6 +444,7 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let feed = await session.streamSessionEvents()
         let stop = session.cancelAll()
@@ -591,6 +597,10 @@ struct SessionMailQueueTests {
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer {
+            backend.proceed.signal()
+            await session.close()
+        }
 
         let feed = await session.streamSessionEvents()
         let id = try session.send("racing prompt")
@@ -666,6 +676,10 @@ struct SessionMailQueueTests {
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer {
+            backend.proceed.signal()
+            await session.close()
+        }
 
         let feed = await session.streamSessionEvents()
         let blockingId = try session.send("blocking")
@@ -715,6 +729,7 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let stream = await session.streamSessionEvents().events
         let id = try session.send("queued prompt")
@@ -735,6 +750,7 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "direct prompt")
@@ -757,6 +773,7 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "first")
@@ -787,6 +804,7 @@ struct SessionMailQueueTests {
             container: BasicLLMContainer(usageIncrement: (input: Self.meteredInput, output: Self.meteredOutput))
         )
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "direct prompt")
@@ -865,6 +883,10 @@ struct SessionMailQueueTests {
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer {
+            backend.proceed.signal()
+            await session.close()
+        }
 
         let feed = await session.streamSessionEvents()
         let blockingId = try session.send("blocking")
@@ -898,6 +920,10 @@ struct SessionMailQueueTests {
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer {
+            backend.proceed.signal()
+            await session.close()
+        }
 
         let feed = await session.streamSessionEvents()
         let runningId = try session.send("blocking")
@@ -974,6 +1000,10 @@ struct SessionMailQueueTests {
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer {
+            backend.proceed.signal()
+            await session.close()
+        }
 
         let feed = await session.streamSessionEvents()
         let answer = Task { try await session.respond(to: "racing prompt") }
@@ -1002,6 +1032,7 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let stream = await session.streamSessionEvents().events
         let id = try session.send("one and done")

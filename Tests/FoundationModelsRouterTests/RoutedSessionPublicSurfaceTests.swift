@@ -137,6 +137,7 @@ struct RoutedSessionPublicSurfaceTests {
     func cancelOfAnAnsweredMessageReportsAlreadyAnswered() async throws {
         let fixture = try await Self.makeQueueFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
         let feed = await fixture.session.streamSessionEvents()
         let id = try fixture.session.send(Self.sentPromptText)
         #expect(try await Self.answered(id, on: fixture.session, prompt: Self.sentPromptText))

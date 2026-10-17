@@ -131,6 +131,7 @@ struct CancelledGenerationTeardownIntegrationTests {
             ref: cancellationSmokeModel,
             samplingMode: .greedy
         )
+        defer { await reloaded.container.model.evict() }
         let reply = try await reloaded.container.makeSession(
             instructions: "You are a terse, literal assistant.", samplingMode: reloaded.samplingMode
         ).respond(
@@ -138,7 +139,6 @@ struct CancelledGenerationTeardownIntegrationTests {
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(!reply.isEmpty)
-        await reloaded.container.model.evict()
     }
 
     /// Task ^3anq1yz: the MLX executor sends its one usage update only after
@@ -153,6 +153,7 @@ struct CancelledGenerationTeardownIntegrationTests {
             ref: cancellationSmokeModel,
             samplingMode: .greedy
         )
+        defer { await loaded.container.model.evict() }
         let backend = loaded.container.makeSession(
             instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
         let usageBefore = try #require(backend.usageTokenCounts())
@@ -163,6 +164,5 @@ struct CancelledGenerationTeardownIntegrationTests {
         let usageAfter = try #require(backend.usageTokenCounts())
         #expect(usageAfter.input - usageBefore.input == 0)
         #expect(usageAfter.output - usageBefore.output == 0)
-        await loaded.container.model.evict()
     }
 }

@@ -640,6 +640,7 @@ struct RoutedSessionCompactTests {
         try await driveAnswers(6, on: session)
 
         let latch = RunLatch()
+        defer { await latch.open() }
         let token = await trackFakeRun(on: session.runPlane, latch: latch)
         await session.runPlane.updateProgress(completionToken: token, detail: "halfway through")
 
@@ -678,8 +679,6 @@ struct RoutedSessionCompactTests {
         #expect(rendering.contains("The session reports each run when it settles"))
         #expect(rendering.contains("status()"))
         #expect(!rendering.contains("live view"))
-
-        await latch.open()
     }
 
     @Test(

@@ -298,6 +298,31 @@ struct CompactionSignalTests {
         return start.id == id.description
     }
 
+    /// Waits until a hook signals `inside`, or until `terminal` returns (rule
+    /// T1). When `terminal` returned first, the test fails by an assertion.
+    ///
+    /// The work of the hook holds until the test opens its gate, so in a test
+    /// that passes the terminal event comes only after `inside`. A work that
+    /// ends before its hold, for example with an error, gives its terminal
+    /// event, and the wait then ends. See
+    /// ``RecordedWaitResult/wait(for:endingOnEndOf:sourceLocation:)``.
+    ///
+    /// - Parameters:
+    ///   - inside: The semaphore that the hook signals when the work holds.
+    ///   - terminal: Waits for the terminal event of the work.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the terminal event came first,
+    ///   or ``ConditionNeverHeld`` when the test was cancelled first.
+    private static func waitForTheHold(
+        _ inside: AsyncSemaphore,
+        endingOn terminal: @escaping @Sendable () async throws -> SessionEvent,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let ending = Task { _ = try? await terminal() }
+        try await RecordedWaitResult.wait(
+            for: { try await inside.waitUnlessCancelled() }, endingOnEndOf: ending, sourceLocation: sourceLocation)
+    }
+
     // MARK: - The id and the terminal event
 
     /// The production change that makes this test fail: a `compact` that
@@ -311,11 +336,15 @@ struct CompactionSignalTests {
         let inside = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         Self.holdFirstSummarizerCall(fixture, inside: inside, release: release)
+        defer {
+            release.signal()
+            await session.close()
+        }
 
         // The call is synchronous: the id comes back while the summarizer
         // call is still held.
         let id = Self.compact(session)
-        await inside.wait()
+        try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         #expect(try Self.recordedTerminal(of: id, on: session) == nil)
 
         release.signal()
@@ -329,7 +358,6 @@ struct CompactionSignalTests {
 
         // A wait after the end gets the same terminal event from the ledger.
         #expect(try await session.awaitTerminal(of: id) == terminal)
-        await session.close()
     }
 
     /// The production change that makes this test fail: a compaction that
@@ -339,6 +367,7 @@ struct CompactionSignalTests {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         let (log, drain) = await OutputLog.watch(session)
 
         let id = Self.compact(session)
@@ -366,6 +395,7 @@ struct CompactionSignalTests {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         fixture.hook.midAnswer = { prompt in
             guard Fixtures.isSummarizerCall(prompt) else { return }
             throw Fixtures.ProbeError.summarizerFailed
@@ -378,7 +408,6 @@ struct CompactionSignalTests {
             id: id.description, reason: .requested,
             outcome: .failed(String(describing: Fixtures.ProbeError.summarizerFailed)))
         #expect(terminal == .compactionFailed(expected))
-        await session.close()
     }
 
     // MARK: - The pause of the mail queue
@@ -395,9 +424,13 @@ struct CompactionSignalTests {
         let inside = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         Self.holdFirstSummarizerCall(fixture, inside: inside, release: release)
+        defer {
+            release.signal()
+            await session.close()
+        }
 
         let id = Self.compact(session)
-        await inside.wait()
+        try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         let mailID = try session.send(Self.waitingPrompt)
 
         // The mail woke the pump, and the pump took nothing: the pump ends,
@@ -433,9 +466,13 @@ struct CompactionSignalTests {
         let release = AsyncSemaphore(value: 0)
         let sawCancel = Flag()
         Self.holdFirstSummarizerCall(fixture, inside: inside, release: release, sawCancel: sawCancel)
+        defer {
+            release.signal()
+            await session.close()
+        }
 
         let compactID = Self.compact(session)
-        await inside.wait()
+        try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: compactID) })
         let mailID = try session.send(Self.waitingPrompt)
         let cancelID = session.cancelAll()
 
@@ -482,11 +519,12 @@ struct CompactionSignalTests {
         let inside = AsyncSemaphore(value: 0)
         let sawCancellation = Fixtures.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Fixtures.firstSummarizerCall(), insideTool: inside)
+        defer { await session.close() }
         let transcriptBefore = Array(await session.transcript)
         let recordedBefore = await fixture.recorder.events.count
 
         let id = Self.compact(session)
-        await inside.wait()
+        try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         // The summarizer call ends only on a cancel, so close returns only
         // when it cancels the call.
         await session.close()
@@ -522,9 +560,10 @@ struct CompactionSignalTests {
         let sentDuringClose = SignalSlot()
         Self.sendACompactionWhenCloseCancels(
             fixture, session: session, inside: inside, sentDuringClose: sentDuringClose)
+        defer { await session.close() }
 
         let running = Self.compact(session)
-        await inside.wait()
+        try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: running) })
         let waiting = Self.compact(session)
         // The summarizer call ends only on a cancel, so close returns only
         // when it cancels the running compaction.
@@ -561,16 +600,23 @@ struct CompactionSignalTests {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        let gates = LateCompactionGates()
+        // The drain of close waits for the held calls, so the deferred close
+        // first opens each gate. A second signal does no harm.
+        defer {
+            gates.summarizerRelease.signal()
+            gates.answerRelease.signal()
+            await session.close()
+        }
         let actor = try #require(session as? RoutedSessionActor)
         let (log, drain) = await OutputLog.watch(session)
-        let gates = LateCompactionGates()
         fixture.hook.midAnswer = { prompt in await gates.hold(prompt) }
 
         // The answer holds its model call, and the cancel of close does not
         // end the hold, so the drain of close waits for the pump until the
         // test releases the answer.
-        _ = try session.send(Self.heldPrompt)
-        await gates.answerInside.wait()
+        let heldMail = try session.send(Self.heldPrompt)
+        try await Self.waitForTheHold(gates.answerInside, endingOn: { try await session.awaitTerminal(of: heldMail) })
         let closing = Task { await session.close() }
         // Close finishes the feeds after it began and before its drain.
         await drain.value
@@ -616,6 +662,7 @@ struct CompactionSignalTests {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (_, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
 
         let stop = session.cancelAll()
         #expect(try await session.awaitTerminal(of: stop) == .signalDone(stop))
@@ -630,7 +677,6 @@ struct CompactionSignalTests {
         let replaceID = session.replace(MailID(), with: .userMessage(prompt: Self.laterPrompt, options: .init()))
         #expect(try await session.awaitTerminal(of: replaceID) == .signalDone(replaceID))
         #expect(try await session.respond(to: Self.laterPrompt) == "ok-\(Self.laterPrompt)")
-        await session.close()
     }
 
     // MARK: - One path for both kinds
@@ -646,6 +692,7 @@ struct CompactionSignalTests {
         Self.replyWithShortSummary(fixture)
         let session = try await Fixtures.makeCompactionTriggeredSession(
             fixture, budget: Fixtures.summarizingCompactionBudget)
+        defer { await session.close() }
         let (log, drain) = await OutputLog.watch(session)
 
         let answerEvents = try await collect(await session.streamEvents(to: "compacts-first"))
@@ -678,6 +725,7 @@ struct CompactionSignalTests {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
 
         let terminal = try await session.awaitTerminal(of: Self.compact(session))
 
@@ -687,7 +735,6 @@ struct CompactionSignalTests {
         }
         #expect(result.summarizerTier == .flash)
         #expect(await fixture.observer.entered.filter(Fixtures.isSummarizerCall).count == 1)
-        await session.close()
     }
 
     /// The production change that makes this test fail: a requested
@@ -697,6 +744,7 @@ struct CompactionSignalTests {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        defer { await session.close() }
         let isFirst = Fixtures.firstSummarizerCall()
         fixture.hook.midAnswer = { prompt in
             guard isFirst(prompt) else { return }
@@ -711,7 +759,6 @@ struct CompactionSignalTests {
         }
         #expect(result.summarizerTier == .ownModel)
         #expect(await fixture.observer.entered.filter(Fixtures.isSummarizerCall).count == 2)
-        await session.close()
     }
 
     /// The production change that makes this test fail: a merge of two
@@ -725,9 +772,13 @@ struct CompactionSignalTests {
         let inside = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         Self.holdFirstSummarizerCall(fixture, inside: inside, release: release)
+        defer {
+            release.signal()
+            await session.close()
+        }
 
         let first = Self.compact(session)
-        await inside.wait()
+        try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: first) })
         let second = Self.compact(session)
         // The second compaction waits for the first: it did not start.
         #expect(await log.firstIndex { Self.startsCompaction($0, second) } == nil)

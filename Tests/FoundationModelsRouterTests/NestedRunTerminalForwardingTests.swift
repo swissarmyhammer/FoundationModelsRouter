@@ -151,6 +151,8 @@ struct NestedRunTerminalForwardingTests {
     ///
     /// - Returns: The observation to drive and then close.
     /// - Throws: Whatever profile resolution or the stub answer throws.
+    ///   Before it throws, it closes the session that it made and removes
+    ///   the directory (rule T1).
     private static func observe() async throws -> Observation {
         let recorder = InMemoryRecorder()
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -161,10 +163,22 @@ struct NestedRunTerminalForwardingTests {
                 container: UndrivenLanguageModelContainer(),
                 dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile: LanguageModelProfile
+        do {
+            profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         let session = profile.standard.makeSession()
-        _ = try await session.respond(to: attachingPrompt)
+        do {
+            _ = try await session.respond(to: attachingPrompt)
+        } catch {
+            await session.close()
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
 
         let settledRuns = SettledRunLog()
         let stream = await session.streamSessionEvents().events
@@ -215,9 +229,12 @@ struct NestedRunTerminalForwardingTests {
     ///
     /// - Parameter session: The session both runs are tracked on.
     /// - Returns: The tokens and the nested run's terminal.
-    /// - Throws: When a run plane wait ends and the run did not settle.
+    /// - Throws: When a run plane wait ends and the run did not settle. The
+    ///   gate opens also when this helper throws, so no nested run stays
+    ///   held (rule T1).
     private static func settleNestedRun(on session: any RoutedSession) async throws -> SettledNesting {
         let gate = RunLatch()
+        defer { await gate.open() }
         let runner = backgroundRunner(wrapping: NestingTool(gate: gate), on: session)
         let rendered = try await runner.call(arguments: MountArguments(value: callArgument))
         let outerToken = try MountFixtures.decodeEnvelope(rendered).completionToken
@@ -261,6 +278,7 @@ struct NestedRunTerminalForwardingTests {
     func nestedRunSettlementReachesTheSessionStream() async throws {
         let observation = try await Self.observe()
         defer { try? FileManager.default.removeItem(at: observation.directory) }
+        defer { await observation.close() }
 
         let nesting = try await Self.settleNestedRun(on: observation.session)
         try await observation.awaitSettlement(of: nesting.nestedToken)
@@ -286,6 +304,7 @@ struct NestedRunTerminalForwardingTests {
     func nestedRunTerminalIsJournaledOnce() async throws {
         let observation = try await Self.observe()
         defer { try? FileManager.default.removeItem(at: observation.directory) }
+        defer { await observation.close() }
 
         let nesting = try await Self.settleNestedRun(on: observation.session)
         try await observation.awaitSettlement(of: nesting.nestedToken)
@@ -294,8 +313,6 @@ struct NestedRunTerminalForwardingTests {
         // in the recorder by the time the stream carried the event.
         let journaled = await Self.journaledTerminals(in: observation.recorder, for: nesting.nestedToken)
         #expect(journaled == [nesting.nestedTerminal])
-
-        await observation.close()
     }
 
     // MARK: - A top-level run is unchanged
@@ -306,8 +323,10 @@ struct NestedRunTerminalForwardingTests {
     func topLevelRunStillSettlesOnce() async throws {
         let observation = try await Self.observe()
         defer { try? FileManager.default.removeItem(at: observation.directory) }
+        defer { await observation.close() }
 
         let gate = RunLatch()
+        defer { await gate.open() }
         let runner = Self.backgroundRunner(wrapping: MountFixtures.GatedTool(gate: gate), on: observation.session)
         let rendered = try await runner.call(arguments: MountArguments(value: Self.callArgument))
         let token = try MountFixtures.decodeEnvelope(rendered).completionToken
@@ -331,6 +350,7 @@ struct NestedRunTerminalForwardingTests {
     func closeAfterNaturalSettlementJournalsNoSecondTerminal() async throws {
         let observation = try await Self.observe()
         defer { try? FileManager.default.removeItem(at: observation.directory) }
+        defer { await observation.close() }
 
         let nesting = try await Self.settleNestedRun(on: observation.session)
         try await observation.awaitSettlement(of: nesting.nestedToken)

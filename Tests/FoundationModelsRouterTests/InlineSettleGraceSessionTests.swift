@@ -95,10 +95,14 @@ struct InlineSettleGraceSessionTests {
         return Fixture(session: session, backend: backend, router: router, clock: clock, directory: directory)
     }
 
-    /// Ends the fixture: closes the session and removes the directory.
+    /// Ends the fixture: opens `gates`, closes the session and removes the
+    /// directory.
     ///
-    /// - Parameter fixture: The fixture to end.
-    private static func end(_ fixture: Fixture) async {
+    /// - Parameters:
+    ///   - fixture: The fixture to end.
+    ///   - gates: The gates of the runs of the session.
+    private static func end(_ fixture: Fixture, opening gates: [RunLatch] = []) async {
+        for gate in gates { await gate.open() }
         await fixture.session.close()
         try? FileManager.default.removeItem(at: fixture.directory)
         withExtendedLifetime(fixture.router) {}
@@ -132,9 +136,9 @@ struct InlineSettleGraceSessionTests {
     @Test("a negative settle period acts as zero on the session")
     func aNegativeGraceActsAsZero() async throws {
         let fixture = try await Self.makeFixture(gate: RunLatch(), grace: -1)
+        defer { await Self.end(fixture) }
         let actor = try #require(fixture.session as? RoutedSessionActor)
         #expect(actor.inlineSettleGrace == 0)
-        await Self.end(fixture)
     }
 
     // MARK: - A run that continues past the settle period
@@ -144,6 +148,7 @@ struct InlineSettleGraceSessionTests {
     func aLongRunGivesAPendingEnvelopeAndOneMail() async throws {
         let gate = RunLatch()
         let fixture = try await Self.makeFixture(gate: gate, grace: Self.shortGrace)
+        defer { await Self.end(fixture, opening: [gate]) }
 
         // The gate stays closed until the call answered. The call waits for
         // its run up to the settle period, and the test then moves the clock
@@ -172,7 +177,6 @@ struct InlineSettleGraceSessionTests {
         let line = OperationEventSegment.renderedLine(for: terminal)
         #expect(prompts.joined(separator: "\n").components(separatedBy: line).count - 1 == 1)
         #expect(await fixture.session.outbox.pending().events.isEmpty)
-        await Self.end(fixture)
     }
 
     // MARK: - A run that ends inside the settle period
@@ -186,6 +190,7 @@ struct InlineSettleGraceSessionTests {
         // ends when the run settles.
         await gate.open()
         let fixture = try await Self.makeFixture(gate: gate, grace: MountFixtures.manualClockGrace)
+        defer { await Self.end(fixture) }
 
         let answer = try await fixture.session.respond(to: Self.jobPrompt)
 
@@ -202,6 +207,5 @@ struct InlineSettleGraceSessionTests {
         #expect(await fixture.session.pumpEnds())
         #expect(fixture.backend.receivedPrompts == [Self.jobPrompt])
         #expect(await fixture.session.outbox.pending().events.isEmpty)
-        await Self.end(fixture)
     }
 }

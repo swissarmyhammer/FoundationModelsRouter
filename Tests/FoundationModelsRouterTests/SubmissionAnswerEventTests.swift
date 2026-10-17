@@ -129,6 +129,10 @@ struct SubmissionAnswerEventTests {
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        defer {
+            await latch.open()
+            await session.close()
+        }
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = try session.send(Self.firstPrompt)

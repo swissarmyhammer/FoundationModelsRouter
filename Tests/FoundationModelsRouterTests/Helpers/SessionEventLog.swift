@@ -1,3 +1,5 @@
+import Testing
+
 @testable import FoundationModelsRouter
 
 /// Collects the events that a session stream delivered, so the test task can
@@ -46,11 +48,41 @@ actor SessionEventLog {
     /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
     ///   first.
     nonisolated func waitForQueuedSubmissions(_ count: Int) async throws {
-        try await wait(until: { events in
-            events.count(where: { event in
-                if case .submissionQueued = event { return true }
-                return false
-            }) >= count
+        try await wait(until: { Self.queuedSubmissionCount(in: $0) >= count })
+    }
+
+    /// Waits until the feed sent `count` ``SessionEvent/submissionQueued(_:)``
+    /// events, or until the feed sent ``SessionEvent/workEnded`` (rule T1).
+    /// When the work ended first, the test fails by an assertion.
+    ///
+    /// Use this wait only when the work of the session cannot end before its
+    /// submissions queued: in a test that passes, the feed then sends no
+    /// ``SessionEvent/workEnded`` before the queued submissions. A submission
+    /// that does not queue runs and ends the work of the session.
+    ///
+    /// - Parameters:
+    ///   - count: How many such events to wait for.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the work ended first, or
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
+    nonisolated func waitForQueuedSubmissionsOrWorkEnd(
+        _ count: Int, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await changes.wait(
+            until: { Self.queuedSubmissionCount(in: await self.events) >= count },
+            endingOn: { await self.events.contains(where: \.isWorkEnd) },
+            sourceLocation: sourceLocation)
+    }
+
+    /// The count of the ``SessionEvent/submissionQueued(_:)`` events in
+    /// `events`.
+    ///
+    /// - Parameter events: The events of a feed.
+    /// - Returns: The count.
+    private static func queuedSubmissionCount(in events: [SessionEvent]) -> Int {
+        events.count(where: { event in
+            if case .submissionQueued = event { return true }
+            return false
         })
     }
 

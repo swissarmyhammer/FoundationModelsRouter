@@ -78,17 +78,25 @@ struct ToolResultCompactionTests {
         slot: KeyPath<LanguageModelProfile, RoutedLLM> = \.standard
     ) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let recorder = InMemoryRecorder()
-        let tool = LargeResultTool(result: toolResult(length: resultLength))
-        let container = LiveBackendContainer(model: ToolResultCompactionModel(toolCallUsage: usage))
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory, recorder: recorder,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile[keyPath: slot].makeSession(tools: [tool], budget: budget)
-        return Fixture(
-            session: session, tool: tool, recorder: recorder, directory: directory,
-            queue: try #require(profile[keyPath: slot].backendQueue))
+        // The caller removes the directory only after this returns. A throw
+        // here must remove it, because the caller then has no fixture.
+        do {
+            let recorder = InMemoryRecorder()
+            let tool = LargeResultTool(result: toolResult(length: resultLength))
+            let container = LiveBackendContainer(model: ToolResultCompactionModel(toolCallUsage: usage))
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: directory, recorder: recorder,
+                loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
+            let profile = try await router.resolve(
+                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let session = profile[keyPath: slot].makeSession(tools: [tool], budget: budget)
+            return Fixture(
+                session: session, tool: tool, recorder: recorder, directory: directory,
+                queue: try #require(profile[keyPath: slot].backendQueue))
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Runs one streamed answer and collects its events.

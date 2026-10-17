@@ -211,6 +211,7 @@ struct SessionWorkEventTests {
     @Test("a prompt gives the work-start event before the first output of its answer, and the work-end event after its answer")
     func aPromptGivesBothEventsAroundItsAnswer() async throws {
         let fixture = try await Self.makeFixture(tools: [])
+        defer { await fixture.end() }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
 
         _ = try await fixture.session.respond(to: Self.jobPrompt)
@@ -220,7 +221,6 @@ struct SessionWorkEventTests {
         #expect(outputs.last == SessionOutput(origin: .system, event: .workEnded))
         let answered = try position(ofFirst: .answered, in: outputs)
         #expect(answered == outputs.count - 2)
-        await fixture.end()
     }
 
     /// The production change that makes this test fail: a check of the work
@@ -232,6 +232,7 @@ struct SessionWorkEventTests {
         let gate = RunLatch()
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
+        defer { await fixture.end(opening: [gate]) }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
 
         _ = try await fixture.session.respond(to: Self.jobPrompt)
@@ -243,12 +244,12 @@ struct SessionWorkEventTests {
         let settled = try position(ofFirst: .runSettled, in: outputs)
         #expect(settled < outputs.count - 1)
         #expect(outputs.map(\.event).answers.count == Self.answersWithAMailAnswer)
-        await fixture.end()
     }
 
     @Test("each change of the work gives one event: two prompts one after the other give two pairs, and close gives none")
     func eachChangeGivesOneEvent() async throws {
         let fixture = try await Self.makeFixture(tools: [])
+        defer { await fixture.end() }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
 
         _ = try await fixture.session.respond(to: Self.jobPrompt)
@@ -261,12 +262,12 @@ struct SessionWorkEventTests {
         let outputs = first + second + rest
         #expect(Self.workEvents(of: outputs) == Self.twoChanges)
         #expect(outputs.filter(\.event.isWorkEvent).allSatisfy { $0.origin == .system })
-        await fixture.end()
     }
 
     @Test("a requested compaction is work: its events come between the work-start and the work-end events")
     func aRequestedCompactionIsWork() async throws {
         let fixture = try await Self.makeFixture(tools: [])
+        defer { await fixture.end() }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
 
         fixture.session.compact(prompt: .default, budget: nil)
@@ -278,7 +279,6 @@ struct SessionWorkEventTests {
         #expect(started > 0)
         let ended = try position(ofFirst: .compaction, .compactionFailed, in: outputs)
         #expect(ended < outputs.count - 1)
-        await fixture.end()
     }
 
     /// The production change that makes this test fail: a check of the work
@@ -290,9 +290,10 @@ struct SessionWorkEventTests {
     @Test("a run that waits only for the user gives the work-end event after its question, and isIdle() says idle while a pending operation stays")
     func aRunThatWaitsOnlyForTheUserIsNoWork() async throws {
         let fixture = try await Self.makeFixture(tools: [])
+        let runGate = RunLatch()
+        defer { await fixture.end(opening: [runGate]) }
         let session = try fixture.sessionActor()
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        let runGate = RunLatch()
         let token = await trackFakeRun(on: session.runPlane, latch: runGate)
         // The run asks its question. The question is open on the run plane,
         // and the postings keep it back from the journal of the session.
@@ -320,7 +321,6 @@ struct SessionWorkEventTests {
         #expect(await fixture.session.awaitIdle())
         _ = await fixture.session.respond(elicitationId: questionId.description, response: .decline)
         #expect(try await answering.value == .decline)
-        await fixture.end(opening: [runGate])
     }
 
     /// The production change that makes this test fail: a check of the work
@@ -333,11 +333,15 @@ struct SessionWorkEventTests {
         let returnGate = RunLatch()
         let fixture = try await Self.makeFixture(
             tools: [AskingTool(asksForURL: false, askGate: askGate, returnGate: returnGate)])
+        defer { await fixture.end(opening: [askGate, returnGate]) }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         let asking = try await Self.outputsUpToTheQuestion(of: fixture, askGate: askGate, feed: &feed)
 
         let delivery = await fixture.session.respond(
             elicitationId: try Self.questionId(in: asking), response: .decline)
+        // An answer that was not delivered starts no answer, and the read
+        // below then waits on: the test fails here, before it waits (rule T1).
+        try #require(delivery == .delivered)
         // The answer goes to the session as mail, and that mail starts an
         // answer while the resumed run waits at its return gate.
         let beforeReturn = await Self.outputs(from: &feed, through: SessionEventCase.answered.matches)
@@ -345,12 +349,10 @@ struct SessionWorkEventTests {
         await returnGate.open()
         let resumed = beforeReturn + (await Self.outputs(throughNextWorkEnd: &feed))
 
-        #expect(delivery == .delivered)
         #expect(resumed.first == SessionOutput(origin: .system, event: .workStarted))
         #expect(Self.workEvents(of: resumed) == [.workStarted, .workEnded])
         let settled = try position(ofFirst: .runSettled, in: resumed)
         #expect(settled < resumed.count - 1)
-        await fixture.end(opening: [askGate, returnGate])
     }
 
     /// The production change that makes this test fail: a check of the work
@@ -363,22 +365,24 @@ struct SessionWorkEventTests {
         let returnGate = RunLatch()
         let fixture = try await Self.makeFixture(
             tools: [AskingTool(asksForURL: true, askGate: askGate, returnGate: returnGate)])
+        defer { await fixture.end(opening: [askGate, returnGate]) }
         var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
         let asking = try await Self.outputsUpToTheQuestion(of: fixture, askGate: askGate, feed: &feed)
         let questionId = try Self.questionId(in: asking)
 
         let accepted = await fixture.session.respond(elicitationId: questionId, response: .accept(content: nil))
         let completed = await fixture.session.complete(elicitationId: questionId)
+        // A question with no completion does not resume its run, and the read
+        // below then waits on: the test fails here, before it waits (rule T1).
+        try #require(completed == .completed)
         try await Self.checkWorkEndAfterThePump(of: fixture.sessionActor())
         await returnGate.open()
         let resumed = await Self.outputs(throughNextWorkEnd: &feed)
 
         #expect(accepted == .acceptedAwaitingCompletion)
-        #expect(completed == .completed)
         #expect(resumed.first == SessionOutput(origin: .system, event: .workStarted))
         #expect(Self.workEvents(of: resumed) == [.workStarted, .workEnded])
         let settled = try position(ofFirst: .runSettled, in: resumed)
         #expect(settled < resumed.count - 1)
-        await fixture.end(opening: [askGate, returnGate])
     }
 }

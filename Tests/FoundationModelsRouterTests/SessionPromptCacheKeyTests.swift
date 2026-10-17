@@ -56,13 +56,19 @@ struct SessionPromptCacheKeyTests {
     /// Makes a router over a new ``PromptCacheScopeRecordingModel``.
     ///
     /// - Returns: The fixture.
-    /// - Throws: What the resolution of the profile throws.
+    /// - Throws: What the resolution of the profile throws. Before it throws,
+    ///   it removes the directory of the router (rule T1).
     private static func makeFixture() async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = PromptCacheScopeLog()
         let container = LiveBackendContainer(model: PromptCacheScopeRecordingModel(log: log))
-        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
-        return Fixture(log: log, profile: resolved.profile, directory: directory)
+        do {
+            let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
+            return Fixture(log: log, profile: resolved.profile, directory: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// The scope of the passes of `session`.
@@ -100,6 +106,7 @@ struct SessionPromptCacheKeyTests {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: Self.parentPrompt)
 
         await session.close()
@@ -117,6 +124,7 @@ struct SessionPromptCacheKeyTests {
         let parent = fixture.profile.standard.makeSession()
         _ = try await parent.respond(to: Self.parentPrompt)
         let fork = try await parent.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: Self.forkPrompt)
 
         await fork.close()

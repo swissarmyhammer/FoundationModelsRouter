@@ -195,6 +195,9 @@ struct Qwen38ToolAnswerIntegrationTests {
         let loadStarted = ContinuousClock.now
         let container = try await RealModelContainer.load(
             ref: qwen38ToolAnswerModel, samplingMode: Self.samplingMode)
+        // The weights go back also when the test throws before the eviction
+        // below (rule T1). A second eviction does no harm.
+        defer { await container.container.model.evict() }
         let loadDuration = ContinuousClock.now - loadStarted
 
         let (session, profile, directory) = makeSession(over: container)

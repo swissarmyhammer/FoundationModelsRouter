@@ -127,6 +127,10 @@ struct CompactionRoundTripIntegrationTests {
             ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
+        // An evict is idempotent: it removes the model from the cache by its
+        // id. So this deferred evict can run after the evict before step 4,
+        // and it runs also when the test throws before that evict (rule T1).
+        defer { await loaded.container.model.evict() }
         let profile = RealModelHarness.make(
             model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
@@ -218,6 +222,7 @@ struct CompactionRoundTripIntegrationTests {
             ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
+        defer { await reloaded.container.model.evict() }
         let profile2 = RealModelHarness.make(
             model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
@@ -249,7 +254,5 @@ struct CompactionRoundTripIntegrationTests {
         let restoredReply = try await restoredSession.respond(
             to: "Reply with just the word \"restored\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         #expect(!restoredReply.isEmpty)
-
-        await reloaded.container.model.evict()
     }
 }

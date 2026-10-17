@@ -85,9 +85,16 @@ struct WatchStopUsageTests {
     {
         let fixture = try await RepeatingReasoningSessionFixture.make(
             script: script, repeatsAfterStop: false, detection: detection, tempDirPrefix: tempDirPrefix)
-        let events = try await collect(fixture.session.streamEvents(to: prompt))
-        let contextTokens = try #require(fixture.session as? RoutedSessionActor).contextTokens
-        return Answer(fixture: fixture, events: events, contextTokens: contextTokens)
+        // The caller removes the directory only after this returns. A throw
+        // here must remove it, because the caller then has no answer.
+        do {
+            let events = try await collect(fixture.session.streamEvents(to: prompt))
+            let contextTokens = try #require(fixture.session as? RoutedSessionActor).contextTokens
+            return Answer(fixture: fixture, events: events, contextTokens: contextTokens)
+        } catch {
+            try? FileManager.default.removeItem(at: fixture.directory)
+            throw error
+        }
     }
 
     /// The size of the render that the recovery call received, without the

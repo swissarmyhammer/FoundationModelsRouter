@@ -97,6 +97,10 @@ struct Qwen38ReasoningStopRecoveryIntegrationTests {
         // The session's handle holds its owning profile weakly, so the profile
         // has to stay referenced for the whole answer.
         defer { withExtendedLifetime(profile) {} }
+        // The model is evicted also when the test throws (rule T1). This defer
+        // runs first, so the eviction comes before the end of the profile and
+        // the removal of the directory.
+        defer { await container.container.model.evict() }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(
                 instructions: Self.instructions, tools: [ReadFileTool()],
@@ -111,7 +115,6 @@ struct Qwen38ReasoningStopRecoveryIntegrationTests {
             stops.withLock { $0.append(stop) }
         }
         let entries = await (session as? RoutedSessionActor)?.backend.transcriptEntries() ?? []
-        await container.container.model.evict()
 
         let stop = try #require(stops.withLock { $0.first })
         #expect(stop.recovery == 1)

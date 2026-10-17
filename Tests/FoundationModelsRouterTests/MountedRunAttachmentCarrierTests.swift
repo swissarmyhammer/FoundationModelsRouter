@@ -133,6 +133,9 @@ struct MountedRunAttachmentCarrierTests {
             ]),
             mounting: [Self.mountingTool, gatedTool])
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        // A throw before the test opens the gate must not leave the gated
+        // round held. A second open does no harm.
+        defer { await gate.open() }
 
         let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
         var events: [SessionEvent] = []
