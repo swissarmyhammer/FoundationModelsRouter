@@ -176,6 +176,7 @@ struct SubmissionQueueSpikeTests {
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(
             tools: [ChildStartingTool(child: child, worker: worker, firstCall: FirstCallFlag())])
+        defer { await SessionFixtureLifecycle.close([parent, child]) }
 
         // The mail: the terminal of the background run, whose detail is the
         // answer of the child. The subscription opens before the first

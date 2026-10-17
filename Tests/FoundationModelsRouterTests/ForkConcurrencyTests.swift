@@ -350,6 +350,7 @@ struct ForkConcurrencyTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
+        defer { await parent.close() }
         #expect(parent.parentId == nil)
         _ = try await parent.respond(to: "hello")
 
@@ -358,6 +359,7 @@ struct ForkConcurrencyTests {
         #expect(parentBackend.receivedPrompts == ["hello"])
 
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         // The fork's backend is produced via makeFork(), pre-seeded with a copy
         // of the parent's prompt history as of fork time — the stand-in for
@@ -391,7 +393,9 @@ struct ForkConcurrencyTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
+        defer { await parent.close() }
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
         let parentBackend = try #require(container.lastBackend)
         let childBackend = try #require(parentBackend.lastFork)
 
@@ -424,7 +428,9 @@ struct ForkConcurrencyTests {
 
         let grammar = Grammar.jsonSchema(#"{"type":"object"}"#)
         let parent = profile.standard.makeGuidedSession(grammar: grammar)
+        defer { await parent.close() }
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         #expect(child.grammar == grammar)
 
@@ -457,15 +463,20 @@ struct ForkConcurrencyTests {
         // share the container's one generation queue, so their submissions
         // must serialize, each in the order it joined the queue.
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let fork1 = try await root.fork(workingDirectory: nil)
+        defer { await fork1.close() }
         let fork2 = try await root.fork(workingDirectory: nil)
+        defer { await fork2.close() }
         let fork3 = try await root.fork(workingDirectory: nil)
+        defer { await fork3.close() }
         let callers: [any RoutedSession] = [root, fork1, fork2, fork3]
         // The gate gives one permit for each call also when a wait below
         // throws, so no call stays held (rule T1). In a test that passes, the
         // body gave the permits already. These permits are then not used: each
         // call takes one permit, and a signal with no waiter only adds a
-        // permit.
+        // permit. This `defer` comes after the closes of the callers, so it
+        // runs before them: a close waits for a held call.
         defer { Self.release(releaseGate, forEachOf: callers) }
 
         let queue = container.generationQueue
@@ -533,11 +544,15 @@ struct ForkConcurrencyTests {
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
+        defer { await root.close() }
 
         // Each fork is held in `forks` while the next one is made, so every
         // earlier fork is still alive when the last one returns. A gate that
         // counted forks would suspend one of these calls; none of them can.
         var forks: [any RoutedSession] = []
+        // Each fork that the loop made closes, also when a later fork throws
+        // (rule T1).
+        defer { await SessionFixtureLifecycle.close(forks) }
         for _ in 0..<Self.uncountedForkCount {
             forks.append(try await root.fork(workingDirectory: nil))
         }

@@ -9,7 +9,8 @@ import FoundationModelsRouterTestSupport
 // `StubProbe`, `StubMetadataSource`, and `StubEmbeddingContainer`. Other
 // suites use them too, so they are not defined again here. This file adds
 // only what the residency suites need beyond them: a load spy, a spying
-// loader, a canned container, the footprint constants, and a router factory.
+// loader, a canned container, the footprint constants, a router factory, and
+// a one-answer step that closes its session.
 
 /// Counts every load and every eviction a router routes through its loader,
 /// keyed by the exact ``ModelRef`` (revision-sensitive), so a test can prove
@@ -300,5 +301,22 @@ enum ResidencyFixtures {
             samplingMode: samplingMode,
             pool: pool
         )
+    }
+
+    /// Makes a session on `handle`, gets one answer to `prompt`, and closes
+    /// the session, also when the answer throws (rule T1).
+    ///
+    /// The close does not drop the handle of the session, so it does not
+    /// change what the pool keeps resident.
+    ///
+    /// - Parameters:
+    ///   - handle: The generation handle that makes the session.
+    ///   - prompt: The prompt of the answer.
+    /// - Returns: The answer.
+    /// - Throws: What the answer throws, after the close.
+    static func answer(from handle: RoutedLLM, to prompt: String) async throws -> String {
+        let session = handle.makeSession(instructions: nil)
+        defer { await session.close() }
+        return try await session.respond(to: prompt)
     }
 }

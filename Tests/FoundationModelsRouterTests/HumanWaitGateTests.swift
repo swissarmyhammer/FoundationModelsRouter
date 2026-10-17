@@ -504,6 +504,9 @@ struct HumanWaitGateTests {
         // Two root sessions over the SAME model.
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
+        // The release of each held wait below comes in a later `defer`, so it
+        // runs before these closes (rule T1).
+        defer { await SessionFixtureLifecycle.close([sessionA, sessionB]) }
 
         // The tool body of A's submission waits on `humanGate`, as a tool that
         // waits for a person does. The body sends `waitStarted` from inside
@@ -554,6 +557,7 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         let humanGate = AsyncSemaphore(value: 0)
         // The release of the gate, also when the test throws before it (rule
@@ -596,6 +600,7 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
         let backend = try #require(fixture.container.backends.first)
 
         let humanGate = AsyncSemaphore(value: 0)
@@ -622,6 +627,15 @@ struct HumanWaitGateTests {
         // ends the wait, so a fork that waited for the submission would never
         // make it.
         let fork = ObservedRun { try await session.fork(workingDirectory: nil) }
+        // The child closes also when the test throws before it reads the
+        // child (rule T1). The gate opens first, so a fork that waits for the
+        // submission also ends.
+        defer {
+            humanGate.signal()
+            if let child = try? await fork.value() {
+                await child.close()
+            }
+        }
         try await fork.wait(for: backend.forkMade)
 
         humanGate.signal()
@@ -645,6 +659,7 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         // The person has already replied with a refusal, so the wait ends at
         // once, and the tool body then throws.
@@ -754,6 +769,7 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         // Two waits in one submission — what a tool that asks a person two
         // questions, one after the other, looks like to the session.
@@ -803,6 +819,7 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         // Every moment this test waits for is an ``AwaitedEvent``, resumed by the
         // run that reaches it (task ^q8cnmb2): a loaded machine makes this test
@@ -878,6 +895,7 @@ struct HumanWaitGateTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
+        defer { await SessionFixtureLifecycle.close([sessionA, sessionB]) }
 
         // The mirror image of `waitOverlappingAnotherAnswerLeavesTheSessionIdle`:
         // there the wait ended after the answer, here the answer ends while the
@@ -966,6 +984,7 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
+        defer { await session.close() }
 
         // The wait runs as its own task, so the test can read the state of
         // the session while the wait is open.

@@ -89,14 +89,8 @@ struct QueuedPassStallWatchTests {
     private static func close(
         _ sessions: [any RoutedSession], of fixture: PassObservingFixture, signalling gates: [AsyncSemaphore] = []
     ) async {
-        for gate in gates {
-            for _ in 0..<passesBeforeTheHeldPass {
-                gate.signal()
-            }
-        }
-        for session in sessions {
-            await SessionFixtureLifecycle.close(session, opening: [fixture.latch])
-        }
+        await SessionFixtureLifecycle.close(
+            sessions, opening: [fixture.latch], releasing: gates, permits: passesBeforeTheHeldPass)
     }
 
     /// The ids that the `submissionQueued` events among `events` carry, in

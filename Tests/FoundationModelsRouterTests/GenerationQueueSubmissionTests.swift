@@ -170,6 +170,9 @@ struct GenerationQueueSubmissionTests {
         let toolLatch = RunLatch()
         let waiting = resolved.profile.standard.makeSession(tools: [WaitingTool(entered: entered, latch: toolLatch)])
         let other = resolved.profile.standard.makeSession()
+        // The tool latch opens before the closes, also when the test throws
+        // (rule T1): a close waits for the held tool body.
+        defer { await SessionFixtureLifecycle.close([waiting, other], opening: [toolLatch]) }
 
         let otherFeed = await SessionEventLog.watch(other)
         defer { otherFeed.drain.cancel() }
@@ -211,6 +214,13 @@ struct GenerationQueueSubmissionTests {
         let first = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
         let second = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
         let passesPerSubmission = Self.loopingToolRounds + 1
+        // The step gets one permit for each pass of the two submissions
+        // before the closes, also when the test throws (rule T1): a close
+        // waits for a held pass.
+        defer {
+            await SessionFixtureLifecycle.close(
+                [first, second], releasing: [step], permits: passesPerSubmission * 2)
+        }
 
         let secondFeed = await SessionEventLog.watch(second)
         defer { secondFeed.drain.cancel() }
@@ -258,6 +268,7 @@ struct GenerationQueueSubmissionTests {
         let refusal = ErrorBox()
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(tools: [ChildAnswerTool(child: child, refusal: refusal)])
+        defer { await SessionFixtureLifecycle.close([parent, child]) }
 
         // The refusal in the tool body ends the answer of the parent. A
         // regression that parks the child behind the submission of its
@@ -294,6 +305,12 @@ struct GenerationQueueSubmissionTests {
         let refusal = ErrorBox()
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(tools: [ChildAnswerTool(child: child, refusal: refusal)])
+        // The step gets one permit for each pass before the closes, also when
+        // the test throws (rule T1): a close waits for a held pass.
+        defer {
+            await SessionFixtureLifecycle.close(
+                [parent, child], releasing: [step], permits: Self.busyChildPassCount)
+        }
 
         let childFeed = await SessionEventLog.watch(child)
         defer { childFeed.drain.cancel() }
@@ -334,6 +351,9 @@ struct GenerationQueueSubmissionTests {
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(
             tools: [BackgroundChildAnswerTool(child: child, start: runStart)])
+        // The run latch opens before the closes, also when the test throws
+        // (rule T1): a close waits for the held background run.
+        defer { await SessionFixtureLifecycle.close([parent, child], opening: [runStart]) }
 
         // A stream of events ends with its answer, and does not wait for the
         // background runs of that answer. The run waits on its latch, so the

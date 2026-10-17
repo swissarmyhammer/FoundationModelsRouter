@@ -173,6 +173,9 @@ struct PoolEntryQueueTests {
         // the latch holds the first answer in the model and the next answers
         // in the queue, so in a test that passes no answer ends first.
         let sessions = [fromFirst, fromSecond, fromFirst].map { $0.standard.makeSession() }
+        // The latch opens before the closes, also when the test throws (rule
+        // T1): a close waits for the held pass.
+        defer { await SessionFixtureLifecycle.close(sessions, opening: [fixture.latch]) }
         var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
         for session in sessions {
             feeds.append(await SessionEventLog.watch(session))

@@ -154,7 +154,7 @@ struct CrossRouterResidencyTests {
         #expect(await Self.totalLoads(on: pair.secondSpy) == 0)
 
         // The second router's handle is over the first router's container.
-        let reply = try await fromSecond.standard.makeSession(instructions: nil).respond(to: "hi")
+        let reply = try await ResidencyFixtures.answer(from: fromSecond.standard, to: "hi")
         #expect(reply == CannedLLMContainer.reply(for: Self.sharedStandardRef))
         withExtendedLifetime(fromFirst) {}
     }
@@ -180,7 +180,7 @@ struct CrossRouterResidencyTests {
         // Still referenced by the second router: nothing evicted anywhere.
         #expect(await pair.firstSpy.evictions == 0)
         #expect(await pair.secondSpy.evictions == 0)
-        let reply = try await fromSecond.standard.makeSession(instructions: nil).respond(to: "still alive")
+        let reply = try await ResidencyFixtures.answer(from: fromSecond.standard, to: "still alive")
         #expect(reply == CannedLLMContainer.reply(for: Self.sharedStandardRef))
     }
 
@@ -299,8 +299,10 @@ struct CrossRouterResidencyTests {
         let fromFirst = try await pair.first.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
         let fromSecond = try await pair.second.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
 
-        _ = fromFirst.standard.makeSession(instructions: nil)
-        _ = fromSecond.standard.makeSession(instructions: nil)
+        let firstSession = fromFirst.standard.makeSession(instructions: nil)
+        let secondSession = fromSecond.standard.makeSession(instructions: nil)
+        // The closes run after the check below reads the modes.
+        defer { await SessionFixtureLifecycle.close([firstSession, secondSession]) }
 
         // The first router's session asked for greedy decoding and the second
         // router's session asked for the provider default. A signature with no

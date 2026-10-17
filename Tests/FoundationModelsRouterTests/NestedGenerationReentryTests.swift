@@ -217,6 +217,9 @@ struct NestedGenerationReentryTests {
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
             let child = try await session.fork(workingDirectory: nil)
+            // The body reads only the parent id of the child, so the child
+            // closes when the body returns (rule T1).
+            defer { await child.close() }
             return child.parentId?.description ?? Self.noParentOutput
         }
     }
@@ -585,6 +588,7 @@ struct NestedGenerationReentryTests {
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
         let nested = profile.standard.makeSession()
+        defer { await SessionFixtureLifecycle.close([caller, nested]) }
         target.set(nested)
 
         let outcome = await Self.outcome(
@@ -610,6 +614,7 @@ struct NestedGenerationReentryTests {
         let middle = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: middleTarget, label: "middle")])
         let innermost = profile.standard.makeSession()
+        defer { await SessionFixtureLifecycle.close([outer, middle, innermost]) }
         outerTarget.set(middle)
         middleTarget.set(innermost)
 
@@ -638,6 +643,7 @@ struct NestedGenerationReentryTests {
 
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
+        defer { await caller.close() }
         // The tool waits for an answer of the very session whose submission
         // invoked it. That answer could come only after the submission, which
         // waits for the tool, so the wait could never end. It has to fail at
@@ -684,6 +690,7 @@ struct NestedGenerationReentryTests {
         let profile = try await makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [MailWaitingTool(target: target, wait: wait)])
+        defer { await caller.close() }
         target.set(caller)
         let model = try #require(caller as? RoutedSessionActor).model
 
@@ -749,6 +756,7 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
+        defer { await caller.close() }
         // The tool forks the very session whose submission invoked it. The
         // fork reads the settled transcript of that session, so it waits for
         // nothing the submission holds (task ^dpn2ytt).
@@ -773,6 +781,7 @@ struct NestedGenerationReentryTests {
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
         let forked = profile.standard.makeSession()
+        defer { await SessionFixtureLifecycle.close([caller, forked]) }
         target.set(forked)
 
         let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
@@ -795,6 +804,7 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [TranscriptReadingTool(target: target)])
+        defer { await caller.close() }
         // The tool reads the very session whose submission invoked it. The
         // read takes the settled transcript of that session, so it waits for
         // nothing the submission holds (task ^dpn2ytt).
@@ -879,6 +889,18 @@ struct NestedGenerationReentryTests {
             await answerHold.open()
             return await answer.value
         }
+
+        /// Opens ``answerHold``, and then closes each of `sessions`.
+        ///
+        /// A test calls it from one `defer` right after it makes its
+        /// sessions, so each session closes also when the test throws (rule
+        /// T1). A close waits for the held submission, so the hold opens
+        /// first.
+        ///
+        /// - Parameter sessions: The sessions that the test made.
+        func close(_ sessions: [any RoutedSession]) async {
+            await SessionFixtureLifecycle.close(sessions, opening: [answerHold])
+        }
     }
 
     @Test("a declared background body generates on a second session while the submission that started it is still open")
@@ -891,6 +913,7 @@ struct NestedGenerationReentryTests {
         let caller = harness.makeCallerSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
         let nested = harness.profile.standard.makeSession()
+        defer { await harness.close([caller, nested]) }
         harness.target.set(nested)
 
         let answer = harness.startAnswer(on: caller)
@@ -920,6 +943,7 @@ struct NestedGenerationReentryTests {
         let harness = try await BackgroundHarness.make(dir: dir)
         let caller = harness.makeCallerSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
+        defer { await harness.close([caller]) }
         // The body asks the very session whose submission started it. Its
         // mark is closed, so the message is not refused: it waits in the
         // outbox for a later submission of the session.
@@ -953,6 +977,7 @@ struct NestedGenerationReentryTests {
         let harness = try await BackgroundHarness.make(dir: dir)
         let caller = harness.makeCallerSession(
             tools: [ForkingTool(target: harness.target, mount: Self.backgroundMount)])
+        defer { await harness.close([caller]) }
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)
@@ -978,6 +1003,7 @@ struct NestedGenerationReentryTests {
         let harness = try await BackgroundHarness.make(dir: dir)
         let caller = harness.makeCallerSession(
             tools: [TranscriptReadingTool(target: harness.target, mount: Self.backgroundMount)])
+        defer { await harness.close([caller]) }
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)

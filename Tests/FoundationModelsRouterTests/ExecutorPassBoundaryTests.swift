@@ -38,6 +38,7 @@ struct ExecutorPassBoundaryTests {
     /// - Parameter log: The log the model and the tool record into.
     /// - Returns: A fresh session.
     private static func makeSession(recordingInto log: PassBoundaryLog) -> LanguageModelSession {
+        // No close for rule T1: an SDK `LanguageModelSession` has no close call and no cancel call.
         let model = PassBoundaryProbeModel(
             wrapping: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()), log: log)
         return LanguageModelSession(model: model, tools: [PassBoundaryProbeTool(log: log)])

@@ -81,6 +81,9 @@ struct SharedGenerationQueueContentionTests {
 
         let holder = profile.standard.makeSession()
         let waiter = profile.flash.makeSession()
+        // The latch opens before the closes, also when this helper throws
+        // (rule T1): a close waits for the held pass.
+        defer { await SessionFixtureLifecycle.close([holder, waiter], opening: [fixture.latch]) }
         let waiterFeed = await SessionEventLog.watch(waiter)
         defer { waiterFeed.drain.cancel() }
 

@@ -80,10 +80,43 @@ enum SessionFixtureLifecycle {
     ///     The gates open also then.
     ///   - gates: The gates of the held work of the session.
     static func close(_ session: (any RoutedSession)?, opening gates: [RunLatch]) async {
+        await close(session.map { [$0] } ?? [], opening: gates)
+    }
+
+    /// Opens `gates`, gives each of `semaphores` `permits` permits, and then
+    /// closes each of `sessions`, in order.
+    ///
+    /// This is the teardown of a test that makes more than one session. A
+    /// test calls it from one `defer` right after it makes its sessions, so
+    /// each session closes also when the test throws (rule T1). A wait on an
+    /// ``AsyncSemaphore`` does not end on a cancel (``AsyncSemaphore/wait()``),
+    /// so a close cannot end a held wait: the permits end it before the close.
+    /// Give each semaphore at least one permit for each wait that the test can
+    /// hold on it. A permit that no wait takes does nothing.
+    ///
+    /// - Parameters:
+    ///   - sessions: The sessions to close.
+    ///   - gates: The latches of the held work of the sessions. The default
+    ///     is no latch.
+    ///   - semaphores: The semaphores of the held work of the sessions. The
+    ///     default is no semaphore.
+    ///   - permits: The permits that each of `semaphores` gets. The default
+    ///     is none.
+    static func close(
+        _ sessions: [any RoutedSession], opening gates: [RunLatch] = [],
+        releasing semaphores: [AsyncSemaphore] = [], permits: Int = 0
+    ) async {
         for gate in gates {
             await gate.open()
         }
-        await session?.close()
+        for semaphore in semaphores {
+            for _ in 0..<permits {
+                semaphore.signal()
+            }
+        }
+        for session in sessions {
+            await session.close()
+        }
     }
 }
 

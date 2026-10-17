@@ -137,6 +137,10 @@ struct PooledResidencyTests {
         RouterTestFixtures.makeTempDir(prefix: "PooledResidencyTests")
     }
 
+    /// How many calls ``concurrentGenerationOnSharedModelSerializes()`` makes
+    /// on the shared model: one for each of its two profiles.
+    private static let sharedModelCallCount = 2
+
     /// Waits for the first footprint of `footprints` that has no resident
     /// model.
     ///
@@ -227,8 +231,8 @@ struct PooledResidencyTests {
         #expect(await spy.embedderLoads.filter { $0 == "org/emb-shared" }.count == 1)
 
         // Both profiles' sessions independently generate against the shared model.
-        let firstReply = try await first.standard.makeSession(instructions: nil).respond(to: "hi")
-        let secondReply = try await second.standard.makeSession(instructions: nil).respond(to: "hi")
+        let firstReply = try await ResidencyFixtures.answer(from: first.standard, to: "hi")
+        let secondReply = try await ResidencyFixtures.answer(from: second.standard, to: "hi")
         #expect(firstReply == "from-org/std-shared")
         #expect(secondReply == "from-org/std-shared")
     }
@@ -269,8 +273,8 @@ struct PooledResidencyTests {
         #expect(await spy.embedderLoads.count == 2)
 
         // Each generates independently through its own resident model.
-        let replyA = try await resolvedA.standard.makeSession(instructions: nil).respond(to: "hi")
-        let replyB = try await resolvedB.standard.makeSession(instructions: nil).respond(to: "hi")
+        let replyA = try await ResidencyFixtures.answer(from: resolvedA.standard, to: "hi")
+        let replyB = try await ResidencyFixtures.answer(from: resolvedB.standard, to: "hi")
         #expect(replyA == "from-org/a-std")
         #expect(replyB == "from-org/b-std")
     }
@@ -310,7 +314,7 @@ struct PooledResidencyTests {
         // A's residency is untouched by B's failed attempt: nothing was
         // evicted, and A can still generate.
         #expect(await spy.evictions == 0)
-        let replyA = try await resolvedA.standard.makeSession(instructions: nil).respond(to: "hi")
+        let replyA = try await ResidencyFixtures.answer(from: resolvedA.standard, to: "hi")
         #expect(replyA == "from-org/only-a-std")
     }
 
@@ -353,6 +357,10 @@ struct PooledResidencyTests {
             profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 0)
         var session: (any RoutedSession)? = try #require(second).standard.makeSession(instructions: nil)
+        // The session closes also when the test throws (rule T1). In a test
+        // that passes, the test closes it before it drops it, and this close
+        // finds no session.
+        defer { await session?.close() }
         _ = try await #require(session).respond(to: "still alive")
 
         // A session holds the profile it came from. While the session lives,
@@ -373,6 +381,9 @@ struct PooledResidencyTests {
         // loader returns. Thus a footprint with no resident model comes only
         // after the release of the session and each of the three evictions.
         let footprints = router.pool.footprints
+        // A close does not drop the handle of the session, so the models stay
+        // resident until the drop below.
+        await session?.close()
         session = nil
         await Self.waitUntilNothingIsResident(in: footprints)
 
@@ -415,8 +426,18 @@ struct PooledResidencyTests {
         let queue = try #require(first.standard.container as? SuspendingLLMContainer).generationQueue
         #expect(try #require(second.standard.container as? SuspendingLLMContainer).generationQueue === queue)
 
-        async let firstReply: String = first.standard.makeSession(instructions: nil).respond(to: "0")
-        async let secondReply: String = second.standard.makeSession(instructions: nil).respond(to: "1")
+        let firstSession = first.standard.makeSession(instructions: nil)
+        let secondSession = second.standard.makeSession(instructions: nil)
+        async let firstReply: String = firstSession.respond(to: "0")
+        async let secondReply: String = secondSession.respond(to: "1")
+        // The gate gets one permit for each call, and then each session
+        // closes, also when the test throws (rule T1). This `defer` comes
+        // after the two `async let` calls, so it runs before the implicit wait
+        // for them: that wait ends only after the gate releases each call.
+        defer {
+            await SessionFixtureLifecycle.close(
+                [firstSession, secondSession], releasing: [releaseGate], permits: Self.sharedModelCallCount)
+        }
 
         // Let one call reach (and suspend inside) the shared model, and the
         // other wait in the shared queue, before releasing them, so the queue
@@ -502,7 +523,7 @@ struct PooledResidencyTests {
         #expect(await spy.embedderLoads.filter { $0 == "org/role-repo" }.count == 1)
 
         // Each handle really holds its own role's container.
-        let reply = try await resolved.standard.makeSession(instructions: nil).respond(to: "hi")
+        let reply = try await ResidencyFixtures.answer(from: resolved.standard, to: "hi")
         #expect(reply == "from-org/role-repo")
         let vectors = try await resolved.embedding.embed(texts: ["hi"])
         #expect(vectors.count == 1)
@@ -544,8 +565,8 @@ struct PooledResidencyTests {
         #expect(await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 1)
 
         // Both profiles' sessions answer from the one resident container.
-        let wideReply = try await resolvedWide.standard.makeSession(instructions: nil).respond(to: "hi")
-        let narrowReply = try await resolvedNarrow.standard.makeSession(instructions: nil).respond(to: "hi")
+        let wideReply = try await ResidencyFixtures.answer(from: resolvedWide.standard, to: "hi")
+        let narrowReply = try await ResidencyFixtures.answer(from: resolvedNarrow.standard, to: "hi")
         #expect(wideReply == "from-org/ctx-repo")
         #expect(narrowReply == "from-org/ctx-repo")
     }
