@@ -27,10 +27,26 @@ comments:
     - Full `swift test`, one run: 1827 tests in 224 suites passed with 6 known issues (from `withKnownIssue` in files this card does not change). Also 26 tests in 14 suites passed, and 19 tests in 3 suites passed. XCTest: 0 tests.
     - IntegrationTests: not built, because no edited file is compiled by it.
   timestamp: 2026-10-17T12:15:54.633717+00:00
+- actor: claude-code
+  id: 01m54wy0z5j9ynf93hdjnpqype
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 053b33bc). 10 files reviewed. Counts: findings 0, confirmed 0, refuted 1, attempted 21, failed 0, skipped 0. The .reviewignore rule excluded 4 .kanban files.
+    - next: none. The task is in done.
+  timestamp: 2026-10-17T12:21:06.149832+00:00
+- actor: claude-code
+  id: 01m54x07we8p56f5j6vtcpzg0s
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 10 test files (the orchestrator checked the 11 subtask boxes after the review, because the work of each one is in commit 053b33bc)
+    - test: green — the one full swift test run of the implement step: 1827 tests in 224 suites + 26 + 19 passed
+    - commit: 053b33bc
+    - review: clean — 0 findings, 10 files reviewed
+  timestamp: 2026-10-17T12:22:18.766869+00:00
 depends_on:
 - 01M54727H1C10B483C56M1ZE24
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8b80
 title: 'T1 follow-up b9: elicitation, mail, public surface and example suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the elicitation, mail, run delivery, public surface, guided and example suites.
@@ -47,14 +63,14 @@ How to close (use the forms that T1 added):
 - After a close, a test that waits on a feed now ends on the feed end. Check that no test now passes only because a wait ends early.
 
 Suites (file under Tests/FoundationModelsRouterTests/; the tests that never close):
-- [ ] ElicitationRoutingTests, ElicitationRoutingTests.swift: 7 of 10 (formRoundTripThroughSessionRespond, declineResumesWithDeclineNotCancel, urlTwoStepThroughSessionSurface, doubleElicitResolvesIndependently, unknownAndMalformedIdsAreNoOps, idCaseDoesNotAffectRouting, respondNeverCrossesSessions).
-- [ ] SessionMailQueueTests, SessionMailQueueTests.swift: 5 of 25 (respondAndSentMessageKeepTheirOrder, sentMessageComposesPendingEvents, settledRunWithNoMessageRunsADeliverySubmission, progressOnlyMailRunsNoSubmission, sentPromptFlattensEveryTextSegment).
-- [ ] RunMessageDeliveryTests, RunMessageDeliveryTests.swift: all 6 (local makeFixture).
-- [ ] RunProgressDeliveryTests, RunProgressDeliveryTests.swift: 5 of 7 (eachProgressEventArrivesLive, aPlanArrivesLiveWithItsPlan, theNextPromptHoldsNoPlan, aPlanEventIsWrittenAtOnce, consecutivePlanEventsAreEachWrittenAtOnce).
-- [ ] ExamplesTests, ExamplesTests.swift: 7 of 12 (generateWithASession, streamAResponse, multiModelDirectGeneration, guidedRawConstrainedText, subagentFanOutByForking, proactiveCompactionBetweenAnswers, reactiveCompactionRecoversFromContextOverflow).
-- [ ] ProjectionExampleTests, ProjectionExampleTests.swift: all 1 (ProjectionExampleHarness.makeSession).
-- [ ] GuidedPublicSurfaceTests, GuidedPublicSurfaceTests.swift: 1 of 3 (minimalConformersDriveAnAnswer).
-- [ ] RoutedSessionPublicSurfaceTests, RoutedSessionPublicSurfaceTests.swift: 3 of 4 (compactWithNoArgumentsMeasuresTheLiveTranscript, compactWithBudgetCompactsAgainstThatBudget, sendTextSendsThatTextAsOneMessage).
-- [ ] GuidedGenerationTests, GuidedGenerationTests.swift: 6 of 16 (guidedSessionConstrainsAndRecords, ebnfGuidedSession, guidedSessionRejectsUnsupported, guidedSessionForwardsAutoCompactionBudget, guidedSessionAutoCompactsAtTrigger, grammarTravelsWithSession).
-- [ ] DiscoveryPrimingTests, DiscoveryPrimingTests.swift: 13 of 15 (primingSeedsTheAnswerBeforeGeneration, primingOffLeavesConstructionUnchanged, seededEntriesRoundTripThroughRecording, failingDiscoveryGeneratesUnseededAndSurfacesTheFailure, unmountedToolSurfacesTheFailure, nonTextOutputSurfacesTheFailure, primingIsGenericOverTheArgumentProperty, mismatchedArgumentPropertySurfacesTheFailure, everyAnswerPrimesOnTopOfTheAccumulatedTranscript, primedAnswerAttachesPendingEventSegmentsToTheRealPrompt, forkInheritsPriming, primingSeedsAfterTheLeadingInstructionsEntry, guidedSessionPrimesDiscovery).
-- [ ] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup
+- [x] ElicitationRoutingTests, ElicitationRoutingTests.swift: 7 of 10 (formRoundTripThroughSessionRespond, declineResumesWithDeclineNotCancel, urlTwoStepThroughSessionSurface, doubleElicitResolvesIndependently, unknownAndMalformedIdsAreNoOps, idCaseDoesNotAffectRouting, respondNeverCrossesSessions).
+- [x] SessionMailQueueTests, SessionMailQueueTests.swift: 5 of 25 (respondAndSentMessageKeepTheirOrder, sentMessageComposesPendingEvents, settledRunWithNoMessageRunsADeliverySubmission, progressOnlyMailRunsNoSubmission, sentPromptFlattensEveryTextSegment).
+- [x] RunMessageDeliveryTests, RunMessageDeliveryTests.swift: all 6 (local makeFixture).
+- [x] RunProgressDeliveryTests, RunProgressDeliveryTests.swift: 5 of 7 (eachProgressEventArrivesLive, aPlanArrivesLiveWithItsPlan, theNextPromptHoldsNoPlan, aPlanEventIsWrittenAtOnce, consecutivePlanEventsAreEachWrittenAtOnce).
+- [x] ExamplesTests, ExamplesTests.swift: 7 of 12 (generateWithASession, streamAResponse, multiModelDirectGeneration, guidedRawConstrainedText, subagentFanOutByForking, proactiveCompactionBetweenAnswers, reactiveCompactionRecoversFromContextOverflow).
+- [x] ProjectionExampleTests, ProjectionExampleTests.swift: all 1 (ProjectionExampleHarness.makeSession).
+- [x] GuidedPublicSurfaceTests, GuidedPublicSurfaceTests.swift: 1 of 3 (minimalConformersDriveAnAnswer).
+- [x] RoutedSessionPublicSurfaceTests, RoutedSessionPublicSurfaceTests.swift: 3 of 4 (compactWithNoArgumentsMeasuresTheLiveTranscript, compactWithBudgetCompactsAgainstThatBudget, sendTextSendsThatTextAsOneMessage).
+- [x] GuidedGenerationTests, GuidedGenerationTests.swift: 6 of 16 (guidedSessionConstrainsAndRecords, ebnfGuidedSession, guidedSessionRejectsUnsupported, guidedSessionForwardsAutoCompactionBudget, guidedSessionAutoCompactsAtTrigger, grammarTravelsWithSession).
+- [x] DiscoveryPrimingTests, DiscoveryPrimingTests.swift: 13 of 15 (primingSeedsTheAnswerBeforeGeneration, primingOffLeavesConstructionUnchanged, seededEntriesRoundTripThroughRecording, failingDiscoveryGeneratesUnseededAndSurfacesTheFailure, unmountedToolSurfacesTheFailure, nonTextOutputSurfacesTheFailure, primingIsGenericOverTheArgumentProperty, mismatchedArgumentPropertySurfacesTheFailure, everyAnswerPrimesOnTopOfTheAccumulatedTranscript, primedAnswerAttachesPendingEventSegmentsToTheRealPrompt, forkInheritsPriming, primingSeedsAfterTheLeadingInstructionsEntry, guidedSessionPrimesDiscovery).
+- [x] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup
