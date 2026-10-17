@@ -390,6 +390,11 @@ struct RespondRunPlaneDrainTests {
         defer { await gate.open() }
         let backend = try #require(container.lastBackend)
         let events = await session.streamSessionEvents().events
+        // The settle of the run, or the end of the feed, is the failure event
+        // of the wait for the timeout window: a run that settles puts no
+        // window on the clock.
+        let settled = Task { await firstSettledTerminal(in: events) }
+        defer { settled.cancel() }
 
         _ = try await session.respond(to: "run the job")
         if opening {
@@ -397,10 +402,10 @@ struct RespondRunPlaneDrainTests {
         } else {
             // The timeout window of the run waits, and the run posts nothing
             // in it. One full window ends the run.
-            await clock.waitForSleepers(atLeast: 1)
+            try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: settled)
             clock.advance(by: .seconds(fixtureTimeoutSeconds))
         }
-        let terminal = try #require(await firstSettledTerminal(in: events))
+        let terminal = try #require(await settled.value)
         let delivery = try #require(try await prompts(atLeast: 2, reaching: backend).last)
         return (delivery, terminal)
     }

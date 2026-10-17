@@ -49,10 +49,26 @@ comments:
     - evidence: `swift test` one full run, exit 0: "Test run with 1817 tests in 221 suites passed after 4.714 seconds with 3 known issues" (2 known issues are the new PromptWaitTests, 1 is the RealModelHarness embedding-slot test from before), plus "26 tests in 14 suites passed" and "19 tests in 3 suites passed"; XCTest: 0 tests. After a doc-comment edit, `swift build --build-tests` exit 0. The only build warning is SwiftPM "missing creator for mutated node" for mlx-swift_Cmlx.bundle (build graph, not a source file). IntegrationTests compiles none of the changed files, so I did not build it. Files: Tests/FoundationModelsRouterTests/Helpers/MailQueueFixtures.swift, Helpers/SessionPlumbingAccess.swift, PromptWaitTests.swift (new), MailSubscriptionTests.swift, MailTranscriptTests.swift, OriginAndTerminalEventTests.swift, RunMessageDeliveryTests.swift, SessionMessagePumpTests.swift, SubmissionAnswerEventTests.swift. No production code changed. Not committed.
     - next: /review
   timestamp: 2026-10-17T06:37:34.835873+00:00
+- actor: claude-code
+  id: 01m549j0dwy32r7bbxb5423kd0
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 2fda24ac). 9 files reviewed, 4 .kanban files not reviewed because of .reviewignore. Counts: findings 0, confirmed 0, refuted 0, attempted 14, failed 0, skipped 0. The task has no prior Review Findings sections.
+    - next: The task is in done. Continue to the next task that this task blocks (^404vfsz).
+  timestamp: 2026-10-17T06:42:29.436429+00:00
+- actor: claude-code
+  id: 01m549jsf0y6j4cngh5by974qr
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 test files
+    - test: green — the one full swift test run of the implement step: 1817 tests in 221 suites + 26 + 19 passed, exit 0
+    - commit: 2fda24ac
+    - review: clean — 0 findings, 9 files reviewed
+  timestamp: 2026-10-17T06:42:55.072721+00:00
 depends_on:
 - 01M546C19377FP3SF7YFPZCDT3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffc80
 title: 'T1 follow-up 2/6: waitForPrompts of a prompt-counting backend also ends on the pump end or the answer end'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit comment "kinds of waits checked and left" names this helper change as not made: `waitForPrompts` with an end on the pump end (MailQueueFixtures / PumpProbeBackend). Reason given: the failure event (pump end, mail terminal) signals a different ChangeSignal, not `backend.changes`.

@@ -320,11 +320,18 @@ struct ToolDisplayDeliveryTests {
         }
         let answer = try await fixture.session.respond(to: Self.jobPrompt)
         let envelope = try #require(PendingRunEnvelope.makeDecoded(fromRendered: answer))
+        // The settle of the run is the failure event of each wait for a
+        // window of the timeout: a run that settles puts no more window on
+        // the clock.
+        let runPlane = fixture.session.runPlane
+        let settled = Task {
+            try await MountFixtures.settledTerminal(of: envelope.completionToken, in: runPlane)
+        }
 
         for count in 1...texts.count {
             // A window of the timeout waits before the tool posts, so the
             // post comes inside that window.
-            await fixture.clock.waitForSleepers(atLeast: 1)
+            try await fixture.clock.waitForSleepers(atLeast: 1, endingOnEndOf: settled)
             beat.signal()
             try await Self.waitForDisplayTexts(count, on: fixture)
             // A full timeout passes. The window held a display event, so the
@@ -332,8 +339,7 @@ struct ToolDisplayDeliveryTests {
             fixture.clock.advance(by: .seconds(Self.beatTimeout))
         }
 
-        let terminal = try await MountFixtures.settledTerminal(
-            of: envelope.completionToken, in: fixture.session.runPlane)
+        let terminal = try await settled.value
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == Self.runOutput)
         #expect(await fixture.events.events.displayTexts == texts)

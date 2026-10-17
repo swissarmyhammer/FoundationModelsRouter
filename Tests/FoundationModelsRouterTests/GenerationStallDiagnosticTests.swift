@@ -379,12 +379,17 @@ struct GenerationStallDiagnosticTests {
     ///   - held: The event the backend signals when the model call holds.
     ///   - interval: How far to move the clock. The default is
     ///     ``testReportInterval``.
-    /// - Throws: ``EventNeverArrived`` when the test task was cancelled first.
+    ///   - answer: The task of the answer that starts the watch. Its end is
+    ///     the failure event of the wait for the watch on the clock.
+    /// - Throws: ``EventNeverArrived`` when the test task was cancelled first,
+    ///   or the error of `#require` when the answer ended before the watch
+    ///   slept.
     private static func advance(
-        _ clock: ManualRunClock, onceHeld held: AwaitedEvent, by interval: Duration = testReportInterval
+        _ clock: ManualRunClock, onceHeld held: AwaitedEvent, by interval: Duration = testReportInterval,
+        endingOnEndOf answer: Task<String, any Error>
     ) async throws {
         try await held.wait()
-        await clock.waitForSleepers(atLeast: 1)
+        try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answer)
         clock.advance(by: interval)
     }
 
@@ -417,7 +422,7 @@ struct GenerationStallDiagnosticTests {
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await Self.advance(clock, onceHeld: backend.suspended)
+        try await Self.advance(clock, onceHeld: backend.suspended, endingOnEndOf: answerTask)
         let reported = await Self.firstStall(on: feed)
         backend.release.signal()
         _ = try await answerTask.value
@@ -440,7 +445,7 @@ struct GenerationStallDiagnosticTests {
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await Self.advance(clock, onceHeld: backend.suspended)
+        try await Self.advance(clock, onceHeld: backend.suspended, endingOnEndOf: answerTask)
         #expect(await Self.firstStall(on: feed) != nil)
 
         backend.release.signal()
@@ -469,6 +474,15 @@ struct GenerationStallDiagnosticTests {
         // streaming body. So after the last `.textDelta` the watch counted
         // every fragment the answer produced, and only then does the test move
         // the clock. The one report of the watch comes after that point.
+        //
+        // The test reads the stream of the answer itself, so a second task
+        // reads the end of the answer from the session-wide feed. That end is
+        // the failure event of the wait for the watch on the clock.
+        let feed = await session.streamSessionEvents().events
+        let answerEnded = Task {
+            for await event in feed where event.isAnswerEnd { return }
+        }
+        defer { answerEnded.cancel() }
         var countedFragments = 0
         var stall: GenerationStall?
         let stream = await session.streamEvents(to: Self.prompt)
@@ -477,7 +491,7 @@ struct GenerationStallDiagnosticTests {
             case .textDelta:
                 countedFragments += 1
                 if countedFragments == producedFragments {
-                    await clock.waitForSleepers(atLeast: 1)
+                    try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answerEnded)
                     clock.advance(by: Self.testReportInterval)
                 }
             case .generationStalled(let reported) where stall == nil:
@@ -554,7 +568,7 @@ struct GenerationStallDiagnosticTests {
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await Self.advance(clock, onceHeld: backend.suspended, by: reportInterval)
+        try await Self.advance(clock, onceHeld: backend.suspended, by: reportInterval, endingOnEndOf: answerTask)
         let reported = await Self.firstStall(on: feed)
 
         backend.release.signal()
@@ -589,7 +603,7 @@ struct GenerationStallDiagnosticTests {
             await session.useCaptureLogger(for: context.logger)
             let feed = await session.streamSessionEvents().events
             let answerTask = Task { try await session.respond(to: Self.prompt) }
-            try await Self.advance(clock, onceHeld: backend.suspended)
+            try await Self.advance(clock, onceHeld: backend.suspended, endingOnEndOf: answerTask)
             #expect(await Self.firstStall(on: feed) != nil)
 
             backend.release.signal()
@@ -665,9 +679,10 @@ struct GenerationStallDiagnosticTests {
             handshake.proceed.signal()
         }
         // The session asks for the element after the last append only after
-        // it noted the tool result. Only then does the clock move.
+        // it noted the tool result. Only then does the clock move. An answer
+        // that ends with no watch on the clock ends the wait too.
         await handshake.asked.wait()
-        await clock.waitForSleepers(atLeast: 1)
+        try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: drain)
         clock.advance(by: Self.testReportInterval)
         try await log.wait(until: { events in
             events.contains { event in
@@ -697,7 +712,8 @@ struct GenerationStallDiagnosticTests {
         let answerTask = Task { try await session.respond(to: Self.prompt) }
         // The call holds for a while before its tool invocation. The clock
         // stays short of the interval, so no tick comes before the invocation.
-        try await Self.advance(clock, onceHeld: backend.suspended, by: Self.timeBeforeToolInvocation)
+        try await Self.advance(
+            clock, onceHeld: backend.suspended, by: Self.timeBeforeToolInvocation, endingOnEndOf: answerTask)
 
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "tool-run", sessionID: session.id, openedAt: Date())

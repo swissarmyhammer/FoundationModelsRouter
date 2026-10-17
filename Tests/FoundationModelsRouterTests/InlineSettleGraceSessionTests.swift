@@ -152,9 +152,10 @@ struct InlineSettleGraceSessionTests {
 
         // The gate stays closed until the call answered. The call waits for
         // its run up to the settle period, and the test then moves the clock
-        // past that period, so the run continues past it.
+        // past that period, so the run continues past it. A call that ends
+        // with no wait on the clock ends the wait of the test too.
         let answering = Task { try await fixture.session.respond(to: Self.jobPrompt) }
-        await fixture.clock.waitForSleepers(atLeast: 1)
+        try await fixture.clock.waitForSleepers(atLeast: 1, endingOnEndOf: answering)
         fixture.clock.advance(by: .seconds(Self.shortGrace))
         let answer = try await answering.value
         let envelope = try #require(PendingRunEnvelope.makeDecoded(fromRendered: answer))

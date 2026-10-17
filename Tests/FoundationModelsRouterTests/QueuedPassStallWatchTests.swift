@@ -220,7 +220,7 @@ struct QueuedPassStallWatchTests {
         // watch sleeps for its first interval. An answer that ends first did
         // not start the pass.
         try await RecordedWaitResult.wait(for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: answer)
-        await clock.waitForSleepers(atLeast: 1)
+        try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answer)
         clock.advance(by: Self.reportInterval)
         try await log.wait(until: { !Self.stalls(in: $0).isEmpty })
         await fixture.latch.open()
@@ -265,7 +265,7 @@ struct QueuedPassStallWatchTests {
         // wait, and its watch sleeps for its first interval. The holding pass
         // waits for its step, so the submission still waits while the clock
         // moves, and the watch counts no time.
-        await clock.waitForSleepers(atLeast: 1)
+        try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: waitingAnswer)
         clock.advance(by: Self.workerWaitTime)
         let watchDuringTheWait = try #require(await waitingActor.appliedStallWatch())
         #expect(watchDuringTheWait.measuredFrom == nil)
