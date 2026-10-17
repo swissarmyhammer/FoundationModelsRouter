@@ -185,14 +185,17 @@ struct ProjectionExampleTests {
         /// model.
         ///
         /// - Returns: A session that answers each message with ``answer``.
-        /// - Throws: Whatever profile resolution throws.
+        /// - Throws: Whatever profile resolution throws. Before it throws, it
+        ///   removes the temp directory.
         static func makeSession() async throws -> any RoutedSession {
+            let directory = RouterTestFixtures.makeTempDir(prefix: "ProjectionExampleTests")
             let router = RouterTestFixtures.makeRouter(
-                cacheDir: RouterTestFixtures.makeTempDir(prefix: "ProjectionExampleTests"),
+                cacheDir: directory,
                 loader: StubModelLoader(
                     container: ScriptedContainer(), dimension: RouterTestFixtures.stubDimension))
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+                try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            }
             return profile.standard.makeSession(instructions: "You are a terse support agent.")
         }
     }

@@ -446,7 +446,9 @@ struct RoutedSessionCompactTests {
         // budget's target one token under the live context.
         let recorder2 = InMemoryRecorder()
         let container2 = ConfiguredLLMContainer(responseText: Self.cannedText)
-        let router2 = Self.makeRouter(container: container2, recorder: recorder2, cacheDir: Self.makeTempDir())
+        let cacheDir2 = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: cacheDir2) }
+        let router2 = Self.makeRouter(container: container2, recorder: recorder2, cacheDir: cacheDir2)
         let tightContext = Int((Double(liveTokens - 1) / TokenBudget(limit: liveTokens).target).rounded())
         let profile2 = try await router2.resolve(
             profile: Self.profile(context: tightContext), reporting: ResolutionProgress())

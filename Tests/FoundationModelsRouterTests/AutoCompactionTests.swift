@@ -527,7 +527,8 @@ struct AutoCompactionTests {
     ///   - recorder: The recorder of the router.
     /// - Returns: The session, the container of its backend, and the profile
     ///   that keeps its models resident.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     private static func makeOverflowSession(
         overflowsRemaining: Int = 1, overflowingCalls: Set<Int> = [],
         recorder: InMemoryRecorder = InMemoryRecorder()
@@ -542,7 +543,9 @@ struct AutoCompactionTests {
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
+        }
         let session = profile.standard.makeSession(
             budget: TokenBudget(limit: characterCount(of: seedEntries), target: 0.35))
         return (session, standardContainer, profile)
@@ -554,6 +557,7 @@ struct AutoCompactionTests {
     @MainActor
     func reactiveRetrySurfacesAfterOneFailedRetry() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
         let recorder = InMemoryRecorder()
         let seedEntries = ScriptedOverflowBackend.seedEntries(answerCount: 6, responseText: Self.cannedText)
         // Overflows on every call this test could plausibly make (initial +
@@ -780,7 +784,8 @@ struct AutoCompactionTests {
     ///   - target: The configured target of the budget, as a fraction of the window.
     ///   - overflowsRemaining: How many calls the backend fails with an overflow.
     /// - Returns: The session and its container.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     private static func makeRoomTestSession(
         target: Double, overflowsRemaining: Int
     ) async throws -> (session: any RoutedSession, container: OverflowLLMContainer) {
@@ -791,8 +796,10 @@ struct AutoCompactionTests {
             standard: container, flash: ConfiguredLLMContainer(responseText: "FLASH-SUMMARY"),
             dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: InMemoryRecorder(), loader: loader)
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(context: roomTestWindowTokens), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(
+                profile: RouterTestFixtures.profile(context: roomTestWindowTokens), reporting: ResolutionProgress())
+        }
         let session = profile.standard.makeSession(
             budget: TokenBudget(limit: roomTestWindowTokens, target: target))
         return (session, container)

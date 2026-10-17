@@ -14,6 +14,10 @@ import Testing
 /// records to memory.
 @Suite("RoutedModel.transcriptTree: tree access off the resolved handle")
 struct TranscriptTreeAccessTests {
+    /// The start of the name of each temporary directory of this suite. A
+    /// directory that stays after a test then names this suite as its owner.
+    private static let tempDirPrefix = "TranscriptTreeAccessTests"
+
     /// Builds a stub-backed router over the shared fixtures.
     private func makeRouter(cacheDir: URL, recordingsDir: URL? = nil) -> Router {
         let recorder: any TranscriptRecorder =
@@ -32,10 +36,9 @@ struct TranscriptTreeAccessTests {
     @Test("returns the tree loaded from <recordingsRoot>/<routerId>/")
     @MainActor
     func returnsTheRouterLevelTree() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "TranscriptTreeAccessTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(
-            prefix: "TranscriptTreeAccessTests-recordings")
-        let router = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
+        defer { directories.remove() }
+        let router = makeRouter(cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
@@ -49,12 +52,11 @@ struct TranscriptTreeAccessTests {
     @Test("an explicit recordingRoot loads that directory's flat layout")
     @MainActor
     func explicitRecordingRootLoadsTheFlatLayout() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "TranscriptTreeAccessTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(
-            prefix: "TranscriptTreeAccessTests-recordings")
-        let sessionRoot = RouterTestFixtures.makeTempDir(
-            prefix: "TranscriptTreeAccessTests-sessionRoot")
-        let router = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
+        defer { directories.remove() }
+        let sessionRoot = RouterTestFixtures.makeTempDir(prefix: "\(Self.tempDirPrefix)-sessionRoot")
+        defer { try? FileManager.default.removeItem(at: sessionRoot) }
+        let router = makeRouter(cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(recordingRoot: sessionRoot)
@@ -68,7 +70,8 @@ struct TranscriptTreeAccessTests {
     @Test("throws noDurableRecordingsRoot when the router records to memory")
     @MainActor
     func throwsWithoutADurableRoot() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "TranscriptTreeAccessTests")
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let router = makeRouter(cacheDir: cacheDir)
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())

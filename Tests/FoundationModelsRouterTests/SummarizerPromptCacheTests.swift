@@ -75,24 +75,27 @@ struct SummarizerPromptCacheTests {
     ///     `false` (the default), the flash slot resolves to the recording
     ///     model too.
     /// - Returns: The fixture.
-    /// - Throws: What the resolution of the profile throws.
+    /// - Throws: What the resolution of the profile throws. Before it throws,
+    ///   it removes the directory.
     private static func makeFixture(reportedInputTokens: Int = 0, failingFlash: Bool = false) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = PromptCacheScopeLog()
         let container = LiveBackendContainer(
             model: PromptCacheScopeRecordingModel(log: log, reportedInputTokens: reportedInputTokens))
-        guard failingFlash else {
-            let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
-            return Fixture(log: log, profile: resolved.profile, directory: directory)
+        return try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            guard failingFlash else {
+                let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
+                return Fixture(log: log, profile: resolved.profile, directory: directory)
+            }
+            let router = RouterTestFixtures.makeRouter(
+                cacheDir: directory,
+                loader: PerSlotModelLoader(
+                    standard: container,
+                    flash: ConfiguredLLMContainer(responseText: "unused flash answer", shouldThrow: true),
+                    dimension: RouterTestFixtures.stubDimension))
+            let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+            return Fixture(log: log, profile: profile, directory: directory)
         }
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory,
-            loader: PerSlotModelLoader(
-                standard: container,
-                flash: ConfiguredLLMContainer(responseText: "unused flash answer", shouldThrow: true),
-                dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return Fixture(log: log, profile: profile, directory: directory)
     }
 
     /// The production change that makes this test fail: an own-model

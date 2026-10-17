@@ -25,7 +25,8 @@ import Testing
 /// ``MetadataSource``, ``ModelLoader``) and an ``InMemoryRecorder``. In
 /// production you construct `Router(recordingsDir:)` with a configured
 /// `LiveModelLoader` instead; every line *after* the `ExampleHarness.makeRouter`
-/// call is real usage.
+/// call is real usage, except the `defer` that removes the temporary cache
+/// directory of the harness.
 @Suite("Examples: canonical usage of the public API")
 struct ExamplesTests {
     // MARK: - Unit-test seam (the ONLY non-production code in this file)
@@ -153,16 +154,16 @@ struct ExamplesTests {
         ///     models by asserting on their distinct outputs.
         ///   - embeddingDimension: The length of every embedding vector.
         /// - Returns: A `Router` whose seams are offline stubs, recording to
-        ///   memory under a throwaway temporary cache directory.
+        ///   memory, and its temporary cache directory. The example removes
+        ///   that directory in a `defer` right after this call, so the
+        ///   directory goes also when the example throws (rule T1).
         static func makeRouter(
             cannedResponse: String = "OK",
             cannedResponses: [ModelSlot: String] = [:],
             embeddingDimension: Int = 768
-        ) -> Router {
-            let cacheDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("ExamplesTests-\(UUID().uuidString)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-            return Router(
+        ) -> (router: Router, cacheDir: URL) {
+            let cacheDir = RouterTestFixtures.makeTempDir(prefix: "ExamplesTests")
+            let router = Router(
                 cacheDir: cacheDir,
                 recorder: InMemoryRecorder(),
                 probe: StubProbe(
@@ -178,6 +179,7 @@ struct ExamplesTests {
                 ),
                 pool: ModelPool()
             )
+            return (router, cacheDir)
         }
     }
 
@@ -186,7 +188,8 @@ struct ExamplesTests {
     @Test("Author a ProfileDefinition and resolve it, watching progress reach .ready")
     @MainActor
     func resolveProfileObservingProgress() async throws {
-        let router = ExampleHarness.makeRouter()
+        let (router, cacheDir) = ExampleHarness.makeRouter()
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
 
         // Author a profile: list candidate models per slot, biggest/best first.
         // Resolution picks the highest-preference candidate that fits this machine.
@@ -237,7 +240,8 @@ struct ExamplesTests {
     @Test("Open a session and respond to a prompt")
     @MainActor
     func generateWithASession() async throws {
-        let router = ExampleHarness.makeRouter(cannedResponse: "The keyword is `final`.")
+        let (router, cacheDir) = ExampleHarness.makeRouter(cannedResponse: "The keyword is `final`.")
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -262,7 +266,8 @@ struct ExamplesTests {
     @Test("Stream a response fragment by fragment")
     @MainActor
     func streamAResponse() async throws {
-        let router = ExampleHarness.makeRouter(cannedResponse: "Hello, world!")
+        let (router, cacheDir) = ExampleHarness.makeRouter(cannedResponse: "Hello, world!")
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -288,10 +293,11 @@ struct ExamplesTests {
     @Test("Route work across two resident models: flash triages, standard answers")
     @MainActor
     func multiModelDirectGeneration() async throws {
-        let router = ExampleHarness.makeRouter(cannedResponses: [
+        let (router, cacheDir) = ExampleHarness.makeRouter(cannedResponses: [
             .flash: "billing",
             .standard: "Refunds for Q3 invoices post within 5–7 business days.",
         ])
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -335,7 +341,8 @@ struct ExamplesTests {
     @MainActor
     func embedStrings() async throws {
         let vectorLength = 384
-        let router = ExampleHarness.makeRouter(embeddingDimension: vectorLength)
+        let (router, cacheDir) = ExampleHarness.makeRouter(embeddingDimension: vectorLength)
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -360,7 +367,8 @@ struct ExamplesTests {
     @Test("Guided (raw): constrain output to a grammar via respond(to:following:) and makeGuidedSession")
     @MainActor
     func guidedRawConstrainedText() async throws {
-        let router = ExampleHarness.makeRouter(cannedResponse: #"{"intent":"bugfix"}"#)
+        let (router, cacheDir) = ExampleHarness.makeRouter(cannedResponse: #"{"intent":"bugfix"}"#)
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -396,9 +404,10 @@ struct ExamplesTests {
     @Test("Guided (dynamic): constrain to a runtime schema via respond(to:matching:) into a JSONValue")
     @MainActor
     func guidedDynamicJSONValue() async throws {
-        let router = ExampleHarness.makeRouter(
+        let (router, cacheDir) = ExampleHarness.makeRouter(
             cannedResponse: #"{"language":"python","confident":true}"#
         )
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -430,7 +439,8 @@ struct ExamplesTests {
     @Test("Fan out N short-lived subagents by forking one session")
     @MainActor
     func subagentFanOutByForking() async throws {
-        let router = ExampleHarness.makeRouter(cannedResponse: "done")
+        let (router, cacheDir) = ExampleHarness.makeRouter(cannedResponse: "done")
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -474,7 +484,8 @@ struct ExamplesTests {
     @Test("Residency: pooled — a second resolve of the same profile shares its models; dropping the last reference frees them")
     @MainActor
     func residencyPooledSharingAndDrop() async throws {
-        let router = ExampleHarness.makeRouter()
+        let (router, cacheDir) = ExampleHarness.makeRouter()
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -534,9 +545,10 @@ struct ExamplesTests {
         @Test("Guided (typed): constrain to a @Generable type via respond(to:generating:)")
         @MainActor
         func guidedTypedGenerable() async throws {
-            let router = ExampleHarness.makeRouter(
+            let (router, cacheDir) = ExampleHarness.makeRouter(
                 cannedResponse: #"{"summary":"Looks good.","lineCount":42}"#
             )
+            defer { try? FileManager.default.removeItem(at: cacheDir) }
             let coding = ProfileDefinition(
                 name: "coding",
                 description: "Local coding assistant.",
@@ -611,12 +623,13 @@ struct ExamplesTests {
 
         /// Resolves a one-model profile whose working context is `context`
         /// and opens a `standard`-slot session driven entirely by `backend`.
+        ///
+        /// - Throws: What the resolve of the profile throws. Before it throws,
+        ///   it removes the temporary cache directory (rule T1).
         static func makeSession(
             over backend: any LanguageModelSessionBackend, context: Int
         ) async throws -> any RoutedSession {
-            let cacheDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("CompactionExample-\(UUID().uuidString)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            let cacheDir = RouterTestFixtures.makeTempDir(prefix: "CompactionExample")
             let router = Router(
                 cacheDir: cacheDir,
                 recorder: InMemoryRecorder(),
@@ -626,17 +639,19 @@ struct ExamplesTests {
                 loader: StubModelLoader(backend: backend),
                 pool: ModelPool()
             )
-            let profile = try await router.resolve(
-                profile: ProfileDefinition(
-                    name: "compaction-example",
-                    description: "Compaction example profile.",
-                    standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
-                    flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-                    embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
-                    context: context
-                ),
-                reporting: ResolutionProgress()
-            )
+            let profile = try await RouterTestFixtures.removingDirectoryOnThrow(cacheDir) {
+                try await router.resolve(
+                    profile: ProfileDefinition(
+                        name: "compaction-example",
+                        description: "Compaction example profile.",
+                        standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
+                        flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
+                        embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+                        context: context
+                    ),
+                    reporting: ResolutionProgress()
+                )
+            }
             return profile.standard.makeSession()
         }
     }

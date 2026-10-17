@@ -30,6 +30,8 @@ struct BackgroundRunTranscriptTests {
     /// - Parameter recorder: The recorder every vended session records
     ///   through.
     /// - Returns: The vended session and the temp directory to clean up.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the temp directory.
     private static func makeSession(
         recorder: any TranscriptRecorder
     ) async throws -> (session: any RoutedSession, dir: URL) {
@@ -40,8 +42,9 @@ struct BackgroundRunTranscriptTests {
             loader: StubModelLoader(
                 container: BasicLLMContainer(), dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        }
         return (profile.standard.makeSession(), dir)
     }
 

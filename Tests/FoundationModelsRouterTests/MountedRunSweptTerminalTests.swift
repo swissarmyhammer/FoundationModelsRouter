@@ -92,7 +92,8 @@ struct MountedRunSweptTerminalTests {
     ///
     /// - Parameter recorder: The recorder the vended session journals through.
     /// - Returns: The vended session and the temp directory to clean up.
-    /// - Throws: Whatever profile resolution throws.
+    /// - Throws: Whatever profile resolution throws. Before it throws, it
+    ///   removes the temp directory.
     private static func makeSession(
         recorder: any TranscriptRecorder
     ) async throws -> (session: any RoutedSession, directory: URL) {
@@ -104,8 +105,9 @@ struct MountedRunSweptTerminalTests {
                 container: UndrivenLanguageModelContainer(),
                 dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        }
         return (profile.standard.makeSession(), directory)
     }
 

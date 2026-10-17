@@ -41,10 +41,26 @@ comments:
   id: 01m550ct3zwrgss2pnhcxr9j81
   text: 'Correction to the step record above: the full suite ran two times, not one time. The first run (1832 tests in 225 suites passed, 8 known issues) came before the code changed again: the change of `MailQueueFixtures.waitForPrompts(_:on:endingWhenWorkEnds:)` to the shared helper and the 2 new TaskEndEventWaitTests tests. The second run, after that change, is the result that the record gives (1834 tests, 9 known issues).'
   timestamp: 2026-10-17T13:21:36.383902+00:00
+- actor: claude-code
+  id: 01m550xfwym5bcjhfx9pft1mkq
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit c733c35e). 0 findings, 0 confirmed, 0 refuted. 28 validator runs, 0 failed, 0 skipped. 23 files reviewed. 6 .kanban files not reviewed because of .reviewignore.
+    - next: The task is in done. No open findings.
+  timestamp: 2026-10-17T13:30:42.974538+00:00
+- actor: claude-code
+  id: 01m550y3z4eq137js722sq9ptb
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 23 test files
+    - test: green — full swift test after the last helper change: 1834 tests in 225 suites + 26 + 19 passed (the full suite ran two times on this card)
+    - commit: c733c35e
+    - review: clean — 0 findings, 23 files reviewed
+  timestamp: 2026-10-17T13:31:03.524188+00:00
 depends_on:
 - 01M5473QWCC106G7P89CJ4FD37
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8d80
 title: 'T1 follow-up c2: decision for swissarmyhammer-96 on the T1 places that stay (race, quiet state, production hook)'
 ---
 Source: task ^dbr1dqy (T1 audit, done), comment "kinds of waits checked and left", and the check of 2026-10-17. This card does not change code first. It lists the places where no fix under the rule is known, each with its reason, so that the coordinating session (swissarmyhammer-96) decides: leave the place (with a comment in the test), or approve a change.

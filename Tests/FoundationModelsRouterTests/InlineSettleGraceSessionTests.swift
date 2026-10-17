@@ -82,16 +82,23 @@ struct InlineSettleGraceSessionTests {
     ///   - grace: The ``SessionConfiguration/inlineSettleGrace`` of the
     ///     session.
     /// - Returns: The fixture.
-    /// - Throws: What the resolve of the profile throws.
+    /// - Throws: What the resolve of the profile throws, or when the
+    ///   container vended no backend. Before it throws, it closes the session
+    ///   that it made and removes the directory (rule T1).
     private static func makeFixture(gate: RunLatch, grace: TimeInterval) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "InlineSettleGraceSessionTests")
         let container = BackgroundingLLMContainer()
         let clock = ManualRunClock()
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory, runClock: clock)
+        let (router, profile) = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory, runClock: clock)
+        }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: [HostGraceBackgroundTool(gate: gate)], inlineSettleGrace: grace))
-        let backend = try #require(container.lastBackend)
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            directory, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
+        }
         return Fixture(session: session, backend: backend, router: router, clock: clock, directory: directory)
     }
 
