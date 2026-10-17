@@ -256,7 +256,10 @@ struct DiscoveryPrimingTests {
         """
 
     /// One vended session plus everything a test needs to inspect it.
-    private struct Fixture {
+    ///
+    /// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``
+    /// from a `defer`, so the session closes also when the test throws.
+    private struct Fixture: SessionDirectoryFixture {
         /// The vended session under test.
         let session: any RoutedSession
 
@@ -267,7 +270,7 @@ struct DiscoveryPrimingTests {
         let recorder: InMemoryRecorder
 
         /// The per-test temp directory to clean up.
-        let dir: URL
+        let directory: URL
     }
 
     /// Builds a fresh router + resolved profile + vended session over a
@@ -283,6 +286,8 @@ struct DiscoveryPrimingTests {
     ///   - tools: The tools to mount on the session.
     ///   - priming: The priming opt-in, or `nil` to leave it off.
     /// - Returns: The fixture.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the directory.
     private static func makeFixture(
         instructions: String? = nil,
         grammar: Grammar? = nil,
@@ -297,8 +302,9 @@ struct DiscoveryPrimingTests {
             recorder: recorder,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        }
         let session: any RoutedSession
         if let grammar {
             session = profile.standard.makeGuidedSession(
@@ -307,7 +313,7 @@ struct DiscoveryPrimingTests {
             session = profile.standard.makeSession(
                 instructions: instructions, tools: tools, discoveryPriming: priming)
         }
-        return Fixture(session: session, log: container.log, recorder: recorder, dir: dir)
+        return Fixture(session: session, log: container.log, recorder: recorder, directory: dir)
     }
 
     /// The priming failures among `events`, in order.
@@ -331,7 +337,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -366,7 +372,7 @@ struct DiscoveryPrimingTests {
     func primingOffLeavesConstructionUnchanged() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
         let fixture = try await Self.makeFixture(tools: [tool])
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -387,7 +393,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -420,7 +426,7 @@ struct DiscoveryPrimingTests {
             tools: [FailingDiscoveryTool()],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
@@ -444,7 +450,7 @@ struct DiscoveryPrimingTests {
             tools: [RecordingDiscoveryTool(output: Self.discoveryOutput)],
             priming: DiscoveryPriming(tool: "notMounted", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
@@ -459,7 +465,7 @@ struct DiscoveryPrimingTests {
             tools: [NonTextDiscoveryTool()],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
@@ -475,7 +481,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findTopics", queryProperty: "topic")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -496,7 +502,7 @@ struct DiscoveryPrimingTests {
             tools: [RecordingDiscoveryTool(output: Self.discoveryOutput)],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "topic")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
@@ -518,7 +524,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: "first")
         _ = try await fixture.session.respond(to: "second")
@@ -542,7 +548,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "7", kind: .completed, detail: "exit 0")
@@ -583,9 +589,10 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         let forked = try await fixture.session.fork(workingDirectory: nil)
+        defer { await forked.close() }
         _ = try await forked.respond(to: Self.prompt)
 
         #expect(tool.queries == [Self.prompt])
@@ -602,7 +609,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -628,8 +635,7 @@ struct DiscoveryPrimingTests {
             tools: [FailingDiscoveryTool()],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
-        defer { await fixture.session.close() }
+        defer { await fixture.end() }
 
         let sessionEvents = await fixture.session.streamSessionEvents().events
         let response = try await fixture.session.respond(to: Self.prompt)
@@ -655,8 +661,7 @@ struct DiscoveryPrimingTests {
             tools: [FailingDiscoveryTool()],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
-        defer { await fixture.session.close() }
+        defer { await fixture.end() }
 
         let sessionEvents = await fixture.session.streamSessionEvents().events
         try fixture.session.send(Self.prompt)
@@ -684,7 +689,7 @@ struct DiscoveryPrimingTests {
             tools: [tool],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
         )
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        defer { await fixture.end() }
 
         #expect(fixture.session.grammar == .jsonSchema(Self.guidedSchema))
         _ = try await fixture.session.respond(to: Self.prompt)

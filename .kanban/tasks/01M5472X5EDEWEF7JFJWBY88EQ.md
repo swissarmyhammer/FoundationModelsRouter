@@ -1,10 +1,36 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m54wmgr92ypbhb8sje8deyah
+  text: |-
+    ### implement — changed
+
+    All listed tests now close each session in a `defer` right after the session is made. The close runs after the test reads its values. A held gate or latch opens before the close.
+
+    Changes, file by file (all under `Tests/FoundationModelsRouterTests/`):
+    - `ElicitationRoutingTests`: `makeSession(pool:)` returns `SessionFixtureLifecycle.Started`. It removes the directory when the resolve throws. Each test uses `defer { await fixture.end() }`.
+    - `SessionMailQueueTests`: `makeSession` returns `Started`, with the same throw path. All 12 callers use `fixture.end()`. The gated test uses `fixture.end(opening: [gate])`.
+    - `RunMessageDeliveryTests` and `RunProgressDeliveryTests`: `Fixture` conforms to `SessionDirectoryFixture`. `tearDown` is `async` and calls `fixture.end()`. In `RunProgressDeliveryTests.makeFixture`, the throw path of the first respond also closes the session.
+    - `ExamplesTests`, `ProjectionExampleTests`, `GuidedPublicSurfaceTests`, `GuidedGenerationTests`: a `defer { await session.close() }` in the test, not in the example code. The fan-out example closes each fork before the planner.
+    - `RoutedSessionPublicSurfaceTests`: the 3 listed tests close in a `defer`.
+    - `DiscoveryPrimingTests`: `Fixture` conforms to `SessionDirectoryFixture`. `makeFixture` removes the directory when the resolve throws. All 15 tests use `fixture.end()`. `forkInheritsPriming` closes the fork. The two feed tests keep their body close before they read the feed.
+
+    Discoveries:
+    - The temporary directories of the harness routers in `ExamplesTests` stay. They are router-only scope for the later card.
+    - Other files still use the old `(session, dir)` pattern: `SubmissionBoundaryToolTests`, `SessionRunPlaneTests`, `PendingEventInjectionTests`, `BackgroundRunTranscriptTests`. They are not on this card.
+
+    Evidence:
+    - `swift build --build-tests`: no compiler warnings or errors.
+    - `swift test --filter 'FoundationModelsRouterTests\.(ElicitationRoutingTests|SessionMailQueueTests|RunMessageDeliveryTests|RunProgressDeliveryTests|ExamplesTests|ProjectionExampleTests|GuidedPublicSurfaceTests|RoutedSessionPublicSurfaceTests|GuidedGenerationTests|DiscoveryPrimingTests)/'`: 99 tests in 10 suites passed.
+    - Full `swift test`, one run: 1827 tests in 224 suites passed with 6 known issues (from `withKnownIssue` in files this card does not change). Also 26 tests in 14 suites passed, and 19 tests in 3 suites passed. XCTest: 0 tests.
+    - IntegrationTests: not built, because no edited file is compiled by it.
+  timestamp: 2026-10-17T12:15:54.633717+00:00
 depends_on:
 - 01M54727H1C10B483C56M1ZE24
-position_column: todo
-position_ordinal: '8e80'
+position_column: doing
+position_ordinal: '80'
 title: 'T1 follow-up b9: elicitation, mail, public surface and example suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the elicitation, mail, run delivery, public surface, guided and example suites.

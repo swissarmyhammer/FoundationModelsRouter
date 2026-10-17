@@ -228,6 +228,7 @@ struct GuidedPublicSurfaceTests {
             container: MinimalContainer(chunks: Self.minimalChunks))
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = profile.standard.makeSession(instructions: nil)
+        defer { await session.close() }
 
         // A streaming answer reads the backend through
         // `streamResponseFragments(to:maxTokens:)`, which ``MinimalBackend``

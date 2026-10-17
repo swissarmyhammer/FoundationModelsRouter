@@ -181,7 +181,13 @@ struct ElicitationRoutingTests {
 
     /// Builds a fresh router + resolved profile + vended session over a plain
     /// stub backend, recording through an ``InMemoryRecorder``.
-    private static func makeSession(pool: ModelPool = ModelPool()) async throws -> (session: any RoutedSession, dir: URL) {
+    ///
+    /// - Parameter pool: The model pool of the router.
+    /// - Returns: The session, its router and its directory. The caller ends
+    ///   them with ``SessionDirectoryFixture/end(opening:)`` in a `defer`.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the directory.
+    private static func makeSession(pool: ModelPool = ModelPool()) async throws -> SessionFixtureLifecycle.Started {
         let dir = makeTempDir()
         let router = Router(
             cacheDir: dir,
@@ -191,8 +197,10 @@ struct ElicitationRoutingTests {
             loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8),
             pool: pool
         )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        return (profile.standard.makeSession(), dir)
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        }
+        return SessionFixtureLifecycle.Started(session: profile.standard.makeSession(), router: router, directory: dir)
     }
 
     // MARK: - Elicitation scaffolding
@@ -251,8 +259,9 @@ struct ElicitationRoutingTests {
     @Test("a suspended ToolContext.elicit resumes when respond() is called on the session, with the exact response passed through")
     @MainActor
     func formRoundTripThroughSessionRespond() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let elicitationId = ULID.generate()
         let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
@@ -271,8 +280,9 @@ struct ElicitationRoutingTests {
     @Test("respond(.decline) resumes the run with .decline — a declined elicitation is not a cancelled run")
     @MainActor
     func declineResumesWithDeclineNotCancel() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let elicitationId = ULID.generate()
         let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
@@ -288,8 +298,9 @@ struct ElicitationRoutingTests {
     @Test("URL mode: after respond(.accept) the run is still running; it resumes only on complete(); a duplicate complete is a no-op")
     @MainActor
     func urlTwoStepThroughSessionSurface() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let elicitationId = ULID.generate()
         let answering = try await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: elicitationId), on: session)
@@ -315,8 +326,9 @@ struct ElicitationRoutingTests {
     @Test("two pending elicitations on one run resolve independently: responding to one leaves the other suspended")
     @MainActor
     func doubleElicitResolvesIndependently() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let firstId = ULID.generate()
         let secondId = ULID.generate()
@@ -355,8 +367,9 @@ struct ElicitationRoutingTests {
     @Test("unknown-id and malformed-id respond()/complete() are safe no-ops")
     @MainActor
     func unknownAndMalformedIdsAreNoOps() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let unknown = ULID.generate().description
         #expect(await session.respond(elicitationId: unknown, response: .decline) == .noPendingElicitation)
@@ -370,8 +383,9 @@ struct ElicitationRoutingTests {
     @Test("respond()/complete() accept a pending id in either case — Crockford base32 is case-insensitive")
     @MainActor
     func idCaseDoesNotAffectRouting() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // Case is never what makes an id malformed: Crockford base32 is
         // case-insensitive per the ULID spec, so uppercase and lowercase forms
@@ -405,10 +419,12 @@ struct ElicitationRoutingTests {
     @Test("cross-session isolation: respond on session A never resumes session B's elicitation")
     @MainActor
     func respondNeverCrossesSessions() async throws {
-        let (sessionA, dirA) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dirA) }
-        let (sessionB, dirB) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dirB) }
+        let fixtureA = try await Self.makeSession()
+        defer { await fixtureA.end() }
+        let sessionA = fixtureA.session
+        let fixtureB = try await Self.makeSession()
+        defer { await fixtureB.end() }
+        let sessionB = fixtureB.session
 
         let elicitationId = ULID.generate()
         let answering = try await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: sessionB)
@@ -533,9 +549,9 @@ struct ElicitationRoutingTests {
     )
     @MainActor
     func elicitationRequestedBetweenSubmissionsReachesTheSessionStream() async throws {
-        let (session, dir) = try await Self.makeSession()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // The session installs its journal on the outbox at its first
         // submission. A real tool always runs inside or after a submission, so

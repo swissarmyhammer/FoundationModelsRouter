@@ -203,6 +203,7 @@ struct ProjectionExampleTests {
     @MainActor
     func projectOneStreamedAnswer() async throws {
         let session = try await ProjectionExampleHarness.makeSession()
+        defer { await session.close() }
 
         // One projection observes the session for its whole life. In SwiftUI
         // this is `@State private var projection = SessionObserver()`, and

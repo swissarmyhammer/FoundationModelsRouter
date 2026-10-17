@@ -24,7 +24,7 @@ struct RunMessageDeliveryTests {
     typealias Backend = SessionMessagePumpTests.PumpProbeBackend
 
     /// One session over a ``Backend``, with what a test reads.
-    struct Fixture {
+    struct Fixture: SessionDirectoryFixture {
         /// The session under test.
         let session: any RoutedSession
 
@@ -116,12 +116,17 @@ struct RunMessageDeliveryTests {
             session: session, backend: backend, events: events, drain: drain, profile: profile, directory: directory)
     }
 
-    /// Ends the fixture: stops the event drain and removes the directory.
+    /// Ends the fixture: closes the session, stops the event drain, and
+    /// removes the directory.
+    ///
+    /// Each test calls it from one `defer`, so the session closes also when
+    /// the test throws (rule T1). A test opens its latches in a `defer` that
+    /// it declares after this one, so the latches open before the close.
     ///
     /// - Parameter fixture: The fixture to end.
-    private static func tearDown(_ fixture: Fixture) {
+    private static func tearDown(_ fixture: Fixture) async {
+        await fixture.end()
         fixture.drain.cancel()
-        try? FileManager.default.removeItem(at: fixture.directory)
         withExtendedLifetime(fixture.profile) {}
     }
 
@@ -159,7 +164,7 @@ struct RunMessageDeliveryTests {
     @Test("a message of an open background run starts an answer with no caller message, and the run stays open")
     func aMessageOfAnOpenRunStartsAnAnswer() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let latch = RunLatch()
         defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
@@ -179,7 +184,7 @@ struct RunMessageDeliveryTests {
     @Test("a later terminal of the same run settles the run and starts an answer of its own")
     func aLaterTerminalStartsItsOwnAnswer() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let latch = RunLatch()
         defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
@@ -205,7 +210,7 @@ struct RunMessageDeliveryTests {
     func aMessageWhileAnAnswerRunsWaitsForTheNextAnswer() async throws {
         let holdFirstAnswer = RunLatch()
         let fixture = try await Self.makeFixture(script: [1: .hold(holdFirstAnswer)])
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let latch = RunLatch()
         defer {
             await latch.open()
@@ -231,7 +236,7 @@ struct RunMessageDeliveryTests {
     @Test("a message of a run that is no background run starts no answer, and rides the next caller message")
     func aMessageOfAnUnknownRunRidesTheNextCallerMessage() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         _ = try await fixture.session.respond(to: Self.firstPrompt)
         let inBandMessage = Self.message(of: "in-band-run")
 
@@ -251,7 +256,7 @@ struct RunMessageDeliveryTests {
     @Test("the bound on answers that mail alone starts holds a message, and the session sends the pause event")
     func theMailOnlyAnswerLimitHoldsAMessage() async throws {
         let fixture = try await Self.makeFixture(mailOnlyAnswerLimit: 0)
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let latch = RunLatch()
         defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)
@@ -275,7 +280,7 @@ struct RunMessageDeliveryTests {
     @Test("a message of a background run arrives on streamSessionEvents() as runMessage")
     func aMessageArrivesOnTheSessionFeed() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let latch = RunLatch()
         defer { await latch.open() }
         let token = await Self.openRun(on: fixture.session, until: latch)

@@ -251,6 +251,8 @@ struct ExamplesTests {
         let session = profile.standard.makeSession(
             instructions: "You are a terse Swift expert."
         )
+        // Close a session when its work ends: the close ends its open work.
+        defer { await session.close() }
         let answer = try await session.respond(
             to: "Which Swift keyword marks a class that cannot be subclassed?"
         )
@@ -271,6 +273,7 @@ struct ExamplesTests {
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         // Consume the stream as fragments arrive, e.g. to render tokens live.
         var streamed = ""
@@ -306,6 +309,7 @@ struct ExamplesTests {
         let triage = profile.flash.makeSession(
             instructions: "Classify the support ticket into one category word."
         )
+        defer { await triage.close() }
         let category = try await triage.respond(
             to: "My Q3 invoice has a discrepancy in the refund total."
         )
@@ -315,6 +319,7 @@ struct ExamplesTests {
         let answer = profile.standard.makeSession(
             instructions: "You are a support agent. Write a helpful, precise reply."
         )
+        defer { await answer.close() }
         let reply = try await answer.respond(
             to: "Explain our \(category) policy for the customer's Q3 invoice."
         )
@@ -380,6 +385,7 @@ struct ExamplesTests {
         // Reusable: `makeGuidedSession` applies the grammar to every answer, and the
         // grammar travels with the session (so a fork inherits it).
         let session = profile.standard.makeGuidedSession(grammar: grammar)
+        defer { await session.close() }
         #expect(session.grammar == grammar)
         let next = try await session.respond(to: "Classify: 'add dark mode'.")
         #expect(next == #"{"intent":"bugfix"}"#)
@@ -437,9 +443,16 @@ struct ExamplesTests {
         // A planner session establishes shared context once; each subagent is a
         // fork that inherits its cached prefix and then diverges independently.
         let planner = profile.standard.makeSession(instructions: "You are the planner.")
+        defer { await planner.close() }
 
         let subagentCount = 4
         var subagents: [any RoutedSession] = []
+        // Close each fork when the fan-out ends, before the planner closes.
+        defer {
+            for subagent in subagents {
+                await subagent.close()
+            }
+        }
         for _ in 0..<subagentCount {
             subagents.append(try await planner.fork(workingDirectory: nil))
         }
@@ -635,6 +648,7 @@ struct ExamplesTests {
     func proactiveCompactionBetweenAnswers() async throws {
         let backend = StubSessionBackend(responseText: "ok")
         let session = try await CompactionExampleHarness.makeSession(over: backend, context: 100_000)
+        defer { await session.close() }
 
         let budget = TokenBudget(limit: 100_000)
         var compactedAtAnswer: Int?
@@ -850,6 +864,7 @@ struct ExamplesTests {
         let contextTokens = preCompactionCount * 2
 
         let session = try await CompactionExampleHarness.makeSession(over: backend, context: contextTokens)
+        defer { await session.close() }
 
         let reply = try await respondWithReactiveCompaction(
             session: session, prompt: "keep going", contextTokens: contextTokens)

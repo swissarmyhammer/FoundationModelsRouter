@@ -50,7 +50,7 @@ struct RoutedSessionPublicSurfaceTests {
     @Test("compact() runs the compaction pipeline against this session's own working context")
     func compactWithNoArgumentsMeasuresTheLiveTranscript() async throws {
         let fixture = try await Self.makeQueueFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
         let result = try await fixture.session.compactAndAwait()
@@ -70,6 +70,7 @@ struct RoutedSessionPublicSurfaceTests {
     func compactWithBudgetCompactsAgainstThatBudget() async throws {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
+        defer { await session.close() }
 
         let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
@@ -115,7 +116,7 @@ struct RoutedSessionPublicSurfaceTests {
     @Test("send(_:) sends the plain text it is given as one message")
     func sendTextSendsThatTextAsOneMessage() async throws {
         let fixture = try await Self.makeQueueFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let id: MailID = try fixture.session.send(Self.sentPromptText)
 

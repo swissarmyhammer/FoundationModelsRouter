@@ -17,7 +17,7 @@ struct RunProgressDeliveryTests {
     typealias Backend = SessionMessagePumpTests.PumpProbeBackend
 
     /// One session over a ``Backend``, with what a test reads.
-    struct Fixture {
+    struct Fixture: SessionDirectoryFixture {
         /// The session under test.
         let session: any RoutedSession
 
@@ -54,8 +54,8 @@ struct RunProgressDeliveryTests {
     /// Makes a session over a new backend, answers ``firstPrompt``, and
     /// watches the events of the session.
     ///
-    /// When a step throws, this helper first stops the event drain and
-    /// removes the directory (rule T1).
+    /// When a step throws, this helper first closes the session, stops the
+    /// event drain and removes the directory (rule T1).
     ///
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile or the first answer throws.
@@ -73,7 +73,13 @@ struct RunProgressDeliveryTests {
         }
         let session = profile.standard.makeSession()
         let (events, drain) = await SessionEventLog.watch(session)
-        _ = try await RouterTestFixtures.removingDirectoryOnThrow(directory, alsoOnThrow: { drain.cancel() }) {
+        _ = try await RouterTestFixtures.removingDirectoryOnThrow(
+            directory,
+            alsoOnThrow: {
+                await session.close()
+                drain.cancel()
+            }
+        ) {
             try await session.respond(to: firstPrompt)
         }
         return Fixture(
@@ -81,12 +87,17 @@ struct RunProgressDeliveryTests {
             profile: profile, directory: directory)
     }
 
-    /// Ends the fixture: stops the event drain and removes the directory.
+    /// Ends the fixture: closes the session, stops the event drain, and
+    /// removes the directory.
+    ///
+    /// Each test calls it from one `defer`, so the session closes also when
+    /// the test throws (rule T1). The close runs after the test reads the
+    /// rows of the recorder and the feed.
     ///
     /// - Parameter fixture: The fixture to end.
-    private static func tearDown(_ fixture: Fixture) {
+    private static func tearDown(_ fixture: Fixture) async {
+        await fixture.end()
         fixture.drain.cancel()
-        try? FileManager.default.removeItem(at: fixture.directory)
         withExtendedLifetime(fixture.profile) {}
     }
 
@@ -134,7 +145,7 @@ struct RunProgressDeliveryTests {
     @Test("each progress event of a run arrives on streamSessionEvents() as runProgress, in post order")
     func eachProgressEventArrivesLive() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         // The second and the third event go into the open progress row, which
         // writes nothing now. They must still go live.
         let posted = [
@@ -153,7 +164,7 @@ struct RunProgressDeliveryTests {
     @Test("the runProgress event of a plan carries the whole plan to the host")
     func aPlanArrivesLiveWithItsPlan() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let planEvent = PlanFixtures.planProgress()
 
         await Self.post([planEvent], to: fixture)
@@ -195,7 +206,7 @@ struct RunProgressDeliveryTests {
     @Test("the prompt of the next answer carries the detail of a plan event and no plan entry")
     func theNextPromptHoldsNoPlan() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let planEvent = PlanFixtures.planProgress()
         await Self.post([planEvent], to: fixture)
 
@@ -211,7 +222,7 @@ struct RunProgressDeliveryTests {
     @Test("a plan event goes to the transcript at once, and does not wait in the open progress row")
     func aPlanEventIsWrittenAtOnce() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let start = PlanFixtures.textProgress("first output")
         let merged = PlanFixtures.textProgress("second output")
         let planEvent = PlanFixtures.planProgress()
@@ -226,7 +237,7 @@ struct RunProgressDeliveryTests {
     @Test("each plan event of one run goes to the transcript at once, also after a plan event")
     func consecutivePlanEventsAreEachWrittenAtOnce() async throws {
         let fixture = try await Self.makeFixture()
-        defer { Self.tearDown(fixture) }
+        defer { await Self.tearDown(fixture) }
         let firstPlan = PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .inProgress))
         let secondPlan = PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .completed))
 

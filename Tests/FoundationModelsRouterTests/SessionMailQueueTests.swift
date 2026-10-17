@@ -193,12 +193,22 @@ struct SessionMailQueueTests {
 
     /// Builds a fresh router + resolved profile + vended session over
     /// `container`, recording through `recorder`, mounting `tools`.
+    ///
+    /// - Parameters:
+    ///   - recorder: The recorder of the router.
+    ///   - container: The container that vends the backend.
+    ///   - tools: The tools that the session mounts.
+    ///   - pool: The model pool of the router.
+    /// - Returns: The session, its router and its directory. The caller ends
+    ///   them with ``SessionDirectoryFixture/end(opening:)`` in a `defer`.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the directory.
     private static func makeSession(
         recorder: any TranscriptRecorder,
         container: any LoadedLLMContainer,
         tools: [any Tool] = [],
         pool: ModelPool = ModelPool()
-    ) async throws -> (session: any RoutedSession, dir: URL) {
+    ) async throws -> SessionFixtureLifecycle.Started {
         let dir = Self.makeTempDir()
         let router = Router(
             cacheDir: dir,
@@ -208,8 +218,11 @@ struct SessionMailQueueTests {
             loader: StubModelLoader(container: container, dimension: stubDimension),
             pool: pool
         )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        return (profile.standard.makeSession(tools: tools), dir)
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        }
+        return SessionFixtureLifecycle.Started(
+            session: profile.standard.makeSession(tools: tools), router: router, directory: dir)
     }
 
     /// The text that each ``GatedStubBackend`` of a ``GatedFixture`` answers
@@ -256,8 +269,8 @@ struct SessionMailQueueTests {
     private static func makeGatedSession() async throws -> GatedFixture {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: gatedResponseText)
-        let (session, dir) = try await makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
-        return GatedFixture(session: session, backend: backend, recorder: recorder, dir: dir)
+        let started = try await makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        return GatedFixture(session: started.session, backend: backend, recorder: recorder, dir: started.directory)
     }
 
     // MARK: - Mail helpers
@@ -398,8 +411,9 @@ struct SessionMailQueueTests {
     @MainActor
     func respondAndSentMessageKeepTheirOrder() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         _ = try session.send("queued")
         let directResponse = try await session.respond(to: "direct")
@@ -421,9 +435,9 @@ struct SessionMailQueueTests {
     @MainActor
     func sendRefusesAPromptWithNoTextAndEveryPromptAfterClose() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         #expect(throws: PromptRefusal.noTextSegment) { try session.send(Transcript.Prompt(segments: [])) }
         #expect(await session.pendingMessages().isEmpty)
@@ -506,9 +520,9 @@ struct SessionMailQueueTests {
     @MainActor
     func sessionWithNoMessageRecordsNothing() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let feed = await session.streamSessionEvents()
         let stop = session.cancelAll()
@@ -538,8 +552,9 @@ struct SessionMailQueueTests {
     @MainActor
     func sentMessageComposesPendingEvents() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let posted = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)
@@ -566,10 +581,11 @@ struct SessionMailQueueTests {
         let recorder = InMemoryRecorder()
         let container = BackgroundingLLMContainer()
         let gate = RunLatch()
-        let (session, dir) = try await Self.makeSession(
+        let fixture = try await Self.makeSession(
             recorder: recorder, container: container,
             tools: [LatchedBackgroundToolRunner(name: "job", gate: gate, output: Self.deliveredToolOutput)])
-        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await fixture.end(opening: [gate]) }
+        let session = fixture.session
         let backend = try #require(container.lastBackend)
 
         // The first submission backgrounds the job; no message waits after it.
@@ -605,8 +621,9 @@ struct SessionMailQueueTests {
     @MainActor
     func progressOnlyMailRunsNoSubmission() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let progress = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .progress, detail: "12 lines so far")
         await session.outbox.post(event: progress)
@@ -629,8 +646,9 @@ struct SessionMailQueueTests {
     @MainActor
     func sentPromptFlattensEveryTextSegment() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let event = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         _ = try session.send(
@@ -779,9 +797,9 @@ struct SessionMailQueueTests {
     @MainActor
     func sentMessageSubmissionFrameNamesItsMessage() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let stream = await session.streamSessionEvents().events
         let id = try session.send("queued prompt")
@@ -800,9 +818,9 @@ struct SessionMailQueueTests {
     @MainActor
     func respondSubmissionFrameNamesItsOneMessage() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "direct prompt")
@@ -823,9 +841,9 @@ struct SessionMailQueueTests {
     @MainActor
     func consecutiveAnswersTakeDistinctIds() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "first")
@@ -851,12 +869,12 @@ struct SessionMailQueueTests {
     @MainActor
     func sessionStreamCarriesRespondAnswerEvents() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(
+        let fixture = try await Self.makeSession(
             recorder: recorder,
             container: BasicLLMContainer(usageIncrement: (input: Self.meteredInput, output: Self.meteredOutput))
         )
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "direct prompt")
@@ -1065,9 +1083,9 @@ struct SessionMailQueueTests {
     @MainActor
     func cancelMessageReportsAlreadyAnsweredForAFinishedMessage() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
+        let fixture = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let stream = await session.streamSessionEvents().events
         let id = try session.send("one and done")

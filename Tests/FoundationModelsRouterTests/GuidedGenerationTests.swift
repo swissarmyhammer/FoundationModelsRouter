@@ -316,6 +316,7 @@ struct GuidedGenerationTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeGuidedSession(grammar: .jsonSchema(Self.smallSchema))
+        defer { await session.close() }
         let text = try await session.respond(to: "hi")
         #expect(text == Self.canned)
 
@@ -335,6 +336,7 @@ struct GuidedGenerationTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeGuidedSession(grammar: .ebnf(Self.ebnf))
+        defer { await session.close() }
         let text = try await session.respond(to: "hi")
         #expect(text == Self.canned)
 
@@ -371,6 +373,7 @@ struct GuidedGenerationTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeGuidedSession(grammar: .jsonSchema("{\"$ref\":\"#/$defs/Y\"}"))
+        defer { await session.close() }
         await #expect(throws: GuidedRequestError.self) {
             _ = try await session.respond(to: "hi")
         }
@@ -395,6 +398,7 @@ struct GuidedGenerationTests {
         let customPrompt = CompactionPrompt(name: "guided-test-prompt", text: "Summarize tersely.")
         let session = profile.standard.makeGuidedSession(
             grammar: .jsonSchema(Self.smallSchema), budget: budget, compactionPrompt: customPrompt)
+        defer { await session.close() }
 
         // `makeGuidedSession` shares the same internal builder as
         // `makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)`
@@ -561,6 +565,7 @@ struct GuidedGenerationTests {
 
         let session = resolvedProfile.standard.makeGuidedSession(
             grammar: .jsonSchema(Self.smallSchema), budget: Self.autoCompactionFixedBudget)
+        defer { await session.close() }
         let backend = try #require(standardContainer.lastBackend)
 
         // Warm-up answers run through the guided path — `RoutedSessionActor.respond(to:maxTokens:)`
@@ -612,10 +617,12 @@ struct GuidedGenerationTests {
 
         let grammar = Grammar.jsonSchema(Self.smallSchema)
         let guided = profile.standard.makeGuidedSession(grammar: grammar)
+        defer { await guided.close() }
         #expect(guided.grammar == grammar)
 
         // A plain session carries no grammar.
         let plain = profile.standard.makeSession()
+        defer { await plain.close() }
         #expect(plain.grammar == nil)
     }
 
