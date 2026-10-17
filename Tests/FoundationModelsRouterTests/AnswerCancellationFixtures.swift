@@ -475,17 +475,22 @@ extension AnswerCancellationTests {
     /// reached the tool. Past the event the tool has already thrown and the answer
     /// is already unwinding, so the `await` below reads an answer that ends.
     ///
+    /// Rule T1: the wait for the event also ends when the answer ended. The
+    /// tool sends the event before it throws, so an answer that ended with
+    /// no event never reached the tool, and the test then fails.
+    ///
     /// - Parameters:
     ///   - answerTask: The task awaiting the cancelled answer, whatever it returns.
     ///   - sawCancellation: The event ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``
     ///     returned for that tool.
-    /// - Throws: ``EventNeverArrived`` when the waiting task was cancelled before
-    ///   the cancellation reached the tool.
+    /// - Throws: The error of `#require` when the answer ended before the
+    ///   cancellation reached the tool, or ``ConditionNeverHeld`` when the
+    ///   waiting task was cancelled first.
     static func awaitCancelledUnwind<Value: Sendable>(
         _ answerTask: Task<Value, Error>,
         sawCancellation: AwaitedEvent
     ) async throws {
-        try await sawCancellation.wait()
+        try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: answerTask)
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
         }

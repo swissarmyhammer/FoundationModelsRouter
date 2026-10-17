@@ -377,6 +377,24 @@ struct HumanWaitGateTests {
         func cancel() {
             task.cancel()
         }
+
+        /// Waits until `event` was sent, or until the run ended (rule T1).
+        /// When the run ended and `event` was not sent, the test fails by an
+        /// assertion.
+        ///
+        /// Use it for an event that the work of this run sends before the
+        /// run ends, so that in a test that passes the run does not end
+        /// first.
+        ///
+        /// - Parameters:
+        ///   - event: The event that the work of the run sends.
+        ///   - sourceLocation: The place of the call, for the failure.
+        /// - Throws: The error of `#require` when the run ended before
+        ///   `event` was sent, or ``ConditionNeverHeld`` when the test was
+        ///   cancelled first.
+        func wait(for event: AwaitedEvent, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+            try await RecordedWaitResult.wait(for: event, endingOnEndOf: task, sourceLocation: sourceLocation)
+        }
     }
 
     /// Thrown by the run of ``submissionQueued(on:)`` when the event stream of
@@ -503,7 +521,7 @@ struct HumanWaitGateTests {
         }
 
         let answerA = ObservedRun { try await sessionA.respond(to: "a-wait") }
-        try await waitStarted.wait()
+        try await answerA.wait(for: waitStarted)
 
         // A's pump keeps its answer running for the full wait.
         #expect(await sessionA.isPumpRunning)
@@ -549,7 +567,7 @@ struct HumanWaitGateTests {
         }
 
         let first = ObservedRun { try await session.respond(to: "first") }
-        try await waitStarted.wait()
+        try await first.wait(for: waitStarted)
 
         // The second respond is a message. It waits in the outbox, and never
         // goes into the running submission, which keeps the model for the
@@ -595,7 +613,7 @@ struct HumanWaitGateTests {
         // appended, its `.response` entry is not. Anything that reads the live
         // transcript now reads a torn submission.
         let answer = ObservedRun { try await session.respond(to: "answer") }
-        try await waitStarted.wait()
+        try await answer.wait(for: waitStarted)
         #expect(Self.isResponse(entry: backend.transcriptEntries().last) == false)
 
         // The fork reads the settled transcript of the session, so it does not
@@ -604,7 +622,7 @@ struct HumanWaitGateTests {
         // ends the wait, so a fork that waited for the submission would never
         // make it.
         let fork = ObservedRun { try await session.fork(workingDirectory: nil) }
-        try await backend.forkMade.wait()
+        try await fork.wait(for: backend.forkMade)
 
         humanGate.signal()
         #expect(try await answer.value() == Self.reply(to: "answer"))
@@ -690,7 +708,7 @@ struct HumanWaitGateTests {
 
         let feed = await session.streamSessionEvents()
         let answer = ObservedRun { try await session.respond(to: "cancelled") }
-        try await insideWait.wait()
+        try await answer.wait(for: insideWait)
         #expect(await session.isPumpRunning)
 
         answer.cancel()
@@ -758,7 +776,7 @@ struct HumanWaitGateTests {
         }
 
         let answer = ObservedRun { try await session.respond(to: "nested") }
-        try await firstEntered.wait()
+        try await answer.wait(for: firstEntered)
 
         // The first wait is open, and the answer still runs: a wait releases
         // nothing, and no message waits.
@@ -766,7 +784,7 @@ struct HumanWaitGateTests {
         #expect(session.waitingUserMailCount == 0)
 
         releaseFirst.signal()
-        try await secondEntered.wait()
+        try await answer.wait(for: secondEntered)
 
         // The second wait is open, and the answer still runs.
         #expect(await session.isPumpRunning)
@@ -811,7 +829,7 @@ struct HumanWaitGateTests {
         }
 
         let answer = ObservedRun { try await session.respond(to: "answer") }
-        try await inAnswer.wait()
+        try await answer.wait(for: inAnswer)
         #expect(await session.isPumpRunning)
 
         // The wait outside the submission takes nothing and gives nothing back.
@@ -826,7 +844,7 @@ struct HumanWaitGateTests {
             waitEntered.signal()
             await releaseWait.wait()
         }
-        try await waitEntered.wait()
+        try await wait.wait(for: waitEntered)
         #expect(await session.isPumpRunning)
 
         // The end of the submission ends the answer.
@@ -893,7 +911,7 @@ struct HumanWaitGateTests {
 
         // A's pump runs its answer, which suspends without any wait of its own.
         let answerA = ObservedRun { try await sessionA.respond(to: "answer-a") }
-        try await inAnswerA.wait()
+        try await answerA.wait(for: inAnswerA)
         #expect(await sessionA.isPumpRunning)
 
         // A wait outside any submission opens. The run ends after the wait
@@ -907,7 +925,7 @@ struct HumanWaitGateTests {
             waitEntered.signal()
             await releaseWait.wait()
         }
-        try await waitEntered.wait()
+        try await wait.wait(for: waitEntered)
         #expect(await sessionA.isPumpRunning)
 
         // B starts its own answer on the same model. Its submission waits behind
@@ -923,7 +941,7 @@ struct HumanWaitGateTests {
         releaseAnswerA.signal()
         #expect(try await answerA.value() == Self.reply(to: "answer-a"))
         #expect(await sessionA.isIdleOnceThePumpEnds())
-        try await inAnswerB.wait()
+        try await answerB.wait(for: inAnswerB)
 
         // The wait ends next. It takes nothing back, so it does not suspend.
         releaseWait.signal()
@@ -962,7 +980,7 @@ struct HumanWaitGateTests {
             await personAnswers.wait()
             return Self.personReply
         }
-        try await waitEntered.wait()
+        try await wait.wait(for: waitEntered)
 
         // The wait is open, and no pump runs: a wait outside a submission
         // starts no work of the session.

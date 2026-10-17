@@ -238,7 +238,7 @@ struct PoolEntryQueueTests {
         // in a test that passes no call ends first.
         let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
         let entered = directLoader.embedding.entered
-        try await RecordedWaitResult.wait(for: { await entered.wait() }, endingOnEndOf: directCall)
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall)
         // The queue of the pool entry records its depth metric when it makes
         // the job of the router call, on the task of that call, with the
         // factory that the task binds. The same `submit` call then puts the
@@ -247,7 +247,7 @@ struct PoolEntryQueueTests {
         let routerCall = Task {
             try await withMetricsFactory(probe) { try await profile.embedding.embed(texts: Self.texts) }
         }
-        try await RecordedWaitResult.wait(for: { await probe.enqueued.wait() }, endingOnEndOf: routerCall)
+        try await RecordedWaitResult.wait(forPermitOf: probe.enqueued, endingOnEndOf: routerCall)
 
         directLoader.embedding.gate.signal()
         directLoader.embedding.gate.signal()

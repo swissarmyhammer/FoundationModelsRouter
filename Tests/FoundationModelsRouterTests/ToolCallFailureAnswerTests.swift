@@ -81,7 +81,7 @@ struct ToolCallFailureAnswerTests {
     private static func waitForEntry(
         of tool: CancellingMarkerTool, orEndOf answering: Task<String, any Error>
     ) async throws {
-        try await RecordedWaitResult.wait(for: { try await tool.entered.wait() }, endingOnEndOf: answering)
+        try await RecordedWaitResult.wait(for: tool.entered, endingOnEndOf: answering)
         try #require(tool.calledSteps == [Step.failing])
     }
 

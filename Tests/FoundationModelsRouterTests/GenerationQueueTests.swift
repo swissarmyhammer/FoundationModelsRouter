@@ -71,7 +71,9 @@ struct GenerationQueueTests {
         let secondCall = Task {
             try await Self.submitCall("second", of: second, to: queue, onQueued: { secondQueued.signal() })
         }
-        await secondQueued.wait()
+        // The second call ends only after the latch opens below, so the wait
+        // also ends on its end (rule T1).
+        try await RecordedWaitResult.wait(forPermitOf: secondQueued, endingOnEndOf: secondCall)
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
@@ -132,7 +134,9 @@ struct GenerationQueueTests {
         let waitingCall = Task {
             try await Self.submitCall("waiter", of: waiter, to: fixture.queue, onQueued: { waiterQueued.signal() })
         }
-        await waiterQueued.wait()
+        // The waiting call ends only after the cancel below, so the wait also
+        // ends on its end (rule T1).
+        try await RecordedWaitResult.wait(forPermitOf: waiterQueued, endingOnEndOf: waitingCall)
         waitingCall.cancel()
         let waitingOutcome = await waitingCall.result
         let waiterCountAfterCancel = await fixture.queue.waitingCount
@@ -163,14 +167,16 @@ struct GenerationQueueTests {
                 await release.wait()
             }
         }
-        await entered.wait()
+        // Each submission ends only after the release below, so each wait
+        // also ends on the end of its submission (rule T1).
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: holdingSubmission)
         let waitingSubmission = Task {
             try await queue.submit(onQueued: {
                 waiterWaits.signal()
                 waiterQueued.signal()
             }) {}
         }
-        await waiterQueued.wait()
+        try await RecordedWaitResult.wait(forPermitOf: waiterQueued, endingOnEndOf: waitingSubmission)
         release.signal()
         try await holdingSubmission.value
         try await waitingSubmission.value

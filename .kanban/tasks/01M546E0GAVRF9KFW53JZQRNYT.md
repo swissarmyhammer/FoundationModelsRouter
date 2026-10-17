@@ -33,10 +33,26 @@ comments:
     - evidence: 10 files. New: Tests/FoundationModelsRouterTestSupport/ConditionWaitList.swift, Tests/FoundationModelsRouterTests/SupportWaitCancellationTests.swift. Changed: Tests/FoundationModelsRouterTestSupport/ConcurrencyPeakObserver.swift, Tests/FoundationModelsRouterTestSupport/ExecutorPassBoundaryProbe.swift, Tests/FoundationModelsRouterTests/{GenerationQueueTests,SummarizerSubmissionTests,SharedGenerationQueueContentionTests,PoolEntryQueueTests,NestedGenerationReentryTests,QueuedPassStallWatchTests}.swift. `swift test`: 1821 tests in 223 suites passed (4 known issues), 26 in 14 passed, 19 in 3 passed. IntegrationTests build complete.
     - next: review
   timestamp: 2026-10-17T07:14:11.832990+00:00
+- actor: claude-code
+  id: 01m54bjfnkxv5656qrpngqkskx
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit b9f843fe). Counts: findings 0, confirmed 0, refuted 0, attempted 7, failed 0, skipped 0. The engine reviewed 10 files. The .reviewignore rule excluded 2 .kanban files.
+    - next: The task is in done. No work remains.
+  timestamp: 2026-10-17T07:17:42.195462+00:00
+- actor: claude-code
+  id: 01m54bk0jp3dvv1rpe49yxe0x1
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 10 test files
+    - test: green — the one full swift test run of the implement step: 1821 tests in 223 suites + 26 + 19 passed; IntegrationTests build complete
+    - commit: b9f843fe
+    - review: clean — 0 findings, 10 files reviewed
+  timestamp: 2026-10-17T07:17:59.510041+00:00
 depends_on:
 - 01M546DDX24X6X0Q36H404VFSZ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffe80
 title: 'T1 follow-up 4/6: ConcurrencyPeakObserver and PassBoundaryLog waits end on a cancel'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit comment "kinds of waits checked and left" names this helper change as not made: `ConcurrencyPeakObserver.endWaits()`. Reason given: ConcurrencyPeakObserver `waitUntil` has no way to end a wait.

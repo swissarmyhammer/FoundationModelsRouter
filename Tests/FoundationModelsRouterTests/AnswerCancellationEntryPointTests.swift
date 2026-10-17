@@ -39,7 +39,7 @@ extension AnswerCancellationTests {
             }
             return await delivered.events.count
         }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
         // The backend yields the first chunk before the tool runs, but the
         // signal of the tool does not tell that the consumer has the chunk.
         // The session reads the backend stream through an unfolding stream,
@@ -52,7 +52,9 @@ extension AnswerCancellationTests {
         // chunk always arrives; a loaded machine only delays it. A bound of
         // some seconds failed under parallel stress (task ^7w145zc) while the
         // chunk was still on its way. The wait ends when the chunk arrives.
-        try await firstChunkAtConsumer.wait()
+        // The consumer sends the event in the answer task, so the wait also
+        // ends on the end of that task (rule T1).
+        try await RecordedWaitResult.wait(for: firstChunkAtConsumer, endingOnEndOf: answerTask)
 
         let stop = await Self.requestStop(of: session, by: .cancelAll)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
@@ -102,7 +104,9 @@ extension AnswerCancellationTests {
 
         // `send` starts the submission, and no other call is necessary.
         let sent = try session.send("send-cancel")
-        await insideTool.wait()
+        // The mail has its terminal event only after the answer ended, so the
+        // wait also ends on that event (rule T1).
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnTerminalOf: sent, on: session)
 
         // The pump took the mail into the open answer, so the mail is not in
         // the queue. A cancel of one mail acts only on queued mail: its
@@ -157,7 +161,7 @@ extension AnswerCancellationTests {
         }
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
 
         // Twice while the same answer provably still runs: the second call
         // requests what was already requested and changes nothing.
@@ -202,7 +206,7 @@ extension AnswerCancellationTests {
         }
 
         let answerTask = Task { try await session.respond(to: "stubborn") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
         #expect(await session.stopRunningWork())
 
         // Nothing Router can do makes it stop, so the answer runs to completion
@@ -234,7 +238,7 @@ extension AnswerCancellationTests {
         }
 
         let firstTask = Task { try await session.respond(to: "holds-the-lock") }
-        await insideFirstAnswer.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideFirstAnswer, endingOnEndOf: firstTask)
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
         // The session signals `stateChanges` after it puts a mail in the
@@ -287,7 +291,7 @@ extension AnswerCancellationTests {
         }
 
         let firstTask = Task { try await session.respond(to: "holds-the-pump") }
-        await insideFirstAnswer.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideFirstAnswer, endingOnEndOf: firstTask)
 
         // The task cancels itself before it calls `respond`, so the cancel
         // comes before the session makes the message. The order is fixed by
@@ -346,8 +350,12 @@ extension AnswerCancellationTests {
         #expect(delivered == [HookedSessionBackend.firstStreamedChunk])
 
         // The mail of the stream is in the open answer. The end of the
-        // consumer cancels only queued mail, so the answer still runs.
-        await insideTool.wait()
+        // consumer cancels only queued mail, so the answer still runs. The
+        // pump runs the answer from before the first chunk to the end of the
+        // answer, so the wait also ends on the end of the pump (rule T1).
+        let pumpEnding = Task { _ = await session.pumpEnds() }
+        defer { pumpEnding.cancel() }
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: pumpEnding)
         #expect(await session.isPumpRunning)
 
         // The answer goes on to its end. The session records the full
@@ -390,7 +398,7 @@ extension AnswerCancellationTests {
         let answerTask = Task {
             try await session.respond(to: "overflow-then-cancel")
         }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
         // Each route must behave identically here: no route may let the retry
         // re-enter the model for an answer that has a stop. The tool ignores
         // the stop, so the work cannot end before the release: the wait for
@@ -427,7 +435,7 @@ extension AnswerCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "busy", insideTool: insideTool)
         let answerTask = Task { try await session.respond(to: "busy") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
 
         let id = try session.send("queued")
         try await Self.expectSignalEnds(session.cancel(id), on: session)

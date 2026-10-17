@@ -379,16 +379,17 @@ struct GenerationStallDiagnosticTests {
     ///   - held: The event the backend signals when the model call holds.
     ///   - interval: How far to move the clock. The default is
     ///     ``testReportInterval``.
-    ///   - answer: The task of the answer that starts the watch. Its end is
-    ///     the failure event of the wait for the watch on the clock.
-    /// - Throws: ``EventNeverArrived`` when the test task was cancelled first,
-    ///   or the error of `#require` when the answer ended before the watch
-    ///   slept.
+    ///   - answer: The task of the answer that makes the model call and
+    ///     starts the watch. Its end is the failure event of the wait for
+    ///     `held` and of the wait for the watch on the clock.
+    /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled
+    ///   first, or the error of `#require` when the answer ended before the
+    ///   model call held or before the watch slept.
     private static func advance(
         _ clock: ManualRunClock, onceHeld held: AwaitedEvent, by interval: Duration = testReportInterval,
         endingOnEndOf answer: Task<String, any Error>
     ) async throws {
-        try await held.wait()
+        try await RecordedWaitResult.wait(for: held, endingOnEndOf: answer)
         try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answer)
         clock.advance(by: interval)
     }
@@ -541,7 +542,7 @@ struct GenerationStallDiagnosticTests {
 
         let (log, drain) = await SessionEventLog.watch(session)
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await backend.suspended.wait()
+        try await RecordedWaitResult.wait(for: backend.suspended, endingOnEndOf: answerTask)
         // With no interval, the watch of the call starts no timer. The test
         // does not wait for a time: it reads the installed interval, and then
         // the feed up to the end of the answer.
@@ -640,7 +641,9 @@ struct GenerationStallDiagnosticTests {
         let (log, drain) = SessionEventLog.collect(await session.streamEvents(to: Self.prompt))
         var watches: [GenerationStallWatch] = []
         for position in 0...appendCount {
-            await handshake.asked.wait()
+            // The drain of the stream ends when the answer ends, so the wait
+            // also ends on that end (rule T1).
+            try await RecordedWaitResult.wait(forPermitOf: handshake.asked, endingOnEndOf: drain)
             // The session asks for this element only after it noted the
             // append before it.
             if position > 0 {
@@ -674,14 +677,16 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = SessionEventLog.collect(await session.streamEvents(to: Self.prompt))
+        // The drain of the stream ends when the answer ends, so each wait for
+        // a request also ends on that end (rule T1).
         for _ in appends {
-            await handshake.asked.wait()
+            try await RecordedWaitResult.wait(forPermitOf: handshake.asked, endingOnEndOf: drain)
             handshake.proceed.signal()
         }
         // The session asks for the element after the last append only after
         // it noted the tool result. Only then does the clock move. An answer
         // that ends with no watch on the clock ends the wait too.
-        await handshake.asked.wait()
+        try await RecordedWaitResult.wait(forPermitOf: handshake.asked, endingOnEndOf: drain)
         try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: drain)
         clock.advance(by: Self.testReportInterval)
         try await log.wait(until: { events in

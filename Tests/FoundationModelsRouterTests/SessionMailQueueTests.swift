@@ -316,6 +316,30 @@ struct SessionMailQueueTests {
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal), sourceLocation: sourceLocation)
     }
 
+    /// Waits until `backend` starts a submission, or until the mail `id` of
+    /// that submission has its terminal event (rule T1). When the mail ended
+    /// first, the test fails by an assertion.
+    ///
+    /// The backend holds each submission until the test signals
+    /// ``GatedStubBackend/proceed``, and the mail ends only after its
+    /// submission. So in a test that passes the backend starts first.
+    ///
+    /// - Parameters:
+    ///   - backend: The backend that signals ``GatedStubBackend/started``.
+    ///   - id: A mail of the submission that the test waits for.
+    ///   - session: The session of the mail.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the mail ended before the
+    ///   backend started, or ``ConditionNeverHeld`` when the test was
+    ///   cancelled first.
+    private static func waitForTheStart(
+        of backend: GatedStubBackend, carrying id: MailID, on session: any RoutedSession,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await RecordedWaitResult.wait(
+            forPermitOf: backend.started, endingOnTerminalOf: id, on: session, sourceLocation: sourceLocation)
+    }
+
     /// Reads `feed` to its end, with the origin of each event. Call it after
     /// ``RoutedSession/close()``, which finishes the feed.
     ///
@@ -338,13 +362,13 @@ struct SessionMailQueueTests {
         defer { await fixture.end() }
         let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
-        _ = try session.send("first")
-        await backend.started.wait()
-        _ = try session.send("second")
+        let firstId = try session.send("first")
+        try await Self.waitForTheStart(of: backend, carrying: firstId, on: session)
+        let secondId = try session.send("second")
         _ = try session.send("third")
 
         backend.proceed.signal()
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: secondId, on: session)
         backend.proceed.signal()
         #expect(await session.becomesIdle())
 
@@ -362,7 +386,7 @@ struct SessionMailQueueTests {
         // The backend holds the submission, so a send that waited for its
         // answer could never get here.
         let id = try session.send("wake the pump")
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: id, on: session)
         #expect(await session.mailQueueDepth().running == [id])
 
         backend.proceed.signal()
@@ -423,7 +447,7 @@ struct SessionMailQueueTests {
 
         let feed = await session.streamSessionEvents()
         let blocking = Task { try await session.respond(to: "blocking message") }
-        await backend.started.wait()
+        try await RecordedWaitResult.wait(forPermitOf: backend.started, endingOnEndOf: blocking)
         let firstId = try session.send("cancel me")
         let secondId = try session.send("original")
 
@@ -441,7 +465,7 @@ struct SessionMailQueueTests {
 
         backend.proceed.signal()
         _ = try await blocking.value
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: secondId, on: session)
         backend.proceed.signal()
         #expect(Self.isAnswer(try await session.awaitTerminal(of: secondId), of: secondId))
         #expect(await session.becomesIdle())
@@ -464,7 +488,7 @@ struct SessionMailQueueTests {
         let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let blocking = Task { try await session.respond(to: "blocking message") }
-        await backend.started.wait()
+        try await RecordedWaitResult.wait(forPermitOf: backend.started, endingOnEndOf: blocking)
         let id = try session.send("never delivered")
         try await Self.expectSignalDone(session.cancel(id), on: session)
         #expect(try await session.awaitTerminal(of: id) == .cancelled(id))
@@ -640,7 +664,7 @@ struct SessionMailQueueTests {
         let feed = await session.streamSessionEvents()
         let id = try session.send("racing prompt")
         // The backend has been asked to respond: the pump took the message.
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: id, on: session)
 
         let signal = session.cancel(id)
         try await Self.expectSignalDone(signal, on: session)
@@ -668,7 +692,7 @@ struct SessionMailQueueTests {
         let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
         let id = try session.send("original")
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: id, on: session)
 
         try await Self.expectSignalDone(session.replace(id, with: Self.userMessage("too late")), on: session)
         #expect(await session.pendingMessages().isEmpty)
@@ -686,15 +710,15 @@ struct SessionMailQueueTests {
         defer { await fixture.end() }
         let (session, backend, recorder) = (fixture.session, fixture.backend, fixture.recorder)
 
-        _ = try session.send("first")
-        await backend.started.wait()
+        let firstId = try session.send("first")
+        try await Self.waitForTheStart(of: backend, carrying: firstId, on: session)
 
         // Send a second message while the first submission runs.
         let secondId = try session.send("second")
         #expect(await session.pendingMessages().map(\.id) == [secondId])
 
         backend.proceed.signal()
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: secondId, on: session)
         backend.proceed.signal()
         #expect(await session.becomesIdle())
         #expect(await Self.promptTexts(in: recorder) == ["first", "second"])
@@ -711,7 +735,7 @@ struct SessionMailQueueTests {
 
         let feed = await session.streamSessionEvents()
         let blockingId = try session.send("blocking")
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: blockingId, on: session)
         let id = try session.send("cancel me from many tasks")
 
         let signals = await withTaskGroup(of: SignalID.self) { group in
@@ -872,7 +896,7 @@ struct SessionMailQueueTests {
         let (session, backend) = (fixture.session, fixture.backend)
 
         let firstId = try session.send("first")
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: firstId, on: session)
         let secondId = try session.send("second")
 
         // The first message runs; the second waits. The session owes both
@@ -884,7 +908,7 @@ struct SessionMailQueueTests {
         #expect(midFlight.total == Self.sentMessageCount)
 
         backend.proceed.signal()
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: secondId, on: session)
         let secondFlight = await session.mailQueueDepth()
         #expect(secondFlight == MailQueueDepth(waiting: 0, depthByKind: [:], running: [secondId]))
 
@@ -912,7 +936,7 @@ struct SessionMailQueueTests {
 
         let feed = await session.streamSessionEvents()
         let blockingId = try session.send("blocking")
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: blockingId, on: session)
         let id = try session.send("withdraw me")
 
         let first = session.cancel(id)
@@ -944,7 +968,7 @@ struct SessionMailQueueTests {
 
         let feed = await session.streamSessionEvents()
         let runningId = try session.send("blocking")
-        await backend.started.wait()
+        try await Self.waitForTheStart(of: backend, carrying: runningId, on: session)
         let firstId = try session.send("first waiting")
         let secondId = try session.send("second waiting")
 
@@ -987,7 +1011,7 @@ struct SessionMailQueueTests {
 
         // Occupy the pump with a first respond.
         let blockingAnswer = Task { try await session.respond(to: "blocking message") }
-        await backend.started.wait()
+        try await RecordedWaitResult.wait(forPermitOf: backend.started, endingOnEndOf: blockingAnswer)
 
         // The second respond is a message that waits in the queue. Its
         // caller never sees the id, so the test reads it off the queue.
@@ -1018,7 +1042,7 @@ struct SessionMailQueueTests {
 
         let feed = await session.streamSessionEvents()
         let answer = Task { try await session.respond(to: "racing prompt") }
-        await backend.started.wait()
+        try await RecordedWaitResult.wait(forPermitOf: backend.started, endingOnEndOf: answer)
         let id = try #require(await session.mailQueueDepth().running.first)
 
         let signal = session.cancel(id)

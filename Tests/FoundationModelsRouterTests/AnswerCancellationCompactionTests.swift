@@ -143,10 +143,11 @@ extension AnswerCancellationTests {
             try await answerTask.value
         }
         // When the own model call of the answer started, the stop reached the
-        // tool inside it.
+        // tool inside it. The tool sends the event before the answer ends, so
+        // the wait also ends on the end of the answer (rule T1).
         let ownCallEntered = await fixture.observer.entered.contains { !isSummarizerCall($0) && $0.hasSuffix(prompt) }
         if ownCallEntered {
-            try await answerSawCancellation.wait()
+            try await RecordedWaitResult.wait(for: answerSawCancellation, endingOnEndOf: answerTask)
         }
         return StopDuringCompaction(held: held, events: events, stop: stop)
     }
@@ -161,16 +162,18 @@ extension AnswerCancellationTests {
     ///   - session: The session to close.
     ///   - feed: The session feed, made before the compaction started.
     ///   - cancelReached: Waits until the cancel of the close reached the
-    ///     compaction, and lets the compaction go on.
+    ///     compaction, and lets the compaction go on. It gets the task of the
+    ///     close: the close ends only after the compaction ended, so the end
+    ///     of that task is the failure event of the wait (rule T1).
     /// - Returns: Each output of the feed, in order.
     /// - Throws: What `cancelReached` throws.
     static func close(
         _ session: any RoutedSession,
         readingTo feed: AsyncStream<SessionOutput>,
-        afterTheCancelReaches cancelReached: @Sendable () async throws -> Void
+        afterTheCancelReaches cancelReached: @Sendable (_ closing: Task<Void, Never>) async throws -> Void
     ) async throws -> [SessionOutput] {
         let closing = Task { await session.close() }
-        try await cancelReached()
+        try await cancelReached(closing)
         var outputs: [SessionOutput] = []
         for await output in feed {
             outputs.append(output)
@@ -210,7 +213,7 @@ extension AnswerCancellationTests {
     /// an answer that ends, or a compaction that has its terminal event. In
     /// a test that passes, the hold of the model call keeps that work open,
     /// so the failure event never comes before `inside`. See
-    /// ``RecordedWaitResult/wait(for:endingOnEndOf:sourceLocation:)``.
+    /// ``RecordedWaitResult/wait(forPermitOf:endingOnEndOf:sourceLocation:)``.
     ///
     /// - Parameters:
     ///   - isolation: The isolation of the caller. The wait runs there, so
@@ -231,8 +234,8 @@ extension AnswerCancellationTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let ending = Task { await failureEvent() }
-        try await RecordedWaitResult.wait(
-            for: { try await inside.waitUnlessCancelled() }, endingOnEndOf: ending, sourceLocation: sourceLocation)
+        defer { ending.cancel() }
+        try await RecordedWaitResult.wait(forPermitOf: inside, endingOnEndOf: ending, sourceLocation: sourceLocation)
         let modelCallCame = await isInside()
         try #require(
             modelCallCame, "the work ended before its model call came to the hold", sourceLocation: sourceLocation)
@@ -445,7 +448,7 @@ extension AnswerCancellationTests {
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         try await Self.waitUntilSummarizerInside(held.inside, orEndOf: answerTask, fixture)
 
-        let outputs = try await Self.close(session, readingTo: feed) {
+        let outputs = try await Self.close(session, readingTo: feed) { _ in
             try await Self.awaitCompactionCancelled(on: session)
             held.release.signal()
         }
@@ -494,8 +497,8 @@ extension AnswerCancellationTests {
 
         // The summarizer call runs in the task of the compaction, and only
         // the close cancels that task.
-        let outputs = try await Self.close(session, readingTo: feed) {
-            try await sawCancellation.wait()
+        let outputs = try await Self.close(session, readingTo: feed) { closing in
+            try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: closing)
         }
         #expect(await fixture.observer.toolSawCancellation)
 
@@ -592,7 +595,7 @@ extension AnswerCancellationTests {
         let id = session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
         try await Self.waitUntilSummarizerInside(held.inside, orEndOfCompaction: id, on: session, fixture)
 
-        _ = try await Self.close(session, readingTo: feed) {
+        _ = try await Self.close(session, readingTo: feed) { _ in
             try await Self.awaitCompactionCancelled(on: session)
             held.release.signal()
         }
@@ -646,6 +649,8 @@ extension AnswerCancellationTests {
         // The compaction does not wait for the answer: its summarizer call
         // runs to its reply while the answer still holds its submission. The
         // answer cannot end before the stop below, so the reply comes first.
+        // This wait has no failure event: the answer is held until the stop,
+        // and the compaction has no terminal event while the answer is open.
         let id = session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
         try await summarizerReplied.wait()
         #expect(await fixture.observer.toolSawCancellation == false)
@@ -736,8 +741,8 @@ extension AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOf: answerTask, fixture)
-        let outputs = try await Self.close(session, readingTo: feed) {
-            try await sawCancellation.wait()
+        let outputs = try await Self.close(session, readingTo: feed) { closing in
+            try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: closing)
         }
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
@@ -786,8 +791,8 @@ extension AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOf: answerTask, fixture)
-        _ = try await Self.close(session, readingTo: feed) {
-            try await sawCancellation.wait()
+        _ = try await Self.close(session, readingTo: feed) { closing in
+            try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: closing)
         }
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
@@ -930,8 +935,8 @@ extension AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         try await Self.waitUntilSummarizerInside(insideSummarizer, orEndOf: answerTask, fixture)
-        let outputs = try await Self.close(session, readingTo: feed) {
-            try await sawCancellation.wait()
+        let outputs = try await Self.close(session, readingTo: feed) { closing in
+            try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: closing)
         }
         await #expect(throws: CancellationError.self) {
             try await answerTask.value

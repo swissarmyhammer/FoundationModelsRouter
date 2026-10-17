@@ -362,7 +362,7 @@ struct PromptCacheBudgetTests {
             return hold.key
         }
         // The load of the direct caller runs now, and waits for the gate.
-        await directLoader.loadStarted.wait()
+        try await RecordedWaitResult.wait(forPermitOf: directLoader.loadStarted, endingOnEndOf: direct)
         await loader.waitUntilLatestBudget(is: Int(Self.hostWorkingSet - Self.directFootprintBytes))
         #expect(pool.footprint.loadingBytes == Self.directFootprintBytes)
 

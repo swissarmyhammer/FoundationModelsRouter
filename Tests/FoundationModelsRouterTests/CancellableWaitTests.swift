@@ -57,7 +57,7 @@ struct CancellableWaitTests {
         // Rule T1: the wait also ends when the caller ends before the work
         // starts. In a test that passes, the caller ends only after the
         // cancel below.
-        try await RecordedWaitResult.wait(for: { try await workReached.wait() }, endingOnEndOf: caller)
+        try await RecordedWaitResult.wait(for: workReached, endingOnEndOf: caller)
 
         // The caller stops waiting although the work is still in flight.
         caller.cancel()

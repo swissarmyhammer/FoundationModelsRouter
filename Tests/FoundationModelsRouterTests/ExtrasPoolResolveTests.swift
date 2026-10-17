@@ -304,7 +304,7 @@ struct ExtrasPoolResolveTests {
         // also ends when the resolve ended (rule T1): the gated load holds
         // the resolve until the test opens the gate, so in a test that passes
         // the resolve cannot end first.
-        try await RecordedWaitResult.wait(for: { await entrySignal.wait() }, endingOnEndOf: resolve)
+        try await RecordedWaitResult.wait(forPermitOf: entrySignal, endingOnEndOf: resolve)
         let probe = QueueDepthProbe()
         let direct = Task {
             try await withMetricsFactory(probe) {
@@ -319,7 +319,7 @@ struct ExtrasPoolResolveTests {
         // opens the gate. Thus the direct job joins the queue behind the job
         // of the router. The wait also ends when the direct acquire ended
         // (rule T1): the acquire cannot end before its job joined the queue.
-        try await RecordedWaitResult.wait(for: { await probe.enqueued.wait() }, endingOnEndOf: direct)
+        try await RecordedWaitResult.wait(forPermitOf: probe.enqueued, endingOnEndOf: direct)
         releaseGate.signal()
         let profile = try await resolve.value
         let hold = try await direct.value

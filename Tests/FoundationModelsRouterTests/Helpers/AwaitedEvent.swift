@@ -1,5 +1,7 @@
 import Synchronization
 
+@testable import FoundationModelsRouter
+
 /// Thrown by ``AwaitedEvent/wait()`` when the wait ended without the event,
 /// which happens only when the waiting task was cancelled — so the test that
 /// caught it stops there instead of asserting on something that never happened.
@@ -52,7 +54,25 @@ final class AwaitedEvent: Sendable {
     /// The state, guarded so that check-and-suspend is atomic.
     private let state = Mutex(State.unsent)
 
-    /// Sends the event, resuming a suspended waiter if there is one.
+    /// The signal that ``signal()`` sends after the event is sent.
+    ///
+    /// A wait that also ends on an other event waits on this signal with
+    /// ``hasArrived`` as its condition, and gives the signal to the other
+    /// event too. `RecordedWaitResult.wait(for:endingOnEndOf:sourceLocation:)`
+    /// does this with the end of a task. Such a wait is not a waiter of
+    /// ``wait()``, so it does not count against the single waiter.
+    let changes = ChangeSignal()
+
+    /// Whether the event was sent. It stays `true` after it became `true`.
+    var hasArrived: Bool {
+        state.withLock { state in
+            if case .arrived = state { return true }
+            return false
+        }
+    }
+
+    /// Sends the event, resuming a suspended waiter if there is one, and then
+    /// signals ``changes``.
     ///
     /// Idempotent: the event stays sent, so a ``wait()`` that comes afterwards
     /// returns at once rather than waiting for a second signal that never comes.
@@ -69,6 +89,7 @@ final class AwaitedEvent: Sendable {
             return resumable
         }
         waiter?.resume(returning: true)
+        changes.signal()
     }
 
     /// Waits for the event.

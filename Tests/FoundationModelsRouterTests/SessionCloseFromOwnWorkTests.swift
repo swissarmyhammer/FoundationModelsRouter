@@ -375,7 +375,11 @@ struct SessionCloseFromOwnWorkTests {
 
         // The fork runs on its own: no tool call of the parent waits for it.
         let answering = Task { try await child.respond(to: Self.prompt) }
-        try await hold.sawCancel.wait()
+        // Rule T1: the wait also ends when the answer of the fork ended. The
+        // close in the tool of the fork waits for the held run, and the run
+        // ends only after the gate opens below, so in a test that passes the
+        // answer cannot end first.
+        try await RecordedWaitResult.wait(for: hold.sawCancel, endingOnEndOf: answering)
         await hold.unwind.open()
         let answer = try await answering.value
 

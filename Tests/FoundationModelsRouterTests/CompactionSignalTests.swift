@@ -305,7 +305,7 @@ struct CompactionSignalTests {
     /// that passes the terminal event comes only after `inside`. A work that
     /// ends before its hold, for example with an error, gives its terminal
     /// event, and the wait then ends. See
-    /// ``RecordedWaitResult/wait(for:endingOnEndOf:sourceLocation:)``.
+    /// ``RecordedWaitResult/wait(forPermitOf:endingOnEndOf:sourceLocation:)``.
     ///
     /// - Parameters:
     ///   - inside: The semaphore that the hook signals when the work holds.
@@ -319,8 +319,8 @@ struct CompactionSignalTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let ending = Task { _ = try? await terminal() }
-        try await RecordedWaitResult.wait(
-            for: { try await inside.waitUnlessCancelled() }, endingOnEndOf: ending, sourceLocation: sourceLocation)
+        defer { ending.cancel() }
+        try await RecordedWaitResult.wait(forPermitOf: inside, endingOnEndOf: ending, sourceLocation: sourceLocation)
     }
 
     // MARK: - The id and the terminal event
@@ -526,9 +526,13 @@ struct CompactionSignalTests {
         let id = Self.compact(session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         // The summarizer call ends only on a cancel, so close returns only
-        // when it cancels the call.
-        await session.close()
-        try await sawCancellation.wait()
+        // when it cancels the call. The close waits for the end of the
+        // compaction, and the tool sends its event before that end, so the
+        // wait also ends on the end of the close (rule T1).
+        let closing = Task { await session.close() }
+        defer { closing.cancel() }
+        try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: closing)
+        await closing.value
         await drain.value
 
         let expected = CompactionFailure(id: id.description, reason: .requested, outcome: .cancelled)
@@ -635,8 +639,9 @@ struct CompactionSignalTests {
             gates.progress.signal()
         }
         // The first of the two: a summarizer call of a compaction that
-        // started, or the end of the work.
-        await gates.progress.wait()
+        // started, or the end of the work. The work signals before it ends,
+        // so the wait also ends on the end of the work (rule T1).
+        try await RecordedWaitResult.wait(forPermitOf: gates.progress, endingOnEndOf: work)
         let started = gates.summarizerStarted.isSet
         // The gates open in each case, so the test always ends.
         gates.summarizerRelease.signal()

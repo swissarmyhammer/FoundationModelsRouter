@@ -182,7 +182,7 @@ struct AnswerCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
 
         let stop = await Self.requestStop(of: session, by: route)
 
@@ -214,7 +214,7 @@ struct AnswerCancellationTests {
 
         let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: "caller-cancels") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
 
         // The mail of the caller is in the open answer. The cancel of the
         // caller task ends the wait of the caller, and it does not stop the
@@ -251,7 +251,7 @@ struct AnswerCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
         #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
@@ -296,7 +296,7 @@ struct AnswerCancellationTests {
             fixture, prompt: "cancel-in-wait", insideTool: insideWait)
 
         let answerTask = Task { try await sessionA.respond(to: "cancel-in-wait") }
-        await insideWait.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideWait, endingOnEndOf: answerTask)
         #expect(await sessionA.isPumpRunning)
 
         #expect(await sessionA.stopRunningWork())
@@ -333,7 +333,7 @@ struct AnswerCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
         #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
@@ -364,7 +364,7 @@ struct AnswerCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
-        await insideTool.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideTool, endingOnEndOf: answerTask)
         #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 

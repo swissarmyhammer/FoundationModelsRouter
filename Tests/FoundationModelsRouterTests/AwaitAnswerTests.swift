@@ -155,7 +155,7 @@ struct AwaitAnswerTests {
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
-        await insideModelCall.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnTerminalOf: held, on: session)
         // The pump runs the held answer, so both messages wait in the queue
         // and the next submission delivers them together.
         let first = try session.send(Self.firstQueuedPrompt)
@@ -186,7 +186,7 @@ struct AwaitAnswerTests {
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
-        await insideModelCall.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnTerminalOf: held, on: session)
         let queued = try session.send(Self.firstQueuedPrompt)
         let cancel = session.cancel(queued)
         #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
@@ -322,7 +322,7 @@ struct AwaitAnswerTests {
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
-        await insideModelCall.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnTerminalOf: held, on: session)
         // The held answer runs, so the message waits in the queue until the
         // release. Each wait starts while the message waits or after its
         // end; both orders give the answer of the message.
@@ -351,7 +351,7 @@ struct AwaitAnswerTests {
         Self.holdTheHeldPrompt(fixture, insideModelCall: insideModelCall, release: release)
 
         let held = try session.send(Self.heldPrompt)
-        await insideModelCall.wait()
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnTerminalOf: held, on: session)
         // The answer of the message runs and cannot end before the release.
         // Each wait starts while it runs or after its end; both orders give
         // the answer.

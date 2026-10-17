@@ -422,6 +422,8 @@ struct PooledResidencyTests {
         // other wait in the shared queue, before releasing them, so the queue
         // — not scheduling luck — is what is under test.
         try await observer.changes.wait(until: { await observer.active == 1 })
+        // The two calls are `async let` children, not tasks, so no end of a
+        // task is available to end this wait.
         await queued.wait()
         #expect(await queue.waitingCount == 1)
         #expect(await observer.maxActive == 1)
@@ -777,6 +779,10 @@ struct PooledResidencyTests {
         var resolveBTask: Task<LanguageModelProfile, any Error>? = Task {
             try await router.resolve(profile: profileB, reporting: ResolutionProgress())
         }
+        // This wait does not also end on the end of `resolveBTask`. An
+        // observer of that task keeps a second handle of it, and thus of the
+        // profile of B, until the task ends. The test counts the references
+        // of that profile, so a second handle can change the result.
         await entrySignal.wait()
 
         // B is now suspended inside its own standard slot's download, with

@@ -164,7 +164,7 @@ struct ResolveCancellationTests {
         let resolve = Task {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: progress)
         }
-        await gate.reached.wait()
+        try await RecordedWaitResult.wait(forPermitOf: gate.reached, endingOnEndOf: resolve)
 
         // The router is suspended inside the gated stage. Cancel, then let that
         // stage finish: the resolve must stop at the next stage boundary.
@@ -225,7 +225,7 @@ struct ResolveCancellationTests {
             try await router.resolve(
                 profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
-        await gate.reached.wait()
+        try await RecordedWaitResult.wait(forPermitOf: gate.reached, endingOnEndOf: holder)
 
         let queuedProgress = ResolutionProgress()
         let probe = QueueDepthProbe()
@@ -240,7 +240,7 @@ struct ResolveCancellationTests {
         // in the same `submit` call, with no suspension point between. The
         // job of the first resolve holds the gate until the test releases it,
         // so the second job waits behind it.
-        await probe.enqueued.wait()
+        try await RecordedWaitResult.wait(forPermitOf: probe.enqueued, endingOnEndOf: queued)
 
         // It throws while the holder is still suspended — no `release.signal()`
         // has been sent, so the throw cannot have come from an ended job.

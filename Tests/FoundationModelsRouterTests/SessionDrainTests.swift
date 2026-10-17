@@ -278,16 +278,16 @@ struct SessionDrainTests {
         let answer = Task { try await session.respond(to: "long work") }
         // Rule T1: the wait also ends when the answer ended. The answer ends
         // only after the test stops it below.
-        try await RecordedWaitResult.wait(
-            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnEndOf: answer)
 
         // The close cancels the model call, and then waits for its end. The
-        // model call ends only after the test opens the gate.
+        // model call ends only after the test opens the gate, so the close
+        // cannot end before the model call saw its cancel (rule T1).
         let closing = Task {
             await session.close()
             steps.append("closed")
         }
-        try await hold.sawCancel.wait()
+        try await RecordedWaitResult.wait(for: hold.sawCancel, endingOnEndOf: closing)
         await hold.unwind.open()
         await closing.value
 
@@ -341,9 +341,8 @@ struct SessionDrainTests {
         // only after the test stops it below. The model call starts the
         // generation before it signals that it runs, so an answer that ends
         // before the generation started fails the test at one of these waits.
-        try await RecordedWaitResult.wait(
-            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
-        try await RecordedWaitResult.wait(for: { try await generation.started.wait() }, endingOnEndOf: answer)
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnEndOf: answer)
+        try await RecordedWaitResult.wait(for: generation.started, endingOnEndOf: answer)
 
         let closing = Task { [session] in
             await session?.close()
@@ -400,8 +399,7 @@ struct SessionDrainTests {
         let answer = Task { [session] in try await session?.respond(to: "long work") }
         // Rule T1: the wait also ends when the answer ended. The answer ends
         // only after the test stops it below.
-        try await RecordedWaitResult.wait(
-            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnEndOf: answer)
 
         let taskEndWaiters = try #require(helperTasks.taskEnds.waiterChanges)
         let releaseOpener = Task {
@@ -551,8 +549,7 @@ struct SessionDrainTests {
         let answer = Task { try await session.respond(to: "stubborn work") }
         // Rule T1: the wait also ends when the answer ended. The answer ends
         // only after the test stops it below.
-        try await RecordedWaitResult.wait(
-            for: { try await insideModelCall.waitUnlessCancelled() }, endingOnEndOf: answer)
+        try await RecordedWaitResult.wait(forPermitOf: insideModelCall, endingOnEndOf: answer)
 
         // The signal ends while the model call still holds: the caller gets
         // the end of the answer at once.
@@ -610,12 +607,13 @@ struct SessionDrainTests {
         await bodyStarted.wait()
 
         // The close cancels the run, and then waits for the end of its body.
-        // The body ends only after the test opens the gate.
+        // The body ends only after the test opens the gate, so the close
+        // cannot end before the body saw its cancel (rule T1).
         let closing = Task {
             await session.close()
             steps.append("closed")
         }
-        try await hold.sawCancel.wait()
+        try await RecordedWaitResult.wait(for: hold.sawCancel, endingOnEndOf: closing)
         await hold.unwind.open()
         await closing.value
 

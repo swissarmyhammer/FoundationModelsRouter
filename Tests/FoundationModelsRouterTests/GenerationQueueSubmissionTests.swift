@@ -175,7 +175,7 @@ struct GenerationQueueSubmissionTests {
         defer { otherFeed.drain.cancel() }
 
         let waitingAnswerTask = Task { try await waiting.respond(to: Self.firstPrompt) }
-        await entered.wait()
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: waitingAnswerTask)
 
         // The other submission waits behind the submission whose tool body
         // waits: the tool body is a step of that submission. The wait also
