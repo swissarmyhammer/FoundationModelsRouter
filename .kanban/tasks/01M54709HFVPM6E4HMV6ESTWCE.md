@@ -21,10 +21,27 @@ comments:
     - evidence: 14 files — Tests/FoundationModelsRouterTests/Helpers/SessionFixtureLifecycle.swift, Helpers/CeilingProbeLanguageModel.swift, Helpers/RepeatingReasoningModel.swift, Helpers/StagedReasoningModel.swift, Helpers/AnswerLimitsModel.swift, ReasoningStopRecoveryTests.swift, ReasoningTokenLimitTests.swift, RepetitionStopTests.swift, WatchStopUsageTests.swift, SubmissionFinishReasonTests.swift, PassTokenLimitTests.swift, AnswerTokenCeilingTests.swift, AnswerLimitsTests.swift, TokenBudgetTests.swift. `swift build --build-tests`: 0 errors, 0 compiler warnings. Filtered run `FoundationModelsRouterTests\.(10 listed suites)/`: 79 tests in 10 suites passed. Full `swift test` one time: 1827 tests in 224 suites passed with 6 known issues (the expected `withKnownIssue` wait tests); 26 tests in 14 suites passed; 19 tests in 3 suites passed.
     - next: review
   timestamp: 2026-10-17T10:12:57.494769+00:00
+- actor: claude-code
+  id: 01m54nx1r24ev44w9xpxtsths4
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 954964e9). Counts: findings 1, confirmed 1, refuted 1, attempted 14, failed 0. 6 `.kanban/` files are not reviewed (ignore rule).
+    - dropped: 1 finding, by the written rule that drops findings that ask to refactor tests that already existed. Finding: `Tests/FoundationModelsRouterTests/ReasoningTokenLimitTests.swift:212` `duplication/duplication`. It asks to move the answer-and-end-on-throw step of `ReasoningTokenLimitTests.runAnswer` and `ReasoningEndRecoveryTests.runAnswer` into one shared fixture helper. Before this commit, the two helpers had the same wrapper-and-return shape (`RouterTestFixtures.removingDirectoryOnThrow`). The commit only changed the wrapper to `fixture.endingOnThrow` and changed the comment.
+    - next: the task moves to done. No prior review findings are open.
+  timestamp: 2026-10-17T10:18:14.146634+00:00
+- actor: claude-code
+  id: 01m54nxnn6w03v2nmxj0dd4nk8
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 14 test files
+    - test: green — the one full swift test run of the implement step: 1827 tests in 224 suites + 26 + 19 passed
+    - commit: 954964e9
+    - review: clean — 1 engine finding dropped by the written rule (refactor of tests that existed before: ReasoningTokenLimitTests.swift:212)
+  timestamp: 2026-10-17T10:18:34.534580+00:00
 depends_on:
 - 01M546ZF1JPP7J84196MQDTWTY
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8680
 title: 'T1 follow-up b5: reasoning, repetition and token limit suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the reasoning, repetition and token limit suites.

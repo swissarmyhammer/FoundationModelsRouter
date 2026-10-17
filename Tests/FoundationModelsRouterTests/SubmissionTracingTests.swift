@@ -50,7 +50,9 @@ struct SubmissionTracingTests {
 
     /// Everything one driven answer needs, and everything a test reads back
     /// off it.
-    private struct AnswerFixture {
+    ///
+    /// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+    private struct AnswerFixture: SessionDirectoryFixture {
         /// The session the test drives its answer on.
         let session: any RoutedSession
 
@@ -65,8 +67,8 @@ struct SubmissionTracingTests {
         /// recording root.
         let router: Router
 
-        /// The temp directory the router cached into, which the caller must
-        /// remove.
+        /// The temp directory the router cached into.
+        /// ``SessionDirectoryFixture/end(opening:)`` removes it.
         let directory: URL
     }
 
@@ -135,7 +137,7 @@ struct SubmissionTracingTests {
     func respondOpensOneSubmissionSpanWithAttributes() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
         #expect(answer == Self.cannedAnswer)
@@ -161,7 +163,7 @@ struct SubmissionTracingTests {
     func goodSubmissionCarriesMeasuredTokenCounts() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
@@ -176,7 +178,7 @@ struct SubmissionTracingTests {
     func eachSubmissionOpensItsOwnSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: Self.prompt)
         _ = try await fixture.session.respond(to: Self.prompt)
@@ -195,7 +197,7 @@ struct SubmissionTracingTests {
     func streamedAnswerOpensOneSubmissionSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         var streamed = ""
         for try await chunk in await fixture.session.streamResponse(to: Self.prompt) {
@@ -213,7 +215,7 @@ struct SubmissionTracingTests {
     func sentMessageOpensOneSubmissionSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         // `send` starts the submission, and no other call is necessary.
         try fixture.session.send(Self.prompt)
@@ -229,7 +231,7 @@ struct SubmissionTracingTests {
     func submissionSpanCarriesTheMailIDs() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let id = try fixture.session.send(Self.prompt)
         #expect(await fixture.session.becomesIdle())
@@ -242,7 +244,7 @@ struct SubmissionTracingTests {
     func failedSubmissionRecordsItsErrorOnTheSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         fixture.backend.shouldThrow = true
         await #expect(throws: StubSessionBackend.StubError.boom) {
@@ -257,7 +259,7 @@ struct SubmissionTracingTests {
     @Test("an answer with no tracer injected and no backend bootstrapped comes normally")
     func untracedAnswerComesNormally() async throws {
         let fixture = try await Self.makeFixture(tracer: nil)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
         #expect(answer == Self.cannedAnswer)

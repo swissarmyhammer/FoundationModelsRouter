@@ -94,7 +94,7 @@ struct GenerationCallUsageTests {
     @Test("a submission of three generation calls reports three records with the counts of each call")
     func threeCallsGiveThreeRecords() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
@@ -114,7 +114,7 @@ struct GenerationCallUsageTests {
     )
     func submissionStampStaysTheSum() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
@@ -148,7 +148,7 @@ struct GenerationCallUsageTests {
     @Test("a tool-asking call is reported before its tool opens, and the last call before the submission ends")
     func recordsArriveLive() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
         _ = eventsInsideAnswerFrame(events)
@@ -179,7 +179,7 @@ struct GenerationCallUsageTests {
     @Test("the run journal holds one generationCall event for each call, with its counts and no entry")
     func journalHoldsEachCall() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
@@ -201,7 +201,7 @@ struct GenerationCallUsageTests {
     @Test("the last call's journal event follows the response entry the call left")
     func lastCallFollowsItsResponseEntry() async throws {
         let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
@@ -222,7 +222,7 @@ struct GenerationCallUsageTests {
             MeteredGenerationCall(tokensIn: 100, tokensOut: Self.requestedCeiling),
             MeteredGenerationCall(tokensIn: 400, tokensOut: 5),
         ])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: Self.requestedCeiling)
 

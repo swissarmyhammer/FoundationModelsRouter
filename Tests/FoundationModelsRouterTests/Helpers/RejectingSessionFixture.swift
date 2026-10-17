@@ -9,14 +9,17 @@ import Tracing
 /// The session crosses the production backend and a real
 /// `LanguageModelSession`, so a rejected tool call goes through the real
 /// retry of the router, and no GPU is in the loop.
-struct RejectingSessionFixture {
+///
+/// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+struct RejectingSessionFixture: SessionDirectoryFixture {
     /// The vended session a test drives its answer on.
     let session: any RoutedSession
 
     /// The log of the transcript of each generation call.
     let log: RejectingModelLog
 
-    /// The temp directory the router cached into, which the caller must remove.
+    /// The temp directory the router cached into. ``SessionDirectoryFixture/end(opening:)``
+    /// removes it.
     let directory: URL
 
     /// Builds a router and a session over a model that rejects its first

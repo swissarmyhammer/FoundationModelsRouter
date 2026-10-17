@@ -157,7 +157,7 @@ struct ToolTracingTests {
             mounting: [MarkerEmittingTool()],
             tempDirPrefix: "ToolTracingTests",
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -178,7 +178,7 @@ struct ToolTracingTests {
             mounting: [MarkerEmittingTool()],
             tempDirPrefix: "ToolTracingTests",
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -203,7 +203,7 @@ struct ToolTracingTests {
             mounting: [row.makeTool()],
             tempDirPrefix: "ToolTracingTests",
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         // The failure is the call's output, so the answer completes.
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
@@ -225,7 +225,7 @@ struct ToolTracingTests {
             mounting: [BackgroundMarkerTool()],
             tempDirPrefix: "ToolTracingTests",
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
         await Self.settleBackgroundRuns(of: fixture.session)
@@ -248,7 +248,7 @@ struct ToolTracingTests {
             mounting: [NonStringMarkerTool()],
             tempDirPrefix: "ToolTracingTests",
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -271,7 +271,7 @@ struct ToolTracingTests {
             budget: TokenBudget(
                 limit: Self.cappedBudgetLimit, toolOutputLimit: Self.cappedToolOutputLimit),
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 

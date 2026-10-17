@@ -90,6 +90,7 @@ struct SessionTracerWiringTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
+        defer { await root.close() }
 
         #expect(Self.isSameTracer(root.sessionTracer, as: tracer, probeName: "probe-root"))
     }
@@ -104,7 +105,9 @@ struct SessionTracerWiringTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let child = try await root.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         #expect(Self.isSameTracer(child.sessionTracer, as: tracer, probeName: "probe-fork"))
     }
@@ -119,6 +122,7 @@ struct SessionTracerWiringTests {
         let firstProfile = try await firstRouter.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let root = firstProfile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // A second router over the same recording root, the way a fresh process
@@ -128,6 +132,7 @@ struct SessionTracerWiringTests {
         let secondProfile = try await secondRouter.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let restored = try await secondProfile.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(
             Self.isSameTracer(restored.root.sessionTracer, as: tracer, probeName: "probe-restored"))

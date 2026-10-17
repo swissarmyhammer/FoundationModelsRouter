@@ -103,6 +103,41 @@ struct RouterMetricsTests {
         [("model.ref", session.modelRefDimension), ("slot", ModelSlot.standard.rawValue)]
     }
 
+    /// Makes `count` sessions on the standard slot of a profile over a new
+    /// ``PassObservingFixture``, runs `body` with them, and then ends them.
+    ///
+    /// The latch of the fixture holds each pass until `body` opens it. The
+    /// end opens the latch, closes each session and removes the temp
+    /// directory, also when `body` throws (rule T1). The end runs after
+    /// `body` returns the metrics that it read, so a record of a close
+    /// changes no value that a test checks.
+    ///
+    /// - Parameters:
+    ///   - count: How many sessions to make.
+    ///   - isolation: The isolation of the caller. `body` runs there.
+    ///   - body: The steps of the test, given the fixture, the profile and
+    ///     the sessions in the order that they were made.
+    /// - Returns: What `body` returns.
+    /// - Throws: What the resolve or `body` throws.
+    private static func withHeldSessions<Value>(
+        count: Int,
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: (PassObservingFixture, LanguageModelProfile, [any RoutedSession]) async throws -> Value
+    ) async throws -> Value {
+        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let sessions = (0..<count).map { _ in resolved.profile.standard.makeSession() }
+        defer {
+            for session in sessions {
+                await SessionFixtureLifecycle.close(session, opening: [fixture.latch])
+            }
+            withExtendedLifetime(resolved) {}
+        }
+        return try await body(fixture, resolved.profile, sessions)
+    }
+
     // MARK: - The vocabulary
 
     @Test("each metric name starts with the module name")
@@ -119,7 +154,7 @@ struct RouterMetricsTests {
         let metrics = try await TelemetryCapture.run(forbidding: [Self.meteredPrompt]) { context in
             let fixture = try await MeteredToolLoopSessionFixture.make(
                 calls: Self.meteredCalls, context: Self.meteredContextTokens, tempDirPrefix: Self.tempDirPrefix)
-            defer { try? FileManager.default.removeItem(at: fixture.directory) }
+            defer { await fixture.end() }
             await fixture.session.useCaptureMetrics(for: context.metricsFactory)
 
             for try await _ in await fixture.session.streamEvents(to: Self.meteredPrompt, maxTokens: nil) {}
@@ -147,6 +182,7 @@ struct RouterMetricsTests {
         let factory = try await TelemetryCapture.run(forbidding: []) { context in
             let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: nil, tempDirPrefix: Self.tempDirPrefix)
+            defer { await session.close() }
             await session.useCaptureMetrics(for: context.metricsFactory)
 
             _ = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
@@ -167,6 +203,7 @@ struct RouterMetricsTests {
         let factory = try await TelemetryCapture.run(forbidding: []) { context in
             let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: AutoCompactionFixtures.fixedBudget, tempDirPrefix: Self.tempDirPrefix)
+            defer { await session.close() }
             await session.useCaptureMetrics(for: context.metricsFactory)
 
             for try await _ in await session.streamEvents(to: Self.triggeringPrompt, maxTokens: nil) {}
@@ -242,28 +279,29 @@ struct RouterMetricsTests {
         "a caller message that waits behind the running answer is recorded in the queue depth of the session, by mail kind"
     )
     func waitingMessagesAreRecordedInTheSessionQueueDepth() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let fixture = PassObservingFixture()
-        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
-        let session = resolved.profile.standard.makeSession()
-
-        let depths = try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
-            context in
-            await session.useCaptureMetrics(for: context.metricsFactory)
-            let holding = Task { try await session.respond(to: Self.holdingPrompt) }
-            try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holding)
-            for prompt in Self.waitingPrompts {
-                _ = try session.send(prompt)
-            }
-            await fixture.latch.open()
-            _ = try await holding.value
-            // The session is idle only after its pump answered the waiting
-            // messages, so the queue is empty when the test reads it.
-            #expect(await session.becomesIdle())
-            #expect(await session.mailQueueDepth().total == 0)
-            return try MailKind.allCases.map { kind in
-                (kind, try context.metricsFactory.expectRecorder(Self.queueDepthName, [("mail.kind", kind.rawValue)]).values)
+        let depths = try await Self.withHeldSessions(count: 1) { fixture, _, sessions in
+            let session = try #require(sessions.first)
+            return try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
+                context in
+                await session.useCaptureMetrics(for: context.metricsFactory)
+                let holding = Task { try await session.respond(to: Self.holdingPrompt) }
+                try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holding)
+                for prompt in Self.waitingPrompts {
+                    _ = try session.send(prompt)
+                }
+                await fixture.latch.open()
+                _ = try await holding.value
+                // The session is idle only after its pump answered the waiting
+                // messages, so the queue is empty when the test reads it.
+                #expect(await session.becomesIdle())
+                #expect(await session.mailQueueDepth().total == 0)
+                return try MailKind.allCases.map { kind in
+                    (
+                        kind,
+                        try context.metricsFactory.expectRecorder(Self.queueDepthName, [("mail.kind", kind.rawValue)])
+                            .values
+                    )
+                }
             }
         }
 
@@ -278,33 +316,28 @@ struct RouterMetricsTests {
                 #expect(values.allSatisfy { $0 == 0 }, "the queue depths of \(kind.rawValue) are \(values)")
             }
         }
-        withExtendedLifetime(resolved) {}
     }
 
     @Test("a cancel of a waiting message adds one to the count of cancelled mail")
     func cancelledMailIsCounted() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let fixture = PassObservingFixture()
-        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
-        let session = resolved.profile.standard.makeSession()
-
-        let count = try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
-            context in
-            await session.useCaptureMetrics(for: context.metricsFactory)
-            let holding = Task { try await session.respond(to: Self.holdingPrompt) }
-            try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holding)
-            let waiting = try session.send(Self.waitingPrompts[0])
-            let cancel = session.cancel(waiting)
-            #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
-            #expect(try await session.awaitTerminal(of: waiting) == .cancelled(waiting))
-            await fixture.latch.open()
-            _ = try await holding.value
-            return try context.metricsFactory.expectCounter(Self.cancelledMailName).totalValue
+        let count = try await Self.withHeldSessions(count: 1) { fixture, _, sessions in
+            let session = try #require(sessions.first)
+            return try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
+                context in
+                await session.useCaptureMetrics(for: context.metricsFactory)
+                let holding = Task { try await session.respond(to: Self.holdingPrompt) }
+                try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holding)
+                let waiting = try session.send(Self.waitingPrompts[0])
+                let cancel = session.cancel(waiting)
+                #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
+                #expect(try await session.awaitTerminal(of: waiting) == .cancelled(waiting))
+                await fixture.latch.open()
+                _ = try await holding.value
+                return try context.metricsFactory.expectCounter(Self.cancelledMailName).totalValue
+            }
         }
 
         #expect(count == 1)
-        withExtendedLifetime(resolved) {}
     }
 
     @Test("a compaction records the time that it paused the mail queue")
@@ -312,6 +345,7 @@ struct RouterMetricsTests {
         let values = try await TelemetryCapture.run(forbidding: []) { context in
             let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: nil, tempDirPrefix: Self.tempDirPrefix)
+            defer { await session.close() }
             let factory = context.metricsFactory
             let signalling = SignallingMetricsFactory(wrapping: factory)
             await session.useCaptureMetrics(for: signalling)
@@ -332,60 +366,56 @@ struct RouterMetricsTests {
 
     @Test("a submission that starts while others wait records the waiting count of the queue of its model")
     func waitingSubmissionsAreRecordedInTheGenerationQueueGauge() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let fixture = PassObservingFixture()
-        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
-        let queue = try #require(resolved.profile.standard.backendQueue)
-        let holding = resolved.profile.standard.makeSession()
-        let waiting = Self.waitingPrompts.map { _ in resolved.profile.standard.makeSession() }
-
-        let (values, modelRef) = try await TelemetryCapture.run(
-            forbidding: [Self.holdingPrompt] + Self.waitingPrompts
-        ) { context in
-            for session in [holding] + waiting {
-                await session.useCaptureMetrics(for: context.metricsFactory)
+        let (values, modelRef) = try await Self.withHeldSessions(count: 1 + Self.waitingPrompts.count) {
+            fixture, profile, sessions in
+            let queue = try #require(profile.standard.backendQueue)
+            let holding = try #require(sessions.first)
+            let waiting = Array(sessions.dropFirst())
+            return try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
+                context in
+                for session in sessions {
+                    await session.useCaptureMetrics(for: context.metricsFactory)
+                }
+                var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
+                for session in waiting {
+                    feeds.append(await SessionEventLog.watch(session))
+                }
+                let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
+                try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holdingAnswer)
+                var waitingAnswers: [Task<String, any Error>] = []
+                for (index, session) in waiting.enumerated() {
+                    let prompt = Self.waitingPrompts[index]
+                    let answer = Task { try await session.respond(to: prompt) }
+                    waitingAnswers.append(answer)
+                    // The queue counts the submission before it reports the wait,
+                    // and the holding answer keeps each submission in the queue.
+                    // The wait also ends when the answer ended (rule T1): the
+                    // latch holds the answer in the queue, so in a test that
+                    // passes it cannot end first.
+                    let log = feeds[index].log
+                    try await RecordedWaitResult.wait(
+                        for: { try await log.wait(until: { Self.containsQueuedSubmission($0) }) },
+                        endingOnEndOf: answer)
+                    #expect(await queue.waitingCount == index + 1)
+                }
+                await fixture.latch.open()
+                _ = try await holdingAnswer.value
+                for answer in waitingAnswers {
+                    _ = try await answer.value
+                }
+                for feed in feeds {
+                    feed.drain.cancel()
+                }
+                let gauge = try context.metricsFactory.expectGauge(
+                    "FoundationModelsRouter.generation_queue.waiting", [("model.ref", holding.modelRefDimension)])
+                return (gauge.values, holding.modelRefDimension)
             }
-            var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
-            for session in waiting {
-                feeds.append(await SessionEventLog.watch(session))
-            }
-            let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
-            try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holdingAnswer)
-            var waitingAnswers: [Task<String, any Error>] = []
-            for (index, session) in waiting.enumerated() {
-                let prompt = Self.waitingPrompts[index]
-                let answer = Task { try await session.respond(to: prompt) }
-                waitingAnswers.append(answer)
-                // The queue counts the submission before it reports the wait,
-                // and the holding answer keeps each submission in the queue.
-                // The wait also ends when the answer ended (rule T1): the
-                // latch holds the answer in the queue, so in a test that
-                // passes it cannot end first.
-                let log = feeds[index].log
-                try await RecordedWaitResult.wait(
-                    for: { try await log.wait(until: { Self.containsQueuedSubmission($0) }) },
-                    endingOnEndOf: answer)
-                #expect(await queue.waitingCount == index + 1)
-            }
-            await fixture.latch.open()
-            _ = try await holdingAnswer.value
-            for answer in waitingAnswers {
-                _ = try await answer.value
-            }
-            for feed in feeds {
-                feed.drain.cancel()
-            }
-            let gauge = try context.metricsFactory.expectGauge(
-                "FoundationModelsRouter.generation_queue.waiting", [("model.ref", holding.modelRefDimension)])
-            return (gauge.values, holding.modelRefDimension)
         }
 
         // The second submission starts when the first one ends, while the
         // third one still waits behind it.
         #expect(values.contains(1), "the waiting counts of \(modelRef) are \(values)")
         #expect(values.allSatisfy { $0 >= 0 })
-        withExtendedLifetime(resolved) {}
     }
 
     // MARK: - The explicit factory of a session
@@ -400,10 +430,13 @@ struct RouterMetricsTests {
                 container: CannedLLMContainer(ref: "org/std-a"), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let factory = try await TelemetryCapture.run(forbidding: []) { context in
             await session.useCaptureMetrics(for: context.metricsFactory)
-            let child = try #require(try await session.fork(workingDirectory: nil) as? RoutedSessionActor)
+            let fork = try await session.fork(workingDirectory: nil)
+            defer { await fork.close() }
+            let child = try #require(fork as? RoutedSessionActor)
             // A detached task gets no capture of its own, so only the explicit
             // factory of the child can bring this metric to the capture.
             await Task.detached {

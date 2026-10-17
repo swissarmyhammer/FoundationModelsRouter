@@ -370,6 +370,28 @@ struct GenerationStallDiagnosticTests {
         return (session, clock, dir)
     }
 
+    /// Opens each hold of the stream of `backend`, and then closes `session`.
+    ///
+    /// A test calls it from a `defer`, so the session closes also when the
+    /// test throws (rule T1). No hold ends on a cancel
+    /// (``AsyncSemaphore/wait()``), and a close waits for the end of the
+    /// stream, so the holds open first. One stream asks for at most one step
+    /// more than its appends, so that count of steps opens each step that can
+    /// wait. A permit that no wait takes does nothing.
+    ///
+    /// - Parameters:
+    ///   - session: The session to close.
+    ///   - backend: The backend whose holds to open.
+    private static func close(_ session: any RoutedSession, openingHoldsOf backend: ToolAnswerBackend) async {
+        if let handshake = backend.handshake {
+            for _ in 0...backend.appends.count {
+                handshake.proceed.signal()
+            }
+        }
+        backend.release.signal()
+        await session.close()
+    }
+
     /// Moves `clock` by `interval` once the model call holds and its watch
     /// sleeps, so the next tick of the watch comes at a point of a fixed
     /// order.
@@ -586,8 +608,10 @@ struct GenerationStallDiagnosticTests {
         let (session, _, dir) = try await Self.makeSession(
             over: StallingLLMContainer(fragmentsBeforeStall: 0), reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         #expect(await child.installedGenerationStallReportInterval == reportInterval)
     }
@@ -636,6 +660,7 @@ struct GenerationStallDiagnosticTests {
         let (session, _, dir) = try await Self.makeSession(
             over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, openingHoldsOf: backend) }
         let actor = try #require(session as? RoutedSessionActor)
 
         let (log, drain) = SessionEventLog.collect(await session.streamEvents(to: Self.prompt))
@@ -675,6 +700,7 @@ struct GenerationStallDiagnosticTests {
         let (session, clock, dir) = try await Self.makeSession(
             over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await Self.close(session, openingHoldsOf: backend) }
 
         let (log, drain) = SessionEventLog.collect(await session.streamEvents(to: Self.prompt))
         // The drain of the stream ends when the answer ends, so each wait for

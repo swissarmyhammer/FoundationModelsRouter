@@ -235,6 +235,7 @@ struct TokenUsageMeteringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
 
@@ -266,6 +267,7 @@ struct TokenUsageMeteringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "first")
 
         let events = await recorder.events
@@ -290,6 +292,7 @@ struct TokenUsageMeteringTests {
         let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "first")
         _ = try await root.respond(to: "second")
         let rootId = root.id
@@ -302,6 +305,7 @@ struct TokenUsageMeteringTests {
         let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        defer { await restored.root.close() }
         // Each submission's own delta is 150 tokens (100 + 50); the newest stamp is
         // what a restored session's fill derives from, over the 1000-token
         // resolved context — never the two submissions' 300-token cumulative sum.
@@ -323,6 +327,7 @@ struct TokenUsageMeteringTests {
         let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "first")
         let rootId = root.id
 
@@ -331,6 +336,7 @@ struct TokenUsageMeteringTests {
         let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        defer { await restored.root.close() }
         let fill = await restored.root.contextFill
         #expect(fill.isNaN)
     }
@@ -352,6 +358,7 @@ struct TokenUsageMeteringTests {
         let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "first")
         let rootId = root.id
 
@@ -370,6 +377,7 @@ struct TokenUsageMeteringTests {
         let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        defer { await restored.root.close() }
         #expect(await restored.root.contextFill == 0.15)
     }
 
@@ -390,8 +398,10 @@ struct TokenUsageMeteringTests {
         let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "first")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         let rootId = root.id
         let forkId = fork.id
 
@@ -400,6 +410,10 @@ struct TokenUsageMeteringTests {
         let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        defer {
+            await restored.root.close()
+            await restored.session(forkId)?.close()
+        }
         let restoredFork = try #require(restored.session(forkId))
         // The fork itself never ran a submission, so it has no stamp of its own;
         // it inherits the root's 150/1000 = 0.15 up to its fork cut point,

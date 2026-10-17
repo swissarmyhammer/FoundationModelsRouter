@@ -239,6 +239,7 @@ struct EnterRecordTests {
                 in: context, cacheDir: dir, loader: Self.succeedingLoader(vending: container))
             let profile = try await Self.resolve(on: router)
             let session = profile.standard.makeSession()
+            defer { await session.close() }
             await session.useCaptureLogger(for: context.logger)
 
             _ = try await session.respond(to: Self.prompt)
@@ -260,6 +261,9 @@ struct EnterRecordTests {
                 loader: Self.succeedingLoader(vending: SharedBackendContainer(backend: backend)))
             let profile = try await Self.resolve(on: router)
             let session = profile.standard.makeSession()
+            // The close cancels the held call of the backend, so it ends the
+            // answer also when the test throws before the release.
+            defer { await session.close() }
             await session.useCaptureLogger(for: context.logger)
 
             // The wait for the backend also ends when the answer ends (rule

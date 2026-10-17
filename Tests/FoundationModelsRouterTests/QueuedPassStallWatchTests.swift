@@ -70,6 +70,35 @@ struct QueuedPassStallWatchTests {
         try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir, runClock: clock)
     }
 
+    /// Opens each hold of the passes and of the tool bodies of a test, and
+    /// then closes each of `sessions`.
+    ///
+    /// A test calls it from one `defer` right after it makes its sessions, so
+    /// they close also when the test throws (rule T1). A close waits for the
+    /// end of each held pass and each held tool body, so the holds open first.
+    /// The close opens the latch of `fixture`. No wait on a gate ends on a
+    /// cancel (``AsyncSemaphore/wait()``), so each gate gets one permit for
+    /// each pass that a test of this suite can make: no test makes more than
+    /// ``passesBeforeTheHeldPass``. A permit that no wait takes does nothing.
+    ///
+    /// - Parameters:
+    ///   - sessions: The sessions to close.
+    ///   - fixture: The fixture whose latch holds each pass.
+    ///   - gates: The semaphores that hold a pass or a tool body. The default
+    ///     is no gate.
+    private static func close(
+        _ sessions: [any RoutedSession], of fixture: PassObservingFixture, signalling gates: [AsyncSemaphore] = []
+    ) async {
+        for gate in gates {
+            for _ in 0..<passesBeforeTheHeldPass {
+                gate.signal()
+            }
+        }
+        for session in sessions {
+            await SessionFixtureLifecycle.close(session, opening: [fixture.latch])
+        }
+    }
+
     /// The ids that the `submissionQueued` events among `events` carry, in
     /// order.
     ///
@@ -124,6 +153,7 @@ struct QueuedPassStallWatchTests {
         let queue = try #require(resolved.profile.standard.backendQueue)
         let holding = resolved.profile.standard.makeSession()
         let waiting = resolved.profile.standard.makeSession()
+        defer { await Self.close([holding, waiting], of: fixture) }
         let waitingActor = try #require(waiting as? RoutedSessionActor)
         await waiting.setGenerationStallReportInterval(Self.reportInterval)
         let (holdingLog, holdingDrain) = await SessionEventLog.watch(holding)
@@ -190,6 +220,7 @@ struct QueuedPassStallWatchTests {
         let toolGate = AsyncSemaphore(value: 0)
         let tool = PassBoundaryProbeTool(log: toolLog, hold: { await toolGate.wait() })
         let session = resolved.profile.standard.makeSession(tools: [tool])
+        defer { await Self.close([session], of: fixture, signalling: [toolGate]) }
         let actor = try #require(session as? RoutedSessionActor)
         await session.setGenerationStallReportInterval(Self.reportInterval)
 
@@ -213,6 +244,7 @@ struct QueuedPassStallWatchTests {
         let clock = ManualRunClock()
         let resolved = try await Self.resolve(fixture, in: dir, clock: clock)
         let session = resolved.profile.standard.makeSession()
+        defer { await Self.close([session], of: fixture) }
         await session.setGenerationStallReportInterval(Self.reportInterval)
 
         let (log, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
@@ -250,6 +282,7 @@ struct QueuedPassStallWatchTests {
         let toolGate = AsyncSemaphore(value: 0)
         let tool = PassBoundaryProbeTool(log: toolLog, hold: { await toolGate.wait() })
         let waiting = resolved.profile.standard.makeSession(tools: [tool])
+        defer { await Self.close([holding, waiting], of: fixture, signalling: [step, toolGate]) }
         let waitingActor = try #require(waiting as? RoutedSessionActor)
         await waiting.setGenerationStallReportInterval(Self.reportInterval)
 

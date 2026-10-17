@@ -70,36 +70,49 @@ struct RouterTelemetryLoggingTests {
             metadata: [RouterTelemetry.LogMetadataKey.category: RouterTelemetry.LogCategory.generation.rawValue])
     }
 
-    /// Makes a session over a stub model, with its recording in `dir`.
+    /// Makes a session over a stub model in a new temp directory, runs `body`
+    /// with it, and then closes the session and removes the directory.
     ///
-    /// - Parameter dir: The cache and recording directory of the router.
-    /// - Returns: The session.
-    /// - Throws: What the resolve of the profile throws.
-    private static func makeSession(in dir: URL) async throws -> any RoutedSession {
+    /// The close and the removal run also when `body` throws (rule T1). They
+    /// run after `body` returns, and each check of a test only looks for a
+    /// record that `body` made, so a record of the close changes no check.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. `body` runs there.
+    ///   - body: The steps of the test, given the session.
+    /// - Returns: What `body` returns.
+    /// - Throws: What the resolve of the profile or `body` throws.
+    private static func withSession<Value>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: (any RoutedSession) async throws -> Value
+    ) async throws -> Value {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RouterTelemetryLoggingTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir, loader: StubModelLoader(
                 container: CannedLLMContainer(ref: "org/std-a"), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return profile.standard.makeSession()
+        let session = profile.standard.makeSession()
+        defer { await session.close() }
+        return try await body(session)
     }
 
     @Test("a module logger inside a pump job writes to the explicit logger of the session")
     func pumpJobBindsTheExplicitLogger() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "RouterTelemetryLoggingTests")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let session = try #require(try await Self.makeSession(in: dir) as? RoutedSessionActor)
-
-        let logs = try await TelemetryCapture.run(forbidding: []) { context in
-            await session.useCaptureLogger(for: context.logger)
-            // A detached task gets no capture of its own, as the pump does not,
-            // so only the binding of the pump job can bring this record of a
-            // module logger to the capture.
-            await Task.detached {
-                await session.withSessionLogger {
-                    RouterTelemetry.makeLogger(.recording).warning("from a pump job")
-                }
-            }.value
-            return context
+        let logs = try await Self.withSession { vended in
+            let session = try #require(vended as? RoutedSessionActor)
+            return try await TelemetryCapture.run(forbidding: []) { context in
+                await session.useCaptureLogger(for: context.logger)
+                // A detached task gets no capture of its own, as the pump does not,
+                // so only the binding of the pump job can bring this record of a
+                // module logger to the capture.
+                await Task.detached {
+                    await session.withSessionLogger {
+                        RouterTelemetry.makeLogger(.recording).warning("from a pump job")
+                    }
+                }.value
+                return context
+            }
         }
 
         logs.expectLogged(
@@ -109,19 +122,19 @@ struct RouterTelemetryLoggingTests {
 
     @Test("a fork starts with the explicit logger of its parent")
     func forkKeepsTheExplicitLogger() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "RouterTelemetryLoggingTests")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let session = try await Self.makeSession(in: dir)
-
-        let logs = try await TelemetryCapture.run(forbidding: []) { context in
-            await session.useCaptureLogger(for: context.logger)
-            let child = try #require(try await session.fork(workingDirectory: nil) as? RoutedSessionActor)
-            // A detached task gets no capture of its own, so only the explicit
-            // logger of the child can bring this record to the capture.
-            await Task.detached {
-                await child.sessionLogger(.generation).warning("from the child")
-            }.value
-            return context
+        let logs = try await Self.withSession { session in
+            try await TelemetryCapture.run(forbidding: []) { context in
+                await session.useCaptureLogger(for: context.logger)
+                let fork = try await session.fork(workingDirectory: nil)
+                defer { await fork.close() }
+                let child = try #require(fork as? RoutedSessionActor)
+                // A detached task gets no capture of its own, so only the explicit
+                // logger of the child can bring this record to the capture.
+                await Task.detached {
+                    await child.sessionLogger(.generation).warning("from the child")
+                }.value
+                return context
+            }
         }
 
         logs.expectLogged(containing: "from the child")

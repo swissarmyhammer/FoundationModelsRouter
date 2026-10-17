@@ -124,7 +124,7 @@ struct TelemetryContentSafetyTests {
             mounting: [MarkerEmittingTool()],
             tempDirPrefix: tempDirPrefix,
             tracer: context.tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
         await fixture.session.useCaptureLogger(for: context.logger)
         await fixture.session.useCaptureMetrics(for: context.metricsFactory)
 
@@ -158,7 +158,7 @@ struct TelemetryContentSafetyTests {
     private static func driveRejectedCallRetry(in context: TelemetryCapture.Context) async throws {
         let fixture = try await RejectingSessionFixture.make(
             rejectionCount: 1, tempDirPrefix: tempDirPrefix, tracer: context.tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
         await fixture.session.useCaptureLogger(for: context.logger)
         await fixture.session.useCaptureMetrics(for: context.metricsFactory)
 

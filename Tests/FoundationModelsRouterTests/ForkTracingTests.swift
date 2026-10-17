@@ -176,7 +176,9 @@ struct ForkTracingTests {
         let tracer = InMemoryTracer()
         let profile = try await Self.makeProfile(cacheDir: directory, tracer: tracer)
         let parent = profile.standard.makeSession()
+        defer { await parent.close() }
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let spans = Self.finishedForkSpans(reportedTo: tracer)
         try #require(spans.count == 1)
@@ -206,8 +208,10 @@ struct ForkTracingTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let parent = profile.standard.makeSession()
+        defer { await parent.close() }
 
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         #expect(child.parentId == parent.id)
     }
@@ -231,7 +235,10 @@ struct ForkTracingTests {
             mounting: [SelfForkingTool(target: target, child: child)],
             tempDirPrefix: Self.tempDirPrefix,
             tracer: tracer)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
+        // The tool puts the child in the box, so the child closes also when
+        // the answer throws after the fork.
+        defer { await child.value?.close() }
         target.set(fixture.session)
 
         // The tool forks the session whose submission is calling it. The fork reads

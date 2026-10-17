@@ -148,7 +148,9 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
 /// A routed session over a ``LiveBackendContainer`` that runs a
 /// ``MeteredToolLoopLanguageModel``, with the tool it mounts, the recorder
 /// that holds its run journal, and the directory the router cached into.
-struct MeteredToolLoopSessionFixture {
+///
+/// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+struct MeteredToolLoopSessionFixture: SessionDirectoryFixture {
     /// The vended session a test drives its answer on.
     let session: any RoutedSession
 
@@ -158,7 +160,8 @@ struct MeteredToolLoopSessionFixture {
     /// The recorder the router persists every transcript event into.
     let recorder: InMemoryRecorder
 
-    /// The temp directory the router cached into, which the caller must remove.
+    /// The temp directory the router cached into. ``SessionDirectoryFixture/end(opening:)``
+    /// removes it.
     let directory: URL
 
     /// Builds a router, resolves a profile at `context`, and vends a session

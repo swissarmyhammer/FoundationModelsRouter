@@ -128,6 +128,7 @@ struct SessionCreationTracingTests {
         let tracer = InMemoryTracer()
         let profile = try await Self.makeProfile(workspace: workspace, tracer: tracer)
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let spans = Self.finishedSessionSpans(reportedTo: tracer)
         try #require(spans.count == 1)
@@ -153,7 +154,9 @@ struct SessionCreationTracingTests {
         let tracer = InMemoryTracer()
         let profile = try await Self.makeProfile(workspace: workspace, tracer: tracer)
         let parent = profile.standard.makeSession()
+        defer { await parent.close() }
         let child = try await parent.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         // The parent and the child are two different sessions, so a span that
         // named the wrong one would be indistinguishable from the right one.
@@ -187,8 +190,10 @@ struct SessionCreationTracingTests {
         let recordingProfile = try await Self.makeProfile(
             workspace: workspace, tracer: recordedTracer)
         let root = recordingProfile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "remember 42")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         // A second router over the same recording root, the way a fresh
         // process picks a recorded tree back up. Its own tracer holds the
@@ -197,6 +202,10 @@ struct SessionCreationTracingTests {
         let restoringProfile = try await Self.makeProfile(
             id: root.routerId, workspace: workspace, tracer: restoreTracer)
         let restored = try await restoringProfile.standard.restoreSessionTree(root: root.id)
+        defer {
+            await restored.root.close()
+            await restored.session(fork.id)?.close()
+        }
 
         #expect(restored.root.id == root.id)
         #expect(Self.finishedSessionSpans(reportedTo: restoreTracer).count == 2)

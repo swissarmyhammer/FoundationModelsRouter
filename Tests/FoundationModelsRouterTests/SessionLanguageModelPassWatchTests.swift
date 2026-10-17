@@ -27,6 +27,7 @@ struct SessionLanguageModelPassWatchTests {
     private static func makeSession(tool: WatchCountingTool) -> (LanguageModelSession, SessionLanguageModelState) {
         let model = SessionLanguageModel(
             wrapping: ToolResultCompactionModel(toolCallUsage: MeteredGenerationCall(tokensIn: 1, tokensOut: 1)))
+        // An SDK `LanguageModelSession` has no end or cancel call for a `defer`, so no test of this suite closes it.
         return (LanguageModelSession(model: model, tools: [tool]), model.state)
     }
 

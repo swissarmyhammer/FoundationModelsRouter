@@ -75,56 +75,50 @@ extension TelemetryContentSafetyTests {
     @Test("a compact span whose work throws records the error type and no content")
     func failedCompactSpanRecordsOnlyTheErrorType() async throws {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
-            let fixture = try await Self.makeFailingSpanFixture(in: context)
-            defer { try? FileManager.default.removeItem(at: fixture.directory) }
-            let session = try #require(fixture.session as? RoutedSessionActor)
-
-            await #expect(throws: ContentBearingError.self) {
-                try await session.withCompactionSpan(reason: .requested, signal: SignalID()) {
-                    throw Self.contentBearingError
+            try await Self.withFailingSpanSession(in: context) { session in
+                await #expect(throws: ContentBearingError.self) {
+                    try await session.withCompactionSpan(reason: .requested, signal: SignalID()) {
+                        throw Self.contentBearingError
+                    }
                 }
-            }
 
-            #expect(
-                Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.compact, in: context)
-                    == ["\(ContentBearingError.self)"])
+                #expect(
+                    Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.compact, in: context)
+                        == ["\(ContentBearingError.self)"])
+            }
         }
     }
 
     @Test("a fork span whose work throws records the error type and no content")
     func failedForkSpanRecordsOnlyTheErrorType() async throws {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
-            let fixture = try await Self.makeFailingSpanFixture(in: context)
-            defer { try? FileManager.default.removeItem(at: fixture.directory) }
-            let session = try #require(fixture.session as? RoutedSessionActor)
+            try await Self.withFailingSpanSession(in: context) { session in
+                await #expect(throws: ContentBearingError.self) {
+                    try await session.withForkSpan { throw Self.contentBearingError }
+                }
 
-            await #expect(throws: ContentBearingError.self) {
-                try await session.withForkSpan { throw Self.contentBearingError }
+                #expect(
+                    Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.fork, in: context)
+                        == ["\(ContentBearingError.self)"])
             }
-
-            #expect(
-                Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.fork, in: context)
-                    == ["\(ContentBearingError.self)"])
         }
     }
 
     @Test("a submission span whose attempt throws records the error type and no content")
     func failedSubmissionSpanRecordsOnlyTheErrorType() async throws {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
-            let fixture = try await Self.makeFailingSpanFixture(in: context)
-            defer { try? FileManager.default.removeItem(at: fixture.directory) }
-            let session = try #require(fixture.session as? RoutedSessionActor)
+            try await Self.withFailingSpanSession(in: context) { session in
+                // The answer pump does these three steps for an attempt that
+                // throws: it opens the submission, records the error of the
+                // attempt, and ends the submission.
+                await session.beginSubmission(cause: .message, mailIds: [])
+                await session.recordSubmissionError(Self.contentBearingError)
+                await session.endSubmission(usage: nil, finishReason: .completed, measuredRender: nil, onEvent: nil)
 
-            // The answer pump does these three steps for an attempt that
-            // throws: it opens the submission, records the error of the
-            // attempt, and ends the submission.
-            await session.beginSubmission(cause: .message, mailIds: [])
-            await session.recordSubmissionError(Self.contentBearingError)
-            await session.endSubmission(usage: nil, finishReason: .completed, measuredRender: nil, onEvent: nil)
-
-            #expect(
-                Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.submission, in: context)
-                    == ["\(ContentBearingError.self)"])
+                #expect(
+                    Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.submission, in: context)
+                        == ["\(ContentBearingError.self)"])
+            }
         }
     }
 
@@ -148,19 +142,31 @@ extension TelemetryContentSafetyTests {
         }
     }
 
-    /// Makes a scripted session that reports to `context`, for a test that
-    /// drives a span of the session directly.
+    /// Makes a scripted session that reports to `context`, runs `body` on it,
+    /// and then ends the fixture, for a test that drives a span of the session
+    /// directly.
     ///
-    /// - Parameter context: The capture that the session reports to.
-    /// - Returns: The fixture. The caller removes its directory.
-    /// - Throws: Whatever profile resolution throws.
-    private static func makeFailingSpanFixture(
-        in context: TelemetryCapture.Context
-    ) async throws -> ScriptedSessionFixture {
-        try await ScriptedSessionFixture.make(
+    /// The fixture ends also when `body` throws (rule T1): the session closes
+    /// and the directory goes. The end runs after `body` reads the spans, and
+    /// a close opens no span, so the end changes no span that a test reads.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. `body` runs there.
+    ///   - context: The capture that the session reports to.
+    ///   - body: The steps of the test, given the actor of the session.
+    /// - Throws: Whatever profile resolution throws, the error when the
+    ///   session is not a ``RoutedSessionActor``, or what `body` throws.
+    private static func withFailingSpanSession(
+        isolation: isolated (any Actor)? = #isolation,
+        in context: TelemetryCapture.Context,
+        _ body: (RoutedSessionActor) async throws -> Void
+    ) async throws {
+        let fixture = try await ScriptedSessionFixture.make(
             playing: ScriptedAnswerScript(rounds: []),
             mounting: [],
             tempDirPrefix: tempDirPrefix,
             tracer: context.tracer)
+        defer { await fixture.end() }
+        try await body(try #require(fixture.session as? RoutedSessionActor))
     }
 }

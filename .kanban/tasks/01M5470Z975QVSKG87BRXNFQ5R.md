@@ -1,10 +1,30 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m54pz2dds6g3pn02bqv5636c
+  text: |-
+    Implementation notes (for the next agent):
+    - `ScriptedSessionFixture`, `MeteredToolLoopSessionFixture` and `RejectingSessionFixture` now conform to `SessionDirectoryFixture`, so a test ends each one with `defer { await fixture.end() }`. The local `AnswerFixture` of `SubmissionTracingTests` conforms too.
+    - A close opens no span (only make, fork, submission, compact, embed, resolve and load open spans), so span reads are safe. A close can record cancelled mail and queue depth metrics, but each listed test reads its metrics before its `defer` runs, so no count changes.
+    - New shared helpers, one for each file that had copies: `TelemetryContentSafetyTests.withFailingSpanSession(in:_:)`, `RouterMetricsTests.withHeldSessions(count:_:)` (opens the latch of the `PassObservingFixture` before each close), `RouterTelemetryLoggingTests.withSession(_:)`, `GenerationStallDiagnosticTests.close(_:openingHoldsOf:)` and `QueuedPassStallWatchTests.close(_:of:signalling:)`.
+    - `AsyncSemaphore.wait()` does not end on a cancel. So each gate that a test holds (tool gate, step, `handshake.proceed`, `release`) gets permits in the `defer` before the close: one permit for each wait that can occur. A permit that no wait takes does nothing.
+    - `HeldSessionBackend` ends its hold on a cancel, so the close of `hungSubmissionHasItsEnterRecord` needs no release.
+    - `SessionLanguageModelPassWatchTests` makes an SDK `LanguageModelSession`. It has no end or cancel call (checked in the SDK swiftinterface), so it is out of scope (decision group 4(b)); a one-line comment is at the place.
+    - Discovery for the later partial-close card: the other 7 tests of `GenerationStallDiagnosticTests` that use `makeStallingSession()` also never close their session (only the throw path of the helper closes). They are not on this card, so this card does not change them.
+  timestamp: 2026-10-17T10:36:48.941033+00:00
+- actor: claude-code
+  id: 01m54q08h6dxc9xc1knjk8fr4z
+  text: |-
+    ### implement — changed
+    - evidence: 18 test files changed (14 suites plus the fixtures `ScriptedSessionFixture`, `MeteredToolLoopSessionFixture`, `RejectingSessionFixture`). `swift build --build-tests`: no compiler warning (only the SwiftPM note "missing creator for mutated node" of the mlx bundle, which was there before). Filtered run of the 14 suites: 88 tests in 14 suites passed. Full `swift test` one time: 1827 tests in 224 suites passed with 6 known issues (the `withKnownIssue` wait tests that were there before), 26 tests in 14 suites passed, 19 tests in 3 suites passed; 0 failures. IntegrationTests not built: no file that it compiles changed.
+    - next: review
+  timestamp: 2026-10-17T10:37:27.974983+00:00
 depends_on:
 - 01M54709HFVPM6E4HMV6ESTWCE
-position_column: todo
-position_ordinal: 8b80
+position_column: doing
+position_ordinal: '80'
 title: 'T1 follow-up b6: telemetry, tracing and metering suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the telemetry, tracing, metering and stall suites.
@@ -20,19 +40,19 @@ How to close (use the forms that T1 added):
 - After a close, a test that waits on a feed now ends on the feed end. Check that no test now passes only because a wait ends early.
 
 Suites (file under Tests/FoundationModelsRouterTests/; the tests that never close):
-- [ ] ForkTracingTests, ForkTracingTests.swift: all 3.
-- [ ] SessionCreationTracingTests, SessionCreationTracingTests.swift: all 3.
-- [ ] SessionTracerWiringTests, SessionTracerWiringTests.swift: all 3.
-- [ ] SubmissionTracingTests, SubmissionTracingTests.swift: all 8 (local makeFixture).
-- [ ] ToolTracingTests, ToolTracingTests.swift: all 6 (ScriptedSessionFixture.make).
-- [ ] TelemetryContentSafetyTests, TelemetryContentSafetyTests.swift: all 1 (local driveScriptedSession).
-- [ ] TelemetryContentSafetyTests extension, TelemetryContentSafetyTests+FailedSpans.swift: 3 of 5 (failedCompactSpanRecordsOnlyTheErrorType, failedForkSpanRecordsOnlyTheErrorType, failedSubmissionSpanRecordsOnlyTheErrorType).
-- [ ] RouterMetricsTests, RouterMetricsTests.swift: 8 of 11 (generationCallsRecordTokensAndTimes, callerCompactionIsCounted, automaticCompactionIsCounted, waitingMessagesAreRecordedInTheSessionQueueDepth, cancelledMailIsCounted, compactionRecordsThePauseOfTheMailQueue, waitingSubmissionsAreRecordedInTheGenerationQueueGauge, forkKeepsTheExplicitMetricsFactory).
-- [ ] RouterTelemetryLoggingTests, RouterTelemetryLoggingTests.swift: 2 of 7 (pumpJobBindsTheExplicitLogger, forkKeepsTheExplicitLogger).
-- [ ] TokenUsageMeteringTests, TokenUsageMeteringTests.swift: all 6.
-- [ ] GenerationCallUsageTests, GenerationCallUsageTests.swift: 6 of 9 (threeCallsGiveThreeRecords, submissionStampStaysTheSum, recordsArriveLive, journalHoldsEachCall, lastCallFollowsItsResponseEntry, ceilingCallReportsMaxTokens).
-- [ ] EnterRecordTests, EnterRecordTests.swift: 2 of 5 (eachSubmissionWritesOneEnterRecord, hungSubmissionHasItsEnterRecord).
-- [ ] GenerationStallDiagnosticTests, GenerationStallDiagnosticTests.swift: 3 of 12 (aForkStartsWithTheIntervalOfItsParent, toolCallsWithNoTextReportNoStall, anAnswerThatStopsAfterAToolResultNamesIt).
-- [ ] QueuedPassStallWatchTests, QueuedPassStallWatchTests.swift: 4 of 7 (aWaitingSubmissionSendsItsQueuedIdBeforeItsStartAndNoStall, aToolBodyIsNotAStall, aHeldPassWithNoFragmentStillReportsAStall, aStallAfterAWaitAndAToolBodyMeasuresOnlyTheHeldPass).
-- [ ] SessionLanguageModelPassWatchTests, SessionLanguageModelPassWatchTests.swift: all 2.
-- [ ] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup
+- [x] ForkTracingTests, ForkTracingTests.swift: all 3.
+- [x] SessionCreationTracingTests, SessionCreationTracingTests.swift: all 3.
+- [x] SessionTracerWiringTests, SessionTracerWiringTests.swift: all 3.
+- [x] SubmissionTracingTests, SubmissionTracingTests.swift: all 8 (local makeFixture).
+- [x] ToolTracingTests, ToolTracingTests.swift: all 6 (ScriptedSessionFixture.make).
+- [x] TelemetryContentSafetyTests, TelemetryContentSafetyTests.swift: all 1 (local driveScriptedSession).
+- [x] TelemetryContentSafetyTests extension, TelemetryContentSafetyTests+FailedSpans.swift: 3 of 5 (failedCompactSpanRecordsOnlyTheErrorType, failedForkSpanRecordsOnlyTheErrorType, failedSubmissionSpanRecordsOnlyTheErrorType).
+- [x] RouterMetricsTests, RouterMetricsTests.swift: 8 of 11 (generationCallsRecordTokensAndTimes, callerCompactionIsCounted, automaticCompactionIsCounted, waitingMessagesAreRecordedInTheSessionQueueDepth, cancelledMailIsCounted, compactionRecordsThePauseOfTheMailQueue, waitingSubmissionsAreRecordedInTheGenerationQueueGauge, forkKeepsTheExplicitMetricsFactory).
+- [x] RouterTelemetryLoggingTests, RouterTelemetryLoggingTests.swift: 2 of 7 (pumpJobBindsTheExplicitLogger, forkKeepsTheExplicitLogger).
+- [x] TokenUsageMeteringTests, TokenUsageMeteringTests.swift: all 6.
+- [x] GenerationCallUsageTests, GenerationCallUsageTests.swift: 6 of 9 (threeCallsGiveThreeRecords, submissionStampStaysTheSum, recordsArriveLive, journalHoldsEachCall, lastCallFollowsItsResponseEntry, ceilingCallReportsMaxTokens).
+- [x] EnterRecordTests, EnterRecordTests.swift: 2 of 5 (eachSubmissionWritesOneEnterRecord, hungSubmissionHasItsEnterRecord).
+- [x] GenerationStallDiagnosticTests, GenerationStallDiagnosticTests.swift: 3 of 12 (aForkStartsWithTheIntervalOfItsParent, toolCallsWithNoTextReportNoStall, anAnswerThatStopsAfterAToolResultNamesIt).
+- [x] QueuedPassStallWatchTests, QueuedPassStallWatchTests.swift: 4 of 7 (aWaitingSubmissionSendsItsQueuedIdBeforeItsStartAndNoStall, aToolBodyIsNotAStall, aHeldPassWithNoFragmentStillReportsAStall, aStallAfterAWaitAndAToolBodyMeasuresOnlyTheHeldPass).
+- [x] SessionLanguageModelPassWatchTests, SessionLanguageModelPassWatchTests.swift: all 2.
+- [x] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup

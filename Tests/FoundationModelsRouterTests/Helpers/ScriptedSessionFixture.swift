@@ -11,14 +11,17 @@ import Tracing
 /// resolved profile, then `makeSession(tools:)` off the profile's standard slot
 /// — so an answer driven through it crosses Router's real session machinery,
 /// with the scripted model standing in only for the weights.
-struct ScriptedSessionFixture {
+///
+/// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+struct ScriptedSessionFixture: SessionDirectoryFixture {
     /// The vended session a test drives its answer on.
     let session: any RoutedSession
 
     /// The log the scripted model writes its observations into.
     let log: ScriptedAnswerLog
 
-    /// The temp directory the router cached into, which the caller must remove.
+    /// The temp directory the router cached into. ``SessionDirectoryFixture/end(opening:)``
+    /// removes it.
     let directory: URL
 
     /// The backends the fixture's container vended, so a test can read the
@@ -60,7 +63,7 @@ struct ScriptedSessionFixture {
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
     /// - Returns: The vended session, its scripted model's log, and the temp
-    ///   directory the caller must remove.
+    ///   directory. The caller ends the fixture.
     /// - Throws: Whatever profile resolution throws. Before it throws, it
     ///   removes the temp directory.
     static func make(
