@@ -111,6 +111,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
+        defer { await session.close() }
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -129,6 +130,7 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
+        defer { await session.close() }
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -144,6 +146,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -163,10 +166,12 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
+        defer { await session.close() }
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let fork = try await session.fork(workingDirectory: nil)
+        defer { await fork.close() }
         try await Self.compact(session: fork)
 
         Self.expectProtectedOnly(in: await fork.transcript)
@@ -182,6 +187,9 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
+        // The recorded session stays open through the restore, and closes
+        // after the restored session.
+        defer { await session.close() }
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -189,6 +197,7 @@ struct ToolOutputProtectionSessionTests {
         let restored = try await restoring.standard.restoreSession(
             id: session.id, recordingRoot: nil, toolOutputProtection: Fixtures.rule
         ).session
+        defer { await restored.close() }
         try await Self.compact(session: restored)
 
         Self.expectProtectedOnly(in: await restored.transcript)
@@ -202,6 +211,9 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
+        // The recorded session stays open through the restore, and closes
+        // after the restored session.
+        defer { await session.close() }
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
         try await Self.compact(session: session)
@@ -212,6 +224,7 @@ struct ToolOutputProtectionSessionTests {
         let restored = try await restoring.standard.restoreSession(
             id: session.id, toolOutputProtection: Fixtures.rule
         ).session
+        defer { await restored.close() }
 
         let restoredTranscript = await restored.transcript
         #expect(restoredTranscript.map(\.id) == liveIds)

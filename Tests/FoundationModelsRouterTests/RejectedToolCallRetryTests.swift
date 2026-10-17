@@ -48,6 +48,7 @@ struct RejectedToolCallRetryTests {
     func retryAttemptSeesTheRejection() async throws {
         let fixture = try await Self.makeFixture(rejectionCount: 1)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
 
@@ -65,6 +66,7 @@ struct RejectedToolCallRetryTests {
     func retriesContinueUntilTheModelWritesAValidCall() async throws {
         let fixture = try await Self.makeFixture(rejectionCount: Self.rejectionsBeforeTheAnswer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: Self.prompt)
 

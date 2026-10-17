@@ -223,6 +223,7 @@ struct SubmissionBoundaryToolTests {
         let probe = SubmissionBoundaryProbeTool(log: log)
         let (session, dir) = try await Self.makeSession(log: log, tools: [probe])
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "hello")
 
@@ -237,6 +238,7 @@ struct SubmissionBoundaryToolTests {
         let probe = SubmissionBoundaryProbeTool(log: log)
         let (session, dir) = try await Self.makeSession(log: log, tools: [probe])
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
@@ -253,6 +255,7 @@ struct SubmissionBoundaryToolTests {
         let plain = NonConformingTool()
         let (session, dir) = try await Self.makeSession(log: log, tools: [plain, probe])
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "hello")
 
@@ -267,6 +270,7 @@ struct SubmissionBoundaryToolTests {
         let probe = SubmissionBoundaryProbeTool(log: log)
         let (session, dir) = try await Self.makeSession(log: log, tools: [probe], rejectedCallCount: 1)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         // The first submission throws a rejected tool call. The session sends
         // the rejection back to the model in a continuation submission of the
@@ -284,6 +288,7 @@ struct SubmissionBoundaryToolTests {
         let probe = SubmissionBoundaryProbeTool(log: log)
         let (session, dir) = try await Self.makeSession(log: log, tools: [probe])
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
         _ = try await session.respond(to: "hello")
         let latch = RunLatch()
         await latch.open()

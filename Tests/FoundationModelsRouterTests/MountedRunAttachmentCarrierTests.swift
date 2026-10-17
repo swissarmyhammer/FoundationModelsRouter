@@ -91,7 +91,8 @@ struct MountedRunAttachmentCarrierTests {
     /// - Parameters:
     ///   - script: The answer shape the scripted model plays out.
     ///   - tools: The tools the session mounts.
-    /// - Returns: The vended fixture. The caller removes its directory.
+    /// - Returns: The vended fixture. The caller closes its session and
+    ///   removes its directory.
     /// - Throws: Whatever profile resolution throws.
     private static func makeFixture(
         playing script: ScriptedAnswerScript, mounting tools: [any Tool]
@@ -101,7 +102,8 @@ struct MountedRunAttachmentCarrierTests {
     }
 
     /// Drives one answer whose single call reaches ``mountingTool``, and
-    /// returns the answer's events in stream order.
+    /// returns the answer's events in stream order. The session closes after
+    /// the answer, also when the answer throws (rule T1).
     ///
     /// - Returns: Every event the answer's stream carried.
     /// - Throws: Whatever the fixture or the answer throws.
@@ -110,6 +112,7 @@ struct MountedRunAttachmentCarrierTests {
             playing: ScriptedAnswerScript(rounds: [round(id: mountingCallID, calling: mountingTool)]),
             mounting: [mountingTool])
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         return try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
     }
@@ -134,8 +137,9 @@ struct MountedRunAttachmentCarrierTests {
             mounting: [Self.mountingTool, gatedTool])
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         // A throw before the test opens the gate must not leave the gated
-        // round held. A second open does no harm.
-        defer { await gate.open() }
+        // round held, so the gate opens before the close. A second open does
+        // no harm.
+        defer { await SessionFixtureLifecycle.close(fixture.session, opening: [gate]) }
 
         let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
         var events: [SessionEvent] = []

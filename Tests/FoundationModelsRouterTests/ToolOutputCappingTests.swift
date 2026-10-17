@@ -384,10 +384,11 @@ struct ToolOutputCappingTests {
 
         let longText = String(repeating: "e", count: 40)
         let tool = StringOutputTool(output: longText)
-        _ = profile.standard.makeSession(
+        let session = profile.standard.makeSession(
             tools: [tool],
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
+        defer { await session.close() }
 
         guard let capping = failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<FakeToolArguments>,
             capping.wrapped is RunToCompletionRunner<FakeToolArguments>
@@ -412,10 +413,11 @@ struct ToolOutputCappingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let tool = StringOutputTool(output: "unchanged")
-        _ = profile.standard.makeSession(
+        let session = profile.standard.makeSession(
             tools: [tool],
             budget: TokenBudget(limit: 4096)
         )
+        defer { await session.close() }
 
         #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<FakeToolArguments>))
         #expect((failureDeliveryPeeled(container.lastTools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
@@ -432,7 +434,8 @@ struct ToolOutputCappingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let tool = StringOutputTool(output: "unchanged")
-        _ = profile.standard.makeSession(tools: [tool])
+        let session = profile.standard.makeSession(tools: [tool])
+        defer { await session.close() }
 
         #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<FakeToolArguments>))
         #expect((failureDeliveryPeeled(container.lastTools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
@@ -454,6 +457,7 @@ struct ToolOutputCappingTests {
             tools: [tool],
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
+        defer { await session.close() }
 
         guard let capping = failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<AmbientToolArguments>,
             let mounting = capping.wrapped as? RunToCompletionRunner<AmbientToolArguments>,
@@ -493,7 +497,9 @@ struct ToolOutputCappingTests {
             tools: [tool],
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         guard let childActor = child as? RoutedSessionActor,
             let capping = failureDeliveryPeeled(childActor.tools.first) as? TokenCappingTool<FakeToolArguments>,
@@ -521,7 +527,9 @@ struct ToolOutputCappingTests {
             tools: [tool],
             budget: TokenBudget(limit: 4096)
         )
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         guard let childActor = child as? RoutedSessionActor else {
             Issue.record("expected the fork to be a RoutedSessionActor")
@@ -543,7 +551,9 @@ struct ToolOutputCappingTests {
 
         let tool = StringOutputTool(output: "unchanged")
         let session = profile.standard.makeSession(tools: [tool])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         guard let childActor = child as? RoutedSessionActor else {
             Issue.record("expected the fork to be a RoutedSessionActor")

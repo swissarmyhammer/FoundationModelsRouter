@@ -97,6 +97,7 @@ struct ToolCallFailureAnswerTests {
             mounting: [failingTool, markerTool],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -123,6 +124,7 @@ struct ToolCallFailureAnswerTests {
             mounting: [failingTool, markerTool],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -143,7 +145,10 @@ struct ToolCallFailureAnswerTests {
             mounting: [cancellingTool],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
         let answering = Task { try await fixture.session.respond(to: ScriptedToolFixture.prompt) }
+        // The answer ends also when the test throws before its cancel.
+        defer { answering.cancel() }
 
         // The stop comes when the tool call runs, as a stop of a user does.
         // It cancels the model call, so the task of the tool call is
@@ -175,6 +180,7 @@ struct ToolCallFailureAnswerTests {
             mounting: [failingTool],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 

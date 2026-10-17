@@ -45,6 +45,7 @@ struct ToolCallRunJoinTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: script, mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 
@@ -66,6 +67,7 @@ struct ToolCallRunJoinTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: script, mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 

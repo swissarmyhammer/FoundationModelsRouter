@@ -41,13 +41,20 @@ struct ToolCallRepetitionStopTests {
     /// Runs one streamed answer over a fresh fixture.
     ///
     /// - Parameter snippetLines: The lines of the snippet the model sends.
-    /// - Returns: The fixture and the events of the answer, in order.
+    /// - Returns: The fixture and the events of the answer, in order. The
+    ///   session of the fixture is open: the caller closes it.
+    /// - Throws: What the answer throws. The helper then closes the session
+    ///   and removes the directory of the fixture first (rule T1).
     private static func runAnswer(
         snippetLines: [String]
     ) async throws -> (fixture: RepeatingToolCallSessionFixture, events: [SessionEvent]) {
         let fixture = try await RepeatingToolCallSessionFixture.make(
             snippetLines: snippetLines, tempDirPrefix: tempDirPrefix)
-        let events = try await collect(fixture.session.streamEvents(to: prompt))
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(
+            fixture.directory, alsoOnThrow: { await fixture.session.close() }
+        ) {
+            try await collect(fixture.session.streamEvents(to: prompt))
+        }
         return (fixture, events)
     }
 
@@ -72,6 +79,7 @@ struct ToolCallRepetitionStopTests {
         let snippet = Array(repeating: Self.repeatedLine, count: Self.repeatedLineCount)
         let (fixture, events) = try await Self.runAnswer(snippetLines: snippet)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let stop = try #require(Self.stops(in: events).first)
         #expect(Self.stops(in: events).count == 1)
@@ -93,6 +101,7 @@ struct ToolCallRepetitionStopTests {
     func differentSnippetRuns() async throws {
         let (fixture, events) = try await Self.runAnswer(snippetLines: Self.differentLines)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         #expect(Self.stops(in: events).isEmpty)
         #expect(events.submissionEnds.map(\.finishReason) == [.completed])

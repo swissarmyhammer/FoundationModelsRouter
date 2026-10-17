@@ -76,6 +76,7 @@ struct ToolOutputFeedbackTests {
     func respondFeedsToolOutputBackIntoGeneration() async throws {
         let (fixture, tool) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
@@ -86,6 +87,7 @@ struct ToolOutputFeedbackTests {
     func streamEventsFeedsToolOutputBackIntoGeneration() async throws {
         let (fixture, tool) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         var answer = ""
         let events = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)

@@ -34,9 +34,10 @@ struct IdenticalToolCallLimitTests {
     /// - Parameters:
     ///   - script: The tool calls the model makes.
     ///   - detection: The repetition detection of the session.
-    /// - Returns: The fixture and the events of the answer, in order.
-    /// - Throws: What the answer throws. The helper then removes the
-    ///   directory of the fixture first (rule T1).
+    /// - Returns: The fixture and the events of the answer, in order. The
+    ///   session of the fixture is open: the caller closes it.
+    /// - Throws: What the answer throws. The helper then closes the session
+    ///   and removes the directory of the fixture first (rule T1).
     private static func runAnswer(
         script: IdenticalToolCallScript, detection: RepetitionDetection = RepetitionDetection()
     ) async throws -> (fixture: RepeatingToolCallSessionFixture, events: [SessionEvent]) {
@@ -44,7 +45,9 @@ struct IdenticalToolCallLimitTests {
         let fixture = try await RepeatingToolCallSessionFixture.make(
             model: IdenticalToolCallModel(log: log, script: script), log: log, detection: detection,
             tempDirPrefix: tempDirPrefix)
-        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        let events = try await RouterTestFixtures.removingDirectoryOnThrow(
+            fixture.directory, alsoOnThrow: { await fixture.session.close() }
+        ) {
             try await collect(fixture.session.streamEvents(to: prompt))
         }
         return (fixture, events)
@@ -55,6 +58,7 @@ struct IdenticalToolCallLimitTests {
         let codes = Array(repeating: Self.repeatedCode, count: RepetitionDetection.defaultIdenticalToolCallLimit + 1)
         let (fixture, events) = try await Self.runAnswer(script: IdenticalToolCallScript(codes: codes, finalPassCode: nil))
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let stop = try #require(events.repetitionStops.first)
         #expect(events.repetitionStops.count == 1)
@@ -78,6 +82,7 @@ struct IdenticalToolCallLimitTests {
         let codes = [Self.repeatedCode, Self.repeatedCode, Self.otherCode, Self.repeatedCode, Self.repeatedCode]
         let (fixture, events) = try await Self.runAnswer(script: IdenticalToolCallScript(codes: codes, finalPassCode: nil))
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         #expect(events.repetitionStops.isEmpty)
         #expect(fixture.runs.value == codes.count)
@@ -91,6 +96,7 @@ struct IdenticalToolCallLimitTests {
             script: IdenticalToolCallScript(codes: codes, finalPassCode: nil),
             detection: RepetitionDetection(identicalToolCallLimit: limit))
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         #expect(events.repetitionStops.isEmpty)
         #expect(fixture.runs.value == codes.count)
@@ -103,6 +109,7 @@ struct IdenticalToolCallLimitTests {
             script: IdenticalToolCallScript(codes: codes, finalPassCode: Self.changeCode),
             detection: RepetitionDetection(recoveriesPerAnswer: 0))
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let stop = try #require(events.repetitionStops.first)
         #expect(events.repetitionStops.count == 1)

@@ -198,6 +198,12 @@ struct ToolInvocationLivenessTests {
             mounting: [slowTool],
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer {
+            // The gate opens before the close, because a close waits for the
+            // held call. Both also come when the test throws.
+            slowTool.openGate()
+            await fixture.session.close()
+        }
 
         let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
         var events: [SessionEvent] = []
@@ -283,6 +289,7 @@ struct ToolInvocationLivenessTests {
             mounting: [markerTool],
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         var sawLiveInvocation = false
         for try await event in await fixture.session.streamEvents(to: ScriptedToolFixture.prompt) {
@@ -473,6 +480,12 @@ struct ToolInvocationLivenessTests {
             mounting: [quickTool, slowTool],
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer {
+            // The gate opens before the close, because a close waits for the
+            // held call. Both also come when the test throws.
+            slowTool.openGate()
+            await fixture.session.close()
+        }
 
         // Read the answer's stream up to the quick call's close record. The
         // gated call of the second round has not returned, so the submission
@@ -613,6 +626,7 @@ struct ToolInvocationLivenessTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 
@@ -681,6 +695,7 @@ struct ToolInvocationLivenessTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 
@@ -696,6 +711,7 @@ struct ToolInvocationLivenessTests {
         let fixture = try await ScriptedSessionFixture.make(
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 

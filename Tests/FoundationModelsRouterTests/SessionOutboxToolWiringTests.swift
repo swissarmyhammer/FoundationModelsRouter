@@ -497,7 +497,8 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let plain = PlainTool()
-        _ = profile.standard.makeSession(tools: [emitter, plain])
+        let session = profile.standard.makeSession(tools: [emitter, plain])
+        defer { await session.close() }
 
         #expect(container.lastTools.count == 2)
         // Every String-output tool arrives wrapped in the mount layer;
@@ -518,7 +519,8 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let emitter = AmbientEventPostingTool()
-        _ = profile.standard.makeSession(tools: [emitter])
+        let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
 
         // No per-tool copy step exists anymore: the composition wraps the
         // very same instance the caller passed, and per-session event
@@ -542,6 +544,7 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
 
         // No wiring call appears anywhere in this test — the mount
         // layer `makeSession(tools:)` composed binds the ambient
@@ -568,6 +571,7 @@ struct SessionOutboxToolWiringTests {
         let emitter = AmbientEventPostingTool()
         let plain = PlainTool()
         let session = profile.standard.makeSession(tools: [plain, emitter])
+        defer { await session.close() }
 
         let mixedInnerTools = container.lastTools.compactMap(mountWrapped)
         let instancedPlain = try #require(mixedInnerTools.first(where: { $0 is PlainTool }) as? PlainTool)
@@ -600,6 +604,7 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
 
         // The composed, model-facing tool is the binding-only wrapper —
         // never the bare original: the pending envelope has no String wire
@@ -635,6 +640,7 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
 
         _ = try await session.respond(to: "drive the non-String tool")
 
@@ -668,6 +674,7 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         let pending = await session.outbox.pending()
         #expect(pending.events.isEmpty)
         #expect(session.outbox.queue.pending.isEmpty)
@@ -686,7 +693,9 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         #expect(session.outbox !== child.outbox)
     }
@@ -705,7 +714,9 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let parentActor = try #require(session as? RoutedSessionActor)
         let childActor = try #require(child as? RoutedSessionActor)
@@ -745,7 +756,9 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let (parentBound, childBound) = try Self.boundPair(of: session, and: child)
         // Both sessions share the very same underlying tool instance —
@@ -785,7 +798,9 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let (parentBound, childBound) = try Self.boundPair(of: session, and: child)
         // Both sessions share the very same underlying tool instance —
@@ -853,6 +868,7 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
 
         let parentActor = try #require(session as? RoutedSessionActor)
         let capturedMounted = try #require(
@@ -861,6 +877,7 @@ struct SessionOutboxToolWiringTests {
         // Stands in for a background task that captured the composed tool at
         // operation start, before any fork happened.
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         _ = try await capturedMounted.call(arguments: AmbientToolArguments(value: "captured-before-fork"))
         let parentPending = await session.outbox.pending()
@@ -884,7 +901,9 @@ struct SessionOutboxToolWiringTests {
         let forkable = ForkableAmbientTool()
         let plain = PlainTool()
         let session = profile.standard.makeSession(tools: [forkable, plain])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let parentActor = try #require(session as? RoutedSessionActor)
         let childActor = try #require(child as? RoutedSessionActor)
@@ -933,9 +952,11 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
         let rootBackend = try #require(container.lastBackend)
 
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         // `rootBackend` is the actual backend `RoutedSessionActor.fork()` calls
         // `makeFork(tools:)` on — asserting on `lastForkTools` here proves the
@@ -975,6 +996,7 @@ struct SessionOutboxToolWiringTests {
             tools: [emitter],
             budget: Self.budgetWithSmallToolOutputCap
         )
+        defer { await session.close() }
 
         let capping = try #require(
             failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<AmbientToolArguments>)
@@ -1001,6 +1023,7 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
+        defer { await session.close() }
 
         #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<AmbientToolArguments>))
         let mounting = try #require(
@@ -1028,7 +1051,9 @@ struct SessionOutboxToolWiringTests {
             tools: [forkable],
             budget: Self.budgetWithSmallToolOutputCap
         )
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let childActor = try #require(child as? RoutedSessionActor)
         let capping = try #require(
@@ -1055,7 +1080,9 @@ struct SessionOutboxToolWiringTests {
 
         let forkable = ForkableAmbientTool()
         let session = profile.standard.makeSession(tools: [forkable])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let childActor = try #require(child as? RoutedSessionActor)
         #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<AmbientToolArguments>))
@@ -1093,6 +1120,7 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let session = profile.standard.makeSession(tools: [emitter], budget: budget)
+        defer { await session.close() }
 
         // Capping requires a String output to truncate, so at every budget
         // level the chain for a non-String-output tool is bind(tool) —
@@ -1144,7 +1172,9 @@ struct SessionOutboxToolWiringTests {
 
         let emitter = AmbientNonStringOutputTool()
         let session = profile.standard.makeSession(tools: [emitter], budget: budget)
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        defer { await child.close() }
 
         let childActor = try #require(child as? RoutedSessionActor)
         // The same bind-only chain as the root site at every budget level:
@@ -1212,8 +1242,10 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        defer { await gate.open() }
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
+        // The gate opens before the close, because a close waits for the held
+        // run.
+        defer { await SessionFixtureLifecycle.close(session, opening: [gate]) }
         let backend = try #require(container.lastBackend)
         let mounted = try #require(
             failureDeliveryPeeled(container.lastTools.first) as? BackgroundToolRunner<FakeToolArguments>)
@@ -1263,9 +1295,12 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        defer { await gate.open() }
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
+        defer { await session.close() }
         let child = try await session.fork(workingDirectory: nil)
+        // The held run is on the fork, so the gate opens before the close of
+        // the fork: a close waits for the held run.
+        defer { await SessionFixtureLifecycle.close(child, opening: [gate]) }
 
         let childActor = try #require(child as? RoutedSessionActor)
         let childMounted = try #require(
@@ -1296,7 +1331,6 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        defer { await gate.open() }
         // toolOutputLimit 5 is far below the envelope's own estimated size:
         // real tool output at this cap is truncated, but the envelope —
         // control-plane data whose completionToken the model must keep —
@@ -1305,6 +1339,9 @@ struct SessionOutboxToolWiringTests {
             tools: [GatedBackgroundToolRunner(gate: gate)],
             budget: Self.budgetWithSmallToolOutputCap
         )
+        // The gate opens before the close, because a close waits for the held
+        // run.
+        defer { await SessionFixtureLifecycle.close(session, opening: [gate]) }
 
         let capping = try #require(
             failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<FakeToolArguments>)
@@ -1341,11 +1378,10 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        defer {
-            await answerHold.open()
-            await gate.open()
-        }
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
+        // The hold and the gate open before the close, because a close waits
+        // for the held answer and the held run.
+        defer { await SessionFixtureLifecycle.close(session, opening: [answerHold, gate]) }
         let backend = try #require(container.lastBackend)
 
         // Drive an answer whose backend invokes the composed background tool,
@@ -1361,6 +1397,8 @@ struct SessionOutboxToolWiringTests {
             }
             return try await session.respond(to: "cancel me")
         }
+        // The answer ends also when the test throws before it reads the answer.
+        defer { answer.cancel() }
         // The backend signals its change after the tool call handed back
         // its envelope. Rule T1: the wait also ends when the answer ended.
         // The answer hold keeps the answer open after the tool call
@@ -1410,15 +1448,25 @@ struct SessionOutboxToolWiringTests {
     /// - Parameters:
     ///   - tools: The tools the session mounts.
     ///   - dir: The temporary directory the router caches under.
-    /// - Returns: The session and its backend.
+    /// - Returns: The session and its backend. The session is open: the
+    ///   caller closes it.
+    /// - Throws: What profile resolution throws, or the error of `#require`
+    ///   when the container vended no backend. Before it throws, it closes
+    ///   the session that it made and removes `dir` (rule T1).
     private static func makeBackgroundingSession(
         tools: [any Tool], dir: URL
     ) async throws -> (session: any RoutedSession, backend: BackgroundingBackend) {
         let container = BackgroundingLLMContainer()
         let router = makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        }
         let session = profile.standard.makeSession(tools: tools)
-        let backend = try #require(container.lastBackend)
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            dir, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
+        }
         return (session, backend)
     }
 
@@ -1445,6 +1493,8 @@ struct SessionOutboxToolWiringTests {
         let gate = RunLatch()
         let (session, backend) = try await Self.makeBackgroundingSession(
             tools: [LatchedBackgroundToolRunner(name: "job", gate: gate, output: "job done")], dir: dir)
+        // The runs settle first, and then the session closes.
+        defer { await session.close() }
         defer { await Self.settleBackgroundRuns(on: session, opening: gate) }
 
         for try await _ in await session.streamEvents(to: "start the job") {}
@@ -1465,6 +1515,8 @@ struct SessionOutboxToolWiringTests {
         let reported = RunLatch()
         let (session, backend) = try await Self.makeBackgroundingSession(
             tools: [ProgressReportingBackgroundToolRunner(gate: gate, reported: reported)], dir: dir)
+        // The runs settle first, and then the session closes.
+        defer { await session.close() }
         defer { await Self.settleBackgroundRuns(on: session, opening: gate) }
 
         for try await _ in await session.streamEvents(to: "start the job") {}
@@ -1510,10 +1562,13 @@ struct SessionOutboxToolWiringTests {
         let elicitationId = ULID.generate()
         let (session, backend) = try await Self.makeBackgroundingSession(
             tools: [ElicitingBackgroundToolRunner(elicitationId: elicitationId)], dir: dir)
+        defer { await session.close() }
         let feed = await SessionEventLog.watch(session)
         defer { feed.drain.cancel() }
 
         let responding = Task { try await session.respond(to: "start the job") }
+        // The answer ends also when the test throws before it reads the answer.
+        defer { responding.cancel() }
 
         // The question is staged for the model, addressed by its own id. The
         // outbox stages the question before the session sends

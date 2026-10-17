@@ -1,10 +1,31 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m54kd6xe139q7hcegn46jg22
+  text: 'Picked up. Research: the prevailing form is `defer { try? FileManager.default.removeItem(at: fixture.directory) }` and then `defer { await fixture.session.close() }`, so the close runs first. A local `runAnswer` helper that returns an open session uses `RouterTestFixtures.removingDirectoryOnThrow(_:alsoOnThrow:_:)` with `{ await fixture.session.close() }`. A gated tool (`GatedMarkerTool`) has no `RunLatch`, so `SessionFixtureLifecycle.close(_:opening:)` does not fit; its defer opens the gate and then closes. Discovery: the `files` edit op with `replace_all: true` replaced only 1 match, so each place needs its own edit with unique context. Done so far: IdenticalToolCallLimitTests, ToolCallFailureAnswerTests, ToolCallRepetitionStopTests, ToolCallRunJoinTests, ToolContextMountSinkPublicSurfaceTests, ToolInvocationLivenessTests, ToolOutputCappingTests, ToolOutputFeedbackTests, ToolOutputProtectionSessionTests, RejectedToolCallRetryTests, ScriptedToolAnswerComparisonTests, SubmissionBoundaryToolTests, SubmissionBoundaryToolPublicSurfaceTests.'
+  timestamp: 2026-10-17T09:34:37.998035+00:00
+- actor: claude-code
+  id: 01m54kv08qb4zsymgjjt6j8ym6
+  text: |-
+    Implementation landed in 17 test files. Notes for the next agent:
+    - Each listed test closes each session that it makes (root, fork, restored) in a `defer` right after the make. The recorded session of a restore test stays open through the restore and closes after the restored session.
+    - Held work: a `RunLatch` gate opens through `SessionFixtureLifecycle.close(_:opening:)` before the close (PerCallMountSessionTests, MountedRunAttachmentCarrierTests, SessionOutboxToolWiringTests). In `forkBackgroundRunLivesInForkRunPlane` the held run is on the fork, so the fork closes with the gate. `GatedMarkerTool` (ToolInvocationLivenessTests) has no `RunLatch`, so its defer opens the gate and then closes.
+    - Helpers that return an open session (`runAnswer`, `makeHarness`, `makeSession`, `makeCancellationObservingSession`, `makeBackgroundingSession`) now close the session and remove the directory when a later step throws, through `RouterTestFixtures.removingDirectoryOnThrow(_:alsoOnThrow:_:)`. Helpers that do not return the session (`driveAnswer`, `mountingAnswerEvents`, `expectInBandCallReportsItsAttachments`, `makeRespondRun`, `makeStreamRun`, `assert*ComposesBindOnly*`) close it in their own defer, after they read their values.
+    - Existing answer Tasks in the changed tests are cancelled in a `defer`, before the close.
+    - Each close runs after the checks, so no close adds an event that a check counts, and no wait ends earlier than before.
+    - Filtered run: `swift test --filter 'FoundationModelsRouterTests\.(<17 suites>)/'`: 125 tests in 17 suites passed.
+    - Full run (`swift test`, one time): 1827 tests in 224 suites passed with 6 known issues (the `withKnownIssue` cases of RealModelHarness, PromptWaitTests, TaskEndEventWaitTests and ManualRunClockWaitTests, not changed); public surface: 26 tests in 14 suites passed; 19 tests in 3 suites passed; XCTest: 0 tests. No compiler warning; the one build warning is the known mlx-swift bundle warning. IntegrationTests compiles no changed file, so it was not built.
+
+    ### implement — changed
+    - evidence: 17 files under Tests/FoundationModelsRouterTests/ (IdenticalToolCallLimitTests, ToolCallFailureAnswerTests, ToolCallRepetitionStopTests, ToolCallRunJoinTests, ToolContextMountSinkPublicSurfaceTests, ToolInvocationLivenessTests, ToolOutputCappingTests, ToolOutputFeedbackTests, ToolOutputProtectionSessionTests, RejectedToolCallRetryTests, ScriptedToolAnswerComparisonTests, PerCallMountSessionTests, MountedRunAttachmentCarrierTests, RoutedSessionToolContextBindingTests, SessionOutboxToolWiringTests, SubmissionBoundaryToolTests, SubmissionBoundaryToolPublicSurfaceTests); `swift test`: 1827 tests in 224 suites passed (6 known issues), 26 in 14 suites passed, 19 in 3 suites passed
+    - next: review
+  timestamp: 2026-10-17T09:42:09.943787+00:00
 depends_on:
 - 01M546YNM74MV9HRDSA7CNP2A0
-position_column: todo
-position_ordinal: '8980'
+position_column: doing
+position_ordinal: '80'
 title: 'T1 follow-up b4: tool output, tool call and mount suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the tool output, tool call and mount suites.
@@ -20,21 +41,21 @@ How to close (use the forms that T1 added):
 - After a close, a test that waits on a feed now ends on the feed end. Check that no test now passes only because a wait ends early.
 
 Suites (file under Tests/FoundationModelsRouterTests/; the tests that never close):
-- [ ] IdenticalToolCallLimitTests, IdenticalToolCallLimitTests.swift: all 4 (local runAnswer; the 2 other suites in the file are value-only).
-- [ ] ToolCallFailureAnswerTests, ToolCallFailureAnswerTests.swift: all 4 (ScriptedSessionFixture.make).
-- [ ] ToolCallRepetitionStopTests, ToolCallRepetitionStopTests.swift: all 2 (local runAnswer).
-- [ ] ToolCallRunJoinTests, ToolCallRunJoinTests.swift: 2 of 8 (invocationEventsCarryTheToolCallIdOfTheirRun, twoRunsOfOneToolJoinTheirOwnCalls).
-- [ ] ToolContextMountSinkPublicSurfaceTests, ToolContextMountSinkPublicSurfaceTests.swift: all 4 (local driveAnswer).
-- [ ] ToolInvocationLivenessTests, ToolInvocationLivenessTests.swift: 7 of 20 (liveInvocationEventArrivesWhileTheToolStillRuns, invocationRecordsAreDeliveryOnlyAndChangeNoRecording, reportPostedDuringTheSubmissionArrivesOnTheAnswerStreamAfterTheCloseRecord, runToCompletionCallReportsItsAttachmentsOnTheAnswerStream, contextBindingToolCallReportsItsAttachmentsOnTheAnswerStream, callWithNoAttachmentsProducesNoReport, reportIsNeverStagedOrRecorded).
-- [ ] ToolOutputCappingTests, ToolOutputCappingTests.swift: 7 of 19 (makeSessionWithToolOutputLimitThreadsCappedTool, makeSessionWithNoToolOutputLimitLeavesToolUnwrapped, makeSessionWithNoBudgetLeavesToolUnwrapped, cappingComposesWithAmbientEventRoute, forkInheritsToolOutputLimitCapping, forkWithNoToolOutputLimitLeavesChildToolsUnwrapped, forkWithNoBudgetLeavesChildToolsUnwrapped).
-- [ ] ToolOutputFeedbackTests, ToolOutputFeedbackTests.swift: all 2.
-- [ ] ToolOutputProtectionSessionTests, ToolOutputProtectionSessionTests.swift: all 6.
-- [ ] RejectedToolCallRetryTests, RejectedToolCallRetryTests.swift: all 2 (RejectingSessionFixture.make).
-- [ ] ScriptedToolAnswerComparisonTests, ScriptedToolAnswerComparisonTests.swift: all 6 (local makeRespondRun / makeStreamRun).
-- [ ] PerCallMountSessionTests, PerCallMountSessionTests.swift: all 4 (local makeHarness).
-- [ ] MountedRunAttachmentCarrierTests, MountedRunAttachmentCarrierTests.swift: all 3 (local makeFixture / mountingAnswerEvents). Note: T1 listed "close on throw" for this file; the check found no close on the success path.
-- [ ] RoutedSessionToolContextBindingTests, RoutedSessionToolContextBindingTests.swift: all 6 (local makeCancellationObservingSession).
-- [ ] SessionOutboxToolWiringTests, SessionOutboxToolWiringTests.swift: all 29 (local makeBackgroundingSession / assert*ComposesBindOnly*).
-- [ ] SubmissionBoundaryToolTests, SubmissionBoundaryToolTests.swift: all 5.
-- [ ] SubmissionBoundaryToolPublicSurfaceTests, SubmissionBoundaryToolPublicSurfaceTests.swift: all 1 (ScriptedSessionFixture.make).
-- [ ] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup
+- [x] IdenticalToolCallLimitTests, IdenticalToolCallLimitTests.swift: all 4 (local runAnswer; the 2 other suites in the file are value-only).
+- [x] ToolCallFailureAnswerTests, ToolCallFailureAnswerTests.swift: all 4 (ScriptedSessionFixture.make).
+- [x] ToolCallRepetitionStopTests, ToolCallRepetitionStopTests.swift: all 2 (local runAnswer).
+- [x] ToolCallRunJoinTests, ToolCallRunJoinTests.swift: 2 of 8 (invocationEventsCarryTheToolCallIdOfTheirRun, twoRunsOfOneToolJoinTheirOwnCalls).
+- [x] ToolContextMountSinkPublicSurfaceTests, ToolContextMountSinkPublicSurfaceTests.swift: all 4 (local driveAnswer).
+- [x] ToolInvocationLivenessTests, ToolInvocationLivenessTests.swift: 7 of 20 (liveInvocationEventArrivesWhileTheToolStillRuns, invocationRecordsAreDeliveryOnlyAndChangeNoRecording, reportPostedDuringTheSubmissionArrivesOnTheAnswerStreamAfterTheCloseRecord, runToCompletionCallReportsItsAttachmentsOnTheAnswerStream, contextBindingToolCallReportsItsAttachmentsOnTheAnswerStream, callWithNoAttachmentsProducesNoReport, reportIsNeverStagedOrRecorded).
+- [x] ToolOutputCappingTests, ToolOutputCappingTests.swift: 7 of 19 (makeSessionWithToolOutputLimitThreadsCappedTool, makeSessionWithNoToolOutputLimitLeavesToolUnwrapped, makeSessionWithNoBudgetLeavesToolUnwrapped, cappingComposesWithAmbientEventRoute, forkInheritsToolOutputLimitCapping, forkWithNoToolOutputLimitLeavesChildToolsUnwrapped, forkWithNoBudgetLeavesChildToolsUnwrapped).
+- [x] ToolOutputFeedbackTests, ToolOutputFeedbackTests.swift: all 2.
+- [x] ToolOutputProtectionSessionTests, ToolOutputProtectionSessionTests.swift: all 6.
+- [x] RejectedToolCallRetryTests, RejectedToolCallRetryTests.swift: all 2 (RejectingSessionFixture.make).
+- [x] ScriptedToolAnswerComparisonTests, ScriptedToolAnswerComparisonTests.swift: all 6 (local makeRespondRun / makeStreamRun).
+- [x] PerCallMountSessionTests, PerCallMountSessionTests.swift: all 4 (local makeHarness).
+- [x] MountedRunAttachmentCarrierTests, MountedRunAttachmentCarrierTests.swift: all 3 (local makeFixture / mountingAnswerEvents). Note: T1 listed "close on throw" for this file; the check found no close on the success path.
+- [x] RoutedSessionToolContextBindingTests, RoutedSessionToolContextBindingTests.swift: all 6 (local makeCancellationObservingSession).
+- [x] SessionOutboxToolWiringTests, SessionOutboxToolWiringTests.swift: all 29 (local makeBackgroundingSession / assert*ComposesBindOnly*).
+- [x] SubmissionBoundaryToolTests, SubmissionBoundaryToolTests.swift: all 5.
+- [x] SubmissionBoundaryToolPublicSurfaceTests, SubmissionBoundaryToolPublicSurfaceTests.swift: all 1 (ScriptedSessionFixture.make).
+- [x] Run the full suite one time (`swift test`). Record the counts in a comment. #t1-followup

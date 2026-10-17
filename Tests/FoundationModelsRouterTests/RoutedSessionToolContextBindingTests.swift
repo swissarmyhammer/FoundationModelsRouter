@@ -318,50 +318,60 @@ struct RoutedSessionToolContextBindingTests {
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``ContextProbingBackend`` — guided by `grammar` when supplied.
     ///
-    /// When it throws, it removes the temp directory first.
+    /// The session is open when this returns: the caller closes it. When it
+    /// throws, it closes the session that it made and removes the temp
+    /// directory first (rule T1).
     private static func makeSession(grammar: Grammar? = nil) async throws -> (
         session: any RoutedSession, backend: ContextProbingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        return try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
-            let container = ProbingLLMContainer()
-            let router = RouterTestFixtures.makeRouter(
-                cacheDir: dir,
-                loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-            )
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            let session =
-                if let grammar {
-                    profile.standard.makeGuidedSession(grammar: grammar)
-                } else {
-                    profile.standard.makeSession()
-                }
-            let backend = try #require(container.lastBackend)
-            return (session, backend, dir)
+        let container = ProbingLLMContainer()
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: dir,
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        let session =
+            if let grammar {
+                profile.standard.makeGuidedSession(grammar: grammar)
+            } else {
+                profile.standard.makeSession()
+            }
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            dir, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
+        }
+        return (session, backend, dir)
     }
 
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``CancellationObservingBackend``.
     ///
-    /// When it throws, it removes the temp directory first.
+    /// The session is open when this returns: the caller closes it. When it
+    /// throws, it closes the session that it made and removes the temp
+    /// directory first (rule T1).
     private static func makeCancellationObservingSession() async throws -> (
         session: any RoutedSession, backend: CancellationObservingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        return try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
-            let container = CancellationObservingLLMContainer()
-            let router = RouterTestFixtures.makeRouter(
-                cacheDir: dir,
-                loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-            )
-            let profile = try await router.resolve(
-                profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-            let session = profile.standard.makeSession()
-            let backend = try #require(container.lastBackend)
-            return (session, backend, dir)
+        let container = CancellationObservingLLMContainer()
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: dir,
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(dir) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
+        let session = profile.standard.makeSession()
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            dir, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
+        }
+        return (session, backend, dir)
     }
 
     // MARK: - Tests
@@ -371,6 +381,7 @@ struct RoutedSessionToolContextBindingTests {
     func respondBindsToolContext() async throws {
         let (session, backend, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "hello")
 
@@ -398,6 +409,7 @@ struct RoutedSessionToolContextBindingTests {
         let (session, backend, dir) = try await Self.makeSession(
             grammar: .ebnf("root ::= \"yes\" | \"no\""))
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "hello")
 
@@ -419,6 +431,7 @@ struct RoutedSessionToolContextBindingTests {
     func streamResponseBindsToolContext() async throws {
         let (session, backend, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         for try await _ in await session.streamResponse(to: "hello") {}
 
@@ -432,6 +445,7 @@ struct RoutedSessionToolContextBindingTests {
     func eachSubmissionMintsFreshCompletionToken() async throws {
         let (session, backend, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
@@ -446,8 +460,11 @@ struct RoutedSessionToolContextBindingTests {
     func cancellingTheAnswerFlipsTheBoundProbe() async throws {
         let (session, backend, dir) = try await Self.makeCancellationObservingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let answerTask = Task { try await session.respond(to: Self.holdPrompt) }
+        // The answer ends also when the test throws before its cancel.
+        defer { answerTask.cancel() }
         // The backend records the start of its hold inside the model call,
         // so the cancel below reaches a model call in flight.
         try await backend.changes.wait(until: { backend.respondStarted })
@@ -468,10 +485,13 @@ struct RoutedSessionToolContextBindingTests {
     func cancellingAStreamingAnswerFlipsTheBoundProbe() async throws {
         let (session, backend, dir) = try await Self.makeCancellationObservingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         let answerTask = Task {
             for try await _ in await session.streamResponse(to: Self.holdPrompt) {}
         }
+        // The answer ends also when the test throws before its cancel.
+        defer { answerTask.cancel() }
         // The producer task of the stream records the start of its hold, so
         // the cancel below reaches a streaming model call in flight.
         try await backend.changes.wait(until: { backend.streamStarted })

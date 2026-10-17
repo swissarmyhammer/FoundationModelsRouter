@@ -79,6 +79,7 @@ struct ScriptedToolAnswerComparisonTests {
             mounting: makeTools(),
             tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
         return ToolAnswerRunOutcome(
@@ -102,6 +103,7 @@ struct ScriptedToolAnswerComparisonTests {
             mounting: makeTools(),
             tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         var answer = ""
         var rawAnswer = ""

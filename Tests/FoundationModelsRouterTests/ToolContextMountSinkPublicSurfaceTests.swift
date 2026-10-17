@@ -232,7 +232,12 @@ struct ToolContextMountSinkPublicSurfaceTests {
 
     // MARK: - Harness
 
-    /// Drives one scripted answer that calls `host` exactly one time.
+    /// Drives one scripted answer that calls `host` exactly one time, and then
+    /// closes the session.
+    ///
+    /// The close comes also when the answer throws (rule T1). Each run that
+    /// `host` mounts settles in the answer, so the close posts no event to the
+    /// sink of a test.
     ///
     /// - Parameter host: The tool the vended session mounts.
     /// - Throws: Whatever session vending or the answer throws.
@@ -249,6 +254,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
             mounting: [host],
             tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
     }

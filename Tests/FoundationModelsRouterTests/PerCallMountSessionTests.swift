@@ -161,8 +161,10 @@ struct PerCallMountSessionTests {
     ///   - inlineSettleGrace: The settle period of the session. The default
     ///     `0` makes each background call answer with its pending envelope at
     ///     once, also when its run ends at once.
-    /// - Returns: The harness.
-    /// - Throws: What profile resolution throws.
+    /// - Returns: The harness. Its session is open: the caller closes it.
+    /// - Throws: What profile resolution throws, or the error of `#require`
+    ///   when the container vended no backend. Before it throws, it closes
+    ///   the session that it made and removes the directory (rule T1).
     private static func makeHarness(
         tools: [any Tool], calls: [ScriptedMountCall], inlineSettleGrace: TimeInterval = 0
     ) async throws -> Harness {
@@ -174,10 +176,16 @@ struct PerCallMountSessionTests {
             recorder: recorder,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: tools, inlineSettleGrace: inlineSettleGrace))
-        let backend = try #require(container.lastBackend)
+        let backend = try await RouterTestFixtures.removingDirectoryOnThrow(
+            directory, alsoOnThrow: { await session.close() }
+        ) {
+            try #require(container.lastBackend)
+        }
         return Harness(session: session, backend: backend, recorder: recorder, directory: directory)
     }
 
@@ -253,8 +261,11 @@ struct PerCallMountSessionTests {
             tools: [tool], calls: [Self.perCallMountCall(value: Self.synchronousValue)],
             inlineSettleGrace: Self.inlineSettleGrace)
         defer { try? FileManager.default.removeItem(at: harness.directory) }
+        defer { await SessionFixtureLifecycle.close(harness.session, opening: [gate]) }
 
         let answering = Task { try await harness.session.respond(to: "run it in band") }
+        // The answer ends also when the test throws before it reads the answer.
+        defer { answering.cancel() }
         // The gate holds the body, so the answer cannot end before the body
         // starts. An answer that ends first did not call the tool.
         try await RecordedWaitResult.wait(for: { await entered.waitUntilOpen() }, endingOnEndOf: answering)
@@ -288,6 +299,7 @@ struct PerCallMountSessionTests {
         let harness = try await Self.makeHarness(
             tools: [tool], calls: [Self.perCallMountCall(value: Self.backgroundValue)])
         defer { try? FileManager.default.removeItem(at: harness.directory) }
+        defer { await harness.session.close() }
 
         let answer = try await harness.session.respond(to: "run it in the background")
         let envelope = try MountFixtures.decodeEnvelope(answer)
@@ -317,6 +329,7 @@ struct PerCallMountSessionTests {
         let harness = try await Self.makeHarness(
             tools: [try AgentOperationFixtures.makeTool(startGate: startGate)], calls: calls)
         defer { try? FileManager.default.removeItem(at: harness.directory) }
+        defer { await SessionFixtureLifecycle.close(harness.session, opening: [startGate]) }
 
         let answer = try await harness.session.respond(to: "start, list, check and cancel")
         let outputs = harness.backend.toolOutputs
@@ -350,6 +363,7 @@ struct PerCallMountSessionTests {
             tools: [tool],
             calls: [ScriptedMountCall(toolName: tool.name, argumentsJSON: #"{"value":"outer call"}"#)])
         defer { try? FileManager.default.removeItem(at: harness.directory) }
+        defer { await SessionFixtureLifecycle.close(harness.session, opening: [gate]) }
 
         // The synchronous call answers in band with the envelope of the
         // nested run.

@@ -66,6 +66,7 @@ struct SubmissionBoundaryToolPublicSurfaceTests {
             mounting: [CountingBoundaryTool(counter: counter)],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
 
         for _ in 0..<Self.answerCount {
             _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
