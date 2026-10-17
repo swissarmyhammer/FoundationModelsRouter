@@ -31,8 +31,24 @@ comments:
     - evidence: Extras f9b5496 (root and IntegrationTests); 5 files: Tests/FoundationModelsRouterTests/Helpers/QueueDepthProbe.swift, Tests/FoundationModelsRouterTests/PoolEntryQueueTests.swift, Tests/FoundationModelsRouterTests/ExtrasPoolResolveTests.swift, Tests/FoundationModelsRouterTests/ResolveCancellationTests.swift, Tests/FoundationModelsRouterTests/SummarizerSubmissionTests.swift; 4 suites 14/14 passed; full swift test 1827 tests in 224 suites (6 known issues) + 26 in 14 + 19 in 3, 0 failures; IntegrationTests build complete.
     - next: review
   timestamp: 2026-10-17T11:09:41.173921+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m54s0a2xjct2xey0bn1fqcsp
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (e51dea4f). Counts: findings 0, confirmed 0, refuted 0, attempted 7, failed 0. The engine examined 5 files. The .reviewignore rule excluded 4 .kanban files.
+    - next: The task is in done. No work is open.
+  timestamp: 2026-10-17T11:12:26.717089+00:00
+- actor: claude-code
+  id: 01m54s0syaj087b11p553q27yp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 test files, doc comments only; local Extras pin f9b5496
+    - test: green — 4 named suites 14 tests passed; full swift test 1827 tests in 224 suites + 26 + 19 passed, 0 failures; IntegrationTests build complete
+    - commit: e51dea4f
+    - review: clean — 0 findings, 5 files reviewed
+  timestamp: 2026-10-17T11:12:42.954835+00:00
+position_column: done
+position_ordinal: ffffffff8880
 title: 'QueueDepthProbe doc: the depth increment comes in the enqueue step (after the Extras fix)'
 ---
 Source: request of the coordinating session (swissarmyhammer-96), 2026-10-17.
