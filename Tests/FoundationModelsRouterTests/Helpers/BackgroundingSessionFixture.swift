@@ -72,6 +72,24 @@ struct BackgroundingSessionFixture: Sendable {
             SessionFixtureLifecycle.Started(session: session, router: router, directory: directory), opening: gates)
     }
 
+    /// Runs `body`, and then ends the fixture with ``end(opening:)``. The end
+    /// comes also when `body` throws, so a test that fails leaves no session
+    /// open and no run held on `gates`.
+    ///
+    /// - Parameters:
+    ///   - gates: The gates of the runs of the session.
+    ///   - body: The steps of the test.
+    /// - Throws: What `body` throws.
+    func endingAfter(opening gates: [RunLatch] = [], _ body: () async throws -> Void) async throws {
+        do {
+            try await body()
+        } catch {
+            await end(opening: gates)
+            throw error
+        }
+        await end(opening: gates)
+    }
+
     /// Ends the fixture with ``end(opening:)`` and then reads `feed` to its
     /// end. The close of the session finishes the feed.
     ///

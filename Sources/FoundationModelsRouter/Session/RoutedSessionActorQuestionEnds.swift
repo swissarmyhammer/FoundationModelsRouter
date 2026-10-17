@@ -68,4 +68,67 @@ extension RoutedSessionActor {
     private func waitUntilQuestionsLeftTheRecord(_ ids: [ULID]) async {
         _ = await questionPosts.waitUntil { !askedQuestions.holdsQuestion(amongAnyOf: ids) }
     }
+
+    /// Ends each question that went out on the feeds and can still get an
+    /// end or a completion, waits for its post, and then finishes the feeds
+    /// (``finishSessionEventSubscriptions()``). Only ``close()`` calls it,
+    /// after ``performCancelAll()``.
+    ///
+    /// The rule (R3): each ``SessionEvent/elicitationRequested(_:)`` on a
+    /// feed gets its ``SessionEvent/elicitationEnded(_:)`` (or its answer or
+    /// its completion) on the same feed before that feed ends.
+    ///
+    /// ``performCancelAll()`` ends the questions that are open when it runs.
+    /// While it waits for the end posts, a run that no cancel reached can ask
+    /// a new question, for example a question that a
+    /// ``SubagentQuestionRelay`` sends up from a child. The journal records
+    /// that question, and it goes out on the feeds. The sweep that
+    /// ``performCancelAll()`` starts ends such a question only later, because
+    /// a slow canceler can hold the sweep. Thus each cycle of this call ends
+    /// each open question (`RunPlane.cancelOpenElicitations()`), and waits
+    /// for each end post and each completion post that is on its way
+    /// (``awaitQuestionPosts(of:)``).
+    ///
+    /// The cycles repeat until a check finds no such question
+    /// (``feedsHoldAnOpenQuestion()``). The feeds finish after that check
+    /// with no suspension point between them, so no question goes out on a
+    /// feed between the check and the end of the feeds. The journal records
+    /// a later question, and it goes to no feed.
+    ///
+    /// The waits are bounded by sink posts only, as the waits of
+    /// ``performCancelAll()`` are: no canceler and no tool bounds them. A
+    /// cycle repeats only for a question that a run asked during the cycle
+    /// before.
+    func finishFeedsAfterTheirQuestionsEnded() async {
+        while true {
+            _ = await runPlane.cancelOpenElicitations()
+            await awaitQuestionPosts(of: await questionPostsOnTheirWay())
+            guard await feedsHoldAnOpenQuestion() else {
+                finishSessionEventSubscriptions()
+                return
+            }
+        }
+    }
+
+    /// Whether a question that went out on the feeds can still get an end or
+    /// a completion: the record holds it (``askedQuestions``), and the run
+    /// plane holds it open, or its end post or completion post is on its
+    /// way. A question that the journal recorded during the reads of the run
+    /// plane counts too, because the reads can come before its question
+    /// opened in the run plane.
+    ///
+    /// A question that the run plane holds and the record does not hold did
+    /// not go out yet. The journal records it after this check, and the
+    /// caller then finished the feeds.
+    ///
+    /// - Returns: `true` when a cycle of
+    ///   ``finishFeedsAfterTheirQuestionsEnded()`` must end a question or
+    ///   wait for a post.
+    private func feedsHoldAnOpenQuestion() async -> Bool {
+        let recordedBefore = askedQuestions.recordedCount
+        let open = await runPlane.openElicitations().map(\.elicitationId)
+        let onTheirWay = await questionPostsOnTheirWay()
+        return askedQuestions.recordedCount != recordedBefore
+            || askedQuestions.holdsQuestion(amongAnyOf: open + onTheirWay)
+    }
 }

@@ -429,7 +429,8 @@ public enum SessionEvent: Sendable, Equatable {
     ///   cancel-all signal. The event comes before the
     ///   ``signalDone(_:)`` of that signal.
     /// - ``RoutedSession/close()``: ``Origin/system``. The event comes
-    ///   before the end of ``RoutedSession/streamSessionEvents()``.
+    ///   before the end of ``RoutedSession/streamSessionEvents()``, also for
+    ///   a question that a run asked while the close stopped the work.
     /// - An end that comes up from a subagent (``SubagentQuestionRelay``):
     ///   ``Origin/system``. The event comes before the ``runSettled(_:)`` of
     ///   the run that drives the subagent.

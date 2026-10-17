@@ -188,17 +188,6 @@ struct SubagentQuestionRelayTests {
         return (rootEnd.position, childEnd.position)
     }
 
-    /// The test of a question with the id `id`.
-    ///
-    /// - Parameter id: The id of a question.
-    /// - Returns: A test that accepts ``SessionEvent/elicitationRequested(_:)`` of that question.
-    private static func isQuestion(_ id: ULID) -> (SessionEvent) -> Bool {
-        { event in
-            guard case .elicitationRequested(let question) = event else { return false }
-            return question.elicitation?.elicitationId == id
-        }
-    }
-
     // MARK: - The question goes up
 
     /// The production change that makes this test fail: no relay, or a relay
@@ -593,7 +582,7 @@ struct SubagentQuestionRelayTests {
         let asking = Task {
             try await context.elicit(PendingElicitationFixtures.formRequest(elicitationId: directId))
         }
-        _ = await SessionWorkEventTests.outputs(from: &level.rootFeed, through: Self.isQuestion(directId))
+        _ = await SessionWorkEventTests.outputs(from: &level.rootFeed, through: isQuestion(directId))
 
         let rootOpen = await level.root.openElicitationIds()
         let childOpen = await level.child.openElicitationIds()

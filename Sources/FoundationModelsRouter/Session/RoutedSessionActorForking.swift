@@ -430,14 +430,19 @@ extension RoutedSessionActor {
         // with the origin ``Origin/system``, so each end of a question that
         // close ends has that origin. Its waits are bounded by sink posts
         // only, so they end, also when the caller of close is cancelled.
+        //
+        // Then the feeds finish (``finishFeedsAfterTheirQuestionsEnded()``),
+        // before anything that can return early: a consumer looping over
+        // ``streamSessionEvents()`` must end when the session does, whether or
+        // not this close has anything to journal. A run can ask a new
+        // question while ``performCancelAll()`` waits, for example a question
+        // that a subagent relay sends up. That call first ends each question
+        // that went out on the feeds, with the same origin, so each question
+        // on a feed gets its end on that feed before the feed ends (rule R3).
         await OriginContext.$current.withValue(.system) {
             await performCancelAll()
+            await finishFeedsAfterTheirQuestionsEnded()
         }
-
-        // Before anything that can return early: a consumer looping over
-        // ``streamSessionEvents()`` must end when the session does, whether or
-        // not this close has anything to journal.
-        finishSessionEventSubscriptions()
 
         // The drain sweeps and journals the background runs, and waits until
         // no work of the session runs, also until the generation pass of a

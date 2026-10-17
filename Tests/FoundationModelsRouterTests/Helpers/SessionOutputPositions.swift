@@ -87,6 +87,17 @@ func firstQuestion(
     return try #require(question, "the output has no question", sourceLocation: sourceLocation)
 }
 
+/// The test of a question with the id `id`.
+///
+/// - Parameter id: The id of a question.
+/// - Returns: A test that accepts ``SessionEvent/elicitationRequested(_:)`` of that question.
+func isQuestion(_ id: ULID) -> (SessionEvent) -> Bool {
+    { event in
+        guard case .elicitationRequested(let question) = event else { return false }
+        return question.elicitation?.elicitationId == id
+    }
+}
+
 /// The position of the first output of `outputs` whose event `matches`.
 ///
 /// - Parameters:

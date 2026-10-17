@@ -136,6 +136,14 @@ struct AskedQuestions: Sendable {
     /// Each recorded question, by its id.
     private var questions: [ULID: Question] = [:]
 
+    /// The count of the questions that the record took in
+    /// (``noteAsked(_:mailID:)``) since the session started. A question that
+    /// leaves the record does not decrease it. Thus a reader that reads the
+    /// count before a suspension and again after it knows whether the journal
+    /// recorded a question in that time
+    /// (``RoutedSessionActor/finishFeedsAfterTheirQuestionsEnded()``).
+    private(set) var recordedCount = 0
+
     /// Records the question of `request`, with the requested schema of a
     /// form-mode question.
     ///
@@ -143,6 +151,7 @@ struct AskedQuestions: Sendable {
     ///   - request: The question that a run asked.
     ///   - mailID: The id of the run mail that holds the question, or `nil`.
     mutating func noteAsked(_ request: ElicitationRequest, mailID: MailID?) {
+        recordedCount += 1
         let isForm = request.mode == .form
         questions[request.elicitationId] = Question(
             state: isForm ? .form : .url, mailID: mailID, requestedSchema: isForm ? request.requestedSchema : nil,

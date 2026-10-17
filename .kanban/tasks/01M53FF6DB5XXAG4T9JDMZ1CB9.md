@@ -22,8 +22,24 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/StoppedAnswerOtherWorkEventTests.swift. `swift test --filter 'FoundationModelsRouterTests.StoppedAnswerOtherWorkEventTests'`: 7 tests passed. Full `swift test` (after the fix): 1794 tests in 217 suites passed with 1 known issue (the RealModelHarness `withKnownIssue`), plus 26 and 19 tests passed, exit 0. `swift build --package-path IntegrationTests --build-tests`: Build complete, exit 0. The only warning is the SwiftPM "missing creator for mutated node" of mlx-swift_Cmlx.bundle, which other cards already record.
     - next: review
   timestamp: 2026-10-17T00:03:43.732243+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m53jyr4jrg9x5w1tttgd8njq
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (88cb5726). 0 findings, 0 confirmed, 1 refuted, 7 attempted, 0 failed. 1 file reviewed (StoppedAnswerOtherWorkEventTests.swift). 12 .kanban files not reviewed (ignore rule).
+    - next: none. The task is in done.
+  timestamp: 2026-10-17T00:07:29.682665+00:00
+- actor: claude-code
+  id: 01m53jz4tgb3ckxc46c74nqqwp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 test file; Package.resolved (gitignored) pins Extras 7a40759
+    - test: green — the full swift test run of the implement step after its fix: 1794 tests in 217 suites + 26 + 19 passed, exit 0; IntegrationTests build complete
+    - commit: 88cb5726
+    - review: clean — 0 findings, 1 file reviewed
+  timestamp: 2026-10-17T00:07:42.672178+00:00
+position_column: done
+position_ordinal: fffffff580
 title: Move to Extras 7a40759 (R1 cancel ends questions, JSON Schema pattern and length)
 ---
 Source: elicitation check of 2026-10-16 (elicitation-plan.md section 10), item 0. Request from the coordinating session.

@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsExtras
@@ -52,6 +53,9 @@ struct ElicitationEndedEventTests {
 
     /// The prompt whose answer calls ``InAnswerURLAskingTool``.
     private static let askingPrompt = "ask inside the answer"
+
+    /// The count of a post or an end that comes one time.
+    fileprivate static let once = 1
 
     // MARK: - Helpers
 
@@ -252,6 +256,130 @@ struct ElicitationEndedEventTests {
         #expect(end.origin == .system)
         try await Self.expectNoPendingQuestion(asked)
         await asked.end()
+    }
+
+    /// The production change that makes this test fail: a `close()` that
+    /// ends the feeds while a question that a run asked during the stop of
+    /// all work (``RoutedSessionActor/performCancelAll()``) is still open, so
+    /// the end of that question goes to a feed that ended (rule R3).
+    ///
+    /// The first question holds the stop: its end post waits at a gate, so
+    /// `RunPlane.cancelOpenElicitations()` of the stop waits. In that window
+    /// a second question opens, as the relayed question of a subagent does,
+    /// and the session sends it on the feed. Its run is no background run, so
+    /// no cancel of a run ends it. The sweep that the stop starts holds at the
+    /// slow canceler of a run, so the sweep does not end the second question
+    /// before the feed ends. The test opens that canceler only after it read
+    /// the feed to its end.
+    @Test("close() ends a question that opens while its stop waits, on the feed, before the feed ends")
+    func closeEndsAQuestionThatOpensWhileItsStopWaits() async throws {
+        let firstEnd = RunLatch()
+        let slowCanceler = CancelerHold()
+        let fixture = try await BackgroundingSessionFixture.make(prefix: Self.prefix, tools: [])
+        try await fixture.endingAfter(opening: [firstEnd, slowCanceler.release]) {
+            let session = try fixture.sessionActor()
+            await session.attachOutboxJournalIfNeeded()
+            var feed = await session.streamSessionEvents().makeAsyncIterator()
+            let heldRun = await trackFakeRun(
+                on: session.runPlane, latch: slowCanceler.release, kind: .process, holdingCancelerAt: slowCanceler)
+            let first = ContextQuestion(on: session, runToken: heldRun, holdingEndsAt: firstEnd)
+            let firstAnswer = Task { try await first.ask() }
+            try await first.waitForThePost()
+
+            let closing = Task { await session.close() }
+            try await first.waitForTheEndPost()
+            let second = ContextQuestion(on: session, runToken: RunPlane.makeCompletionToken())
+            let secondAnswer = Task { try await second.ask() }
+            try await second.waitForThePost()
+            await firstEnd.open()
+            let outputs = await SessionWorkEventTests.remainingOutputs(of: &feed)
+            await slowCanceler.release.open()
+            await closing.value
+            let answers = [try await firstAnswer.value, try await secondAnswer.value]
+
+            let asked = try #require(firstPosition(in: outputs, where: isQuestion(second.id)))
+            let ends = PendingElicitationFixtures.ends(in: outputs).filter { $0.end.elicitationId == second.id }
+            #expect(ends.count == Self.once, "the feed ended while the second question was open")
+            let end = try #require(ends.first)
+            #expect(end.end == ElicitationEnd(elicitationId: second.id, response: PendingElicitationFixtures.runCancelled))
+            #expect(end.origin == .system)
+            #expect(asked < end.position)
+            #expect(answers == [PendingElicitationFixtures.runCancelled, PendingElicitationFixtures.runCancelled])
+        }
+    }
+}
+
+/// A question that a test asks through a context of its own over the run
+/// plane of a session (``PendingElicitationFixtures/makeContext(for:postingTo:completionToken:)``).
+///
+/// The sink of the context forwards each post to the journal of the
+/// session. ``ask()`` signals the changes of that sink when the question
+/// settles, so each wait of this type for a post also ends when the question
+/// settled with no such post.
+private final class ContextQuestion: Sendable {
+    /// The id of the question.
+    let id = ULID.generate()
+
+    /// The sink of the context. It forwards each post to the session.
+    let postings: ElicitationPostings
+
+    /// The context that asks the question.
+    private let context: ToolContext
+
+    /// Whether ``ask()`` returned or threw.
+    private let settled = Mutex(false)
+
+    /// Makes the question and its context. The question is not asked yet.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose run plane and journal the context uses.
+    ///   - runToken: The token of the run that asks.
+    ///   - endGate: The gate that holds the end post of the question before
+    ///     it goes to the session, or `nil` for no gate.
+    init(on session: RoutedSessionActor, runToken: String, holdingEndsAt endGate: RunLatch? = nil) {
+        postings = ElicitationPostings(forwardingTo: session.outbox, holdingEndsAt: endGate)
+        context = PendingElicitationFixtures.makeContext(for: session, postingTo: postings, completionToken: runToken)
+    }
+
+    /// Asks the question, and waits for its answer.
+    ///
+    /// - Returns: The answer that the run gets.
+    /// - Throws: What `ToolContext.elicit(_:)` throws.
+    func ask() async throws -> ElicitationResponse {
+        defer {
+            settled.withLock { $0 = true }
+            postings.changes.signal()
+        }
+        return try await context.elicit(PendingElicitationFixtures.formRequest(elicitationId: id))
+    }
+
+    /// Waits until the journal of the session recorded the question, and
+    /// checks that it did.
+    ///
+    /// - Throws: When the question settled with no post, or
+    ///   ``ConditionNeverHeld``.
+    func waitForThePost() async throws {
+        try await waitUntilSettledOr { postings.postCount >= ElicitationEndedEventTests.once }
+        try #require(postings.postCount == ElicitationEndedEventTests.once, "the question settled with no post")
+    }
+
+    /// Waits until the end post of the question came to the sink, also when
+    /// the end gate holds it, and checks that it came.
+    ///
+    /// - Throws: When the question settled with no end post, or
+    ///   ``ConditionNeverHeld``.
+    func waitForTheEndPost() async throws {
+        try await waitUntilSettledOr { postings.arrivedEndCount >= ElicitationEndedEventTests.once }
+        try #require(postings.arrivedEndCount == ElicitationEndedEventTests.once, "the question settled with no end post")
+    }
+
+    /// Waits until `condition` holds, or until the question settled.
+    ///
+    /// - Parameter condition: Reads the sink.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   first.
+    private func waitUntilSettledOr(_ condition: () -> Bool) async throws {
+        try await postings.changes.wait(until: { condition() || settled.withLock { $0 } })
     }
 }
 
