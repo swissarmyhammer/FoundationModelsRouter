@@ -165,6 +165,32 @@ struct PerSlotModelLoader: ModelLoader {
 /// `AutoCompactionTests` and `CompactionTracingTests` — warm up exactly the
 /// same way and their budgets keep meaning the same thing.
 enum AutoCompactionFixtures {
+    /// One session that a compaction fixture made, with the containers of its
+    /// two slots, its profile, and the temporary directory that its router
+    /// caches under.
+    ///
+    /// The fixture gives the directory to the caller. The caller ends the
+    /// fixture with ``SessionDirectoryFixture/end(opening:)`` in one `defer`
+    /// right after the make, so the session closes and the directory goes
+    /// also when the test throws (rule T1).
+    struct CompactionSession<Standard: Sendable, Flash: Sendable>: SessionDirectoryFixture, Sendable {
+        /// The session, over `profile.standard`.
+        let session: any RoutedSession
+
+        /// The container that the `.standard` slot resolves to.
+        let standard: Standard
+
+        /// The container that the `.flash` slot resolves to.
+        let flash: Flash
+
+        /// The profile that keeps the models of the session resident.
+        let profile: LanguageModelProfile
+
+        /// The temporary directory that the router of the session caches
+        /// under.
+        let directory: URL
+    }
+
     /// A long canned response repeated across every warm-up answer, so a
     /// handful of answers' worth of transcript already carries a real,
     /// non-trivial byte-size estimate — mirrors `RoutedSessionCompactTests.cannedText`.
@@ -280,8 +306,10 @@ enum AutoCompactionFixtures {
     ///     backend it makes, or `nil` (the default) for the provider default.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
-    /// - Returns: The session plus its `standard`/`flash` containers, so a
-    ///   test can configure either before driving the compaction.
+    /// - Returns: The session, its `standard`/`flash` containers, so a test
+    ///   can configure either before driving the compaction, and its
+    ///   temporary directory. The caller ends it with
+    ///   ``SessionDirectoryFixture/end(opening:)`` in a `defer`.
     /// - Throws: Whatever profile resolution or a warm-up answer throws.
     static func makeTriggeredSession(
         budget: TokenBudget?,
@@ -289,12 +317,11 @@ enum AutoCompactionFixtures {
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         tempDirPrefix: String
-    ) async throws -> (session: any RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
-        let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
-        let (session, standardContainer) = try await makeTriggeredSession(
+    ) async throws -> CompactionSession<ConfiguredLLMContainer, ConfiguredLLMContainer> {
+        try await makeTriggeredSession(
             budget: budget, tools: tools, tracer: tracer,
-            samplingMode: samplingMode, flash: flashContainer, tempDirPrefix: tempDirPrefix)
-        return (session, standardContainer, flashContainer)
+            samplingMode: samplingMode, flash: ConfiguredLLMContainer(responseText: "FLASH-SUMMARY"),
+            tempDirPrefix: tempDirPrefix)
     }
 
     /// ``makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``
@@ -316,16 +343,18 @@ enum AutoCompactionFixtures {
     /// When a step throws, this helper first closes the session that it made
     /// and removes the temp directory (rule T1).
     ///
-    /// - Returns: The session plus its `standard` container.
+    /// - Returns: The session, its `standard` and `flash` containers, and its
+    ///   temporary directory. The caller ends it with
+    ///   ``SessionDirectoryFixture/end(opening:)`` in a `defer`.
     /// - Throws: Whatever profile resolution or a warm-up answer throws.
-    static func makeTriggeredSession(
+    static func makeTriggeredSession<Flash: LoadedLLMContainer>(
         budget: TokenBudget?,
         tools: [any Tool] = [],
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
-        flash flashContainer: any LoadedLLMContainer,
+        flash flashContainer: Flash,
         tempDirPrefix: String
-    ) async throws -> (session: any RoutedSession, standard: ConfiguredLLMContainer) {
+    ) async throws -> CompactionSession<ConfiguredLLMContainer, Flash> {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
         let standardContainer = ConfiguredLLMContainer(responseText: cannedText)
@@ -349,6 +378,7 @@ enum AutoCompactionFixtures {
             }
         }
 
-        return (session, standardContainer)
+        return CompactionSession(
+            session: session, standard: standardContainer, flash: flashContainer, profile: profile, directory: dir)
     }
 }

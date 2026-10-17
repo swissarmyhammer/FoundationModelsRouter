@@ -47,8 +47,9 @@ import FoundationModelsRouter
 /// from this suite's shared offline fixtures rather than from its own copy of
 /// them, because how the router is stubbed is not what this example teaches. An
 /// application builds `Router(recordingsDir:)` with a configured
-/// `LiveModelLoader` instead. Every line after the
-/// `ProjectionExampleHarness.makeSession` call is real usage.
+/// `LiveModelLoader` instead. The `defer` that ends the fixture and the read
+/// of `fixture.session` are test cleanup, not usage. Every other line after
+/// the `ProjectionExampleHarness.makeSession` call is real usage.
 @Suite("Examples: bind a SessionObserver to a session")
 struct ProjectionExampleTests {
     // MARK: - Unit-test seam (the ONLY non-production code in this file)
@@ -184,10 +185,12 @@ struct ProjectionExampleTests {
         /// Resolves an offline profile and opens one session over the scripted
         /// model.
         ///
-        /// - Returns: A session that answers each message with ``answer``.
+        /// - Returns: A session that answers each message with ``answer``, its
+        ///   router, and its temporary directory. The test ends them with
+        ///   ``SessionDirectoryFixture/end(opening:)`` in a `defer`.
         /// - Throws: Whatever profile resolution throws. Before it throws, it
         ///   removes the temp directory.
-        static func makeSession() async throws -> any RoutedSession {
+        static func makeSession() async throws -> SessionFixtureLifecycle.Started {
             let directory = RouterTestFixtures.makeTempDir(prefix: "ProjectionExampleTests")
             let router = RouterTestFixtures.makeRouter(
                 cacheDir: directory,
@@ -196,7 +199,9 @@ struct ProjectionExampleTests {
             let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
                 try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
             }
-            return profile.standard.makeSession(instructions: "You are a terse support agent.")
+            return SessionFixtureLifecycle.Started(
+                session: profile.standard.makeSession(instructions: "You are a terse support agent."),
+                router: router, directory: directory)
         }
     }
 
@@ -205,8 +210,9 @@ struct ProjectionExampleTests {
     @Test("Drive a SessionObserver from the event stream of an answer and read the rows it projects")
     @MainActor
     func projectOneStreamedAnswer() async throws {
-        let session = try await ProjectionExampleHarness.makeSession()
-        defer { await session.close() }
+        let fixture = try await ProjectionExampleHarness.makeSession()
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // One projection observes the session for its whole life. In SwiftUI
         // this is `@State private var projection = SessionObserver()`, and

@@ -180,9 +180,10 @@ struct RouterMetricsTests {
     @Test("a caller compaction adds one to the compaction count of the caller trigger")
     func callerCompactionIsCounted() async throws {
         let factory = try await TelemetryCapture.run(forbidding: []) { context in
-            let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+            let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: nil, tempDirPrefix: Self.tempDirPrefix)
-            defer { await session.close() }
+            defer { await fixture.end() }
+            let session = fixture.session
             await session.useCaptureMetrics(for: context.metricsFactory)
 
             _ = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
@@ -201,9 +202,10 @@ struct RouterMetricsTests {
     @MainActor
     func automaticCompactionIsCounted() async throws {
         let factory = try await TelemetryCapture.run(forbidding: []) { context in
-            let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+            let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: AutoCompactionFixtures.fixedBudget, tempDirPrefix: Self.tempDirPrefix)
-            defer { await session.close() }
+            defer { await fixture.end() }
+            let session = fixture.session
             await session.useCaptureMetrics(for: context.metricsFactory)
 
             for try await _ in await session.streamEvents(to: Self.triggeringPrompt, maxTokens: nil) {}
@@ -343,9 +345,10 @@ struct RouterMetricsTests {
     @Test("a compaction records the time that it paused the mail queue")
     func compactionRecordsThePauseOfTheMailQueue() async throws {
         let values = try await TelemetryCapture.run(forbidding: []) { context in
-            let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+            let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: nil, tempDirPrefix: Self.tempDirPrefix)
-            defer { await session.close() }
+            defer { await fixture.end() }
+            let session = fixture.session
             let factory = context.metricsFactory
             let signalling = SignallingMetricsFactory(wrapping: factory)
             await session.useCaptureMetrics(for: signalling)

@@ -283,12 +283,13 @@ struct TranscriptReconstructionTests {
     private static let stubDimension = 8
     private static let cannedText = "canned response"
 
+    /// Makes a new temporary directory with the name of this suite, through
+    /// the shared ``RouterTestFixtures/makeTempDir(prefix:)``. The caller
+    /// removes it in a `defer`.
+    ///
+    /// - Returns: The new directory.
     private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "TranscriptReconstructionTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        RouterTestFixtures.makeTempDir(prefix: "TranscriptReconstructionTests")
     }
 
     /// Creates a session's directory the way a real session's creation does —
@@ -860,13 +861,15 @@ struct TranscriptReconstructionTests {
     /// (compacted away), a recent prompt/response pair (kept), the checkpoint
     /// itself, and one post-compaction prompt/response pair.
     ///
+    /// - Parameter dir: The temporary directory to write the session into.
+    ///   The caller owns it and removes it in a `defer`, also when this
+    ///   helper throws.
     /// - Returns: The tree, the session id, and every fabricated event in
     ///   `seq` order — so a test can assert against the exact ids/order it
     ///   fabricated rather than recomputing them.
-    private static func makeSingleCheckpointFixture() throws -> (
+    private static func makeSingleCheckpointFixture(in dir: URL) throws -> (
         tree: TranscriptTree, sessionId: ULID, events: [TranscriptEvent]
     ) {
-        let dir = Self.makeTempDir()
         let sessionId = ULID.generate()
         let routerId = ULID.generate()
         let sessionDir = try Self.makeSessionDir(
@@ -915,7 +918,9 @@ struct TranscriptReconstructionTests {
 
     @Test("restore view (default): the newest checkpoint's ordered live-window entries, plus everything recorded after it — never the compacted-away entries")
     func restoreViewAppliesNewestCheckpoint() throws {
-        let (tree, sessionId, _) = try Self.makeSingleCheckpointFixture()
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (tree, sessionId, _) = try Self.makeSingleCheckpointFixture(in: dir)
 
         let reconstructed = try tree.effectiveTranscript(forSession: sessionId)
         #expect(
@@ -935,7 +940,9 @@ struct TranscriptReconstructionTests {
 
     @Test("fullHistory view: every recorded entry, in seq order, with the compaction entry present as a compaction marker rather than duplicating what it replaced")
     func fullHistoryViewRetainsEveryEvent() throws {
-        let (tree, sessionId, events) = try Self.makeSingleCheckpointFixture()
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (tree, sessionId, events) = try Self.makeSingleCheckpointFixture(in: dir)
 
         let fullHistory = try tree.effectiveTranscript(forSession: sessionId, view: .fullHistory)
         let fullHistoryIds = Array(fullHistory).map(\.id)
@@ -963,6 +970,7 @@ struct TranscriptReconstructionTests {
     @Test("repeated compactions: only the newest checkpoint governs restore; the earlier one is a historical marker excluded from the restore view")
     func repeatedCompactionsOnlyNewestGovernsRestore() throws {
         let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
         let sessionId = ULID.generate()
         let routerId = ULID.generate()
         let sessionDir = try Self.makeSessionDir(
@@ -1065,6 +1073,7 @@ struct TranscriptReconstructionTests {
     @Test("a checkpoint naming a live-window entry id absent from the session's recorded events throws checkpointEntryMissing")
     func checkpointNamingMissingLiveWindowEntryThrows() throws {
         let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
         let sessionId = ULID.generate()
         let routerId = ULID.generate()
         let sessionDir = try Self.makeSessionDir(

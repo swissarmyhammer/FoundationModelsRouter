@@ -200,11 +200,12 @@ struct RoutedSessionCompactTests {
     @Test("an automatic compaction's flash summarizer backend receives the router's sampling mode")
     @MainActor
     func autoCompactionFlashSummarizerReceivesTheRoutersSamplingMode() async throws {
-        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget,
             samplingMode: .greedy,
             tempDirPrefix: "RoutedSessionCompactTests")
-        defer { await session.close() }
+        defer { await fixture.end() }
+        let (session, standard, flash) = (fixture.session, fixture.standard, fixture.flash)
         // The root session's own backend already carries the mode, and no
         // compaction has asked the flash slot for a backend yet.
         #expect(standard.receivedSamplingModes == [.greedy])

@@ -95,8 +95,10 @@ struct CompactionTracingTests {
         let tracer = InMemoryTracer()
         // No budget: the caller's own compact() is then the only compaction that
         // runs, so the tracer holds exactly one compaction span to read.
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
@@ -118,8 +120,10 @@ struct CompactionTracingTests {
     @Test("a compaction span carries the compaction's own before and after token estimates")
     func compactionSpanCarriesItsOwnTokenCounts() async throws {
         let tracer = InMemoryTracer()
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
@@ -134,8 +138,10 @@ struct CompactionTracingTests {
     @Test("a caller-driven compaction that applies no summary writes no tier on its span")
     func callerDrivenCompactionWithNoSummaryWritesNoTier() async throws {
         let tracer = InMemoryTracer()
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         // A target as large as the whole warm-up transcript: the live context
         // is already under it, so no summarizer runs and no summary applies.
@@ -154,8 +160,10 @@ struct CompactionTracingTests {
     @Test("a caller-driven compaction whose summarizer fails keeps its span, with the error type recorded")
     func callerDrivenCompactionThatThrowsRecordsTheErrorOnItsSpan() async throws {
         let tracer = InMemoryTracer()
-        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let (session, standard, flash) = (fixture.session, fixture.standard, fixture.flash)
         // Both summarizer tiers fail. The flash slot vends a failing backend,
         // and the own-model tier builds its summarizer from the live backend
         // of the session, not from the container.
@@ -178,8 +186,10 @@ struct CompactionTracingTests {
     @MainActor
     func automaticCompactionNamesTheAutoTriggerAndTheFlashTier() async throws {
         let tracer = InMemoryTracer()
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let events = try await Self.drive(session, prompt: Self.triggeringPrompt)
         let result = try Self.compactionResult(in: events)
@@ -201,8 +211,10 @@ struct CompactionTracingTests {
     @MainActor
     func automaticCompactionDegradedToTheOwnModelTierKeepsACleanSpan() async throws {
         let tracer = InMemoryTracer()
-        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let (session, standard, flash) = (fixture.session, fixture.standard, fixture.flash)
         // Every backend the flash slot vends from now on fails, so the flash
         // tier throws and the compaction falls to the session's own model.
         flash.shouldThrow = true
@@ -221,8 +233,10 @@ struct CompactionTracingTests {
     @MainActor
     func automaticCompactionWhoseEveryTierFailsRecordsTheError() async throws {
         let tracer = InMemoryTracer()
-        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let (session, standard, flash) = (fixture.session, fixture.standard, fixture.flash)
         // Both summarizer tiers fail. The last tier's failure reaches the
         // caller, and no summary applies.
         flash.shouldThrow = true
@@ -243,8 +257,10 @@ struct CompactionTracingTests {
     @Test("a requested compaction writes its reason and the id of its signal on its span")
     func requestedCompactionSpanCarriesItsReasonAndSignal() async throws {
         let tracer = InMemoryTracer()
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let signal = session.compact(budget: AutoCompactionFixtures.fixedBudget)
         _ = try await session.awaitTerminal(of: signal)
@@ -258,8 +274,10 @@ struct CompactionTracingTests {
     @MainActor
     func automaticCompactionSpanCarriesItsReasonAndSignal() async throws {
         let tracer = InMemoryTracer()
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let result = try Self.compactionResult(in: try await Self.drive(session, prompt: Self.triggeringPrompt))
 
@@ -270,8 +288,10 @@ struct CompactionTracingTests {
 
     @Test("a compaction with no tracer injected and no backend bootstrapped compacts normally")
     func untracedCompactionRunsNormally() async throws {
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 

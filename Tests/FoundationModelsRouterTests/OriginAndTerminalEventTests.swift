@@ -270,9 +270,10 @@ struct OriginAndTerminalEventTests {
         "the events of an automatic compaction inside an answer carry one signal, and the other events of the answer carry its mail"
     )
     func automaticCompactionEventsCarryASignal() async throws {
-        let (session, _, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tempDirPrefix: Self.tempDirPrefix)
-        defer { await session.close() }
+        defer { await fixture.end() }
+        let (session, flash) = (fixture.session, fixture.flash)
         let feed = await session.streamSessionEvents()
 
         _ = try await session.respond(to: Self.laterPrompt)
@@ -308,9 +309,10 @@ struct OriginAndTerminalEventTests {
         "each event of a requested compaction and its summarizer call have the origin of the returned signal, and each answer the mail of its message"
     )
     func requestedCompactionEventsHaveTheReturnedSignal() async throws {
-        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
-        defer { await session.close() }
+        defer { await fixture.end() }
+        let (session, standard, flash) = (fixture.session, fixture.standard, fixture.flash)
         let feed = await session.streamSessionEvents()
         let answerCalls = standard.generationLog.calls
         #expect(answerCalls.count == AutoCompactionFixtures.answerCount)

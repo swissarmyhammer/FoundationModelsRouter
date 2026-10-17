@@ -624,11 +624,15 @@ struct ExamplesTests {
         /// Resolves a one-model profile whose working context is `context`
         /// and opens a `standard`-slot session driven entirely by `backend`.
         ///
+        /// - Returns: The session, its router, and its temporary cache
+        ///   directory. The test ends them with
+        ///   ``SessionDirectoryFixture/end(opening:)`` in a `defer`, so the
+        ///   directory goes also when the test throws (rule T1).
         /// - Throws: What the resolve of the profile throws. Before it throws,
         ///   it removes the temporary cache directory (rule T1).
         static func makeSession(
             over backend: any LanguageModelSessionBackend, context: Int
-        ) async throws -> any RoutedSession {
+        ) async throws -> SessionFixtureLifecycle.Started {
             let cacheDir = RouterTestFixtures.makeTempDir(prefix: "CompactionExample")
             let router = Router(
                 cacheDir: cacheDir,
@@ -652,7 +656,8 @@ struct ExamplesTests {
                     reporting: ResolutionProgress()
                 )
             }
-            return profile.standard.makeSession()
+            return SessionFixtureLifecycle.Started(
+                session: profile.standard.makeSession(), router: router, directory: cacheDir)
         }
     }
 
@@ -662,8 +667,9 @@ struct ExamplesTests {
     @MainActor
     func proactiveCompactionBetweenAnswers() async throws {
         let backend = StubSessionBackend(responseText: "ok")
-        let session = try await CompactionExampleHarness.makeSession(over: backend, context: 100_000)
-        defer { await session.close() }
+        let fixture = try await CompactionExampleHarness.makeSession(over: backend, context: 100_000)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let budget = TokenBudget(limit: 100_000)
         var compactedAtAnswer: Int?
@@ -878,8 +884,9 @@ struct ExamplesTests {
         let preCompactionCount = characterCount(of: seedEntries)
         let contextTokens = preCompactionCount * 2
 
-        let session = try await CompactionExampleHarness.makeSession(over: backend, context: contextTokens)
-        defer { await session.close() }
+        let fixture = try await CompactionExampleHarness.makeSession(over: backend, context: contextTokens)
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let reply = try await respondWithReactiveCompaction(
             session: session, prompt: "keep going", contextTokens: contextTokens)

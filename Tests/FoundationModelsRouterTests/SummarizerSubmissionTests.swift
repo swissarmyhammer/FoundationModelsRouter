@@ -38,6 +38,12 @@ struct SummarizerSubmissionTests {
     /// session, then the one of the summarizer call.
     private static let flashPassCount = 2
 
+    /// The triggered session of this suite: a stub standard slot and a flash
+    /// slot over the ``PassObservingModel`` of a ``PassObservingFixture``.
+    private typealias TriggeredFixture = AutoCompactionFixtures.CompactionSession<
+        ConfiguredLLMContainer, LiveBackendContainer<PassObservingModel>
+    >
+
     /// A compacting answer whose flash summarizer call waits for the flash
     /// worker, behind a submission of another session on the flash slot.
     private struct WaitingSummarizer {
@@ -47,12 +53,10 @@ struct SummarizerSubmissionTests {
         /// The queue of the pool entry of the flash model.
         let flashQueue: GenerationQueue
 
-        /// The session over the trigger, on the standard slot.
-        let session: any RoutedSession
-
-        /// The standard container. Its log holds each call of the own-model
-        /// tier.
-        let standard: ConfiguredLLMContainer
+        /// The session over the trigger, on the standard slot, with its
+        /// containers and its temporary directory. The log of its standard
+        /// container holds each call of the own-model tier.
+        let triggered: TriggeredFixture
 
         /// The other session, on the flash slot. Its submission holds the
         /// flash worker until the latch opens.
@@ -69,14 +73,17 @@ struct SummarizerSubmissionTests {
         /// answer throws.
         let compactingAnswer: Task<Void, any Error>
 
-        /// Opens the flash latch, and then closes the flash session and the
-        /// session over the trigger.
+        /// Opens the flash latch, closes the flash session, and then ends
+        /// ``triggered``: it closes the session over the trigger and removes
+        /// its temporary directory.
         ///
         /// A test calls it from one `defer` right after it gets the parts, so
-        /// each session closes also when the test throws (rule T1). A session
-        /// that the test closed already closes again with no effect.
+        /// each session closes and the directory goes also when the test
+        /// throws (rule T1). A session that the test closed already closes
+        /// again with no effect.
         func end() async {
-            await SessionFixtureLifecycle.close([flashSession, session], opening: [flash.latch])
+            await SessionFixtureLifecycle.close(flashSession, opening: [flash.latch])
+            await triggered.end()
         }
     }
 
@@ -85,20 +92,23 @@ struct SummarizerSubmissionTests {
     /// that answer calls the flash summarizer, and the call waits for the
     /// flash worker, which the other submission holds until the latch opens.
     ///
-    /// When this helper throws, it opens the flash latch first, and then
-    /// closes each session that it made (rule T1).
+    /// When this helper throws, it opens the flash latch first, then closes
+    /// each session that it made, and then removes the temporary directory
+    /// (rule T1).
     ///
     /// - Returns: The parts that the test reads and releases.
     /// - Throws: Whatever the warm-up of the triggered session throws.
     private static func startSummarizerBehindAFlashSubmission() async throws -> WaitingSummarizer {
         let flash = PassObservingFixture()
-        // The sessions that this helper made, for the close on a throw.
-        var triggeredSession: (any RoutedSession)?
+        // The fixture and the session that this helper made, for the end on
+        // a throw.
+        var triggeredFixture: TriggeredFixture?
         var flashSideSession: (any RoutedSession)?
         do {
-            let (session, standard) = try await AutoCompactionFixtures.makeTriggeredSession(
+            let triggered = try await AutoCompactionFixtures.makeTriggeredSession(
                 budget: AutoCompactionFixtures.fixedBudget, flash: flash.container, tempDirPrefix: tempDirPrefix)
-            triggeredSession = session
+            triggeredFixture = triggered
+            let session = triggered.session
             let flashQueue = try #require(session.profile.flash.backendQueue)
             let flashSession = session.profile.flash.makeSession()
             flashSideSession = flashSession
@@ -122,11 +132,11 @@ struct SummarizerSubmissionTests {
             let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: triggeringPrompt))
             await probe.enqueued.wait()
             return WaitingSummarizer(
-                flash: flash, flashQueue: flashQueue, session: session, standard: standard,
+                flash: flash, flashQueue: flashQueue, triggered: triggered,
                 flashSession: flashSession, flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
         } catch {
             await SessionFixtureLifecycle.close(flashSideSession, opening: [flash.latch])
-            await triggeredSession?.close()
+            await triggeredFixture?.end()
             throw error
         }
     }
@@ -164,11 +174,11 @@ struct SummarizerSubmissionTests {
         let waiting = try await Self.startSummarizerBehindAFlashSubmission()
         defer { await waiting.end() }
         let flash = waiting.flash
-        let standardCallsBeforeTheClose = waiting.standard.generationLog.calls.count
+        let standardCallsBeforeTheClose = waiting.triggered.standard.generationLog.calls.count
 
         // No signal and no stop of the answer affects a running compaction:
         // only the close cancels it.
-        let closing = Task { await waiting.session.close() }
+        let closing = Task { await waiting.triggered.session.close() }
         // The answer ends while the flash submission still holds the worker:
         // the waiting summarizer item left the queue and never ran.
         try await waiting.log.wait(until: { !$0.answerFailures.isEmpty })
@@ -186,7 +196,7 @@ struct SummarizerSubmissionTests {
         #expect(events.compactionResults.isEmpty)
         #expect(events.compactionFailures.map(\.outcome) == [.cancelled])
         // The compaction did not go on to the own-model tier.
-        #expect(waiting.standard.generationLog.calls.count == standardCallsBeforeTheClose)
+        #expect(waiting.triggered.standard.generationLog.calls.count == standardCallsBeforeTheClose)
         await #expect(throws: CancellationError.self) {
             try await waiting.compactingAnswer.value
         }

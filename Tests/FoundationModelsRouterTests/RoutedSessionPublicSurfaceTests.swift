@@ -68,9 +68,10 @@ struct RoutedSessionPublicSurfaceTests {
 
     @Test("compact(budget:) compacts the transcript against the budget it is given")
     func compactWithBudgetCompactsAgainstThatBudget() async throws {
-        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let fixture = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
-        defer { await session.close() }
+        defer { await fixture.end() }
+        let session = fixture.session
 
         let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 

@@ -36,8 +36,24 @@ comments:
     - evidence: 2 files — Tests/FoundationModelsRouterTests/Helpers/RecordedWaitResult.swift (helper waits in the output hub, doc tells why), Tests/FoundationModelsRouterTests/MailTerminalPermitWaitTests.swift (new red-then-green test). `swift test --filter 'FoundationModelsRouterTests.MailTerminalPermitWaitTests/aPermitThatComesFirstLeavesTheMailQueued'`: red (2 issues) with the old helper, green 1 test with the new. Full `swift test` one time at the end: 1835 tests in 226 suites passed with 9 known issues; 26 tests in 14 suites passed; 19 tests in 3 suites passed; XCTest 0 tests (3 targets).
     - next: `/review`
   timestamp: 2026-10-17T14:24:55.261472+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m5545dbcmf2sa7nnksnpyedj
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (df829b46). Counts: findings 0, confirmed 0, refuted 0, attempted 7, failed 0, skipped 0. The engine reviewed 2 files. An ignore rule (.kanban/ from .reviewignore) excluded 4 files.
+    - next: none. The task is in done.
+  timestamp: 2026-10-17T14:27:28.236392+00:00
+- actor: claude-code
+  id: 01m5545zw8mjj6f97msnass7t0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 test files (1 new); red-first test failed with 2 issues on the old helper
+    - test: green — full swift test after the last edit: 1835 tests in 226 suites + 26 + 19 passed (the full suite ran two times on this card)
+    - commit: df829b46
+    - review: clean — 0 findings, 2 files reviewed
+  timestamp: 2026-10-17T14:27:47.208690+00:00
+position_column: done
+position_ordinal: ffffffff9080
 title: 'T1 follow-up: the end wait of `wait(forPermitOf:endingOnTerminalOf:on:)` cancels the mail'
 ---
 Found in ^cj4fd37. `RoutedSessionActor.awaitMailTerminal(of:)` (Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift) has `onCancel: { cancel(id) }`: a cancel of a task that waits in `awaitTerminal(of: MailID)` sends a cancel signal for that mail. `RecordedWaitResult.wait(forPermitOf:endingOnTerminalOf:on:)` (Tests/FoundationModelsRouterTests/Helpers/RecordedWaitResult.swift) starts `Task { _ = try? await session.awaitTerminal(of: id) }` and cancels it in a `defer`. So each call of that helper sends one more cancel signal for the mail of the test, and one more `signalDone` goes to the feed. In ^cj4fd37 the same form in CancelAllSignalTests made `theSessionWorksAfterCancelAll` fail (one more done signal); that site now waits on the recorder of the feed.
