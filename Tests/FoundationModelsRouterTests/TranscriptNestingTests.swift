@@ -216,8 +216,11 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         let grandfork = try await fork.fork(workingDirectory: nil)
+        defer { await grandfork.close() }
 
         // The parentId chain mirrors the lineage.
         #expect(root.parentId == nil)
@@ -250,8 +253,6 @@ struct TranscriptNestingTests {
                 "transcript.jsonl", isDirectory: false)
             #expect(FileManager.default.fileExists(atPath: fileURL.path))
         }
-
-        _ = grandfork
     }
 
     @Test("overriding workingDirectory does not move the transcript out of the lineage nesting")
@@ -272,10 +273,12 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let custom = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: custom) }
 
         let fork = try await root.fork(workingDirectory: custom)
+        defer { await fork.close() }
 
         // The override sets the working directory but does not move the transcript,
         // which stays nested under the parent regardless.
@@ -285,8 +288,6 @@ struct TranscriptNestingTests {
                 == root.recordingDirectory.appendingPathComponent(fork.id.description, isDirectory: true).standardizedFileURL
         )
         #expect(fork.recordingDirectory.standardizedFileURL != custom.standardizedFileURL)
-
-        _ = root
     }
 
     // MARK: - Event emission
@@ -310,6 +311,7 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         let recorded = try events(in: root.recordingDirectory)
@@ -328,12 +330,11 @@ struct TranscriptNestingTests {
 
         // A fork's first line carries the parentId lineage.
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "child")
         let childRecorded = try events(in: fork.recordingDirectory)
         #expect(childRecorded.first?.kind == .session)
         #expect(childRecorded.allSatisfy { $0.parentId == root.id })
-
-        _ = fork
     }
 
     @Test("a streaming session's first line is also the session meta event, then prompt and response")
@@ -358,6 +359,7 @@ struct TranscriptNestingTests {
         // recordSessionMetaIfNeeded() applies to both generation entry points,
         // so the invariant must hold for streaming too.
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         for try await _ in await root.streamResponse(to: "hello") {}
 
         let recorded = try events(in: root.recordingDirectory)
@@ -391,6 +393,7 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession(instructions: "You are terse.")
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // The chokepoint no longer hand-builds a `.prompt`/`.response` pair —
@@ -428,6 +431,7 @@ struct TranscriptNestingTests {
         // streaming, so the SDK-generated leading `.instructions` entry must
         // be persisted in order there too.
         let root = profile.standard.makeSession(instructions: "You are terse.")
+        defer { await root.close() }
         for try await _ in await root.streamResponse(to: "hello") {}
 
         let recorded = try events(in: root.recordingDirectory)
@@ -466,6 +470,7 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
         // A real JSONLRecorder was wired: the session's transcript.jsonl exists
@@ -506,9 +511,13 @@ struct TranscriptNestingTests {
 
         // A root and three forks — four sessions sharing one recorder.
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let fork1 = try await root.fork(workingDirectory: nil)
+        defer { await fork1.close() }
         let fork2 = try await root.fork(workingDirectory: nil)
+        defer { await fork2.close() }
         let fork3 = try await root.fork(workingDirectory: nil)
+        defer { await fork3.close() }
         let sessions: [any RoutedSession] = [root, fork1, fork2, fork3]
 
         // Each session concurrently appends many events to the shared recorder,
@@ -536,8 +545,6 @@ struct TranscriptNestingTests {
         // A single recorder means one totally-ordered log: seq is 0..<n, no gaps
         // or duplicates, regardless of interleaving.
         #expect(events.map(\.seq) == Array(0..<events.count))
-
-        _ = sessions
     }
 
     // MARK: - The run's resolved-profile facts, on each root session's sidecar
@@ -560,6 +567,7 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let sidecar = try #require(
             try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 
@@ -614,6 +622,7 @@ struct TranscriptNestingTests {
             profile: Self.profileWithDerivedContext, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let sidecar = try #require(
             try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 

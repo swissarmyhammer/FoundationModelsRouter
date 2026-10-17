@@ -93,6 +93,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         // One answer, so the session is live and its journal is attached — the
         // state a run can only be tracked from.
@@ -131,6 +132,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -171,6 +173,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -201,6 +204,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -252,6 +256,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -280,6 +285,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         _ = try await session.respond(to: "start the long job")
 
@@ -313,6 +319,7 @@ struct BackgroundRunTranscriptTests {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
+        defer { await session.close() }
 
         // The restore path posts manufactured `.lost` terminals onto a fresh
         // outbox before the session has ever run an answer (see

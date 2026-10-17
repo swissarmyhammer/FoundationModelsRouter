@@ -176,7 +176,9 @@ struct TranscriptTreeTests {
     ///     forks, invisible to `grandfork`'s effective transcript.
     ///   - forkBAnswers: Answers `forkB` gives (`forkB` has no children).
     ///   - grandforkAnswers: Answers `grandfork` gives.
-    /// - Returns: The four vended sessions.
+    /// - Returns: The four vended sessions. The caller closes them with
+    ///   ``close(_:)``. When a step throws, each session that the helper made
+    ///   closes before the error goes to the caller.
     private static func buildBranchingTree(
         profile: LanguageModelProfile,
         rootAnswersBeforeForks: Int = 1,
@@ -185,52 +187,76 @@ struct TranscriptTreeTests {
         forkAAnswersAfterGrandfork: Int = 0,
         forkBAnswers: Int = 1,
         grandforkAnswers: Int = 1
-    ) async throws -> (
-        root: any RoutedSession, forkA: any RoutedSession, forkB: any RoutedSession, grandfork: any RoutedSession
-    ) {
+    ) async throws -> BranchingTree {
         let root = profile.standard.makeSession()
-        if rootAnswersBeforeForks > 0 {
-            for answer in 1...rootAnswersBeforeForks {
-                _ = try await root.respond(to: "root-message-\(answer)")
+        var made: [any RoutedSession] = [root]
+        do {
+            if rootAnswersBeforeForks > 0 {
+                for answer in 1...rootAnswersBeforeForks {
+                    _ = try await root.respond(to: "root-message-\(answer)")
+                }
             }
-        }
 
-        let forkA = try await root.fork(workingDirectory: nil)
-        let forkB = try await root.fork(workingDirectory: nil)
+            let forkA = try await root.fork(workingDirectory: nil)
+            made.append(forkA)
+            let forkB = try await root.fork(workingDirectory: nil)
+            made.append(forkB)
 
-        if rootAnswersAfterForks > 0 {
-            for answer in 1...rootAnswersAfterForks {
-                _ = try await root.respond(to: "root-message-\(rootAnswersBeforeForks + answer)")
+            if rootAnswersAfterForks > 0 {
+                for answer in 1...rootAnswersAfterForks {
+                    _ = try await root.respond(to: "root-message-\(rootAnswersBeforeForks + answer)")
+                }
             }
-        }
 
-        if forkAAnswersBeforeGrandfork > 0 {
-            for answer in 1...forkAAnswersBeforeGrandfork {
-                _ = try await forkA.respond(to: "forkA-message-\(answer)")
+            if forkAAnswersBeforeGrandfork > 0 {
+                for answer in 1...forkAAnswersBeforeGrandfork {
+                    _ = try await forkA.respond(to: "forkA-message-\(answer)")
+                }
             }
-        }
 
-        let grandfork = try await forkA.fork(workingDirectory: nil)
+            let grandfork = try await forkA.fork(workingDirectory: nil)
+            made.append(grandfork)
 
-        if forkAAnswersAfterGrandfork > 0 {
-            for answer in 1...forkAAnswersAfterGrandfork {
-                _ = try await forkA.respond(to: "forkA-message-\(forkAAnswersBeforeGrandfork + answer)")
+            if forkAAnswersAfterGrandfork > 0 {
+                for answer in 1...forkAAnswersAfterGrandfork {
+                    _ = try await forkA.respond(to: "forkA-message-\(forkAAnswersBeforeGrandfork + answer)")
+                }
             }
-        }
 
-        if forkBAnswers > 0 {
-            for answer in 1...forkBAnswers {
-                _ = try await forkB.respond(to: "forkB-message-\(answer)")
+            if forkBAnswers > 0 {
+                for answer in 1...forkBAnswers {
+                    _ = try await forkB.respond(to: "forkB-message-\(answer)")
+                }
             }
-        }
 
-        if grandforkAnswers > 0 {
-            for answer in 1...grandforkAnswers {
-                _ = try await grandfork.respond(to: "grandfork-message-\(answer)")
+            if grandforkAnswers > 0 {
+                for answer in 1...grandforkAnswers {
+                    _ = try await grandfork.respond(to: "grandfork-message-\(answer)")
+                }
             }
-        }
 
-        return (root, forkA, forkB, grandfork)
+            return (root, forkA, forkB, grandfork)
+        } catch {
+            for session in made.reversed() {
+                await session.close()
+            }
+            throw error
+        }
+    }
+
+    /// The four sessions of ``buildBranchingTree(profile:rootAnswersBeforeForks:rootAnswersAfterForks:forkAAnswersBeforeGrandfork:forkAAnswersAfterGrandfork:forkBAnswers:grandforkAnswers:)``.
+    private typealias BranchingTree = (
+        root: any RoutedSession, forkA: any RoutedSession, forkB: any RoutedSession, grandfork: any RoutedSession
+    )
+
+    /// Closes each session of `tree`, each fork before its parent.
+    ///
+    /// - Parameter tree: The sessions to close.
+    private static func close(_ tree: BranchingTree) async {
+        await tree.grandfork.close()
+        await tree.forkB.close()
+        await tree.forkA.close()
+        await tree.root.close()
     }
 
     // MARK: - Lookup by ULID
@@ -251,7 +277,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
+        let sessions = try await Self.buildBranchingTree(profile: profile)
+        defer { await Self.close(sessions) }
+        let (root, forkA, forkB, grandfork) = sessions
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -281,7 +309,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
+        let sessions = try await Self.buildBranchingTree(profile: profile)
+        defer { await Self.close(sessions) }
+        let (root, forkA, forkB, grandfork) = sessions
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -330,7 +360,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, _, grandfork) = try await Self.buildBranchingTree(profile: profile)
+        let sessions = try await Self.buildBranchingTree(profile: profile)
+        defer { await Self.close(sessions) }
+        let (root, forkA, _, grandfork) = sessions
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -370,7 +402,7 @@ struct TranscriptTreeTests {
         // root gives a second answer *after* forkA/forkB fork; forkA gives a
         // second answer *after* grandfork forks — both must be invisible to
         // grandfork's effective transcript.
-        let (root, forkA, _, grandfork) = try await Self.buildBranchingTree(
+        let sessions = try await Self.buildBranchingTree(
             profile: profile,
             rootAnswersBeforeForks: 1,
             rootAnswersAfterForks: 1,
@@ -379,6 +411,8 @@ struct TranscriptTreeTests {
             forkBAnswers: 0,
             grandforkAnswers: 1
         )
+        defer { await Self.close(sessions) }
+        let (root, forkA, _, grandfork) = sessions
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -421,7 +455,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, _, _, _) = try await Self.buildBranchingTree(profile: profile)
+        let sessions = try await Self.buildBranchingTree(profile: profile)
+        defer { await Self.close(sessions) }
+        let root = sessions.root
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -454,7 +490,9 @@ struct TranscriptTreeTests {
         // still written at vending, so — unlike the transcript-only discovery
         // this replaced — it is a fully identified node in the loaded tree.
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "fork-message-1")
 
         let tree = try TranscriptTree.load(
@@ -494,7 +532,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, _, _) = try await Self.buildBranchingTree(profile: profile)
+        let sessions = try await Self.buildBranchingTree(profile: profile)
+        defer { await Self.close(sessions) }
+        let (root, forkA, _, _) = sessions
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         // Sanity: the tree loads, with the shape we expect, before the delete.
@@ -533,7 +573,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, forkB, _) = try await Self.buildBranchingTree(profile: profile)
+        let sessions = try await Self.buildBranchingTree(profile: profile)
+        defer { await Self.close(sessions) }
+        let (root, forkA, forkB, _) = sessions
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         // Sanity: both forks load, and the root reconstructs, before the delete.
@@ -579,6 +621,7 @@ struct TranscriptTreeTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "root-message-1")
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
@@ -612,6 +655,7 @@ struct TranscriptTreeTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "root-message-1")
 
         // Restamp the recorded sidecar with a version this reader does not
@@ -805,6 +849,7 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "root-message-1")
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)

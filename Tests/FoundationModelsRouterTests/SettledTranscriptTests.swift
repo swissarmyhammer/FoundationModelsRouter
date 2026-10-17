@@ -181,6 +181,9 @@ struct SettledTranscriptTests {
             over: container, cacheDir: directory
         ).profile
         let session = profile.standard.makeSession()
+        // The held call does not end on a cancel, so the latch opens before
+        // the close, also when the test throws.
+        defer { await SessionFixtureLifecycle.close(session, opening: [container.release]) }
         _ = try await session.respond(to: Self.settledPrompt)
         let backend = try #require(container.lastBackend)
 
@@ -394,6 +397,10 @@ struct SettledTranscriptTests {
             mounting: [StepMarkerTool(), OwnSessionForkingTool(box: box)],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
+        // The tool makes the child during the answer. The child closes
+        // before its parent, also when the test throws.
+        defer { await box.forkedChild?.close() }
         box.setTarget(fixture.session)
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)

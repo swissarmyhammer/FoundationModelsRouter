@@ -422,9 +422,13 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let forkA = try await root.fork(workingDirectory: nil)
+        defer { await forkA.close() }
         let forkB = try await root.fork(workingDirectory: nil)
+        defer { await forkB.close() }
         let grandfork = try await forkA.fork(workingDirectory: nil)
+        defer { await grandfork.close() }
 
         let routerDir = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
         let rootDir = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
@@ -469,8 +473,10 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "hi")
 
         let routerDir = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
@@ -510,8 +516,10 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let forkDir =
             recordingsDir
@@ -547,8 +555,10 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "hi")
 
         let sidecarPresence = await observed.sidecarPresentAtFirstAppend
@@ -631,6 +641,7 @@ struct SessionSidecarTests {
             tokenCounter: CharacterTokenCounter(),
             tracer: standard.tracer
         )
+        defer { await session.close() }
         #expect(session.recordingDirectory == recordingDirectory)
 
         let sidecar = try #require(try SessionSidecar.read(in: recordingDirectory))
@@ -666,7 +677,9 @@ struct SessionSidecarTests {
         let instructions = "You are a terse assistant."
         let root = profile.standard.makeGuidedSession(
             grammar: .jsonSchema(grammarSource), instructions: instructions)
+        defer { await root.close() }
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let rootDir =
             recordingsDir
@@ -704,7 +717,9 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let rootDir =
             recordingsDir
@@ -750,6 +765,7 @@ struct SessionSidecarTests {
         // No override: the sidecar's workingDirectory defaults to the
         // recording directory, just as the live session's own does.
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let rootDir = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)
             .appendingPathComponent(root.id.description, isDirectory: true)
@@ -759,6 +775,7 @@ struct SessionSidecarTests {
         // An explicit override on a fork records verbatim — never silently
         // reset to the fork's own recording directory.
         let fork = try await root.fork(workingDirectory: overrideDir)
+        defer { await fork.close() }
         let forkDir = rootDir.appendingPathComponent(fork.id.description, isDirectory: true)
         #expect(fork.workingDirectory == overrideDir)
         #expect(try SessionSidecar.read(in: forkDir)?.workingDirectory == overrideDir)
@@ -789,7 +806,9 @@ struct SessionSidecarTests {
         let spawn = SessionSidecar.AgentSpawn(
             parentSessionId: spawningSessionId, parentToolCallId: "agents-tool-call-1")
         let root = profile.standard.makeSession(agentSpawn: spawn)
+        defer { await root.close() }
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         let rootDir = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)
@@ -835,8 +854,10 @@ struct SessionSidecarTests {
             let spawn = SessionSidecar.AgentSpawn(
                 parentSessionId: ULID.generate(), parentToolCallId: "agents-tool-call-2")
             let root = profile.standard.makeSession(agentSpawn: spawn)
+            defer { await root.close() }
             _ = try await root.respond(to: "hello")
             let fork = try await root.fork(workingDirectory: nil)
+            defer { await fork.close() }
             _ = try await fork.respond(to: "hello again")
 
             let events = await recorder.events
@@ -861,6 +882,7 @@ struct SessionSidecarTests {
     func rootSessionWithoutAgentSpawnStampsNilOnTheSessionEvent() async throws {
         try await Self.withInMemoryRecordedProfile { recorder, _, profile, _ in
             let root = profile.standard.makeSession()
+            defer { await root.close() }
             _ = try await root.respond(to: "hello")
 
             let events = await recorder.events
@@ -922,8 +944,10 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         _ = try await fork.respond(to: "hi")
 
         // Nothing at all is recorded — not a sidecar, and not a transcript
@@ -935,8 +959,6 @@ struct SessionSidecarTests {
         // so a level that writes no sidecar must write no transcript.
         let routerDir = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
         #expect(!FileManager.default.fileExists(atPath: routerDir.path))
-        _ = root
-        _ = fork
     }
 
     // MARK: - Best-effort write failure
@@ -968,9 +990,11 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         #expect(try await root.respond(to: "hello") == Self.cannedText)
 
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
         #expect(try await fork.respond(to: "hi") == Self.cannedText)
     }
 
@@ -995,18 +1019,33 @@ struct SessionSidecarTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        let forkIds = try await withThrowingTaskGroup(of: ULID.self) { group in
+        defer { await root.close() }
+        // Each task gives its result and does not throw, so the group keeps
+        // each fork that it made, also when a different fork throws.
+        let outcomes = await withTaskGroup(of: Result<any RoutedSession, any Error>.self) {
+            group -> [Result<any RoutedSession, any Error>] in
             for _ in 0..<forkCount {
                 group.addTask {
-                    try await root.fork(workingDirectory: nil).id
+                    do {
+                        return .success(try await root.fork(workingDirectory: nil))
+                    } catch {
+                        return .failure(error)
+                    }
                 }
             }
-            var ids: [ULID] = []
-            for try await id in group {
-                ids.append(id)
+            var outcomes: [Result<any RoutedSession, any Error>] = []
+            for await outcome in group {
+                outcomes.append(outcome)
             }
-            return ids
+            return outcomes
         }
+        let forks = outcomes.compactMap { try? $0.get() }
+        defer {
+            for fork in forks {
+                await fork.close()
+            }
+        }
+        let forkIds = try outcomes.map { try $0.get().id }
 
         let rootDir =
             recordingsDir

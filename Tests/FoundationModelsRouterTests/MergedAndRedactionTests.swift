@@ -475,6 +475,7 @@ struct MergedAndRedactionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "a secret prompt")
         _ = try await profile.embedding.embed(texts: ["another secret"])
 
@@ -516,6 +517,7 @@ struct MergedAndRedactionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         // Both must return normally despite every recorder write failing.
         let response = try await session.respond(to: "hello")
         #expect(response == Self.cannedText)

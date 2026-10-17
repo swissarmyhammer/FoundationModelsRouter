@@ -245,6 +245,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
 
@@ -295,9 +296,11 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "root message 1")
 
         let child = try await root.fork(workingDirectory: nil)
+        defer { await child.close() }
         _ = try await child.respond(to: "child message")
 
         // The child's file holds only its own delta: a session meta line plus
@@ -336,6 +339,7 @@ struct TranscriptFidelityTests {
         )
         let respondProfile = try await respondRouter.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let respondSession = respondProfile.standard.makeSession()
+        defer { await respondSession.close() }
         _ = try await respondSession.respond(to: "hello")
 
         let streamRecorder = InMemoryRecorder()
@@ -346,6 +350,7 @@ struct TranscriptFidelityTests {
         )
         let streamProfile = try await streamRouter.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let streamSession = streamProfile.standard.makeSession()
+        defer { await streamSession.close() }
         var collected = ""
         for try await chunk in await streamSession.streamResponse(to: "hello") {
             collected += chunk
@@ -387,6 +392,7 @@ struct TranscriptFidelityTests {
         // `session` meta line) are stamped with it too.
         let grammar = Grammar.ebnf(#"root ::= "ok""#)
         let session = profile.standard.makeGuidedSession(grammar: grammar)
+        defer { await session.close() }
         _ = try await session.respond(to: "hello")
 
         let events = await recorder.events.withoutMailRecords
@@ -472,6 +478,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await Self.assertShrinkAppendsUnseenEntries(container: container, recorder: recorder) { prompt in
             _ = try await session.respond(to: prompt)
         }
@@ -491,6 +498,7 @@ struct TranscriptFidelityTests {
         // Mirrors the non-streaming scenario but drives every answer through
         // streamResponse(to:), so the streaming path appends the same events.
         let session = profile.standard.makeSession()
+        defer { await session.close() }
         try await Self.assertShrinkAppendsUnseenEntries(container: container, recorder: recorder) { prompt in
             for try await _ in await session.streamResponse(to: prompt) {}
         }
@@ -510,6 +518,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         // Answer 1: two entries, both recorded. The `.response` carries an
         // explicit id so answer 2 can rewrite it IN PLACE — same id, same
@@ -566,6 +575,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         // Answer 1: two entries, both recorded. The entry VALUES are kept so
         // the insertion of answer 2 leaves their ids intact around the new
@@ -621,6 +631,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         // Answer 1: two entries, both recorded. The `.response` carries an
         // explicit id so answer 2 can rewrite it in place.
@@ -686,6 +697,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let promptEntry = Transcript.Entry.prompt(
             Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "message1 prompt"))]))
@@ -749,6 +761,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let promptEntry = Transcript.Entry.prompt(
             Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "message1 prompt"))]))
@@ -806,6 +819,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         // Simulates a post-generation failure (e.g. a guardrail or validation
         // error raised after the SDK already durably appended the
@@ -850,6 +864,7 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         // Mirrors throwingSubmissionWithRealResponseEntryRecordsExactlyOneResponseEvent
         // but drives the same scenario through streamResponse(to:): the

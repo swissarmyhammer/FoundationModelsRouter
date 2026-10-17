@@ -404,6 +404,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "message 1")
         _ = try await root.respond(to: "message 2")
 
@@ -439,16 +440,20 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "root-message-1")
         let rootBackend = try #require(registry.created.first)
 
         let forkA = try await root.fork(workingDirectory: nil)
+        defer { await forkA.close() }
         let forkABackend = try #require(registry.created.last)
         let forkB = try await root.fork(workingDirectory: nil)
+        defer { await forkB.close() }
         let forkBBackend = try #require(registry.created.last)
 
         _ = try await forkA.respond(to: "forkA-message-1")
         let grandfork = try await forkA.fork(workingDirectory: nil)
+        defer { await grandfork.close() }
         let grandforkBackend = try #require(registry.created.last)
         _ = try await grandfork.respond(to: "grandfork-message-1")
         _ = try await forkB.respond(to: "forkB-message-1")
@@ -488,6 +493,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let backend = try #require(registry.created.first)
         backend.noteSegment = NoteSegment(id: "n1", content: Note(body: "hello"))
         _ = try await root.respond(to: "message 1")
@@ -638,6 +644,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "message 1")
 
         let tree = try TranscriptTree.load(
@@ -716,6 +723,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "message 1")
 
         let backend = try #require(registry.created.first)
@@ -776,6 +784,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         let backend = try #require(registry.created.first)
         backend.throwsBeforeAppendingAnything = true
         await #expect(throws: (any Error).self) {
@@ -1032,6 +1041,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "message 1")
         _ = try await root.respond(to: "message 2")
 

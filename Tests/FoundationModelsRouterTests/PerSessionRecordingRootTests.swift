@@ -174,6 +174,7 @@ struct PerSessionRecordingRootTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(recordingRoot: customRoot)
+        defer { await session.close() }
         _ = try await session.respond(to: "hello")
 
         let expectedDirectory = customRoot.appendingPathComponent(session.id.description, isDirectory: true)
@@ -203,8 +204,10 @@ struct PerSessionRecordingRootTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession(recordingRoot: customRoot)
+        defer { await root.close() }
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
+        defer { await fork.close() }
 
         // The fork nests directly under the flat root's own directory —
         // still no routerId segment anywhere in the path.
@@ -236,6 +239,7 @@ struct PerSessionRecordingRootTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let expectedDirectory = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)
@@ -261,8 +265,10 @@ struct PerSessionRecordingRootTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let sessionA = profile.standard.makeSession(recordingRoot: rootA)
+        defer { await sessionA.close() }
         _ = try await sessionA.respond(to: "session A answer")
         let sessionB = profile.standard.makeSession(recordingRoot: rootB)
+        defer { await sessionB.close() }
         _ = try await sessionB.respond(to: "session B answer")
 
         func childDirectoryNames(of directory: URL) throws -> Set<String> {
@@ -293,6 +299,7 @@ struct PerSessionRecordingRootTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession(recordingRoot: customRoot)
+        defer { await root.close() }
         _ = try await root.respond(to: "remember the flat layout")
 
         // "Tear down" and restore under a fresh process continuing the same
@@ -302,6 +309,7 @@ struct PerSessionRecordingRootTests {
 
         let restored = try await profile2.standard.restoreSessionTree(
             root: root.id, recordingRoot: customRoot)
+        defer { await restored.root.close() }
 
         #expect(restored.root.id == root.id)
         #expect(restored.root.parentId == nil)
@@ -326,12 +334,14 @@ struct PerSessionRecordingRootTests {
 
         // No recordingRoot: the existing nested <recordingsDir>/<routerId>/<sessionId>/ layout.
         let root = profile1.standard.makeSession()
+        defer { await root.close() }
         _ = try await root.respond(to: "remember the nested layout")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        defer { await restored.root.close() }
 
         #expect(restored.root.id == root.id)
         #expect(restored.root.parentId == nil)

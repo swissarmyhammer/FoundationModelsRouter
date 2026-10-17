@@ -39,6 +39,7 @@ struct TranscriptTreeAccessTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
+        defer { await session.close() }
 
         let tree = try profile.standard.transcriptTree()
 
@@ -57,6 +58,7 @@ struct TranscriptTreeAccessTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(recordingRoot: sessionRoot)
+        defer { await session.close() }
 
         let tree = try profile.standard.transcriptTree(recordingRoot: sessionRoot)
 
