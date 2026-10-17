@@ -2,12 +2,42 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises the waits for an ``AwaitedEvent`` and for a permit of an
-/// ``AsyncSemaphore`` that also end on the end of a task (rule T1). The task
-/// is the work that must send the event. When it ends first, the test fails
-/// by an assertion. The suite needs no session, no network and no GPU.
-@Suite("The waits for an event and for a permit also end on the end of a task")
+/// Exercises the waits for an ``AwaitedEvent``, for a permit of an
+/// ``AsyncSemaphore`` and for a state on a ``ChangeSignal`` that also end on
+/// the end of a task (rule T1). The task is the work that must send the event
+/// or make the state. When it ends first, the test fails by an assertion. The
+/// suite needs no session, no network and no GPU.
+@Suite("The waits for an event, for a permit and for a state also end on the end of a task")
 struct TaskEndEventWaitTests {
+    /// The production change that makes this test fail: a wait that reads
+    /// only the state. That wait does not end when the task ends, so it
+    /// records no issue.
+    @Test("a wait for a state fails the test and returns when the task ended and the state did not come")
+    func aStateWaitEndsOnTheEndOfTheTask() async {
+        let state = AwaitedEvent()
+        let ended = Task {}
+        defer { ended.cancel() }
+
+        await withKnownIssue("the task ended before the state came") {
+            try await state.changes.wait(until: { state.hasArrived }, endingOnEndOf: ended)
+        }
+        #expect(!state.hasArrived)
+    }
+
+    /// The production change that makes this test fail: a wait that reads
+    /// the end of the task before the state. The end then fails the test
+    /// although the state came before the end.
+    @Test("a wait for a state returns with no issue when the task made the state and then ended")
+    func aStateWaitReturnsWhenTheStateCameBeforeTheEnd() async throws {
+        let state = AwaitedEvent()
+        let making = Task { state.signal() }
+        defer { making.cancel() }
+        await making.value
+
+        try await state.changes.wait(until: { state.hasArrived }, endingOnEndOf: making)
+        #expect(state.hasArrived)
+    }
+
     /// The production change that makes this test fail: a wait that reads
     /// only the event. That wait does not end when the task ends, so it
     /// records no issue.

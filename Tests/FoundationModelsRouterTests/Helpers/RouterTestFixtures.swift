@@ -138,10 +138,10 @@ enum RouterTestFixtures {
     /// Runs `body`, and when `body` throws, does `cleanup` and removes
     /// `directory` before it throws the error again.
     ///
-    /// This is the one cleanup-on-throw step of the fixture makes (rule T1: a
-    /// fixture closes also when the body throws). A make calls it for each
-    /// step after it made its temporary directory. When `body` returns, the
-    /// directory stays: the end of the fixture removes it.
+    /// This is ``FixtureCleanup/removingDirectoryOnThrow(isolation:_:alsoOnThrow:_:)``,
+    /// the one cleanup-on-throw step of the fixture makes (rule T1), which
+    /// the real-model tests also call. It stands here too, so the fixtures of
+    /// this target find it beside the other steps of a make.
     ///
     /// - Parameters:
     ///   - isolation: The isolation of the caller. `body` and `cleanup` run
@@ -159,13 +159,8 @@ enum RouterTestFixtures {
         alsoOnThrow cleanup: () async -> Void = {},
         _ body: () async throws -> Value
     ) async throws -> Value {
-        do {
-            return try await body()
-        } catch {
-            await cleanup()
-            try? FileManager.default.removeItem(at: directory)
-            throw error
-        }
+        try await FixtureCleanup.removingDirectoryOnThrow(
+            isolation: isolation, directory, alsoOnThrow: cleanup, body)
     }
 
     /// Builds a ``Router`` over ``stubProbe`` and ``rawMetadata``,

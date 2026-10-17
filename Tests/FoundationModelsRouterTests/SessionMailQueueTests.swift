@@ -601,8 +601,9 @@ struct SessionMailQueueTests {
 
         // No caller call: the settlement is mail, and the pump of the session
         // starts the delivery submission by itself. The backend signals
-        // after it records each prompt.
-        try await backend.changes.wait(until: { backend.receivedPrompts.count == 2 })
+        // after it records each prompt. The wait also ends when the work of
+        // the session ended with no delivery (rule T1).
+        try await MailQueueFixtures.waitForPrompts(2, on: backend, endingWhenWorkEnds: session)
         #expect(await session.becomesIdle())
 
         // The model heard the terminal on that submission, and never called
@@ -1036,7 +1037,10 @@ struct SessionMailQueueTests {
         let waitingRespond = Task { try await session.respond(to: "waiting prompt") }
         // Each mail that joins the queue is a change of the state signal of
         // the session, so the test reads the count again after each change.
-        try await session.stateChanges.wait(until: { session.waitingUserMailCount == 1 })
+        // The wait also ends when the respond ended (rule T1): a respond that
+        // does not wait in the queue is answered or fails.
+        try await session.stateChanges.wait(
+            until: { session.waitingUserMailCount == 1 }, endingOnEndOf: waitingRespond)
         let id = try #require(await session.pendingMessages().first?.id)
 
         try await Self.expectSignalDone(session.cancel(id), on: session)

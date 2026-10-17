@@ -112,4 +112,37 @@ extension ChangeSignal {
             stateHeld, "the failure event came before the state that the test waits for",
             sourceLocation: sourceLocation)
     }
+
+    /// Waits until `condition` holds, or until `task` ended (rule T1). When
+    /// `task` ended and `condition` does not hold, the test fails by an
+    /// assertion.
+    ///
+    /// The end of `task` is the failure event: the end signals this signal
+    /// (``RecordedWaitResult/recordingEnd(of:reportingTo:)``), so one wait
+    /// sees the state and the end. After the end, the wait reads the state
+    /// again. Thus a state that came before `task` ended passes, also when
+    /// the end signal comes first. In a test that passes, `task` must not end
+    /// before the state comes: for example `task` is the answer that makes
+    /// the state, and a gate of the test holds that answer.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `condition` can read the state of the caller.
+    ///   - condition: Reads the state, and tells whether it is the state that
+    ///     the test wants.
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `task` ended first;
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
+    ///   otherwise what `condition` throws.
+    func wait<Success: Sendable, Failure: Error>(
+        isolation: isolated (any Actor)? = #isolation,
+        until condition: () async throws -> Bool,
+        endingOnEndOf task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let ended = RecordedWaitResult.recordingEnd(of: task, reportingTo: self)
+        defer { ended.stopRecording() }
+        try await wait(until: condition, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
+    }
 }

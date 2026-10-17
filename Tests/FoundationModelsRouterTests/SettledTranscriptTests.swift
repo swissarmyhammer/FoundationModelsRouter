@@ -189,7 +189,10 @@ struct SettledTranscriptTests {
 
         let heldAnswer = Task { try await session.respond(to: Self.heldPrompt) }
         let entriesWhileHeld = Self.entriesOfOneWholeSubmission + Self.entriesOfTheHeldSubmissionSoFar
-        try await backend.changes.wait(until: { backend.transcriptEntries().count == entriesWhileHeld })
+        // The wait also ends when the held answer ended (rule T1): only the
+        // test opens its latch, so in a test that passes it does not end first.
+        try await backend.changes.wait(
+            until: { backend.transcriptEntries().count == entriesWhileHeld }, endingOnEndOf: heldAnswer)
 
         // The read comes from a task that is not the held submission, while
         // that submission still runs. Only the test opens the latch of the

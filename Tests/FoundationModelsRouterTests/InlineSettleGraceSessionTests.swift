@@ -169,8 +169,10 @@ struct InlineSettleGraceSessionTests {
         #expect(terminal.detail == Self.runOutput)
 
         // The terminal is mail: it starts one more answer by itself, and its
-        // line reaches the model one time over every prompt.
-        try await fixture.backend.changes.wait(untilAtLeast: 2, of: { fixture.backend.receivedPrompts.count })
+        // line reaches the model one time over every prompt. The wait also
+        // ends when the work of the session ended with no such answer (rule
+        // T1).
+        try await MailQueueFixtures.waitForPrompts(2, on: fixture.backend, endingWhenWorkEnds: fixture.session)
         #expect(await fixture.session.pumpEnds())
         let prompts = fixture.backend.receivedPrompts
         #expect(prompts.count == 2)

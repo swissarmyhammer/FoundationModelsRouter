@@ -301,17 +301,24 @@ struct RespondRunPlaneDrainTests {
     /// tracks the runs. Call it only while no run can settle: each gate of
     /// the runs is still shut.
     ///
+    /// The wait also ends when `answer` ended (rule T1). Give the task of the
+    /// answer whose first submission calls the tools, while the backend
+    /// holds that submission open after its tool calls: in a test that
+    /// passes, the answer then does not end before the tool outputs came.
+    ///
     /// - Parameters:
     ///   - count: How many background runs to wait for.
     ///   - session: The session whose run plane is observed.
     ///   - backend: The backend that calls the tools of the session.
+    ///   - answer: The task of the answer that calls the tools.
     /// - Returns: The background runs' completion tokens, in tracking order.
-    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
-    ///   before the tool outputs came.
-    private static func backgroundTokens(
-        atLeast count: Int, on session: any RoutedSession, reportedBy backend: BackgroundingBackend
+    /// - Throws: The error of `#require` when `answer` ended first, or
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
+    private static func backgroundTokens<Success: Sendable, Failure: Error>(
+        atLeast count: Int, on session: any RoutedSession, reportedBy backend: BackgroundingBackend,
+        endingOnEndOf answer: Task<Success, Failure>
     ) async throws -> [String] {
-        try await backend.changes.wait(untilAtLeast: count, of: { backend.toolOutputs.count })
+        try await backend.changes.wait(until: { backend.toolOutputs.count >= count }, endingOnEndOf: answer)
         return await session.runPlane.backgroundRuns().map(\.completionToken)
     }
 
@@ -354,16 +361,20 @@ struct RespondRunPlaneDrainTests {
     /// Waits until `backend` received `count` prompts: the first submission
     /// and each delivery submission after it.
     ///
+    /// The wait also ends when the work of `session` ended (rule T1,
+    /// ``MailQueueFixtures/waitForPrompts(_:on:endingWhenWorkEnds:sourceLocation:)``).
+    ///
     /// - Parameters:
     ///   - count: How many prompts to wait for.
     ///   - backend: The backend to watch.
+    ///   - session: The session of `backend`.
     /// - Returns: The prompts, in call order.
-    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
-    ///   before the prompts came.
+    /// - Throws: The error of `#require` when the work ended first, or
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
     private static func prompts(
-        atLeast count: Int, reaching backend: BackgroundingBackend
+        atLeast count: Int, reaching backend: BackgroundingBackend, of session: any RoutedSession
     ) async throws -> [String] {
-        try await backend.changes.wait(untilAtLeast: count, of: { backend.receivedPrompts.count })
+        try await MailQueueFixtures.waitForPrompts(count, on: backend, endingWhenWorkEnds: session)
         return backend.receivedPrompts
     }
 
@@ -412,7 +423,7 @@ struct RespondRunPlaneDrainTests {
             clock.advance(by: .seconds(fixtureTimeoutSeconds))
         }
         let terminal = try #require(await settled.value)
-        let delivery = try #require(try await prompts(atLeast: 2, reaching: backend).last)
+        let delivery = try #require(try await prompts(atLeast: 2, reaching: backend, of: session).last)
         return (delivery, terminal)
     }
 
@@ -447,9 +458,9 @@ struct RespondRunPlaneDrainTests {
         // them one at a time makes the pump deliver each one on its own.
         // The respond returned, so the first submission recorded each tool
         // output that it will record: with fewer outputs the test fails
-        // here, before it waits (rule T1).
+        // here, and the run plane tracks each run (rule T1).
         try #require(backend.toolOutputs.count >= 2)
-        let tokens = try await Self.backgroundTokens(atLeast: 2, on: session, reportedBy: backend)
+        let tokens = await session.runPlane.backgroundRuns().map(\.completionToken)
         #expect(tokens.count == 2)
         let firstToken = try #require(tokens.first)
         let secondToken = try #require(tokens.last)
@@ -460,11 +471,17 @@ struct RespondRunPlaneDrainTests {
 
         // Each run's own output reached the model, in a delivery submission
         // the pump started with no caller call — never only the pending
-        // envelope the tools returned.
-        try await backend.changes.wait(until: {
-            let deliveries = backend.receivedPrompts.dropFirst().joined(separator: "\n")
-            return deliveries.contains(Self.firstToolOutput) && deliveries.contains(Self.secondToolOutput)
-        })
+        // envelope the tools returned. The wait also ends when the work of
+        // the session ended with fewer deliveries (rule T1): a settled
+        // terminal that waits in the outbox is work, so the work ends only
+        // after the pump delivered it.
+        let workEnds = Task { await session.awaitIdle() }
+        defer { workEnds.cancel() }
+        try await backend.changes.wait(
+            until: {
+                let deliveries = backend.receivedPrompts.dropFirst().joined(separator: "\n")
+                return deliveries.contains(Self.firstToolOutput) && deliveries.contains(Self.secondToolOutput)
+            }, endingOnEndOf: workEnds)
         #expect(backend.receivedPrompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
 
         // Nothing is left tracked, and the model was never asked to poll: two
@@ -546,6 +563,7 @@ struct RespondRunPlaneDrainTests {
         // submission starts the next run, until the seventh submission starts
         // none.
         let submissionCount = Self.backgroundingSubmissionCount + 1
+        // No failure event: a fake run posts its terminal after its settle, so an idle wait races here.
         try await backend.changes.wait(untilAtLeast: submissionCount, of: { backend.receivedPrompts.count })
         // The settlement of each run and the end of each pump are changes of
         // the work of the session (`idleChanges`), so the wait reads the runs
@@ -614,7 +632,8 @@ struct RespondRunPlaneDrainTests {
             return events
         }
 
-        let token = try #require(try await Self.backgroundTokens(atLeast: 1, on: session, reportedBy: backend).first)
+        let tokens = try await Self.backgroundTokens(atLeast: 1, on: session, reportedBy: backend, endingOnEndOf: collecting)
+        let token = try #require(tokens.first)
         await gate.open()
         let terminal = try await Self.settledTerminal(of: token, on: session)
         await holdFirstSubmission.open()
@@ -677,7 +696,8 @@ struct RespondRunPlaneDrainTests {
 
         let feed = await session.streamSessionEvents()
         let responding = Task { try await session.respond(to: "run the job") }
-        _ = try #require(try await Self.backgroundTokens(atLeast: 1, on: session, reportedBy: backend).first)
+        let tokens = try await Self.backgroundTokens(atLeast: 1, on: session, reportedBy: backend, endingOnEndOf: responding)
+        _ = try #require(tokens.first)
 
         // The caller's own task is cancelled. Its mail is in the open answer,
         // so the cancel ends only the wait of the caller: the caller gets

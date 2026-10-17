@@ -485,8 +485,11 @@ struct RoutedSessionToolContextBindingTests {
         // The answer ends also when the test throws before its cancel.
         defer { answerTask.cancel() }
         // The backend records the start of its hold inside the model call,
-        // so the cancel below reaches a model call in flight.
-        try await backend.changes.wait(until: { backend.respondStarted })
+        // so the cancel below reaches a model call in flight. The wait also
+        // ends when the answer ended with no model call (rule T1): only the
+        // cancel ends the hold, so in a test that passes the answer does not
+        // end first.
+        try await backend.changes.wait(until: { backend.respondStarted }, endingOnEndOf: answerTask)
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         _ = try? await answerTask.value
@@ -512,8 +515,11 @@ struct RoutedSessionToolContextBindingTests {
         // The answer ends also when the test throws before its cancel.
         defer { answerTask.cancel() }
         // The producer task of the stream records the start of its hold, so
-        // the cancel below reaches a streaming model call in flight.
-        try await backend.changes.wait(until: { backend.streamStarted })
+        // the cancel below reaches a streaming model call in flight. The wait
+        // also ends when the answer ended with no stream (rule T1): only the
+        // cancel ends the hold, so in a test that passes the answer does not
+        // end first.
+        try await backend.changes.wait(until: { backend.streamStarted }, endingOnEndOf: answerTask)
         let signal = session.cancelAll()
         #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         _ = try? await answerTask.value
@@ -521,6 +527,7 @@ struct RoutedSessionToolContextBindingTests {
         // The probe is read in the stream's own production task, which
         // outlives the cancelled submission. The backend signals the read,
         // and the test waits for that event.
+        // No failure event: a producer task that no cancel reaches stays in its hold, so this wait hangs.
         try await backend.changes.wait(until: { backend.streamProbeRead })
         #expect(backend.observedStreamCancellation)
     }

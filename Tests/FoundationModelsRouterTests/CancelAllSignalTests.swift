@@ -452,15 +452,23 @@ struct CancelAllSignalTests {
     ) async throws -> (mail: Mail, subscription: MailSubscription<SessionOutput>) {
         let mail = RoutedSessionActor.userMessage(streamPrompt, maxTokens: nil, mode: .stream)
         let subscription = try session.mail(mail)
-        // The wait also ends on the terminal event of the mail (rule T1). In
-        // a test that passes, the gate holds the answer open, so its terminal
-        // event never comes before the early text.
+        // Each wait below also ends on the terminal event of the mail (rule
+        // T1). In a test that passes, the gate holds the answer open, so its
+        // terminal event never comes before the early text or the wait at the
+        // gate.
+        let mailEnded: @Sendable ([SessionOutput]) -> Bool = { outputs in
+            outputs.contains { TerminalEventLedger.mailIdsEnded(by: $0.event)?.contains(mail.id) == true }
+        }
         try await recorder.waitFor(
             { outputs in outputs.contains { $0.event == .textDelta(GatedStreamBackend.earlyText) } },
-            endingOn: { outputs in
-                outputs.contains { TerminalEventLedger.mailIdsEnded(by: $0.event)?.contains(mail.id) == true }
-            })
-        try await backend.changes.wait(until: { backend.isLateFragmentWaiting })
+            endingOn: mailEnded)
+        // The recorder reads the terminal event in a task of its own. The
+        // cancel of that task only ends its wait. A cancel of a wait of
+        // `awaitTerminal(of:)` also cancels the mail, so the test does not use
+        // that wait here.
+        let mailEnding = Task { try? await recorder.waitFor(mailEnded) }
+        defer { mailEnding.cancel() }
+        try await backend.changes.wait(until: { backend.isLateFragmentWaiting }, endingOnEndOf: mailEnding)
         return (mail, subscription)
     }
 

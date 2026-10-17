@@ -159,10 +159,7 @@ extension RecordedWaitResult {
         endingOnEndOf task: Task<Success, Failure>,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let ended = recordingEnd(of: task, reportingTo: event.changes)
-        defer { ended.stopRecording() }
-        try await event.changes.wait(
-            until: { event.hasArrived }, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
+        try await event.changes.wait(until: { event.hasArrived }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 
     /// Takes one permit of `semaphore`, or ends when `task` ended. When

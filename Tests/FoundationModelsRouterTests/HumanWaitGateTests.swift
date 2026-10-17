@@ -395,6 +395,30 @@ struct HumanWaitGateTests {
         func wait(for event: AwaitedEvent, sourceLocation: SourceLocation = #_sourceLocation) async throws {
             try await RecordedWaitResult.wait(for: event, endingOnEndOf: task, sourceLocation: sourceLocation)
         }
+
+        /// Waits until `condition` holds, or until the run ended (rule T1).
+        /// When the run ended and `condition` does not hold, the test fails
+        /// by an assertion.
+        ///
+        /// Use it for a state that the run makes before it ends, so that in
+        /// a test that passes the run does not end first.
+        ///
+        /// - Parameters:
+        ///   - isolation: The isolation of the caller. The wait runs there,
+        ///     so `condition` can read the state of the caller.
+        ///   - condition: Reads the state, and tells whether it is the state
+        ///     that the test wants.
+        ///   - changes: The signal of each change of that state.
+        ///   - sourceLocation: The place of the call, for the failure.
+        /// - Throws: The error of `#require` when the run ended first, or
+        ///   ``ConditionNeverHeld`` when the test was cancelled first.
+        func wait(
+            isolation: isolated (any Actor)? = #isolation,
+            until condition: () async throws -> Bool, signalledBy changes: ChangeSignal,
+            sourceLocation: SourceLocation = #_sourceLocation
+        ) async throws {
+            try await changes.wait(until: condition, endingOnEndOf: task, sourceLocation: sourceLocation)
+        }
     }
 
     /// Thrown by the run of ``submissionQueued(on:)`` when the event stream of
@@ -576,9 +600,11 @@ struct HumanWaitGateTests {
         // The second respond is a message. It waits in the outbox, and never
         // goes into the running submission, which keeps the model for the
         // whole wait. The session signals `stateChanges` after it puts a
-        // message in the queue, so the test waits on that signal.
+        // message in the queue, so the test waits on that signal. The wait
+        // also ends when the second respond ended: a respond that does not
+        // wait in the outbox is answered or fails.
         let second = ObservedRun { try await session.respond(to: "second") }
-        try await session.stateChanges.wait(until: { session.waitingUserMailCount == 1 })
+        try await second.wait(until: { session.waitingUserMailCount == 1 }, signalledBy: session.stateChanges)
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)

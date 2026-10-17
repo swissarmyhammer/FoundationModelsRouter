@@ -201,11 +201,59 @@ enum MailQueueFixtures {
         _ count: Int, on backend: some PromptCountingBackend, endingWhenIdle session: any RoutedSession,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let idle = Task { await session.becomesIdle() }
-        // The cancel ends the wait for the idle state, so it leaves no
-        // waiter on the idle signal of the session.
-        defer { idle.cancel() }
-        try await backend.waitForPrompts(count, endingOnEndOf: idle, sourceLocation: sourceLocation)
+        try await waitForPrompts(
+            count, on: backend, endingOnEndOf: { await session.becomesIdle() }, sourceLocation: sourceLocation)
+    }
+
+    /// Waits until at least `count` prompts reached `backend`, or until the
+    /// work of `session` ended (rule T1). When the work ended and the count
+    /// is still low, the test fails by an assertion.
+    ///
+    /// The work ends when ``RoutedSession/awaitIdle()`` returns. Use this
+    /// wait after a background run settled, when its terminal must start a
+    /// submission with no caller call. The terminal of a settled run that
+    /// waits in the outbox is work, so the work does not end until a pump
+    /// took the terminal, called the backend and ended. The idle state of
+    /// ``waitForPrompts(_:on:endingWhenIdle:sourceLocation:)`` does not see
+    /// that terminal: between the settle and the wake of the pump it can hold,
+    /// and the test then fails in a run that the program passes. The work of
+    /// a session also includes each open background run, so the work of a
+    /// session with an open run does not end.
+    ///
+    /// - Parameters:
+    ///   - count: How many prompts to wait for.
+    ///   - backend: The backend of the session.
+    ///   - session: The session whose end of work is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the work ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    static func waitForPrompts(
+        _ count: Int, on backend: some PromptCountingBackend, endingWhenWorkEnds session: any RoutedSession,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await waitForPrompts(
+            count, on: backend, endingOnEndOf: { await session.awaitIdle() }, sourceLocation: sourceLocation)
+    }
+
+    /// Waits until at least `count` prompts reached `backend`, or until
+    /// `failureEvent` returned in a task of its own (rule T1).
+    ///
+    /// - Parameters:
+    ///   - count: How many prompts to wait for.
+    ///   - backend: The backend of the session.
+    ///   - failureEvent: A wait for the failure event. A cancel ends it.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `failureEvent` returned first,
+    ///   or ``ConditionNeverHeld`` when the test was cancelled first.
+    private static func waitForPrompts(
+        _ count: Int, on backend: some PromptCountingBackend,
+        endingOnEndOf failureEvent: @escaping @Sendable () async -> Bool, sourceLocation: SourceLocation
+    ) async throws {
+        let ending = Task { await failureEvent() }
+        // The cancel ends the wait for the failure event, so it leaves no
+        // waiter on the signals of the session.
+        defer { ending.cancel() }
+        try await backend.waitForPrompts(count, endingOnEndOf: ending, sourceLocation: sourceLocation)
     }
 }
 
@@ -225,12 +273,11 @@ extension PromptCountingBackend {
     /// `task` ended (rule T1). When `task` ended and the count is still low,
     /// the test fails by an assertion.
     ///
-    /// The end of `task` signals ``changes``, so one wait sees the count and
-    /// the end. After the end, the wait reads the count again. Thus a prompt
-    /// that came before `task` ended passes, also when the end signal comes
-    /// first. In a test that passes, `task` must not end before the prompts
-    /// came: for example `task` is the answer that the prompts start, and the
-    /// backend holds its call.
+    /// The wait is ``ChangeSignal/wait(isolation:until:endingOnEndOf:sourceLocation:)``
+    /// on ``changes``. Thus a prompt that came before `task` ended passes,
+    /// also when the end signal comes first. In a test that passes, `task`
+    /// must not end before the prompts came: for example `task` is the answer
+    /// that the prompts start, and the backend holds its call.
     ///
     /// - Parameters:
     ///   - count: How many prompts to wait for.
@@ -242,10 +289,8 @@ extension PromptCountingBackend {
         _ count: Int, endingOnEndOf task: Task<Success, Failure>,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let ended = RecordedWaitResult.recordingEnd(of: task, reportingTo: changes)
-        defer { ended.stopRecording() }
         try await changes.wait(
-            until: { self.promptCount >= count }, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
+            until: { self.promptCount >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 }
 

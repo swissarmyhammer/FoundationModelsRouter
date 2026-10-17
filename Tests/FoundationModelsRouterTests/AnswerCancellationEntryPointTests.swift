@@ -247,8 +247,11 @@ extension AnswerCancellationTests {
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
         // The session signals `stateChanges` after it puts a mail in the
-        // queue. The wait ends when the message is in the queue.
-        try await session.stateChanges.wait(until: { session.waitingUserMailCount == 1 })
+        // queue. The wait ends when the message is in the queue, or when the
+        // respond ended (rule T1): a respond that does not wait in the queue
+        // is answered or fails.
+        try await session.stateChanges.wait(
+            until: { session.waitingUserMailCount == 1 }, endingOnEndOf: queuedTask)
         let queuedId = try #require(session.outbox.queue.pending.first { !$0.isRunMail }?.id)
 
         // Cancelled while its mail waits. The mail leaves the queue, and it

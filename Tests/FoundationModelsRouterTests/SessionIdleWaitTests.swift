@@ -123,10 +123,17 @@ struct SessionIdleWaitTests {
     /// A test reads the result with ``result(of:)``, or reads it one time to
     /// see that `work` did not return yet.
     ///
-    /// - Parameter work: The work to run.
+    /// - Parameters:
+    ///   - changes: The signal that the record of the result sends. A test
+    ///     gives the signal of a state that it waits for, so that one wait
+    ///     sees the state and the end of `work`. The default is a new signal
+    ///     of this result alone.
+    ///   - work: The work to run.
     /// - Returns: The result that gets what `work` gives.
-    private static func startRecorded(_ work: @escaping @Sendable () async -> Bool) -> RecordedWaitResult {
-        let outcome = RecordedWaitResult()
+    private static func startRecorded(
+        reportingTo changes: ChangeSignal = ChangeSignal(), _ work: @escaping @Sendable () async -> Bool
+    ) -> RecordedWaitResult {
+        let outcome = RecordedWaitResult(reportingTo: changes)
         Task { outcome.record(await work()) }
         return outcome
     }
@@ -145,11 +152,19 @@ struct SessionIdleWaitTests {
 
     /// Starts the respond to ``jobPrompt`` in a task of its own.
     ///
-    /// - Parameter session: The session to send the prompt to.
+    /// The end of the respond is the failure event of a wait for a state that
+    /// the respond makes: the record of the result signals `changes`, the
+    /// signal of that state (rule T1).
+    ///
+    /// - Parameters:
+    ///   - session: The session to send the prompt to.
+    ///   - changes: The signal that the record of the result sends.
     /// - Returns: The result: `true` when the respond returned, `false` when
     ///   it threw.
-    private static func startResponding(on session: any RoutedSession) -> RecordedWaitResult {
-        startRecorded { (try? await session.respond(to: Self.jobPrompt)) != nil }
+    private static func startResponding(
+        on session: any RoutedSession, reportingTo changes: ChangeSignal
+    ) -> RecordedWaitResult {
+        startRecorded(reportingTo: changes) { (try? await session.respond(to: Self.jobPrompt)) != nil }
     }
 
     /// Reads `events` until `count` answers ended, and gives how many did.
@@ -192,15 +207,16 @@ struct SessionIdleWaitTests {
         defer { await fixture.end(opening: [gate, holdMailAnswer]) }
         let events = await fixture.session.streamSessionEvents().events
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = try await Self.startIdleWait(on: fixture.session).outcome
+        let idleWait = try await Self.startIdleWait(on: fixture.session)
+        let outcome = idleWait.outcome
         #expect(outcome.value == nil)
 
         // The run settles, and its mail starts an answer, which the backend
-        // holds open: the session is busy.
+        // holds open: the session is busy. The wait also ends when the idle
+        // wait returned (rule T1): a mail that starts no answer leaves the
+        // session with no work.
         await gate.open()
-        try await fixture.backend.changes.wait(until: {
-            fixture.backend.receivedPrompts.count == Self.promptsWithAMailAnswer
-        })
+        try await fixture.backend.waitForPrompts(Self.promptsWithAMailAnswer, endingOnEndOf: idleWait.waiting)
         #expect(outcome.value == nil)
 
         await holdMailAnswer.open()
@@ -223,10 +239,13 @@ struct SessionIdleWaitTests {
             tools: [InlineSettlingTool(gate: gate)],
             container: BackgroundingLLMContainer(holdFirstAnswer: holdFirstAnswer))
         defer { await fixture.end(opening: [gate, holdFirstAnswer]) }
-        let responded = Self.startResponding(on: fixture.session)
+        let responded = Self.startResponding(on: fixture.session, reportingTo: fixture.backend.changes)
 
         // The run settled inside its own tool call, and the answer is held.
-        try await fixture.backend.changes.wait(until: { fixture.backend.toolOutputs.count == 1 })
+        // The wait also ends when the respond ended (rule T1): a tool call
+        // that throws ends the respond before the hold.
+        try await fixture.backend.changes.wait(
+            until: { fixture.backend.toolOutputs.count == 1 }, endingOn: { responded.value != nil })
         #expect(await fixture.session.runPlane.backgroundRuns().isEmpty)
         let outcome = try await Self.startIdleWait(on: fixture.session).outcome
         #expect(outcome.value == nil)
@@ -390,8 +409,12 @@ struct SessionIdleWaitTests {
         let session = try fixture.sessionActor()
         let workId = await session.lastWorkId
         let reads = await session.readRunsAndMail()
-        let responded = Self.startResponding(on: fixture.session)
-        try await fixture.backend.changes.wait(until: { fixture.backend.receivedPrompts.count == 1 })
+        let responded = Self.startResponding(on: fixture.session, reportingTo: fixture.backend.changes)
+        // The wait also ends when the respond ended with no prompt (rule T1).
+        // The backend holds the first answer, so in a test that passes the
+        // respond does not end first.
+        try await fixture.backend.changes.wait(
+            until: { fixture.backend.receivedPrompts.count == 1 }, endingOn: { responded.value != nil })
 
         let workIdOfTheAnswer = await session.lastWorkId
         #expect(workIdOfTheAnswer != workId)
