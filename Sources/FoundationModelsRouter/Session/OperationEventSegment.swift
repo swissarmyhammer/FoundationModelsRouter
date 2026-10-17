@@ -140,9 +140,7 @@ extension OperationEventSegment {
     /// - Returns: The segments, in order, with the plans removed.
     private static func removingPlans(from segments: [Transcript.Segment]) -> [Transcript.Segment] {
         segments.map { segment in
-            guard case .structure(let structure) = segment,
-                let eventSegment = (try? OperationEventSegment(structuredSegment: structure)) ?? nil,
-                eventSegment.content.plan != nil
+            guard let eventSegment = Self.eventSegment(of: segment), eventSegment.content.plan != nil
             else { return segment }
             return eventSegment.withoutPlan.transcriptSegment
         }
@@ -183,9 +181,8 @@ extension OperationEventSegment {
     /// - Returns: The entry, or `nil`.
     private static func entryWithoutRelayedQuestions(_ entry: Transcript.Entry) -> Transcript.Entry? {
         guard case .toolOutput(let output) = entry else { return entry }
-        let kept = output.segments.filter { !isRelayedQuestion($0) }
-        guard kept.count != output.segments.count else { return entry }
-        guard !kept.isEmpty else { return nil }
+        guard let kept = TranscriptSegmentFilter.keptSegments(of: output.segments, dropping: isRelayedQuestion)
+        else { return nil }
         return .toolOutput(Transcript.ToolOutput(id: output.id, toolName: output.toolName, segments: kept))
     }
 
@@ -195,10 +192,17 @@ extension OperationEventSegment {
     /// - Parameter segment: A segment of an entry.
     /// - Returns: `true` for a relayed question.
     private static func isRelayedQuestion(_ segment: Transcript.Segment) -> Bool {
-        guard case .structure(let structure) = segment,
-            let eventSegment = (try? OperationEventSegment(structuredSegment: structure)) ?? nil
-        else { return false }
-        return eventSegment.content.elicitation?.isRelayed == true
+        eventSegment(of: segment)?.content.elicitation?.isRelayed == true
+    }
+
+    /// The ``OperationEventSegment`` that `segment` holds.
+    ///
+    /// - Parameter segment: A segment of an entry.
+    /// - Returns: The decoded segment, or `nil` when `segment` is not a
+    ///   structure segment of this type, or when its body does not decode.
+    private static func eventSegment(of segment: Transcript.Segment) -> OperationEventSegment? {
+        guard case .structure(let structure) = segment else { return nil }
+        return (try? OperationEventSegment(structuredSegment: structure)) ?? nil
     }
 }
 
