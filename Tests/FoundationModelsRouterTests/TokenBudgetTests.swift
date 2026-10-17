@@ -28,8 +28,9 @@ struct TokenBudgetTests {
     /// `await` between call and the write) from `RoutedModel.makeSession`,
     /// which is not actor-isolated and so never hops off the calling thread.
     /// Every test that reads `lastBackend` does so from the same `@MainActor`
-    /// test method that made the (synchronous) `makeSession` call chain,
-    /// after it returns — so every write and every read happen on the same
+    /// test method that made the (synchronous) `makeSession` call chain
+    /// through the `@MainActor` helper `startSession()`, after it returns —
+    /// so every write and every read happen on the same
     /// thread, never concurrently. No lock is needed for a field that is
     /// never actually accessed from more than one thread.
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
@@ -144,11 +145,34 @@ struct TokenBudgetTests {
     private static let stubDimension = 8
     private static let cannedText = "canned response"
 
-    private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TokenBudgetTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    /// The prefix of each temp directory this suite makes.
+    private static let tempDirPrefix = "TokenBudgetTests"
+
+    /// Makes a router over a new ``ConfiguredLLMContainer`` in a new temp
+    /// directory, resolves a profile with a context of 1,000 tokens, and
+    /// makes a session.
+    ///
+    /// Each answer of the backend adds 100 input tokens and 50 output tokens
+    /// to its usage. A test ends the session with
+    /// ``SessionFixtureLifecycle/end(_:opening:)`` in a `defer` (rule T1).
+    ///
+    /// - Returns: The session, its router and its directory, and the
+    ///   container that vends the backend of the session.
+    /// - Throws: What the resolve of the profile throws. Before it throws, it
+    ///   removes the directory.
+    @MainActor
+    private static func startSession() async throws -> (
+        started: SessionFixtureLifecycle.Started, container: ConfiguredLLMContainer
+    ) {
+        let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        let container = ConfiguredLLMContainer(text: cannedText, usageIncrement: (input: 100, output: 50))
+        let router = makeRouter(container: container, recorder: InMemoryRecorder(), cacheDir: directory)
+        let resolved = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
+            try await router.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+        }
+        let started = SessionFixtureLifecycle.Started(
+            session: resolved.standard.makeSession(), router: router, directory: directory)
+        return (started, container)
     }
 
     /// Builds a router wired with a ``ConfiguredLLMContainer`` carrying
@@ -216,16 +240,10 @@ struct TokenBudgetTests {
     @Test("a brand-new session reports contextFill ≈ 0 before its first answer")
     @MainActor
     func newSessionReportsZeroFill() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let (started, _) = try await Self.startSession()
+        defer { await SessionFixtureLifecycle.end(started, opening: []) }
 
-        let recorder = InMemoryRecorder()
-        let container = ConfiguredLLMContainer(text: Self.cannedText, usageIncrement: (input: 100, output: 50))
-        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
-        #expect(await session.contextFill == 0)
+        #expect(await started.session.contextFill == 0)
     }
 
     // MARK: - Live fill: last-answer delta, never the cumulative total
@@ -233,15 +251,10 @@ struct TokenBudgetTests {
     @Test("contextFill after one answer is that answer's usage delta over the resolved context")
     @MainActor
     func singleAnswerFillIsDeltaOverContext() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let (started, _) = try await Self.startSession()
+        defer { await SessionFixtureLifecycle.end(started, opening: []) }
+        let session = started.session
 
-        let recorder = InMemoryRecorder()
-        let container = ConfiguredLLMContainer(text: Self.cannedText, usageIncrement: (input: 100, output: 50))
-        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
         _ = try await session.respond(to: "first")
 
         #expect(await session.contextFill == 0.15)
@@ -252,15 +265,10 @@ struct TokenBudgetTests {
     )
     @MainActor
     func multiAnswerFillReflectsOnlyNewestDelta() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let (started, _) = try await Self.startSession()
+        defer { await SessionFixtureLifecycle.end(started, opening: []) }
+        let session = started.session
 
-        let recorder = InMemoryRecorder()
-        let container = ConfiguredLLMContainer(text: Self.cannedText, usageIncrement: (input: 100, output: 50))
-        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
 
@@ -274,15 +282,10 @@ struct TokenBudgetTests {
     @Test("an answer that fails before the backend records anything leaves contextFill unchanged")
     @MainActor
     func failedAnswerLeavesFillUnchanged() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let (started, container) = try await Self.startSession()
+        defer { await SessionFixtureLifecycle.end(started, opening: []) }
+        let session = started.session
 
-        let recorder = InMemoryRecorder()
-        let container = ConfiguredLLMContainer(text: Self.cannedText, usageIncrement: (input: 100, output: 50))
-        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
         _ = try await session.respond(to: "first")
         #expect(await session.contextFill == 0.15)
 

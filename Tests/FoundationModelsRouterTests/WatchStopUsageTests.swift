@@ -85,9 +85,10 @@ struct WatchStopUsageTests {
     {
         let fixture = try await RepeatingReasoningSessionFixture.make(
             script: script, repeatsAfterStop: false, detection: detection, tempDirPrefix: tempDirPrefix)
-        // The caller removes the directory only after this returns. A throw
-        // here must remove it, because the caller then has no answer.
-        return try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        // The caller ends the fixture only after this returns. A throw here
+        // must close the session and remove the directory, because the
+        // caller then has no answer.
+        return try await fixture.endingOnThrow {
             let events = try await collect(fixture.session.streamEvents(to: prompt))
             let contextTokens = try #require(fixture.session as? RoutedSessionActor).contextTokens
             return Answer(fixture: fixture, events: events, contextTokens: contextTokens)
@@ -168,7 +169,7 @@ struct WatchStopUsageTests {
     @Test("after a reasoning stop, the fill of the stopped submission is the render that the recovery receives")
     func reasoningStopFillIsTheRender() async throws {
         let answer = try await Self.runAnswer(script: Self.reasoningScript, detection: RepetitionDetection())
-        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+        defer { await answer.fixture.end() }
 
         #expect(answer.events.reasoningStops.count == 1)
         try Self.expectFillOfRenderAfterStop(of: answer)
@@ -177,7 +178,7 @@ struct WatchStopUsageTests {
     @Test("after a reasoning stop, the stopped call is a generation call, and its fed tokens are in the answer usage")
     func reasoningStopReportsTheStoppedCall() async throws {
         let answer = try await Self.runAnswer(script: Self.reasoningScript, detection: RepetitionDetection())
-        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+        defer { await answer.fixture.end() }
 
         #expect(answer.events.reasoningStops.count == 1)
         try await Self.expectStoppedCallReported(of: answer, finishReason: .reasoningTokenLimit)
@@ -188,7 +189,7 @@ struct WatchStopUsageTests {
         var script = Self.reasoningScript
         script.lineTokenCount = 0
         let answer = try await Self.runAnswer(script: script, detection: RepetitionDetection())
-        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+        defer { await answer.fixture.end() }
 
         #expect(answer.events.reasoningStops.count == 1)
         let stoppedCall = try #require(answer.events.generationCalls.first)
@@ -200,7 +201,7 @@ struct WatchStopUsageTests {
     func repetitionStopFillIsTheRender() async throws {
         let answer = try await Self.runAnswer(
             script: Self.repeatingScript, detection: RepetitionDetection(windowTokens: Self.repetitionWindow))
-        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+        defer { await answer.fixture.end() }
 
         #expect(answer.events.repetitionStops.count == 1)
         try Self.expectFillOfRenderAfterStop(of: answer)
@@ -210,7 +211,7 @@ struct WatchStopUsageTests {
     func repetitionStopReportsTheStoppedCall() async throws {
         let answer = try await Self.runAnswer(
             script: Self.repeatingScript, detection: RepetitionDetection(windowTokens: Self.repetitionWindow))
-        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+        defer { await answer.fixture.end() }
 
         #expect(answer.events.repetitionStops.count == 1)
         try await Self.expectStoppedCallReported(of: answer, finishReason: .repeatedLines)
@@ -222,7 +223,7 @@ struct WatchStopUsageTests {
         script.lineTokenCount = 0
         let answer = try await Self.runAnswer(
             script: script, detection: RepetitionDetection(windowTokens: Self.repetitionWindow))
-        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+        defer { await answer.fixture.end() }
 
         let stop = try #require(answer.events.repetitionStops.first)
         #expect(answer.events.repetitionStops.count == 1)

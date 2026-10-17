@@ -55,7 +55,7 @@ struct AnswerLimitsTests {
     @Test("an answer that needs two compactions and one repetition recovery gets them, and the next answer starts with fresh limits")
     func answerGetsItsLimitsAndTheNextAnswerStartsFresh() async throws {
         let fixture = try await AnswerLimitsSessionFixture.make(tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         // The first answer: two compactions that apply a summary, then one
         // that applies none (the answer stops compacting), then its one
@@ -96,7 +96,7 @@ struct AnswerLimitsTests {
         // The stop holds through the continuation, so the ceiling stop does
         // not compact, and the answer ends as truncated.
         let compaction = try await AnswerLimitsSessionFixture.make(tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: compaction.directory) }
+        defer { await compaction.end() }
         let stopped = try await compaction.answer(
             playing: [.ceilingStopWithNothingToCompact, .repeating, .ceilingStopThatCompacts], to: Self.firstPrompt)
 
@@ -112,7 +112,7 @@ struct AnswerLimitsTests {
         // The count holds through the continuation, so no recovery is left,
         // and one final pass with the reasoning off answers (task ^0dcsd3t).
         let recovery = try await AnswerLimitsSessionFixture.make(tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: recovery.directory) }
+        defer { await recovery.end() }
         let exhausted = try await recovery.answer(
             playing: [.repeating, .ceilingStopThatCompacts, .repeating, .answer], to: Self.firstPrompt)
 

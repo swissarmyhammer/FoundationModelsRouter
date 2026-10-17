@@ -65,9 +65,9 @@ struct ReasoningTokenLimitTests {
         if let logger {
             await fixture.session.useCaptureLogger(for: logger)
         }
-        // A throw before the return removes the temp directory here, because
-        // the caller gets no fixture to remove it.
-        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        // A throw before the return closes the session and removes the temp
+        // directory here, because the caller gets no fixture to end.
+        let events = try await fixture.endingOnThrow {
             try await fixture.answer(to: prompt)
         }
         return (fixture, events)
@@ -100,7 +100,7 @@ struct ReasoningTokenLimitTests {
             let answer = try await Self.runAnswer(script: script, logger: context.logger)
             return (answer, context)
         }
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let limit = RepetitionDetection.defaultReasoningTokenLimit
         let stop = try #require(events.reasoningStops.first)
@@ -130,7 +130,7 @@ struct ReasoningTokenLimitTests {
     @Test("the recovery after a reasoning stop asks the model to turn its reasoning off")
     func recoveryRunsWithReasoningOff() async throws {
         let (fixture, events) = try await Self.runAnswer(script: Self.stoppedScript)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
@@ -144,7 +144,7 @@ struct ReasoningTokenLimitTests {
             ending: .toolCall)
 
         let (fixture, events) = try await Self.runAnswer(script: script, tools: [CountingRunCodeTool(runs: runs)])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.isEmpty)
         #expect(runs.value == 1)
@@ -156,7 +156,7 @@ struct ReasoningTokenLimitTests {
     func noRecoveryLeftEndsWithNamedFinishReason() async throws {
         let (fixture, events) = try await Self.runAnswer(
             script: Self.stoppedScript, detection: RepetitionDetection(recoveriesPerAnswer: 0))
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let stop = try #require(events.reasoningStops.first)
         #expect(events.reasoningStops.count == 1)
@@ -176,7 +176,7 @@ struct ReasoningTokenLimitTests {
 
         let (fixture, events) = try await Self.runAnswer(
             script: script, detection: RepetitionDetection(reasoningTokenLimit: limit))
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.isEmpty)
         #expect(Self.finishReasons(in: events) == [.completed])
@@ -207,9 +207,9 @@ struct ReasoningEndRecoveryTests {
         ending: CeilingProbeEnding
     ) async throws -> (fixture: CeilingProbeSessionFixture, events: [SessionEvent]) {
         let fixture = try await CeilingProbeSessionFixture.make(ending: ending, tempDirPrefix: tempDirPrefix)
-        // A throw before the return removes the temp directory here, because
-        // the caller gets no fixture to remove it.
-        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        // A throw before the return closes the session and removes the temp
+        // directory here, because the caller gets no fixture to end.
+        let events = try await fixture.endingOnThrow {
             try await collect(fixture.session.streamEvents(to: "fix the bug", maxTokens: requestedCeiling))
         }
         return (fixture, events)
@@ -223,7 +223,7 @@ struct ReasoningEndRecoveryTests {
         ])
     func passEndedInsideReasoningRecovers(ending: CeilingProbeEnding, firstReason: FinishReason) async throws {
         let (fixture, events) = try await Self.runAnswer(ending: ending)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let stop = try #require(events.reasoningStops.first)
         #expect(events.reasoningStops.count == 1)
@@ -241,7 +241,7 @@ struct ReasoningEndRecoveryTests {
     )
     func recoveriesEndAtTheConfiguredCount() async throws {
         let (fixture, events) = try await Self.runAnswer(ending: .truncatedInsideReasoning)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer
         #expect(events.reasoningStops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil, nil])

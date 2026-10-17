@@ -403,7 +403,9 @@ extension RepeatingReasoningModel: ReasoningSwitchable {
 /// A routed session over a ``LiveBackendContainer`` that runs a
 /// ``RepeatingReasoningModel``, with the log of the model and the recorder
 /// that holds the recorded transcript of the session.
-struct RepeatingReasoningSessionFixture {
+///
+/// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+struct RepeatingReasoningSessionFixture: SessionDirectoryFixture {
     /// The vended session a test drives its answers on.
     let session: any RoutedSession
 
@@ -413,7 +415,8 @@ struct RepeatingReasoningSessionFixture {
     /// The recorder the router persists every transcript event into.
     let recorder: InMemoryRecorder
 
-    /// The temp directory the router cached into, which the caller must remove.
+    /// The temp directory the router cached into, which the end of the
+    /// fixture removes.
     let directory: URL
 
     /// What the first call writes.

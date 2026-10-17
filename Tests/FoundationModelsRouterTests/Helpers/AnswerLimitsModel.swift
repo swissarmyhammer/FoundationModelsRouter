@@ -244,7 +244,9 @@ struct AnswerLimitsModel: LanguageModel {
 /// A routed session over a ``LiveBackendContainer`` that runs an
 /// ``AnswerLimitsModel``, with an auto-compaction budget and a repetition
 /// detection.
-struct AnswerLimitsSessionFixture {
+///
+/// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+struct AnswerLimitsSessionFixture: SessionDirectoryFixture {
     /// The limit of ``budget``, in tokens: small, so one scripted call can
     /// cross the trigger.
     private static let budgetLimit = 1_000
@@ -275,7 +277,8 @@ struct AnswerLimitsSessionFixture {
     /// The script that the model of the session plays.
     let script: AnswerLimitsScript
 
-    /// The temp directory the router cached into, which the caller must remove.
+    /// The temp directory the router cached into, which the end of the
+    /// fixture removes.
     let directory: URL
 
     /// Builds a router and vends a session over an ``AnswerLimitsModel``.

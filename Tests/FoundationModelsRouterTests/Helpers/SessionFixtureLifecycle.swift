@@ -61,8 +61,7 @@ enum SessionFixtureLifecycle {
     ///   - started: The session, its router and its directory.
     ///   - gates: The gates of the runs of the session.
     static func end(_ started: Started, opening gates: [RunLatch]) async {
-        await close(started.session, opening: gates)
-        try? FileManager.default.removeItem(at: started.directory)
+        await started.end(opening: gates)
         withExtendedLifetime(started.router) {}
     }
 
@@ -87,3 +86,59 @@ enum SessionFixtureLifecycle {
         await session?.close()
     }
 }
+
+/// A test fixture that owns one session and the temporary directory that the
+/// router of the session caches under.
+///
+/// The extension gives each such fixture the same two teardown steps (rule
+/// T1): ``end(opening:)`` for the `defer` of a test, and
+/// ``endingOnThrow(isolation:_:)`` for a helper step that runs after the make
+/// and can throw.
+protocol SessionDirectoryFixture {
+    /// The session of the fixture.
+    var session: any RoutedSession { get }
+
+    /// The temporary directory that the router of the session caches under.
+    var directory: URL { get }
+}
+
+extension SessionDirectoryFixture {
+    /// Opens `gates`, closes the session with
+    /// ``SessionFixtureLifecycle/close(_:opening:)``, and then removes the
+    /// directory.
+    ///
+    /// A test calls it from one `defer` right after it gets the fixture, so
+    /// the session closes also when the test throws (rule T1).
+    ///
+    /// - Parameter gates: The gates of the held work of the session. The
+    ///   default is no gate.
+    func end(opening gates: [RunLatch] = []) async {
+        await SessionFixtureLifecycle.close(session, opening: gates)
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// Runs `body`, and when `body` throws, closes the session and removes
+    /// the directory before it throws the error again.
+    ///
+    /// A helper that makes the fixture and then does a step that can throw
+    /// calls it for that step: the caller gets no fixture to end when the
+    /// helper throws. When `body` returns, the session stays open, and the
+    /// caller ends the fixture with ``end(opening:)``.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. `body` runs there.
+    ///   - body: The step that can throw.
+    /// - Returns: What `body` returns.
+    /// - Throws: What `body` throws, after the close and the removal.
+    func endingOnThrow<Value>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> Value
+    ) async throws -> Value {
+        try await RouterTestFixtures.removingDirectoryOnThrow(
+            isolation: isolation, directory, alsoOnThrow: { await session.close() }, body)
+    }
+}
+
+/// A started session has the same teardown steps, so
+/// ``SessionFixtureLifecycle/end(_:opening:)`` uses ``SessionDirectoryFixture/end(opening:)``.
+extension SessionFixtureLifecycle.Started: SessionDirectoryFixture {}

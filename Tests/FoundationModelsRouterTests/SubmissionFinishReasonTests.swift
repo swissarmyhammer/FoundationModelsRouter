@@ -253,7 +253,7 @@ struct SubmissionFinishReasonTests {
     func answerEndedInsideReasoningReportsEndedInsideReasoning() async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedInsideReasoning, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
 
@@ -265,7 +265,7 @@ struct SubmissionFinishReasonTests {
     func reasoningTruncatedAtCeilingReportsMaxTokens() async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedInsideReasoningAtCeiling, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(
             to: "fix the bug", maxTokens: Self.requestedCeiling)
@@ -278,7 +278,7 @@ struct SubmissionFinishReasonTests {
     func finishedAnswerReportsCompleted() async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
 
@@ -296,7 +296,7 @@ struct SubmissionFinishReasonTests {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedOnFirstCallOnly, repetitionDetection: RepetitionDetection(recoveriesPerAnswer: 0),
             tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let first: SessionAnswer = try await fixture.session.respond(to: "first", maxTokens: nil)
         let second: SessionAnswer = try await fixture.session.respond(to: "second", maxTokens: nil)
@@ -313,7 +313,7 @@ struct SubmissionFinishReasonTests {
     func answerTruncatedAtCeilingReportsMaxTokens(maxTokens: Int?) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedInAnswerText, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
 
@@ -326,7 +326,7 @@ struct SubmissionFinishReasonTests {
     func streamedAnswerTruncatedAtCeilingReportsMaxTokens() async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedInAnswerText, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let usage = try #require(await Self.closingUsage(ofStreamedAnswerOn: fixture.session))
 
@@ -371,7 +371,7 @@ struct SubmissionFinishReasonTests {
     func toolLoopAnswerTruncatedAtCeilingReportsMaxTokens(maxTokens: Int?) async throws {
         let tool = MarkerEmittingTool()
         let fixture = try await Self.toolLoopFixture(ending: .toolCallThenTruncatedInAnswerText, tool: tool)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
 
@@ -384,7 +384,7 @@ struct SubmissionFinishReasonTests {
     func toolLoopFinishedAfterSpentToolCallReportsCompleted() async throws {
         let tool = MarkerEmittingTool()
         let fixture = try await Self.toolLoopFixture(ending: .toolCallThenFinished, tool: tool)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let outcome: SessionAnswer = try await fixture.session.respond(
             to: "fix the bug", maxTokens: Self.requestedCeiling)
@@ -400,7 +400,7 @@ struct SubmissionFinishReasonTests {
     func streamedToolLoopAnswerTruncatedAtCeilingReportsMaxTokens() async throws {
         let tool = MarkerEmittingTool()
         let fixture = try await Self.toolLoopFixture(ending: .toolCallThenTruncatedInAnswerText, tool: tool)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let usage = try #require(await Self.closingUsage(ofStreamedAnswerOn: fixture.session))
 
@@ -412,7 +412,7 @@ struct SubmissionFinishReasonTests {
     func streamedToolLoopWithSilentLastCallReportsCompleted() async throws {
         let tool = MarkerEmittingTool()
         let fixture = try await Self.toolLoopFixture(ending: .toolCallThenNoText, tool: tool)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let usage = try #require(await Self.closingUsage(ofStreamedAnswerOn: fixture.session))
 

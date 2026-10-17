@@ -52,10 +52,27 @@ comments:
     - evidence: 2 files: Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift; `swift test`: 1827 tests in 224 suites passed (6 known issues), 26 in 14 suites passed, 19 in 3 suites passed
     - next: review
   timestamp: 2026-10-17T09:53:26.076122+00:00
+- actor: claude-code
+  id: 01m54mrrj31362rjb1dj4parxk
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 638576b3). Counts: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 2 files reviewed; 2 `.kanban/` files not reviewed because of `.reviewignore`.
+    - prior items: the 3 items of `## Review Findings (2026-10-17 04:43)` are checked and the diff fixes them. RoutedSessionToolContextBindingTests.swift: `makeSession` and `makeCancellationObservingSession` now call one shared `makeVendedSession(over:vend:vendedBackend:)`. ToolInvocationLivenessTests.swift: the two gate-then-close defers now call one shared `releaseAndClose(_:_:)`.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-17T09:58:25.091042+00:00
+- actor: claude-code
+  id: 01m54msbppy6w84mxjjd1105wh
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 test files (3 findings fixed, and one more inline teardown in the same file)
+    - test: green — swift test one run: 1827 tests in 224 suites + 26 + 19 passed
+    - commit: 638576b3
+    - review: clean — 0 findings, 2 files reviewed; 3 prior items fixed
+  timestamp: 2026-10-17T09:58:44.694650+00:00
 depends_on:
 - 01M546YNM74MV9HRDSA7CNP2A0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8580
 title: 'T1 follow-up b4: tool output, tool call and mount suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the tool output, tool call and mount suites.

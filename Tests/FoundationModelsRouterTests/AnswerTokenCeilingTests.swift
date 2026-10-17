@@ -94,7 +94,7 @@ struct AnswerTokenCeilingTests {
     func answerUsesResolvedContext(surface: SessionSurface) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         try await surface.runAnswer(on: fixture.session, maxTokens: nil)
 
@@ -105,7 +105,7 @@ struct AnswerTokenCeilingTests {
     func explicitCeilingIsKept(surface: SessionSurface) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         try await surface.runAnswer(on: fixture.session, maxTokens: Self.requestedCeiling)
 

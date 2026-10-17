@@ -434,14 +434,17 @@ struct CeilingProbeLanguageModel: LanguageModel {
 /// A routed session over a ``LiveBackendContainer`` that runs a
 /// ``CeilingProbeLanguageModel``, with the log its model writes into and the
 /// directory the router cached into.
-struct CeilingProbeSessionFixture {
+///
+/// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
+struct CeilingProbeSessionFixture: SessionDirectoryFixture {
     /// The vended session a test drives its answer on.
     let session: any RoutedSession
 
     /// The log of the ceiling of each generation call.
     let log: CeilingProbeLog
 
-    /// The temp directory the router cached into, which the caller must remove.
+    /// The temp directory the router cached into, which the end of the
+    /// fixture removes.
     let directory: URL
 
     /// Builds a router, resolves a profile at `context`, and vends a session

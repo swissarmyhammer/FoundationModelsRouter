@@ -70,7 +70,8 @@ struct RepetitionStopTests {
     ///     loggers of the module.
     /// - Returns: The fixture and the events of the answer, in order.
     /// - Throws: What the fixture or the answer throws. Before it throws for
-    ///   the answer, it removes the directory of the fixture (rule T1).
+    ///   the answer, it closes the session and removes the directory of the
+    ///   fixture (rule T1).
     private static func runAnswer(
         script: RepeatingReasoningScript, repeatsAfterStop: Bool, detection: RepetitionDetection,
         logger: Logger? = nil
@@ -81,7 +82,7 @@ struct RepetitionStopTests {
         if let logger {
             await fixture.session.useCaptureLogger(for: logger)
         }
-        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        let events = try await fixture.endingOnThrow {
             try await fixture.answer(to: prompt)
         }
         return (fixture, events)
@@ -122,7 +123,7 @@ struct RepetitionStopTests {
                 detection: Self.detection, logger: context.logger)
             return (answer, context)
         }
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let stop = try #require(Self.stops(in: events).first)
         #expect(stop.tokensWithoutNewLine >= Self.window)
@@ -164,7 +165,7 @@ struct RepetitionStopTests {
         let script = RepeatingReasoningScript(reasoningLines: lines, hold: .untilOpened(ReasoningHoldGate()))
 
         let (fixture, events) = try await Self.runAnswer(script: script, repeatsAfterStop: false, detection: Self.detection)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(Self.stops(in: events).isEmpty)
         #expect(Self.finishReasons(in: events) == [.completed])
@@ -175,7 +176,7 @@ struct RepetitionStopTests {
     func repeatedPartLeavesTheRenderAndStaysInTheRecord() async throws {
         let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: .untilStopped), repeatsAfterStop: false, detection: Self.detection)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
         #expect(Self.stops(in: events).count == 1)
 
         let renders = fixture.log.renders
@@ -197,7 +198,7 @@ struct RepetitionStopTests {
     func recoveriesStopAtTheConfiguredCount() async throws {
         let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: .untilStopped), repeatsAfterStop: true, detection: Self.detection)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer
         let stops = Self.stops(in: events)
@@ -229,7 +230,7 @@ struct RepetitionStopTests {
         // stops after the answer reads the whole run.
         let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: .noHold), repeatsAfterStop: false, detection: detection)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(Self.stops(in: events).isEmpty)
         #expect(Self.finishReasons(in: events) == [.completed])

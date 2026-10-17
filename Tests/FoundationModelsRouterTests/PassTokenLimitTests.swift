@@ -85,7 +85,7 @@ struct PassTokenLimitTests {
             ending: .finished, context: Self.largeContext,
             repetitionDetection: RepetitionDetection(passTokenLimit: Self.hostLimit),
             tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let _: String = try await fixture.session.respond(to: Self.prompt)
 

@@ -62,8 +62,9 @@ struct ReasoningStopRecoveryTests {
 
     /// Runs one streamed answer over a ``StagedReasoningSessionFixture``.
     ///
-    /// When the answer throws, this helper removes the temp directory of the
-    /// fixture first (rule T1).
+    /// When the answer throws, this helper first closes the session and
+    /// removes the temp directory of the fixture (rule T1). When it returns,
+    /// the caller ends the fixture.
     ///
     /// - Parameters:
     ///   - scripts: The script of each call, in call order.
@@ -77,7 +78,7 @@ struct ReasoningStopRecoveryTests {
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await StagedReasoningSessionFixture.make(
             scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
-        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        let events = try await fixture.endingOnThrow {
             try await collect(fixture.session.streamEvents(to: prompt))
         }
         return (fixture, events)
@@ -86,8 +87,9 @@ struct ReasoningStopRecoveryTests {
     /// Runs one streamed answer over a ``CeilingProbeSessionFixture`` under
     /// ``requestedCeiling``.
     ///
-    /// When the answer throws, this helper removes the temp directory of the
-    /// fixture first (rule T1).
+    /// When the answer throws, this helper first closes the session and
+    /// removes the temp directory of the fixture (rule T1). When it returns,
+    /// the caller ends the fixture.
     ///
     /// - Parameter ending: How each generation call of the probe ends.
     /// - Returns: The fixture and the events of the answer, in order.
@@ -95,7 +97,7 @@ struct ReasoningStopRecoveryTests {
         ending: CeilingProbeEnding
     ) async throws -> (fixture: CeilingProbeSessionFixture, events: [SessionEvent]) {
         let fixture = try await CeilingProbeSessionFixture.make(ending: ending, tempDirPrefix: tempDirPrefix)
-        let events = try await RouterTestFixtures.removingDirectoryOnThrow(fixture.directory) {
+        let events = try await fixture.endingOnThrow {
             try await collect(fixture.session.streamEvents(to: prompt, maxTokens: requestedCeiling))
         }
         return (fixture, events)
@@ -133,7 +135,7 @@ struct ReasoningStopRecoveryTests {
     @Test("the recovery after a repetition stop asks the model to turn its reasoning off")
     func repetitionRecoveryRunsWithReasoningOff() async throws {
         let (fixture, events) = try await Self.runStagedAnswer(scripts: [Self.repeatingScript])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.repetitionStops.map(\.recovery) == [1])
         #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
@@ -142,7 +144,7 @@ struct ReasoningStopRecoveryTests {
     @Test("the recovery after a pass that ends inside its reasoning asks the model to turn its reasoning off")
     func reasoningEndRecoveryRunsWithReasoningOff() async throws {
         let (fixture, events) = try await Self.runProbeAnswer(ending: .truncatedOnFirstCallOnly)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
@@ -153,7 +155,7 @@ struct ReasoningStopRecoveryTests {
         let runs = RunCount()
         let (fixture, events) = try await Self.runStagedAnswer(
             scripts: [Self.longReasoningScript, Self.toolCallScript], tools: [CountingRunCodeTool(runs: runs)])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         #expect(runs.value == 1)
@@ -168,7 +170,7 @@ struct ReasoningStopRecoveryTests {
             scripts: [Self.longReasoningScript, Self.toolCallScript],
             detection: RepetitionDetection(recoveriesPerAnswer: 0),
             tools: [CountingRunCodeTool(runs: runs)])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [nil])
         #expect(runs.value == 1)
@@ -181,7 +183,7 @@ struct ReasoningStopRecoveryTests {
     func repetitionThenReasoningStopsEndWithFinalPass() async throws {
         let (fixture, events) = try await Self.runStagedAnswer(
             scripts: [Self.repeatingScript, Self.longReasoningScript, Self.longReasoningScript])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let off = ReasoningOffRequest.reasoningLevel
         #expect(events.repetitionStops.map(\.recovery) == [1])
@@ -208,7 +210,7 @@ struct ReasoningStopRecoveryTests {
     @Test("when the final pass gives no text either, the reply is a text that states the stop")
     func emptyFinalPassRepliesWithTheStop() async throws {
         let (fixture, events) = try await Self.runProbeAnswer(ending: .truncatedInsideReasoning)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         let off = ReasoningOffRequest.reasoningLevel
         #expect(events.reasoningStops.map(\.recovery) == [1, 2, nil, nil])
@@ -223,7 +225,7 @@ struct ReasoningStopRecoveryTests {
     @Test("the render of a recovery closes the stopped reasoning before the prompt")
     func recoveryRenderClosesTheStoppedReasoning() async throws {
         let (fixture, events) = try await Self.runStagedAnswer(scripts: [Self.longReasoningScript])
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         let recovery = try #require(fixture.log.renders.last)
@@ -234,7 +236,7 @@ struct ReasoningStopRecoveryTests {
     @Test("the render of a recovery after a pass that ended inside its reasoning closes that reasoning")
     func reasoningEndRenderClosesTheStoppedReasoning() async throws {
         let (fixture, events) = try await Self.runProbeAnswer(ending: .truncatedOnFirstCallOnly)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         let journal = await fixture.session.transcript
