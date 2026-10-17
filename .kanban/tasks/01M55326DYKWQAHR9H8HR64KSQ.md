@@ -45,8 +45,24 @@ comments:
     - evidence: 5 files — Tests/FoundationModelsRouterTests/SessionDrainTests.swift, Tests/FoundationModelsRouterTests/SessionPromptCacheKeyTests.swift, Tests/FoundationModelsRouterTests/AwaitAnswerTests.swift, Tests/FoundationModelsRouterTests/MailSubscriptionTests.swift, Tests/FoundationModelsRouterTests/SummarizerSubmissionTests.swift. Full `swift test` one time: FoundationModelsRouterTests 1835 tests in 226 suites passed (9 known issues, all from existing `withKnownIssue` tests); second Swift Testing target 26 tests in 14 suites passed; Evals 19 tests in 3 suites passed; XCTest 0 tests. No compiler warning (one SwiftPM "missing creator for mutated node" note on the mlx-swift bundle, not from this change).
     - next: `/review`
   timestamp: 2026-10-17T15:07:07.582800+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m556k26xcnzhgzdpnqvgh2vr
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 22805cbc). The engine reviewed 5 files. It found 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). The ignore rule excluded 4 .kanban files.
+    - next: none. The task is in done.
+  timestamp: 2026-10-17T15:09:52.733301+00:00
+- actor: claude-code
+  id: 01m556q6fm445fmzychd2xkmwq
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 test files (6 single-session tests, and one shared teardown in SummarizerSubmissionTests)
+    - test: green — the one full swift test run of the implement step: 1835 tests in 226 suites + 26 + 19 passed
+    - commit: 22805cbc
+    - review: clean — 0 findings, 5 files reviewed
+  timestamp: 2026-10-17T15:12:08.180072+00:00
+position_column: done
+position_ordinal: ffffffff9280
 title: Single-session tests that close no session, or close it only on the success path
 ---
 Source: the audit of ^vkhrmcb (partial closes). That card is about tests that make more than one session. The audit also found tests that make one session and never close it, so the session does not close when the body throws (rule T1).
