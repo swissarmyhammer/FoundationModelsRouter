@@ -218,6 +218,14 @@ extension RecordedWaitResult {
     /// the failure event. See
     /// ``wait(forPermitOf:endingOnEndOf:sourceLocation:)``.
     ///
+    /// The wait for the terminal event runs in a task of its own, and the
+    /// call cancels that task when it returns. That task waits in the output
+    /// hub of the session (``SessionOutputHub/awaitTerminal(of:orThrow:)``),
+    /// not in ``RoutedSession/awaitTerminal(of:)-(MailID)``. A cancel of the
+    /// wait of the session also cancels the mail, but a cancel of the wait of
+    /// the hub only removes that wait. Thus the end of this call does not
+    /// change the mail, and sends no signal.
+    ///
     /// - Parameters:
     ///   - semaphore: The semaphore that the work of the mail signals.
     ///   - id: The mail whose terminal event is the failure event.
@@ -229,7 +237,10 @@ extension RecordedWaitResult {
         forPermitOf semaphore: AsyncSemaphore, endingOnTerminalOf id: MailID, on session: any RoutedSession,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let mailEnding = Task { _ = try? await session.awaitTerminal(of: id) }
+        let hub = (session as! RoutedSessionActor).outputHub
+        let mailEnding = Task {
+            _ = try? await hub.awaitTerminal(of: .mail(id), orThrow: TerminalLookupError.unknownMail(id))
+        }
         defer { mailEnding.cancel() }
         try await wait(forPermitOf: semaphore, endingOnEndOf: mailEnding, sourceLocation: sourceLocation)
     }

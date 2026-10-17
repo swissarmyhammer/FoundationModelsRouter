@@ -28,10 +28,26 @@ comments:
     - evidence: 12 test files changed, no production code: Helpers/SessionFixtureLifecycle.swift, SummarizerSubmissionTests, GenerationStallDiagnosticTests, NestedGenerationReentryTests, SessionPromptCacheKeyTests, SubagentQuestionRelayTests, RelayedQuestionContextTests, SessionRunPlaneTests, SubmissionBoundaryToolTests, BackgroundRunTranscriptTests, PendingEventInjectionTests, MailTranscriptTests. `swift build --build-tests`: no error, no warning. Targeted run `swift test --skip-build --filter 'FoundationModelsRouterTests\.(SummarizerSubmissionTests|GenerationStallDiagnosticTests|NestedGenerationReentryTests|SessionPromptCacheKeyTests|SubagentQuestionRelayTests|RelayedQuestionContextTests|SessionRunPlaneTests|SubmissionBoundaryToolTests|BackgroundRunTranscriptTests|PendingEventInjectionTests|MailTranscriptTests)'`: 95 tests in 11 suites passed. Full suite `swift test` one time: "Test run with 1834 tests in 225 suites passed after 3.474 seconds with 9 known issues" (the intended `withKnownIssue` tests), then 26 tests in 14 suites passed and 19 tests in 3 suites passed. IntegrationTests compiles no changed file, so it was not built. Not committed. New card ^hr64ksq for single-session gaps.
     - next: /review
   timestamp: 2026-10-17T14:08:46.839033+00:00
+- actor: claude-code
+  id: 01m553bytndk3q2jrmbwbw7gvm
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 2ac6eb8a). 12 files reviewed, 6 .kanban files not reviewed (ignore rule). Counts: findings 0, confirmed 0, refuted 1, attempted 21, failed 0, skipped 0.
+    - next: The task has no open findings. The task moved to done.
+  timestamp: 2026-10-17T14:13:34.165101+00:00
+- actor: claude-code
+  id: 01m553cf5c3527f2qb639f5wfx
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 13 test files; new card ^hr64ksq for single sessions that never close
+    - test: green — the one full swift test run of the implement step: 1834 tests in 225 suites + 26 + 19 passed
+    - commit: 2ac6eb8a
+    - review: clean — 0 findings, 12 files reviewed
+  timestamp: 2026-10-17T14:13:50.892947+00:00
 depends_on:
 - 01M5476D8Y29HMWH8S31B1ZMQ8
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8f80
 title: 'c4 Audit partial closes: each root and fork session that a test makes closes, also on a throw'
 ---
 Source: decision of the coordinating session on ^5xy53sw, group 4 (c).
