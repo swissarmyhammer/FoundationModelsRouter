@@ -312,10 +312,10 @@ struct ExtrasPoolResolveTests {
                     directKey, footprintBytes: Self.directFootprintBytes, sessionBytes: 0, loader: directLoader)
             }
         }
-        // The admission queue records its depth meter when it makes the job of
-        // the direct acquire, and puts the job in its input in the same
-        // `submit` call, with no suspension point between. The admission job
-        // of the router holds the gate, so it cannot end before the test
+        // The admission queue records its depth meter in the step that puts
+        // the job of the direct acquire in its input, under the enqueue lock.
+        // Thus when the probe signals, the job is in the queue. The admission
+        // job of the router holds the gate, so it cannot end before the test
         // opens the gate. Thus the direct job joins the queue behind the job
         // of the router. The wait also ends when the direct acquire ended
         // (rule T1): the acquire cannot end before its job joined the queue.

@@ -17,7 +17,7 @@ import Testing
 /// answer leaves the session over the trigger of its budget.
 ///
 /// Each wait here waits for an event: the entry of a pass into the flash
-/// model, the job that the flash queue makes for the summarizer call (its
+/// model, the job of the summarizer call that the flash queue accepts (its
 /// queue depth metric, through a ``QueueDepthProbe`` that the session gets as
 /// its metrics factory), or an event of the answer. No wait has a clock or a
 /// limit.

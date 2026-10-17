@@ -239,10 +239,10 @@ struct PoolEntryQueueTests {
         let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
         let entered = directLoader.embedding.entered
         try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall)
-        // The queue of the pool entry records its depth metric when it makes
-        // the job of the router call, on the task of that call, with the
-        // factory that the task binds. The same `submit` call then puts the
-        // job in the queue, with no suspension point between the two steps.
+        // The queue of the pool entry records its depth metric in the step
+        // that puts the job of the router call in its input, under the enqueue
+        // lock, with the factory that the task of that call binds. Thus when
+        // the probe signals, the job is in the queue.
         let probe = QueueDepthProbe()
         let routerCall = Task {
             try await withMetricsFactory(probe) { try await profile.embedding.embed(texts: Self.texts) }

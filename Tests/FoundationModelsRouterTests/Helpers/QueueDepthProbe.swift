@@ -3,17 +3,18 @@ import Metrics
 @testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
-/// A metrics factory that signals ``enqueued`` each time a queue makes a job
-/// on a task that uses this factory: a task that binds it with
+/// A metrics factory that signals ``enqueued`` each time a queue accepts a job
+/// that a task that uses this factory submits: a task that binds it with
 /// `withMetricsFactory`, or a task of a session that got it as its explicit
-/// factory. The queue records its depth meter when it makes the job, and then
-/// puts the job in its input in the same `submit` call, with no suspension
-/// point between. Each other metric goes to the no-op handler.
+/// factory. The queue records the increment in the step that puts the job in
+/// its input, under the enqueue lock. Thus when ``enqueued`` signals, the job
+/// is in the queue. A job that the queue refuses before that step gets no
+/// increment. Each other metric goes to the no-op handler.
 ///
 /// The queue suites use it where no event of the router tells that a job
 /// joined a queue: a call that submits with no `onQueued`.
 final class QueueDepthProbe: MetricsFactory {
-    /// Signalled once for each job that a queue of ``model`` made.
+    /// Signalled once for each job that a queue of ``model`` accepted.
     let enqueued = AsyncSemaphore(value: 0)
 
     /// The model whose queue counts, or `nil` to count each queue.
@@ -104,7 +105,7 @@ final class QueueDepthProbe: MetricsFactory {
 }
 
 /// The depth meter of a queue that a ``QueueDepthProbe`` counts: each
-/// increment is one job that the queue made, and signals ``enqueued``.
+/// increment is one job that the queue accepted, and signals ``enqueued``.
 final class QueueDepthProbeMeter: MeterHandler {
     /// Signalled once for each increment.
     let enqueued: AsyncSemaphore
@@ -126,7 +127,7 @@ final class QueueDepthProbeMeter: MeterHandler {
     /// - Parameter value: The value.
     func set(_ value: Double) {}
 
-    /// Signals ``enqueued``: the queue made one job.
+    /// Signals ``enqueued``: the queue accepted one job.
     ///
     /// - Parameter amount: The amount of the increment.
     func increment(by amount: Double) {

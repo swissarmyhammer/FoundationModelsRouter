@@ -21,10 +21,26 @@ comments:
     - evidence: 18 test files changed (14 suites plus the fixtures `ScriptedSessionFixture`, `MeteredToolLoopSessionFixture`, `RejectingSessionFixture`). `swift build --build-tests`: no compiler warning (only the SwiftPM note "missing creator for mutated node" of the mlx bundle, which was there before). Filtered run of the 14 suites: 88 tests in 14 suites passed. Full `swift test` one time: 1827 tests in 224 suites passed with 6 known issues (the `withKnownIssue` wait tests that were there before), 26 tests in 14 suites passed, 19 tests in 3 suites passed; 0 failures. IntegrationTests not built: no file that it compiles changed.
     - next: review
   timestamp: 2026-10-17T10:37:27.974983+00:00
+- actor: claude-code
+  id: 01m54qdf8a7e0h6w0xtwe7eke6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 594f6afc). 18 files reviewed, 4 .kanban files not reviewed (ignore rule). Counts: findings 0, confirmed 0, refuted 3, attempted 21, failed 0, skipped 0. No earlier Review Findings section is on the task.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-17T10:44:40.842601+00:00
+- actor: claude-code
+  id: 01m54qe5181z4da3bqqvgwpsff
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 18 test files
+    - test: green — the one full swift test run of the implement step: 1827 tests in 224 suites + 26 + 19 passed, 0 failures
+    - commit: 594f6afc
+    - review: clean — 0 findings, 18 files reviewed
+  timestamp: 2026-10-17T10:45:03.144103+00:00
 depends_on:
 - 01M54709HFVPM6E4HMV6ESTWCE
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8780
 title: 'T1 follow-up b6: telemetry, tracing and metering suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the telemetry, tracing, metering and stall suites.

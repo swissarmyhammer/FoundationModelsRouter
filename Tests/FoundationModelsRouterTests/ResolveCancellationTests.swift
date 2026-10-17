@@ -235,11 +235,11 @@ struct ResolveCancellationTests {
                     profile: RouterTestFixtures.profile(), reporting: queuedProgress)
             }
         }
-        // The admission queue records its depth meter when it makes the
-        // admission job of the second resolve, and puts the job in its input
-        // in the same `submit` call, with no suspension point between. The
-        // job of the first resolve holds the gate until the test releases it,
-        // so the second job waits behind it.
+        // The admission queue records its depth meter in the step that puts
+        // the admission job of the second resolve in its input, under the
+        // enqueue lock. Thus when the probe signals, the job is in the queue.
+        // The job of the first resolve holds the gate until the test releases
+        // it, so the second job waits behind it.
         try await RecordedWaitResult.wait(forPermitOf: probe.enqueued, endingOnEndOf: queued)
 
         // It throws while the holder is still suspended — no `release.signal()`
