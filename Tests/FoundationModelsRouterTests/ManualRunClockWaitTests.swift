@@ -19,6 +19,7 @@ struct ManualRunClockWaitTests {
     func aWaitEndsOnTheEndOfTheTask() async {
         let clock = ManualRunClock()
         let ended = Task {}
+        defer { ended.cancel() }
 
         await withKnownIssue("the task ended before a sleeper came on the clock") {
             try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: ended)

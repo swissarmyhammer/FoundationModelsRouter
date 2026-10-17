@@ -327,6 +327,7 @@ struct ToolDisplayDeliveryTests {
         let settled = Task {
             try await MountFixtures.settledTerminal(of: envelope.completionToken, in: runPlane)
         }
+        defer { settled.cancel() }
 
         for count in 1...texts.count {
             // A window of the timeout waits before the tool posts, so the
