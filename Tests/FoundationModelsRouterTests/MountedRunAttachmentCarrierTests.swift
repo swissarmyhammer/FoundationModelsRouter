@@ -145,6 +145,7 @@ struct MountedRunAttachmentCarrierTests {
         var events: [SessionEvent] = []
         var liveReport: ToolCallReport?
         var iterator = stream.makeAsyncIterator()
+        // Rule T1 race: the gated call can open before the report comes, so no later event ends this read.
         while liveReport == nil, let event = try await iterator.next() {
             events.append(event)
             liveReport = event.carriedReport

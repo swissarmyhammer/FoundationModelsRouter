@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5509bgh14bf48s8xhr45tsh
+  text: |-
+    ### Decision of the coordinating session (swissarmyhammer-96), 2026-10-17
+    - Do this task after the `t1-followup` chain.
+    - The helper must not cancel the mail when only the test wait ends. Use a wait that ends without the `onCancel` of `awaitTerminal(of:)`, or write in the doc why the cancel is wanted.
+  timestamp: 2026-10-17T13:19:43.121505+00:00
 position_column: todo
 position_ordinal: '9380'
 title: 'T1 follow-up: the end wait of `wait(forPermitOf:endingOnTerminalOf:on:)` cancels the mail'

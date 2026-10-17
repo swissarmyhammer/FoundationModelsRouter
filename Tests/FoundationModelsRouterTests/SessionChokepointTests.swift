@@ -296,6 +296,7 @@ struct SessionChokepointTests {
     ///   - count: The number of evictions to wait for.
     /// - Throws: ``ConditionNeverHeld`` when the test was cancelled first.
     private static func waitForEvictions(_ spy: EvictionSpy, count: Int) async throws {
+        // Rule T1 race: the last release can come after a drain of the admissions, so no later event ends this wait.
         try await spy.changes.wait(untilAtLeast: count, of: { await spy.count })
     }
 

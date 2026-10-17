@@ -647,6 +647,7 @@ struct SessionDrainTests {
         // The signal does not wait for the sweep of the runs, so the test
         // waits for the session to become idle.
         try await StopRoute.cancelAll.run(on: session)
+        // Rule T1 quiet state: a sweep that leaves work hangs this wait, and no other event comes while that work stays.
         #expect(await session.awaitIdle())
 
         #expect(await session.runPlane.backgroundRuns().isEmpty)

@@ -78,7 +78,13 @@ struct NoOpToolCallStopTests {
         // The settled job starts the answer that delivers its result. That
         // answer calls the model before it ends, so its end comes after the
         // render of the call.
-        try await events.wait(until: { delivered in delivered.contains { $0.isAnswerEnd } })
+        //
+        // Rule T1: the staged result is work, so the session is idle only
+        // after that answer ended. The close then ends the feed after its
+        // last event, so the wait also ends on the end of the drain.
+        #expect(await fixture.session.awaitIdle())
+        await fixture.session.close()
+        try await events.wait(until: { delivered in delivered.contains { $0.isAnswerEnd } }, endingOnEndOf: drain)
         drain.cancel()
         #expect(await fixture.session.pumpEnds())
         #expect(fixture.log.renders.count >= Self.callsBeforeTheResult + 1)

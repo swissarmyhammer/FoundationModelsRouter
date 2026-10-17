@@ -121,6 +121,7 @@ struct SubagentQuestionRelayTests {
     private static func outputsThroughQuestion(_ feed: inout AsyncStream<SessionOutput>.Iterator) async
         -> [SessionOutput]
     {
+        // Rule T1 quiet state: a relay that sends no question hangs a root read, as the gate holds the root run with no settle.
         await SessionWorkEventTests.outputs(
             from: &feed,
             through: { SessionEventCase.elicitationRequested.matches($0) || SessionEventCase.runSettled.matches($0) })
@@ -369,6 +370,7 @@ struct SubagentQuestionRelayTests {
         // then waits on: the test fails here, before it waits (rule T1).
         try #require(completed == .completed)
         let answers = try await level.fixture.box.waitForAnswers(Self.once)
+        // Rule T1 quiet state: a relay that sends no completion hangs here, as the gate holds the root run with no settle.
         let rootOutputs = await SessionWorkEventTests.outputs(
             from: &level.rootFeed, through: SessionEventCase.elicitationCompleted.matches)
         await level.fixture.end(opening: [level.rootStep.gate])
@@ -399,6 +401,7 @@ struct SubagentQuestionRelayTests {
         }
         let childOutputs = await SessionWorkEventTests.outputs(
             from: &level.childFeed, through: SessionEventCase.runSettled.matches)
+        // Rule T1 quiet state: a relay that sends no end hangs here, as the gate holds the root run with no settle.
         let rootOutputs = await SessionWorkEventTests.outputs(
             from: &level.rootFeed, through: SessionEventCase.elicitationEnded.matches)
 
@@ -572,6 +575,7 @@ struct SubagentQuestionRelayTests {
         defer { await level.fixture.end(opening: [level.rootStep.gate]) }
 
         let rest = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.rootFeed)
+        // Rule T1 quiet state: a root that stays work hangs this wait, and no other event comes while it works.
         let isIdle = await level.root.awaitIdle()
 
         #expect(rest.last?.event == .workEnded)
@@ -609,6 +613,7 @@ struct SubagentQuestionRelayTests {
         let isIdleWhileTheChildWorks = try await level.fixture.sessionActor().isIdle()
         await besideRun.open()
         let rest = await SessionWorkEventTests.outputs(throughNextWorkEnd: &level.rootFeed)
+        // Rule T1 quiet state: a root that keeps the stopped child as work hangs this wait, with no event after it.
         let isIdleWhileTheChildWaits = await level.root.awaitIdle()
 
         #expect(target.context.completionToken != target.context.holdingRunToken)

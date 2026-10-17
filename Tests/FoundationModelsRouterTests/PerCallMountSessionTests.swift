@@ -139,15 +139,23 @@ struct PerCallMountSessionTests {
         /// ``RoutedSession/idleChanges``. So the wait reads both states again
         /// after each end of the pump.
         ///
+        /// Rule T1: the wait also ends when the work of the session ended.
+        /// An open background run and the terminal that it staged are work,
+        /// so the work ends only after the pump delivered that terminal and
+        /// stopped. A terminal that starts no submission ends the work with
+        /// too few prompts, and the test then fails.
+        ///
         /// - Parameter count: The count of prompts to wait for.
         /// - Returns: Every prompt the backend got, in order.
-        /// - Throws: ``ConditionNeverHeld`` when the waiting task was
+        /// - Throws: The error of `#require` when the work ended before the
+        ///   state held, or ``ConditionNeverHeld`` when the waiting task was
         ///   cancelled before the state held.
         func promptsAfterThePumpStops(atLeast count: Int) async throws -> [String] {
-            try await session.idleChanges.wait(until: {
-                let pumpRunning = await session.isPumpRunning
-                return !pumpRunning && backend.receivedPrompts.count >= count
-            })
+            try await session.idleChanges.wait(
+                until: {
+                    let pumpRunning = await session.isPumpRunning
+                    return !pumpRunning && backend.receivedPrompts.count >= count
+                }, endingWhenWorkEnds: session)
             return backend.receivedPrompts
         }
     }

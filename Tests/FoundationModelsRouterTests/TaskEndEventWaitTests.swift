@@ -87,6 +87,37 @@ struct TaskEndEventWaitTests {
         try await sending.value
     }
 
+    /// The production change that makes this test fail: a wait of a log that
+    /// reads only the events. The stream of the log ended with no event, and
+    /// that wait does not end, so it records no issue.
+    @Test("a wait for an event of a log fails the test and returns when the drain ended and no event came")
+    func aLogWaitEndsOnTheEndOfTheDrain() async {
+        let (log, drain) = SessionEventLog.collect(AsyncThrowingStream { $0.finish() })
+        defer { drain.cancel() }
+
+        await withKnownIssue("the drain ended before the event came") {
+            try await log.wait(until: { !$0.isEmpty }, endingOnEndOf: drain)
+        }
+        #expect(await log.events.isEmpty)
+    }
+
+    /// The production change that makes this test fail: a wait of a log that
+    /// reads the end of the drain before the events. The end then fails the
+    /// test although the event came before the end.
+    @Test("a wait for an event of a log returns with no issue when the stream sent the event and then ended")
+    func aLogWaitReturnsWhenTheEventCameBeforeTheEnd() async throws {
+        let (log, drain) = SessionEventLog.collect(
+            AsyncThrowingStream { continuation in
+                continuation.yield(.workStarted)
+                continuation.finish()
+            })
+        defer { drain.cancel() }
+        try await drain.value
+
+        try await log.wait(until: { !$0.isEmpty }, endingOnEndOf: drain)
+        #expect(await log.events == [.workStarted])
+    }
+
     /// The production change that makes this test fail: a wait for a permit
     /// through `AsyncSemaphore.wait()`. That wait does not end when the task
     /// ends, and a cancel does not take it out of the queue: it takes the

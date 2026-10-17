@@ -318,6 +318,7 @@
             let transcript = Transcript(entries: entries)
 
             let container: any LoadedLLMContainer = TranscriptSeededStubContainer()
+            // Rule T1: a backend has no end call and no cancel call for a `defer`, so the test closes no backend.
             let backend = container.makeSession(transcript: transcript)
 
             #expect(backend.transcriptEntries() == entries)

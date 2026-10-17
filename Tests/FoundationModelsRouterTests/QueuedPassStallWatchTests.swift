@@ -171,7 +171,10 @@ struct QueuedPassStallWatchTests {
         await fixture.latch.open()
         _ = try await holdingAnswer.value
         try await waitingAnswer.value
-        try await holdingLog.wait(until: { $0.contains(where: \.isAnswerEnd) })
+        // Rule T1: the close ends the feed of the holding session after its
+        // last event, so the wait also ends on the end of the drain.
+        await holding.close()
+        try await holdingLog.wait(until: { $0.contains(where: \.isAnswerEnd) }, endingOnEndOf: holdingDrain)
         holdingDrain.cancel()
 
         // The waiting submission sends its id in submissionQueued, and then

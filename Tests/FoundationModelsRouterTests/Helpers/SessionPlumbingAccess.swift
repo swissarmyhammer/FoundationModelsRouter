@@ -139,6 +139,7 @@ extension RoutedSession {
     /// - Returns: Whether no user-type mail waits after the last pump ended.
     func isIdleOnceThePumpEnds() async -> Bool {
         let session = self as! RoutedSessionActor
+        // Rule T1 quiet state: a pump that never ends hangs this wait, and no other event comes while the pump runs.
         while let pump = await session.pumpTask {
             await pump.value
         }

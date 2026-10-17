@@ -231,8 +231,8 @@ enum MailQueueFixtures {
         _ count: Int, on backend: some PromptCountingBackend, endingWhenWorkEnds session: any RoutedSession,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        try await waitForPrompts(
-            count, on: backend, endingOnEndOf: { await session.awaitIdle() }, sourceLocation: sourceLocation)
+        try await backend.changes.wait(
+            until: { backend.promptCount >= count }, endingWhenWorkEnds: session, sourceLocation: sourceLocation)
     }
 
     /// Waits until at least `count` prompts reached `backend`, or until

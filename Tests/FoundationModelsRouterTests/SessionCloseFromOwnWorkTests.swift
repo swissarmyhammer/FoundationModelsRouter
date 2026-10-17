@@ -305,6 +305,7 @@ struct SessionCloseFromOwnWorkTests {
         #expect(PendingRunEnvelope.makeDecoded(fromRendered: answer) != nil)
         await probe.mayStartClose.open()
 
+        // Rule T1 quiet state: a close that does not return early hangs here; the hang is the failure, and the body holds all work.
         try await probe.closeReturned.wait()
         await probe.mayReturn.open()
         try await probe.workReturns.wait()
@@ -331,6 +332,7 @@ struct SessionCloseFromOwnWorkTests {
         await probe.mayStartClose.open()
 
         let answering = Task { try await fixture.session.respond(to: Self.prompt) }
+        // Rule T1 quiet state: a close that does not return early hangs here; the hang is the failure, and the tool holds the answer.
         try await probe.closeReturned.wait()
         await probe.mayReturn.open()
         try await probe.workReturns.wait()

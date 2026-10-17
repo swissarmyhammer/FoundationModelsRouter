@@ -132,6 +132,7 @@ struct SessionWorkEventTests {
     static func outputs(throughNextWorkEnd feed: inout AsyncStream<SessionOutput>.Iterator) async
         -> [SessionOutput]
     {
+        // Rule T1 quiet state: a session that stays work sends no work end, and its feed does not end, so this read hangs.
         await outputs(from: &feed, through: { $0 == .workEnded })
     }
 
@@ -320,6 +321,7 @@ struct SessionWorkEventTests {
         #expect(await session.runPlane.runsWaitingOnlyForUser().count == 1)
         #expect(await session.isIdle())
         #expect(await session.hasPendingOperation())
+        // Rule T1 quiet state: a session that counts the run of the user as work hangs here, and no event comes after it.
         #expect(await fixture.session.awaitIdle())
         _ = await fixture.session.respond(elicitationId: questionId.description, response: .decline)
         #expect(try await answering.value == .decline)

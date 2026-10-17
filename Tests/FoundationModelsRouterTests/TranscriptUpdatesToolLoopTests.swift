@@ -56,6 +56,7 @@ struct TranscriptUpdatesToolLoopTests {
     private static func makeToolBackend() -> any LanguageModelSessionBackend {
         let container = LiveBackendContainer(
             model: ToolResultCompactionModel(toolCallUsage: MeteredGenerationCall(tokensIn: 1, tokensOut: 1)))
+        // Rule T1: a backend has no end call and no cancel call for a `defer`, so the tests close no backend.
         return container.makeSession(instructions: nil, tools: [LargeResultTool(result: "RESULT")])
     }
 

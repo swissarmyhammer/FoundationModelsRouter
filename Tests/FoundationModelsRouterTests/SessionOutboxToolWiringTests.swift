@@ -1598,14 +1598,16 @@ struct SessionOutboxToolWiringTests {
         // submission (task ^3qx0mpt).
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
         _ = try await responding.value
-        try await backend.changes.wait(until: {
-            backend.receivedPrompts.contains { $0.contains("answered: accept") }
-        })
+        // Rule T1: the answer mail, the resumed run and its staged terminal
+        // are work, so the work of the session ends only after the pump
+        // delivered both prompts. Each wait also ends then.
+        try await backend.changes.wait(
+            until: { backend.receivedPrompts.contains { $0.contains("answered: accept") } },
+            endingWhenWorkEnds: session)
         // A delivered answer is also elicitation-answer mail, so the model
         // reads the answer of the user in a prompt too.
         let answerLine = "[answer to elicitation \(elicitationId.ulidString)] accept"
-        try await backend.changes.wait(until: {
-            backend.receivedPrompts.contains { $0.contains(answerLine) }
-        })
+        try await backend.changes.wait(
+            until: { backend.receivedPrompts.contains { $0.contains(answerLine) } }, endingWhenWorkEnds: session)
     }
 }

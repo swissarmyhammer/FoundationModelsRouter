@@ -381,6 +381,7 @@ struct RepeatingReasoningModel: LanguageModel {
         /// - Throws: `CancellationError`, always.
         private static func waitForStop() async throws {
             let neverSent = AwaitedEvent()
+            // Rule T1 quiet state: a session that does not stop the call hangs here; only the stop under test can end it.
             try? await neverSent.wait()
             throw CancellationError()
         }

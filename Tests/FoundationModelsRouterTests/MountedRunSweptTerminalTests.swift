@@ -168,6 +168,7 @@ struct MountedRunSweptTerminalTests {
         // it waits for the body of the run, which the shut gate holds, so the
         // close runs in a task of its own until the test opens the gate.
         let closing = Task { await session.close() }
+        // Rule T1 race: the close ends only after the test opens the gate, so no later event ends this wait.
         try await recorder.changes.wait(until: {
             await recorder.events.flatMap(\.operationEvents).contains { $0.kind == .completed }
         })
@@ -208,6 +209,7 @@ struct MountedRunSweptTerminalTests {
         await gate.open()
         // The close returns only after the body of the run ended.
         await closing.value
+        // Rule T1 race: the own terminal can come after the end of the close, so no later event ends this wait.
         try await sink.changes.wait(until: { await sink.events.contains { $0.kind == .completed } })
         let ownTerminal = try #require(await sink.events.first { $0.kind == .completed })
         #expect(ownTerminal.correlationID == token)

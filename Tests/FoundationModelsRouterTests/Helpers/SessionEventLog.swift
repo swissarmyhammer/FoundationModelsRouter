@@ -37,6 +37,31 @@ actor SessionEventLog {
         try await changes.wait(until: { condition(await self.events) })
     }
 
+    /// Waits until the events delivered so far satisfy `condition`, or until
+    /// `drain` ended (rule T1). When `drain` ended and the events do not
+    /// satisfy `condition`, the test fails by an assertion.
+    ///
+    /// `drain` is the task of ``watch(_:)`` or ``collect(_:)``. It ends when
+    /// its stream ends, after it appended the last event. The close of a
+    /// session ends its feed. So a test that closes the session after the work
+    /// that makes the events ended has a failure event that comes after each
+    /// event of that work in every run.
+    ///
+    /// - Parameters:
+    ///   - condition: Tells whether the events are the events that the test
+    ///     waits for.
+    ///   - drain: The task that drains the stream into this log.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when `drain` ended first, or
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
+    nonisolated func wait<Failure: Error>(
+        until condition: @Sendable ([SessionEvent]) -> Bool, endingOnEndOf drain: Task<Void, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await changes.wait(
+            until: { condition(await self.events) }, endingOnEndOf: drain, sourceLocation: sourceLocation)
+    }
+
     /// Waits until the feed sent `count` ``SessionEvent/submissionQueued(_:)``
     /// events.
     ///

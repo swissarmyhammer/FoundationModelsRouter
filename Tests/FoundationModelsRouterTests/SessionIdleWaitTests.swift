@@ -194,6 +194,7 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(tools: [])
         defer { await fixture.end() }
 
+        // Rule T1 quiet state: a session with no work that counts as work hangs here, and no event of work comes.
         #expect(await fixture.session.awaitIdle())
     }
 
@@ -221,6 +222,7 @@ struct SessionIdleWaitTests {
 
         await holdMailAnswer.open()
 
+        // Rule T1 quiet state: a session that stays work after the mail answer hangs here, with no event after it.
         #expect(try await Self.result(of: outcome) == true)
         #expect(await !fixture.session.isPumpRunning)
         #expect(fixture.backend.receivedPrompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
@@ -253,6 +255,7 @@ struct SessionIdleWaitTests {
         await holdFirstAnswer.open()
         #expect(try await Self.result(of: responded) == true)
 
+        // Rule T1 quiet state: a session that counts the settled run as work hangs here, with no event after it.
         #expect(try await Self.result(of: outcome) == true)
         #expect(fixture.backend.receivedPrompts == [Self.jobPrompt])
         #expect(fixture.backend.toolOutputs.first?.contains(Self.runOutput) == true)
@@ -307,6 +310,7 @@ struct SessionIdleWaitTests {
         defer { await fixture.end(opening: [gate]) }
         _ = try await fixture.session.respond(to: Self.jobPrompt)
 
+        // Rule T1 quiet state: a session that counts the held mail as work hangs here, as that mail starts nothing.
         #expect(await fixture.session.awaitIdle())
 
         let waitingMail = await fixture.session.outbox.pending().events

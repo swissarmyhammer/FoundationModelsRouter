@@ -299,8 +299,12 @@ struct SubmissionBoundaryToolTests {
         // mail itself starts the next submission.
         await session.outbox.post(event: terminal)
 
+        // Rule T1: the staged terminal is work, so the work of the session
+        // ends only after the submission that the mail started. The wait
+        // also ends then, and a mail that starts no submission fails it.
         let expected = Self.oneSubmission + Self.oneSubmission
-        try await log.changes.wait(untilAtLeast: expected.count, of: { await log.events.count })
+        try await log.changes.wait(
+            until: { await log.events.count >= expected.count }, endingWhenWorkEnds: session)
         #expect(await log.events == expected)
         #expect(await session.becomesIdle())
     }

@@ -20,6 +20,8 @@ import Testing
 /// submission, and which executor ran each pass. The backends are the
 /// production ``MLXFoundationModelsSessionBackend`` over the scripted model,
 /// through ``LiveBackendContainer``.
+///
+/// Rule T1: a backend has no end call and no cancel call for a `defer`, so these tests close no backend.
 @Suite("Generation queue: one submission at a time for each container (tasks ^8csj2hw, ^1psqdm9)")
 struct GenerationQueueTests {
     /// The repository id of the raw MLX model the wrapper tests build. The

@@ -145,4 +145,39 @@ extension ChangeSignal {
         defer { ended.stopRecording() }
         try await wait(until: condition, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
     }
+
+    /// Waits until `condition` holds, or until the work of `session` ended
+    /// (rule T1). When the work ended and `condition` does not hold, the test
+    /// fails by an assertion.
+    ///
+    /// The work ends when ``RoutedSession/awaitIdle()`` returns. That call
+    /// runs in a task of its own, and the end of that task is the failure
+    /// event of ``wait(isolation:until:endingOnEndOf:sourceLocation:)``. The
+    /// terminal of a settled run that waits in the outbox, user-type mail
+    /// that waits, an open run and a pump that runs are all work. So use this
+    /// wait for a state that work of the session makes before that work ends:
+    /// in a test that passes, the work then cannot end before the state.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `condition` can read the state of the caller.
+    ///   - condition: Reads the state, and tells whether it is the state that
+    ///     the test wants.
+    ///   - session: The session whose end of work is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: The error of `#require` when the work ended first;
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
+    ///   otherwise what `condition` throws.
+    func wait(
+        isolation: isolated (any Actor)? = #isolation,
+        until condition: () async throws -> Bool,
+        endingWhenWorkEnds session: any RoutedSession,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let workEnds = Task { await session.awaitIdle() }
+        // The cancel ends the idle wait, so it leaves no waiter on the
+        // signals of the session.
+        defer { workEnds.cancel() }
+        try await wait(until: condition, endingOnEndOf: workEnds, sourceLocation: sourceLocation)
+    }
 }

@@ -382,6 +382,7 @@ extension AnswerCancellationTests {
         let suspend: @Sendable () async throws -> Void = {
             await withTaskCancellationHandler {
                 insideTool.signal()
+                // Rule T1 quiet state: a cancel that never reaches the tool hangs here; only that cancel can end it.
                 await suspended.wait()
             } onCancel: {
                 suspended.signal()
@@ -490,6 +491,7 @@ extension AnswerCancellationTests {
         _ answerTask: Task<Value, Error>,
         sawCancellation: AwaitedEvent
     ) async throws {
+        // Rule T1 quiet state: with no cancel at the tool, the tool holds the answer, so neither event nor end comes.
         try await RecordedWaitResult.wait(for: sawCancellation, endingOnEndOf: answerTask)
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
