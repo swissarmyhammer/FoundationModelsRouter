@@ -27,10 +27,26 @@ comments:
 
     Next: /review.
   timestamp: 2026-10-17T09:13:37.422721+00:00
+- actor: claude-code
+  id: 01m54jtshm3t8f7qvyfy0zjf6y
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 8471adf3). 10 files reviewed. 0 findings, 0 confirmed, 0 refuted, 21 attempted, 0 failed, 0 skipped. 4 .kanban files are excluded by .reviewignore. The description has no prior review findings.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-17T09:24:34.484810+00:00
+- actor: claude-code
+  id: 01m54jvgctj13jm8vxggx61mgx
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 10 test files
+    - test: green — the one full swift test run of the implement step: 1827 tests in 224 suites + 26 + 19 passed
+    - commit: 8471adf3
+    - review: clean — 0 findings, 10 files reviewed
+  timestamp: 2026-10-17T09:24:57.882061+00:00
 depends_on:
 - 01M546XZ84YRXYSGWFCD2HAR85
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff8480
 title: 'T1 follow-up b3: transcript and recording suites close each session, also when the body throws'
 ---
 Source: task ^dbr1dqy (T1 audit, done). The audit left "tests that never close their session or router at all (about 60 suites)" out of scope. A new check on 2026-10-17 found 107 suites with tests that make a RoutedSession and never close it. `Router` has no `close()`; only `RoutedSession` does, so this group is about sessions only. This card has the transcript and recording suites.
