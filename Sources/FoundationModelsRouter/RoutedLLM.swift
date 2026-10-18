@@ -114,7 +114,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit,
             inlineSettleGrace: configuration.inlineSettleGrace,
             isNoOpToolCall: configuration.isNoOpToolCall,
-            userPresence: configuration.userPresence)
+            userPresence: configuration.userPresence,
+            parentCall: configuration.parentCall)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -137,6 +138,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     See ``SessionConfiguration/isNoOpToolCall``.
     ///   - userPresence: Tells if a user can answer the questions of the
     ///     session. See ``SessionConfiguration/userPresence``.
+    ///   - parentCall: The context of the tool call that starts the session
+    ///     as a child, or `nil` for a root session. See
+    ///     ``SessionConfiguration/parentCall``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -153,7 +157,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
-        userPresence: UserPresence = .interactive
+        userPresence: UserPresence = .interactive,
+        parentCall: ToolContext? = nil
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -181,7 +186,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             cappedToTokenLimit: budget?.toolOutputLimit,
             tokenCounter: container.tokenCounter,
             inlineSettleGrace: inlineSettleGrace,
-            userPresence: userPresence
+            userPresence: userPresence,
+            parentCall: parentCall
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -290,20 +296,57 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         inlineSettleGrace: TimeInterval,
         userPresence: UserPresence
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
+        makeSessionToolWiring(
+            tools, sessionID: sessionID, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter,
+            inlineSettleGrace: inlineSettleGrace, userPresence: userPresence, parentCall: nil)
+    }
+
+    /// Mints the outbox and the run plane of one session, and mounts `tools`
+    /// on them, as
+    /// ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
+    /// does. When `parentCall` is not `nil`, the session is a child session
+    /// of that call: each tool mounts on the child site of the call
+    /// (`ToolContext.childSite(sessionID:runPlane:sink:)`), with the settle
+    /// period `inlineSettleGrace`. The session still gets its own run plane
+    /// and its own registry. See ``SessionConfiguration/parentCall``.
+    ///
+    /// - Parameters:
+    ///   - tools: The original tools of the caller. The call does not change
+    ///     them.
+    ///   - sessionID: The id of the session.
+    ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap output to,
+    ///     or `nil` for no cap.
+    ///   - tokenCounter: The counter of the capping layer.
+    ///   - inlineSettleGrace: How long each background call waits for its own
+    ///     run, in seconds.
+    ///   - userPresence: Tells if a user can answer the questions of the
+    ///     session.
+    ///   - parentCall: The context of the call that starts the session as a
+    ///     child, or `nil` for a root session.
+    /// - Returns: The outbox and the run plane of the session, and the
+    ///   mounted tools.
+    func makeSessionToolWiring(
+        _ tools: [any Tool],
+        sessionID: ULID,
+        cappedToTokenLimit tokenLimit: Int?,
+        tokenCounter: any TokenCounter,
+        inlineSettleGrace: TimeInterval,
+        userPresence: UserPresence,
+        parentCall: ToolContext?
+    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
         let runPlane = RunPlane(
             clock: runClock, userPresence: userPresence, workRegistry: WorkRegistry(sessionID: sessionID))
+        let site =
+            parentCall.map { call in
+                call.settling(within: inlineSettleGrace).childSite(sessionID: sessionID, runPlane: runPlane, sink: outbox)
+            }
+            ?? MountSite(
+                sessionID: sessionID, runPlane: runPlane, sink: outbox, tracer: tracer,
+                inlineSettleGrace: inlineSettleGrace)
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
-                tool: tool,
-                sessionID: sessionID,
-                runPlane: runPlane,
-                sink: outbox,
-                cappedToTokenLimit: tokenLimit,
-                tokenCounter: tokenCounter,
-                tracer: tracer,
-                inlineSettleGrace: inlineSettleGrace
-            )
+                tool: tool, site: site, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter)
         }
         return (outbox, runPlane, instancedTools)
     }

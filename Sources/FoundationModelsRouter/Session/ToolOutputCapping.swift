@@ -182,13 +182,34 @@ extension ToolMounting {
         tracer: (any Tracer)? = nil,
         inlineSettleGrace: TimeInterval
     ) -> any Tool {
-        let mounted = makeWrapped(
+        makeSessionMounted(
             tool: tool,
             site: MountSite(
                 sessionID: sessionID, runPlane: runPlane, sink: sink, tracer: tracer,
                 inlineSettleGrace: inlineSettleGrace),
-            configuration: .synchronous
-        )
+            cappedToTokenLimit: tokenLimit,
+            tokenCounter: tokenCounter)
+    }
+
+    /// Mounts `tool` on `site`, then caps it and adds the failure delivery,
+    /// as ``makeSessionMounted(tool:sessionID:runPlane:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``
+    /// does. The site of a child session comes from
+    /// `ToolContext.childSite(sessionID:runPlane:sink:)`.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to mount.
+    ///   - site: The mount site of the owning session.
+    ///   - tokenLimit: The tokens each call's result may hold, or `nil` for
+    ///     no cap.
+    ///   - tokenCounter: The counter of the owning session.
+    /// - Returns: The model-facing tool.
+    static func makeSessionMounted(
+        tool: any Tool,
+        site: MountSite,
+        cappedToTokenLimit tokenLimit: Int?,
+        tokenCounter: any TokenCounter
+    ) -> any Tool {
+        let mounted = makeWrapped(tool: tool, site: site, configuration: .synchronous)
         let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit, counter: tokenCounter)
         return ToolFailureDelivery.makeWrapped(tool: capped)
     }

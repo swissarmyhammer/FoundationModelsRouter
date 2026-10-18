@@ -136,12 +136,32 @@ public struct SessionConfiguration: Sendable {
     /// inherits it.
     public var userPresence: UserPresence
 
+    /// The context of the tool call that starts this session as a child
+    /// session, or `nil` (the default) for a root session.
+    ///
+    /// For example, the `start agent` call of a subagent gives its own
+    /// context. The session then mounts its tools on the child site of that
+    /// call (`ToolContext.childSite(sessionID:runPlane:sink:)`): the
+    /// `ToolContext` of each tool call of the session gives the session of
+    /// that call as its `parentSessionID`, and the root of the tree of that
+    /// call as its `rootSessionID`. The session keeps its own run plane and
+    /// its own `WorkRegistry`, thus each lease of a tool of the session goes
+    /// into the registry of the session, never into the registry of the
+    /// parent. The child site keeps the tracer of the parent call. The
+    /// settle period of the session is ``inlineSettleGrace``.
+    ///
+    /// The value is a live context, thus ``persistable`` does not record it.
+    /// ``agentSpawn`` records the lineage. A restore and a fork give a root
+    /// session.
+    public var parentCall: ToolContext?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
     /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`,
-    /// `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``, and
-    /// `userPresence` defaults to ``UserPresence/interactive``.
+    /// `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``,
+    /// `userPresence` defaults to ``UserPresence/interactive``, and
+    /// `parentCall` defaults to `nil`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -155,7 +175,8 @@ public struct SessionConfiguration: Sendable {
         mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit,
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         isNoOpToolCall: @escaping NoOpToolCallCheck = defaultIsNoOpToolCall,
-        userPresence: UserPresence = .interactive
+        userPresence: UserPresence = .interactive,
+        parentCall: ToolContext? = nil
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -170,6 +191,7 @@ public struct SessionConfiguration: Sendable {
         self.inlineSettleGrace = inlineSettleGrace
         self.isNoOpToolCall = isNoOpToolCall
         self.userPresence = userPresence
+        self.parentCall = parentCall
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.

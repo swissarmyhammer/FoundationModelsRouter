@@ -38,6 +38,8 @@ struct BackgroundingSessionFixture: Sendable {
     ///     session.
     ///   - recordingsDir: The durable transcripts root of the router, or
     ///     `nil` (the default) for a router that records only in memory.
+    ///   - parentCall: The ``SessionConfiguration/parentCall`` of the
+    ///     session, or `nil` (the default) for a root session.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws, or when the
     ///   container vended no backend. Before it throws for the backend, it
@@ -48,12 +50,14 @@ struct BackgroundingSessionFixture: Sendable {
         container: BackgroundingLLMContainer = BackgroundingLLMContainer(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
         userPresence: UserPresence = .interactive,
-        recordingsDir: URL? = nil
+        recordingsDir: URL? = nil,
+        parentCall: ToolContext? = nil
     ) async throws -> Self {
         let started = try await SessionFixtureLifecycle.start(
             over: container,
             configuration: SessionConfiguration(
-                tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit, userPresence: userPresence),
+                tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit, userPresence: userPresence,
+                parentCall: parentCall),
             prefix: prefix, recordingsDir: recordingsDir)
         do {
             let backend = try #require(container.lastBackend)

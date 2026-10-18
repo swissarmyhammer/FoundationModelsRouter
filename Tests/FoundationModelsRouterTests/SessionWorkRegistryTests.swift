@@ -73,6 +73,43 @@ struct SessionWorkRegistryTests {
         #expect(Self.registry(of: fixture.session).hasWork == false)
     }
 
+    @Test("a session with a parent call mounts its tools on the child site of that call, with its own registry")
+    func aChildSessionMountsOnTheChildSiteOfItsParentCall() async throws {
+        let parentRegistry = WorkRegistry(sessionID: ULID())
+        let root = ToolContext(
+            sessionID: parentRegistry.sessionID, runPlane: RunPlane(workRegistry: parentRegistry),
+            sink: DroppingEventSink(), tool: "agents", op: "start agent",
+            completionToken: ToolContext.makeCompletionToken(), isCancelled: { false })
+        let fixture = try await BackgroundingSessionFixture.make(
+            prefix: "SessionWorkRegistryTests", tools: [LeaseHoldingTool()], parentCall: root)
+        defer { await fixture.end() }
+
+        _ = try await fixture.session.respond(to: "hold one lease")
+
+        let held = try #require(LeaseHoldingTool.held.withLock { $0 }[fixture.session.id])
+        let context = try #require(LeaseHoldingTool.contexts.withLock { $0 }[fixture.session.id])
+        #expect(context.parentSessionID == parentRegistry.sessionID)
+        #expect(context.rootSessionID == parentRegistry.sessionID)
+        #expect(held.sessionID == fixture.session.id)
+        #expect(Self.registry(of: fixture.session).openWork == [held.item])
+        #expect(parentRegistry.hasWork == false)
+        held.end()
+    }
+
+    @Test("a session with no parent call is the root of its tree")
+    func aSessionWithNoParentCallIsARoot() async throws {
+        let fixture = try await Self.makeFixture(tools: [LeaseHoldingTool()])
+        defer { await fixture.end() }
+
+        _ = try await fixture.session.respond(to: "hold one lease")
+
+        let held = try #require(LeaseHoldingTool.held.withLock { $0 }[fixture.session.id])
+        let context = try #require(LeaseHoldingTool.contexts.withLock { $0 }[fixture.session.id])
+        #expect(context.parentSessionID == nil)
+        #expect(context.rootSessionID == fixture.session.id)
+        held.end()
+    }
+
     @Test("close closes the registry of the session, and a lease after the close is no work")
     func closeClosesTheRegistry() async throws {
         let fixture = try await Self.makeFixture()
@@ -96,10 +133,20 @@ struct LeaseHoldingTool: Tool {
     /// The lease of the last call of each session, by the id of the session.
     static let held = Mutex<[ULID: BackgroundWork]>([:])
 
+    /// The context of the last call of each session, by the id of the
+    /// session.
+    static let contexts = Mutex<[ULID: ToolContext]>([:])
+
     func call(arguments: BackgroundFixtureArguments) async throws -> String {
         guard let context = ToolContext.current else { return "no context" }
         let lease = context.beginBackgroundWork(.shellCommand, id: "held")
         Self.held.withLock { $0[context.sessionID] = lease }
+        Self.contexts.withLock { $0[context.sessionID] = context }
         return "held"
     }
+}
+
+/// A sink that drops each event, for a parent call with no session.
+struct DroppingEventSink: OperationEventSink {
+    func post(event: OperationEvent) async {}
 }
