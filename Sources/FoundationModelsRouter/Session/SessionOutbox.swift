@@ -33,7 +33,8 @@ import Tracing
 /// mail that waits for a submission that something else starts. The bound
 /// on answers that mail alone starts holds mail
 /// (``SessionConfiguration/mailOnlyAnswerLimit``), and a submission that gave
-/// its mail back holds it (``requeue(_:)``). An id leaves the set when its
+/// its mail back holds the mail that can start a submission now
+/// (``requeue(_:runTokens:)``). An id leaves the set when its
 /// mail is delivered, cancelled, drained or closed (``forget(_:)``), so the
 /// set never grows without limit. It also keeps the completion tokens of the
 /// runs that ``RoutedSession/cancelAll()`` stopped (``ignoreRunMail(of:)``):
@@ -122,7 +123,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         let event: OperationEvent
 
         /// Whether the mail waits for a submission that something else
-        /// starts: a submission gave it back (``requeue(_:)``), or the bound
+        /// starts: a submission gave it back (``requeue(_:runTokens:)``), or the bound
         /// on answers that mail alone starts held it (``putBack(holding:)``).
         /// A held run terminal or run message starts no submission by
         /// itself, so the pump does not retry it at once; it rides the next
@@ -285,16 +286,40 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Puts run mail that a submission took but did not deliver back at the
     /// front of the queue, with the same ids, without a second journal
-    /// write. Each mail is held (``PendingEvent/isHeld``): a submission that
-    /// could not take it would give it back again, so it waits for the next
-    /// submission that something else starts. It wakes no pump: the pump
-    /// itself gives the mail back.
+    /// write. It wakes no pump: the pump itself gives the mail back.
     ///
-    /// - Parameter mail: The mail to put back, in the order the pump took it.
+    /// Only the mail that can start a submission now
+    /// (``canStartASubmission(_:runTokens:)``) is held
+    /// (``PendingEvent/isHeld``): a submission that could not take it would
+    /// give it back again, so it waits for the next submission that something
+    /// else starts. The other mail starts no submission now, so it goes back
+    /// with no hold. The terminal of a run that is still open is such mail:
+    /// it holds its `WorkKind.mail` lease again, and the settlement of its
+    /// run lets it start a submission. Thus a terminal that a submission gave
+    /// back before its run settled never waits for user-type mail.
+    ///
+    /// - Parameters:
+    ///   - mail: The mail to put back, in the order the pump took it.
+    ///   - runTokens: The completion tokens of the background runs, read
+    ///     before this call.
     /// - Returns: The mail that the queue refused because it is closed. The
     ///   caller sends the terminal event of each one.
-    nonisolated func requeue(_ mail: [Mail]) -> [Mail] {
-        putBack(holding: mail)
+    nonisolated func requeue(_ mail: [Mail], runTokens: BackgroundRunTokens) -> [Mail] {
+        let held = mail.filter { one in
+            Self.canStartASubmission(Self.pendingEvents(of: [one], held: []), runTokens: runTokens)
+        }
+        let heldIds = Set(held.map(\.id))
+        heldMail.withLock { $0.formUnion(heldIds) }
+        endMailWork(heldIds)
+        for one in mail where !heldIds.contains(one.id) {
+            guard let event = one.runEvent, Self.canStartASubmissionByItself(event),
+                runTokens.contains(event.correlationID)
+            else { continue }
+            beginMailWork(one.id)
+        }
+        let refused = queue.putBack(mail)
+        forget(refused.map(\.id))
+        return refused
     }
 
     /// Puts back mail that the pump took and did not use, in front of every

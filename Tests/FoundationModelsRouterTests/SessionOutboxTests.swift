@@ -361,7 +361,7 @@ struct SessionOutboxTests {
         let outbox = SessionOutbox()
         let event = Self.event(correlationID: token, kind: kind)
         if held {
-            #expect(outbox.requeue([Self.runMail(event)]).isEmpty)
+            #expect(outbox.requeueOfSettledRuns([Self.runMail(event)]).isEmpty)
         } else {
             await outbox.post(event: event)
         }
@@ -417,7 +417,7 @@ struct SessionOutboxTests {
     func aHeldTerminalStartsNoSubmission() async throws {
         let outbox = SessionOutbox()
         let givenBack = Self.event(correlationID: "c1", kind: .completed, detail: "given back")
-        #expect(outbox.requeue([Self.runMail(givenBack)]).isEmpty)
+        #expect(outbox.requeueOfSettledRuns([Self.runMail(givenBack)]).isEmpty)
         #expect(Self.takeBatch(from: outbox, deliveringRunsOf: ["c1", "c2"]) == nil)
 
         try outbox.queue.put(Self.userMail("first"))
@@ -443,7 +443,7 @@ struct SessionOutboxTests {
     @Test("putBack returns untouched mail in front of newer mail, each with its own id and hold")
     func putBackKeepsOrderIdsAndHolds() async {
         let outbox = SessionOutbox()
-        #expect(outbox.requeue([Self.runMail(Self.event(correlationID: "c1", kind: .completed, detail: "held"))]).isEmpty)
+        #expect(outbox.requeueOfSettledRuns([Self.runMail(Self.event(correlationID: "c1", kind: .completed, detail: "held"))]).isEmpty)
         await outbox.post(event: Self.event(correlationID: "c2", kind: .progress, detail: "10%"))
         let taken = Self.takeRunMail(from: outbox)
         await outbox.post(event: Self.event(correlationID: "c3", kind: .completed, detail: "newer"))
@@ -463,7 +463,7 @@ struct SessionOutboxTests {
         let taken = Self.takeRunMail(from: outbox)
         await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "newer"))
 
-        #expect(outbox.requeue(taken).isEmpty)
+        #expect(outbox.requeueOfSettledRuns(taken).isEmpty)
 
         let pending = await outbox.pending().events
         #expect(pending.map(\.event.detail) == ["given back", "newer"])
@@ -480,7 +480,7 @@ struct SessionOutboxTests {
         let taken = Self.takeRunMail(from: outbox)
         _ = outbox.queue.close()
 
-        #expect(outbox.requeue(taken).map(\.id) == taken.map(\.id))
+        #expect(outbox.requeueOfSettledRuns(taken).map(\.id) == taken.map(\.id))
         #expect(outbox.putBack(holding: taken).map(\.id) == taken.map(\.id))
         #expect(outbox.putBack(untouched: taken).map(\.id) == taken.map(\.id))
         #expect(outbox.heldMailIDs.isEmpty)
@@ -496,7 +496,7 @@ struct SessionOutboxTests {
         await outbox.post(event: Self.event(correlationID: "c2", kind: .progress, detail: "second"))
         let taken = Self.takeRunMail(from: outbox)
 
-        #expect(outbox.requeue(taken).isEmpty)
+        #expect(outbox.requeueOfSettledRuns(taken).isEmpty)
         let again = Self.takeRunMail(from: outbox)
         #expect(outbox.putBack(untouched: again).isEmpty)
         // The positive control: a new post after them does reach the journal.
@@ -676,7 +676,7 @@ struct SessionOutboxTests {
         let counter = MailArrivalCounter()
         await outbox.attach(mailObserver: counter)
         let heldTerminal = Self.runMail(Self.event(correlationID: "c1", kind: .completed, detail: "c1-done"))
-        #expect(outbox.requeue([heldTerminal]).isEmpty)
+        #expect(outbox.requeueOfSettledRuns([heldTerminal]).isEmpty)
         await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "c2-done"))
         await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "c1-progress"))
         try outbox.queue.put(Self.userMail("hello"))
@@ -890,5 +890,18 @@ struct SessionOutboxTests {
     /// - Returns: The events of the taken run mail, in queue order.
     private static func takeRunEvents(from outbox: SessionOutbox) -> [OperationEvent] {
         takeRunMail(from: outbox).compactMap(\.runEvent)
+    }
+}
+
+extension SessionOutbox {
+    /// Gives `mail` back as a failed submission does
+    /// (``SessionOutbox/requeue(_:runTokens:)``), with each run of the mail
+    /// settled. So each terminal and each message of the mail can start a
+    /// submission now, and the give-back holds it.
+    ///
+    /// - Parameter mail: The mail to give back, in take order.
+    /// - Returns: The mail that the queue refused.
+    nonisolated func requeueOfSettledRuns(_ mail: [Mail]) -> [Mail] {
+        requeue(mail, runTokens: BackgroundRunTokens(settled: Set(mail.compactMap { $0.runEvent?.correlationID })))
     }
 }

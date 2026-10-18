@@ -506,7 +506,7 @@ extension RoutedSessionActor {
                 deliveredMail: recovery == nil ? deliveredMail : [],
                 entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, onEvent: onEvent)
             guard let recovery else { throw error }
-            requeueUndeliveredRunMail(deliveredMail)
+            await requeueUndeliveredRunMail(deliveredMail)
             return try await recoverFailedAttempt(
                 recovery, carrying: carriedMail, sessionText: sessionText, settings: settings, body)
         }

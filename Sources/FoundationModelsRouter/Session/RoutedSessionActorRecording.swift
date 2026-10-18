@@ -190,16 +190,19 @@ extension RoutedSessionActor {
         // submission that delivers the mail at last records it, so the
         // context holds it one time.
         if !deliveredMailAttached {
-            requeueUndeliveredRunMail(deliveredMail)
+            await requeueUndeliveredRunMail(deliveredMail)
         }
         return (diffIncludedResponse, usage, finishReason)
     }
 
     /// Puts the run mail of `mail` back in the queue with the same ids
-    /// (``SessionOutbox/requeue(_:)``), held. The events are not journaled a
-    /// second time, and a submission that could not take them is not started
-    /// again at once. User-type mail does not go back: the answer that
-    /// delivered it ends it.
+    /// (``SessionOutbox/requeue(_:runTokens:)``). The events are not
+    /// journaled a second time. The mail that can start a submission now is
+    /// held, so a submission that could not take it is not started again at
+    /// once. The other mail, for example the terminal of a run that is still
+    /// open, goes back with no hold, so the settlement of its run delivers
+    /// it. User-type mail does not go back: the answer that delivered it
+    /// ends it.
     ///
     /// Each run mail is matched by id to the run mail of the open answer
     /// (``openAnswerRunMail``). That mail leaves the open answer, so the
@@ -210,7 +213,10 @@ extension RoutedSessionActor {
     /// sent the terminal event of that mail.
     ///
     /// - Parameter mail: The mail the submission delivered, in take order.
-    func requeueUndeliveredRunMail(_ mail: [Mail]) {
+    func requeueUndeliveredRunMail(_ mail: [Mail]) async {
+        // Read first: no suspension point comes between the change of the
+        // open answer below and the put back.
+        let runTokens = await readBackgroundRunTokens()
         let runMailIds = Set(mail.filter(\.isRunMail).map(\.id))
         let given = openAnswerRunMail.filter { runMailIds.contains($0.id) }
         openAnswerRunMail.removeAll { runMailIds.contains($0.id) }
@@ -222,7 +228,7 @@ extension RoutedSessionActor {
             return
         }
         openAnswerMail.remove(given.map(\.id))
-        settleCancelledMail(outbox.requeue(given).map(\.id))
+        settleCancelledMail(outbox.requeue(given, runTokens: runTokens).map(\.id))
     }
 
     /// The token usage delta between two ``LanguageModelSessionBackend/usageTokenCounts()``
