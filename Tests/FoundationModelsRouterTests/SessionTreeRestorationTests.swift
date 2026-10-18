@@ -247,6 +247,13 @@ struct SessionTreeRestorationTests {
 
         #expect(restored.root.id == root.id)
         #expect(restored.root.parentId == nil)
+        // Each restored session owns a work registry of its own, under its
+        // own id.
+        let restoredRegistries = [root.id, forkA.id, forkB.id, grandfork.id].compactMap {
+            restored.session($0)?.runPlane.workRegistry
+        }
+        #expect(restoredRegistries.map(\.sessionID) == [root.id, forkA.id, forkB.id, grandfork.id])
+        #expect(Set(restoredRegistries.map(ObjectIdentifier.init)).count == restoredRegistries.count)
 
         let childIds = Set(restored.children(of: root.id).map(\.id))
         #expect(childIds == [forkA.id, forkB.id])

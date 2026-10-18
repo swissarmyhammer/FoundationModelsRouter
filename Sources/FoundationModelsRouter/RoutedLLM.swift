@@ -268,7 +268,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// constructed with.
     /// The outbox and the run plane are fresh per session and never shared.
     /// The run plane runs its timers on ``RoutedModel/runClock``, and it
-    /// answers the questions of the tools as `userPresence` tells.
+    /// answers the questions of the tools as `userPresence` tells. The run
+    /// plane holds a new `WorkRegistry` under `sessionID`, the one registry of
+    /// the session: each lease of a tool of the session goes into it.
     ///
     /// - Parameters:
     ///   - tools: The caller's original tools, never mutated.
@@ -289,7 +291,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         userPresence: UserPresence
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
-        let runPlane = RunPlane(clock: runClock, userPresence: userPresence)
+        let runPlane = RunPlane(
+            clock: runClock, userPresence: userPresence, workRegistry: WorkRegistry(sessionID: sessionID))
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool,

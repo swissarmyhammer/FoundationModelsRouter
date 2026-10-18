@@ -52,10 +52,13 @@ extension RoutedSessionActor {
     /// Ends each ``awaitIdle()`` call that waits with `false`, and makes each
     /// later call return `false` at once. ``close()`` calls it before it
     /// waits for the end of all work, so no wait waits for the end of all
-    /// work. The work events of the session stop too (``endWorkEvents()``).
+    /// work. The work events of the session stop too (``endWorkEvents()``),
+    /// and the work registry of the session closes (``workRegistry``): it
+    /// gives no transition any more, and a lease after this call is no work.
     func endIdleWaits() {
         isClosed = true
         endWorkEvents()
+        workRegistry.close()
         signalWorkChange()
     }
 

@@ -380,6 +380,16 @@ actor RoutedSessionActor: RoutedSession {
     /// session.
     nonisolated let runPlane: RunPlane
 
+    /// The work registry of this session: the one set of the open leases of
+    /// its work (`WorkRegistry`). The run plane holds it, so each background
+    /// run of the session and each lease of a tool of the session go into
+    /// it, and the session puts the leases of its own work into it too. A
+    /// fork, a restored session and a child session each own a registry of
+    /// their own. ``close()`` closes it.
+    nonisolated var workRegistry: WorkRegistry {
+        runPlane.workRegistry
+    }
+
     /// The pump of this session while it runs, or `nil` when no pump runs.
     /// See ``wakePump()``.
     var pumpTask: Task<Void, Never>?

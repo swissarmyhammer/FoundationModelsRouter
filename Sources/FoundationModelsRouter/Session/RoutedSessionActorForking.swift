@@ -121,13 +121,18 @@ extension RoutedSessionActor {
         // clock drives the whole family. The user presence is a host
         // setting, so the child keeps the presence of this session: a fork
         // of a headless session is headless.
-        let childRunPlane = RunPlane(clock: runPlane.clock, userPresence: runPlane.userPresence)
-        // Minted before the tool composition below, deliberately: the
-        // child's binding layers (the runners and the binding-only decorator
-        // of the Extras tool hosting)
-        // stamp this id — the fork's own session identity — into every
-        // composed run's ``ToolContext``.
+        //
+        // Minted before the run plane and the tool composition below,
+        // deliberately: the child's binding layers (the runners and the
+        // binding-only decorator of the Extras tool hosting) stamp this id —
+        // the fork's own session identity — into every composed run's
+        // ``ToolContext``, and the child's own work registry has this id. The
+        // registry is new, never the registry of this session, so a lease of
+        // the fork never makes this session busy.
         let childId = ULID.generate()
+        let childRunPlane = RunPlane(
+            clock: runPlane.clock, userPresence: runPlane.userPresence,
+            workRegistry: WorkRegistry(sessionID: childId))
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
             return ToolMounting.makeSessionMounted(
