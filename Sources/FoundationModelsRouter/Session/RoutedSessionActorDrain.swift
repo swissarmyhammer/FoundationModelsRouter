@@ -135,14 +135,22 @@ extension RoutedSessionActor {
     /// started since. ``close()`` waits for the last sweep.
     ///
     /// The sweep settles the runs with no settlement forward
-    /// (``deliver(settledTerminal:)``), so its end is a change of the work of
-    /// the session of its own (``workDidChange()``).
+    /// (``deliver(settledTerminal:)``), and journals the terminal of each
+    /// swept run after the run plane ended the lease of that run. So a sweep
+    /// that starts while the session has work holds one `WorkKind.sweep`
+    /// lease until its journal ended: the work-end event then comes after
+    /// the ``SessionEvent/runSettled(_:)`` of each swept run. A sweep that
+    /// starts with no work takes no lease: each run that it can find then
+    /// waits only for the user, and is no work. The end of the sweep is a
+    /// change of the work of the session (``signalWorkChange()``).
     private func startSweep() {
         let earlier = sweepTask
+        let lease = workRegistry.hasWork ? beginWork(.sweep, id: ULID.generate().description) : nil
         sweepTask = Task {
+            defer { lease?.end() }
             await earlier?.value
             await self.sweepBackgroundRuns()
-            await self.workDidChange()
+            self.signalWorkChange()
         }
     }
 

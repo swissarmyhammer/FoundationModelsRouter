@@ -75,13 +75,12 @@ extension RoutedSessionActor: OperationEventJournal {
     /// question. The record takes the question out with no suspension point
     /// before the live event, so a second completion finds no question.
     ///
-    /// The completion resumes the run, so it is a start of work
-    /// (``noteWorkStarted()``) before the event: a session that had no work
-    /// sends ``SessionEvent/workStarted`` first. A completion through
-    /// ``RoutedSession/complete(elicitationId:)`` noted that start already.
-    /// The change of the work is reported after the event
-    /// (``workDidChange()``), so a run that settled before its completion
-    /// arrived still gives its work-end event.
+    /// The completion resumes the run, so it is work: a
+    /// `WorkKind.questionAnswer` lease (``beginWork(_:id:)``) holds the
+    /// session from before the event to after it, and a session that had no
+    /// work sends ``SessionEvent/workStarted`` first. The resumed run holds
+    /// its own lease after that. A completion through
+    /// ``RoutedSession/complete(elicitationId:)`` began its lease already.
     ///
     /// After the event, the session reports that the journal handled the
     /// post (``questionPosts``). A cancel-all signal or ``close()`` that
@@ -95,10 +94,11 @@ extension RoutedSessionActor: OperationEventJournal {
     ///   - poster: The origin of the work that posted the completion.
     func record(elicitationCompleted elicitationId: ULID, poster: Origin) async {
         guard let origin = askedQuestions.complete(elicitationId, postedBy: poster) else { return }
-        noteWorkStarted()
+        let lease = beginWork(.questionAnswer, id: elicitationId.description)
+        defer { lease.end() }
         deliverLive(.elicitationCompleted(ElicitationCompletion(elicitationId: elicitationId)), origin: origin)
         questionPosts.signal()
-        await workDidChange()
+        signalWorkChange()
     }
 
     /// Sends ``SessionEvent/elicitationEnded(_:)`` for the question
@@ -339,8 +339,10 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// run: the body of the run posts the terminal, waits until the post
     /// ends, and only then returns, and the run plane settles the run when the
     /// body returns. So the terminal is staged before this call, and the
-    /// wake of this call finds it. The idle check (``isIdle()``) needs this
-    /// order. A sweep (of ``cancelAll()`` or of the end of all work of
+    /// wake of this call finds it. The work of the session needs this order:
+    /// the staged terminal begins the lease of its mail before the run plane
+    /// ends the lease of the run, so the session has work with no gap until
+    /// the pump delivers the terminal. A sweep (of ``cancelAll()`` or of the end of all work of
     /// ``close()``) is the one case where the terminal comes after the
     /// settlement: the sweep settles the run with no call here, and the body
     /// of the run posts its own terminal when it ends. A stopped run makes no
@@ -354,14 +356,15 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// submission already took the terminal and gave it back.
     ///
     /// The settlement is a change of the work of the session
-    /// (``workDidChange()``): a run that settles while the end of all work
-    /// of ``close()`` runs starts no pump, so the pump does not report it.
+    /// (``signalWorkChange()``). The work events come from the leases: the
+    /// run plane ended the lease of the run, and the staged terminal holds
+    /// the lease of its mail until the pump delivers it.
     ///
     /// - Parameter terminal: The terminal the run plane forwarded.
     func deliver(settledTerminal terminal: OperationEvent) async {
         await outbox.journalWithoutStaging(event: terminal)
         wakePump()
-        await workDidChange()
+        signalWorkChange()
     }
 }
 

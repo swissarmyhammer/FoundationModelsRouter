@@ -165,7 +165,7 @@ struct SessionWorkEventTests {
     }
 
     /// Waits until the pump of `session` ended, and then runs one check of
-    /// the work end of the session (``RoutedSessionActor/reportWorkEndIfIdle()``)
+    /// the work end of the session (``RoutedSessionActor/reportWorkEndIfNoWork()``)
     /// to its end.
     ///
     /// The pump clears its task before it reports its change of the work, and
@@ -181,7 +181,7 @@ struct SessionWorkEventTests {
     ///   pump ended.
     static func checkWorkEndAfterThePump(of session: RoutedSessionActor) async throws {
         try await session.idleChanges.wait(until: { await !session.isPumpRunning })
-        await session.reportWorkEndIfIdle()
+        await session.reportWorkEndIfNoWork()
     }
 
     /// Sends ``jobPrompt`` to a session with one ``AskingTool``, and reads the

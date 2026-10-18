@@ -56,6 +56,14 @@ import Tracing
 /// own copy, and the host still gets its ``SessionEvent/runSettled(_:)``,
 /// because neither reads the queue.
 ///
+/// The outbox also keeps the `WorkKind.mail` lease of each queued mail that
+/// can start an answer (``beginMailWork(_:)``), in the work registry of the
+/// session: user-type mail, and run mail that can start a submission by
+/// itself. The lease begins before the put of the mail, and ends when the
+/// mail leaves the queue for good (``forget(_:)``) or goes on hold
+/// (``putBack(holding:)``). Thus queued mail that can start an answer is work
+/// of the session, and the end of the last such mail ends the work.
+///
 /// The outbox also forwards each ``ToolDisplayEvent`` of a tool through
 /// ``post(display:)``. A display event is for the client of the host only: it
 /// is never mail, never combined and never journaled, and a withdraw never
@@ -84,7 +92,7 @@ protocol SessionMailObserver: AnyObject, Sendable {
 }
 
 /// The completion tokens of the background runs of a session, as the run
-/// plane of the session gives them. The pump and the idle check read them to
+/// plane of the session gives them. The pump and the outbox read them to
 /// find the mail that starts a submission with no user-type mail
 /// (``SessionOutbox/canStartASubmission(_:runTokens:)``).
 struct BackgroundRunTokens: Sendable, Equatable {
@@ -104,7 +112,7 @@ struct BackgroundRunTokens: Sendable, Equatable {
 }
 
 actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdrawing {
-    /// One queued run mail, as the pump and the idle check read it.
+    /// One queued run mail, as the pump reads it.
     struct PendingEvent: Sendable {
         /// The id of the mail. It stays the same across the in-place
         /// updates of a coalesced progress event.
@@ -135,6 +143,26 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// The ids of the held mail (``PendingEvent/isHeld``).
     private nonisolated let heldMail = Mutex<Set<MailID>>([])
+
+    /// The work registry of the session and the run plane of the session,
+    /// or `nil` before the session binds them (``bind(workRegistry:runPlane:)``),
+    /// and the `WorkKind.mail` lease of each queued mail that can start an
+    /// answer, by the id of the mail.
+    private nonisolated let mailWork = Mutex<MailWork>(MailWork())
+
+    /// The state behind ``mailWork``.
+    private struct MailWork: Sendable {
+        /// The work registry of the session, or `nil` before the bind.
+        var registry: WorkRegistry?
+
+        /// The run plane of the session, or `nil` before the bind. A run
+        /// event of a run that the run plane does not know (an in-band run)
+        /// starts no submission, so its mail holds no lease.
+        var runPlane: RunPlane?
+
+        /// The open lease of each queued mail that can start an answer.
+        var leases: [MailID: BackgroundWork] = [:]
+    }
 
     /// The output of the session that owns this outbox, or `nil` before
     /// the session binds it (``bind(outputHub:)``). The stage of new run
@@ -216,6 +244,9 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         // is exactly this outbox's post order.
         let origin = RunEventOrigin(mailID: stage(event: event, as: MailID()), poster: OriginContext.current)
         let journalWrite = enqueueJournalWrite(event: event, origin: origin)
+        if Self.canStartASubmissionByItself(event), let id = origin.mailID {
+            await endMailWorkOfAnInBandRun(id, event: event)
+        }
         await journalWrite?.value
         if event.kind == .completed || event.kind == .message {
             await mailObserver?.mailArrived()
@@ -291,6 +322,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         // The hold comes first, so a reader never sees the mail in the queue
         // and not held.
         heldMail.withLock { $0.formUnion(taken.map(\.id)) }
+        // Held mail starts no answer by itself, so it is no work.
+        endMailWork(taken.map(\.id))
         let refused = queue.putBack(taken)
         forget(refused.map(\.id))
         return refused
@@ -332,6 +365,77 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         guard !ids.isEmpty else { return }
         heldMail.withLock { $0.subtract(ids) }
         _ = takeCallers(of: ids)
+        endMailWork(ids)
+    }
+
+    // MARK: - The leases of the mail
+
+    /// Binds this outbox to the work registry and the run plane of the
+    /// session that owns it. From now on, each queued mail that can start an
+    /// answer holds a `WorkKind.mail` lease in `registry`.
+    ///
+    /// The session calls it one time, when it is made, before any pump or
+    /// signal of the session runs.
+    ///
+    /// - Parameters:
+    ///   - registry: The work registry of the session.
+    ///   - runPlane: The run plane of the session.
+    nonisolated func bind(workRegistry registry: WorkRegistry, runPlane: RunPlane) {
+        mailWork.withLock { work in
+            work.registry = registry
+            work.runPlane = runPlane
+        }
+    }
+
+    /// Begins the `WorkKind.mail` lease of the mail `id`. The caller calls it
+    /// before the put of the mail, so a take of the mail always finds the
+    /// lease, and ends it. A mail that holds a lease already keeps its lease:
+    /// a second mail with the same id is refused by the queue.
+    ///
+    /// - Parameter id: The id of the mail.
+    /// - Returns: `true` when this call began a lease. Before the bind, no
+    ///   lease begins.
+    @discardableResult
+    nonisolated func beginMailWork(_ id: MailID) -> Bool {
+        let registry: WorkRegistry? = mailWork.withLock { work in
+            guard work.leases[id] == nil else { return nil }
+            return work.registry
+        }
+        guard let registry else { return false }
+        let lease = registry.begin(.mail, id: id.description)
+        let kept = mailWork.withLock { work -> Bool in
+            guard work.leases[id] == nil else { return false }
+            work.leases[id] = lease
+            return true
+        }
+        guard kept else {
+            lease.end()
+            return false
+        }
+        return true
+    }
+
+    /// Ends the `WorkKind.mail` lease of each mail of `ids` that holds one.
+    ///
+    /// - Parameter ids: The ids of the mail.
+    nonisolated func endMailWork(_ ids: some Sequence<MailID>) {
+        let leases = mailWork.withLock { work in ids.compactMap { work.leases.removeValue(forKey: $0) } }
+        leases.forEach { $0.end() }
+    }
+
+    /// Ends the `WorkKind.mail` lease of the run mail `id` when `event` can
+    /// never start a submission by itself: its run is not a background run
+    /// of the run plane of the session (an in-band run). The post of the
+    /// event calls it before it returns, thus before the run plane settles
+    /// the run: an open background run is then in the open runs.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the run mail.
+    ///   - event: The run event of the mail.
+    private func endMailWorkOfAnInBandRun(_ id: MailID, event: OperationEvent) async {
+        guard let runPlane = mailWork.withLock({ $0.leases[id] == nil ? nil : $0.runPlane }) else { return }
+        guard !(await runPlane.backgroundRunTokens()).contains(event.correlationID) else { return }
+        endMailWork([id])
     }
 
     /// The ids of the held mail.
@@ -370,7 +474,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         Self.pendingEvents(of: queue.pending, held: heldMailIDs)
     }
 
-    /// The run mail of `mail` as the pump and the idle check read it.
+    /// The run mail of `mail` as the pump reads it.
     ///
     /// - Parameters:
     ///   - mail: Mail, in queue order.
@@ -407,6 +511,9 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         // queue can get the id, and the pump can take the mail and end it.
         let hub = outputHub.withLock { $0 }
         let madePending = hub?.beginPending(.mail(id)) ?? false
+        // The lease also begins before the put: a take of the mail ends it.
+        // The post ends it again when the run is an in-band run.
+        let leased = Self.canStartASubmissionByItself(event) && beginMailWork(id)
         do {
             try queue.put(Mail(id: id, sender: .run(correlationID: event.correlationID), body: .runEvent(event)))
             return id
@@ -414,9 +521,12 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
             // The queue refuses mail only after the session closed. Then no
             // submission reads the mail anymore, and the journal still
             // records the event, so the refusal needs only the end of the
-            // pending record.
+            // pending record and of the lease.
             if madePending {
                 hub?.endPending(.mail(id))
+            }
+            if leased {
+                endMailWork([id])
             }
             return nil
         }
@@ -583,6 +693,17 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ) -> Task<Void, Never>? {
         guard let journal else { return nil }
         return journalChain.enqueue { await work(journal) }
+    }
+
+    /// Whether the kind of `event` can start a submission by itself: a
+    /// terminal or a message of a run. Such mail starts a submission only
+    /// for a background run (``canStartASubmission(_:runTokens:)``).
+    ///
+    /// - Parameter event: A run event.
+    /// - Returns: `true` for ``OperationEventKind/completed`` and
+    ///   ``OperationEventKind/message``.
+    static func canStartASubmissionByItself(_ event: OperationEvent) -> Bool {
+        event.kind == .completed || event.kind == .message
     }
 
     /// A snapshot of the queued run mail.

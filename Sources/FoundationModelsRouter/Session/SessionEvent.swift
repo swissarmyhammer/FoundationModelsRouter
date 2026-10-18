@@ -368,10 +368,11 @@ public enum SessionEvent: Sendable, Equatable {
     /// This is the terminal event of the mail.
     case lost(MailID)
 
-    /// The session had no work, and now it has work. The rules of the work
-    /// are the rules of ``RoutedSession/awaitIdle()``: an open background
-    /// run, pump work that runs or waits, or queued run mail that can start
-    /// an answer by itself. A background run that waits only for the user
+    /// The session had no work, and now it has work: the first lease of the
+    /// work registry of the session opened. The rules of the work are the
+    /// rules of ``RoutedSession/awaitIdle()``: an answer that runs, a queued
+    /// mail that can start an answer, a requested compaction, or open
+    /// background tool work. A background run that waits only for the user
     /// (an open question of ``elicitationRequested(_:)``) is no work, unless
     /// a subagent that the run drives works: the ``SubagentQuestionRelay`` of
     /// the run reads the work events of the subagent, and the run is work
@@ -384,14 +385,19 @@ public enum SessionEvent: Sendable, Equatable {
     /// ``workEnded`` come in turns, and ``workStarted`` comes first. A
     /// session that has no work when a feed starts sends nothing until work
     /// starts. A consumer needs no clock and no poll to know the work state.
+    /// Each session sends its own events: the work of a fork or of a child
+    /// session never makes its parent send one.
     ///
     /// After ``RoutedSession/close()`` starts, the session sends no work
     /// event. The feed ends when the close finishes it.
     case workStarted
 
-    /// The session had work, and now it has no work. The rules of the work
-    /// are the rules of ``workStarted``. When this event comes,
-    /// ``RoutedSession/awaitIdle()`` returns `true`.
+    /// The session has no work: nothing is queued to generate, nothing in
+    /// the mailbox can start work, and no background tool work is open. The
+    /// last lease of the work registry of the session ended. This is the
+    /// no-work event of the session. The rules of the work are the rules of
+    /// ``workStarted``. When this event comes, ``RoutedSession/awaitIdle()``
+    /// returns `true`.
     ///
     /// The event comes after each output of the work that ended: for
     /// example after the ``answered(_:)`` of the last answer, after the

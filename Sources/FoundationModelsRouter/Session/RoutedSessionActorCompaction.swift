@@ -170,9 +170,11 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/compact(prompt:budget:)``.
     ///
-    /// A requested compaction is work of the session from the call on, so
-    /// its start is noted (``noteWorkStarted()``) before the call returns,
-    /// and thus before each event of the compaction.
+    /// A requested compaction is work of the session from the call on: it
+    /// holds one `WorkKind.compaction` lease (``beginWork(_:id:)``) from
+    /// before the call returns, thus before each event of the compaction,
+    /// to the end of the compaction, after its terminal event. A compaction
+    /// that the close skips ends its lease in the skip.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer.
@@ -183,26 +185,18 @@ extension RoutedSessionActor {
     nonisolated func compact(prompt: CompactionPrompt = .default, budget: TokenBudget? = nil) -> SignalID {
         let id = SignalID()
         let order = CompactionOrder(prompt: prompt, budget: budget, reason: .requested, overflowRetryTarget: nil)
-        openRequestedCompactions.withLock { $0 += 1 }
-        noteWorkStarted()
+        let lease = beginWork(.compaction, id: id.description)
         submitSignal(
             id,
             { session in
+                defer { lease.end() }
                 _ = await session.performCompaction(id, order)
-                await session.endRequestedCompaction()
+                session.signalWorkChange()
             },
-            skipped: { [self] in
-                openRequestedCompactions.withLock { $0 -= 1 }
+            skipped: {
+                lease.end()
             })
         return id
-    }
-
-    /// Ends the count of one requested compaction, and reports the change of
-    /// the work of the session (``workDidChange()``) after the terminal event
-    /// of the compaction.
-    private func endRequestedCompaction() async {
-        openRequestedCompactions.withLock { $0 -= 1 }
-        await workDidChange()
     }
 
     /// Compacts inside the running answer and waits for the result. Only the

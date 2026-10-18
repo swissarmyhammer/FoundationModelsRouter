@@ -23,9 +23,11 @@ extension RoutedSessionActor {
     /// this mail again.
     ///
     /// A mail that stays in the queue is a change of ``stateChanges``.
-    /// User-type mail that stays in the queue is work of the session, so
-    /// its start is noted (``noteWorkStarted()``) before any output of the
-    /// mail.
+    /// User-type mail in the queue is work of the session: it holds one
+    /// `WorkKind.mail` lease from before the put
+    /// (``SessionOutbox/beginMailWork(_:)``) until it leaves the queue for
+    /// good. So ``SessionEvent/workStarted`` comes before any output of the
+    /// mail. A refused mail ends the lease that this call began.
     ///
     /// The wake of the pump is a helper task (``helperTasks``), and the
     /// session reserves it before the put (``HelperTaskTracker/reserve()``).
@@ -44,20 +46,22 @@ extension RoutedSessionActor {
         let (subscription, key) = outputHub.subscribe(to: mail.id)
         let madePending = outputHub.beginPending(.mail(mail.id))
         let arrival = helperTasks.reserve()
+        // The lease begins before the put: from the put on, the pump can take
+        // the mail and end the lease.
+        let leased = !mail.isRunMail && outbox.beginMailWork(mail.id)
         do {
             try outbox.queue.put(mail)
         } catch {
             throw withdrawRefusedMail(
-                mail.id, refusal: error, arrival: arrival, subscription: key, madePending: madePending)
+                mail.id, refusal: error, arrival: arrival, subscription: key, madePending: madePending,
+                leased: leased)
         }
         if openAnswerMail.contains(mail.id), outbox.queue.cancel(mail.id) != nil {
             throw withdrawRefusedMail(
                 mail.id, refusal: MailRefusal.duplicateID(mail.id), arrival: arrival, subscription: key,
-                madePending: madePending)
+                madePending: madePending, leased: leased)
         }
-        if !mail.isRunMail {
-            noteWorkStarted()
-        }
+        reportWorkStartIfBusy()
         outbox.noteCaller(
             SessionOutbox.MailCaller(serviceContext: ServiceContext.current, ownWork: SessionOwnWork.current),
             for: mail.id)
@@ -71,8 +75,8 @@ extension RoutedSessionActor {
 
     /// Undoes what ``mail(_:)`` did for mail that the session refused: the
     /// reserved wake of the pump ends with no task, the subscription
-    /// finishes, and the pending record of the id ends when this call made
-    /// it. A record that other mail with the same id made stays, because that
+    /// finishes, and the pending record and the lease of the id end when
+    /// ``mail(_:)`` made them. A record that other mail with the same id made stays, because that
     /// mail still waits for its terminal event.
     ///
     /// Each refusal path of ``mail(_:)`` throws the result, so all the paths
@@ -84,18 +88,23 @@ extension RoutedSessionActor {
     ///   - arrival: The reserved wake of the pump. This call ends it.
     ///   - key: The key of the subscription of the refused mail.
     ///   - madePending: Whether ``mail(_:)`` made the id pending.
+    ///   - leased: Whether ``mail(_:)`` began the lease of the id.
     /// - Returns: `refusal`, for the caller to throw.
     private nonisolated func withdrawRefusedMail(
         _ id: MailID,
         refusal: any Error,
         arrival: consuming HelperTaskTracker.Reservation,
         subscription key: ULID,
-        madePending: Bool
+        madePending: Bool,
+        leased: Bool
     ) -> any Error {
         arrival.cancel()
         outputHub.unsubscribe(key)
         if madePending {
             outputHub.endPending(.mail(id))
+        }
+        if leased {
+            outbox.endMailWork([id])
         }
         return refusal
     }
@@ -162,9 +171,9 @@ extension RoutedSessionActor {
     /// answer.
     ///
     /// An answer that resumes a run that waits only for the user starts work
-    /// of the session. The start is noted before the run plane gets the
-    /// answer (``noteWorkStart(answering:with:)``), so it comes before each
-    /// output of the resumed run.
+    /// of the session. Its lease begins before the run plane gets the
+    /// answer (``deliverAnswer(toElicitation:_:orReturn:outcome:through:)``),
+    /// so the work-start event comes before each output of the resumed run.
     ///
     /// A question that a ``SubagentQuestionRelay`` sent up from a child
     /// (``AskedQuestions/isRelayed(_:)``) gives no answer mail at this level:
@@ -224,8 +233,8 @@ extension RoutedSessionActor {
     /// Signals that the out-of-band flow of an accepted URL-mode elicitation finished.
     ///
     /// The completion resumes the run that asked the question, so it starts
-    /// work of the session. The start is noted before the run plane gets
-    /// the completion (``noteWorkStart(answering:with:)``).
+    /// work of the session. Its lease begins before the run plane gets the
+    /// completion (``deliverAnswer(toElicitation:_:orReturn:outcome:through:)``).
     ///
     /// - Returns: The ``ElicitationCompletionDelivery``.
     @discardableResult
@@ -239,11 +248,13 @@ extension RoutedSessionActor {
     }
 
     /// The steps that ``respond(elicitationId:response:)`` and
-    /// ``complete(elicitationId:)`` share. It parses the inbound id, notes
-    /// the start of work when `answer` resumes the run that asks the
-    /// question (``noteWorkStart(answering:with:)``), gives the parsed id to
-    /// `runPlaneCall`, and then records what the run plane did
-    /// (``noteAnswer(to:outcome:startedWork:)``).
+    /// ``complete(elicitationId:)`` share. It parses the inbound id. When
+    /// `answer` resumes the run that asks the question
+    /// (``answerResumesRun(_:with:)``), it begins a `WorkKind.questionAnswer`
+    /// lease (``beginWork(_:id:)``), so ``SessionEvent/workStarted`` comes
+    /// before each output of the resumed run. It gives the parsed id to
+    /// `runPlaneCall`, records what the run plane did
+    /// (``noteAnswer(to:outcome:)``), and then ends the lease.
     ///
     /// The run plane decides whether the answer finds its question. A
     /// question that a cancel of the run plane ended
@@ -268,9 +279,13 @@ extension RoutedSessionActor {
         guard let id = ULID(elicitationId) else {
             return noQuestionResult
         }
-        let startedWork = await noteWorkStart(answering: id, with: answer)
+        let resumesRun = await answerResumesRun(id, with: answer)
+        let lease = resumesRun ? beginWork(.questionAnswer, id: id.description) : nil
+        // The resumed run holds its own lease from the resume on. An answer
+        // that did not resume the run ends the work of this lease alone.
+        defer { lease?.end() }
         let delivery = await runPlaneCall(id)
-        await noteAnswer(to: id, outcome: outcome(delivery), startedWork: startedWork)
+        await noteAnswer(to: id, outcome: outcome(delivery))
         return delivery
     }
 }

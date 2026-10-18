@@ -121,14 +121,16 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// A drain (``drainTask``) ends the loop before its next work. The end of
     /// the loop is a change of the work of the session
-    /// (``workDidChange()``), after the last output of the pump.
+    /// (``signalWorkChange()``), after the last output of the pump. The work
+    /// events come from the leases: each answer holds its own lease
+    /// (``runAnswer(of:workId:)``).
     private func runPump() async {
         while drainTask == nil {
             pumpWakeRequested = false
             guard await withSessionTelemetry({ await runNextAnswer() }) || pumpWakeRequested else { break }
         }
         pumpTask = nil
-        await workDidChange()
+        signalWorkChange()
     }
 
     /// Runs one job of the pump with the explicit telemetry of this session
@@ -249,16 +251,19 @@ extension RoutedSessionActor: SessionMailObserver {
     /// chain sends the terminal event of each mail that the answer
     /// delivered.
     ///
-    /// An answer is work of the session, so its start is noted
-    /// (``noteWorkStarted()``) before the first output of the answer. A pump
-    /// cycle that takes no batch starts no answer and notes no start, so run
-    /// mail that cannot start a submission gives no work event.
+    /// An answer is work of the session: it holds one `WorkKind.generation`
+    /// lease (``beginWork(_:id:)``) from before its first output, also
+    /// before the delivery of its mail ends the lease of each mail, to after
+    /// its terminal event. A pump cycle that takes no batch starts no answer
+    /// and takes no lease, so run mail that cannot start a submission gives
+    /// no work event.
     ///
     /// - Parameters:
     ///   - batch: What the first submission of the chain carries.
     ///   - workId: The id of the work.
     private func runAnswer(of batch: SubmissionBatch, workId: UInt64) async {
-        noteWorkStarted()
+        let generation = beginWork(.generation, id: String(workId))
+        defer { generation.end() }
         lastWorkId = workId
         let options =
             batch.userMail.first.flatMap { SubmissionOptions(for: $0, isGuided: grammar != nil) } ?? .mailDelivery

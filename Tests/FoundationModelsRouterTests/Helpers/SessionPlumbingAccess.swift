@@ -29,9 +29,9 @@ extension RoutedSession {
         get async { await (self as! RoutedSessionActor).isPumpRunning }
     }
 
-    /// How many ``RoutedSession/awaitIdle()`` calls wait now for the next
-    /// change of the session — see ``RoutedSessionActor/idleChanges``.
-    nonisolated var idleWaitCount: Int { (self as! RoutedSessionActor).idleChanges.waiterCount }
+    /// How many ``RoutedSession/awaitIdle()`` calls run now — see
+    /// ``RoutedSessionActor/idleWaits``.
+    nonisolated var idleWaitCount: Int { (self as! RoutedSessionActor).idleWaits.value }
 
     /// The signal of each change of the work of the session: the end of the
     /// pump, the settlement of a background run, and the close — see
@@ -41,9 +41,7 @@ extension RoutedSession {
     /// The signal of each change of ``idleWaitCount``: an
     /// ``RoutedSession/awaitIdle()`` call that starts to wait, or that stops.
     nonisolated var idleWaiterChanges: ChangeSignal {
-        // The session makes its idle signal with the observation of its
-        // waiters, so the report is always there.
-        (self as! RoutedSessionActor).idleChanges.waiterChanges!
+        (self as! RoutedSessionActor).idleWaits.changes
     }
 
     /// The signal of each change of a state that sends no event of its own:

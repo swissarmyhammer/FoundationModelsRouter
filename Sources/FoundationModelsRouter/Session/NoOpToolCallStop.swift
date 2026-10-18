@@ -189,8 +189,9 @@ extension RoutedSessionActor {
     /// - Returns: `true` when the pump delivers a result to the model later.
     func hasPendingOperation() async -> Bool {
         guard noOpToolCallStop == nil else { return true }
-        let reads = await readRunsAndMail()
-        return !reads.openRuns.isEmpty || SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)
+        let runTokens = await readBackgroundRunTokens()
+        let mail = await outbox.pending().events
+        return !runTokens.open.isEmpty || SessionOutbox.canStartASubmission(mail, runTokens: runTokens)
     }
 
     /// Waits until every real call of the round of a no-op call gave its

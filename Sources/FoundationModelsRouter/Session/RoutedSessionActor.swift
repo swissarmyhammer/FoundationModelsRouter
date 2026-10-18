@@ -403,12 +403,15 @@ actor RoutedSessionActor: RoutedSession {
     /// close from outside the session waits for it first. See ``close()``.
     var closeFromOwnWork: Task<Void, Never>?
 
-    /// Wakes each ``awaitIdle()`` call that waits for the next change of the
-    /// work of this session. See ``signalWorkChange()``.
-    ///
-    /// It reports each change of its waiters (``ChangeSignal/waiterChanges``),
-    /// so a test can wait until an ``awaitIdle()`` call waits.
-    nonisolated let idleChanges = ChangeSignal(observingWaiters: true)
+    /// Wakes each wait for the next change of the work of this session, for
+    /// example an ``awaitIdle()`` call whose check found an open question
+    /// that the journal did not record yet. See ``signalWorkChange()``.
+    nonisolated let idleChanges = ChangeSignal()
+
+    /// The count of the ``awaitIdle()`` calls that run now. Only the tests
+    /// read it: a test waits until a call waits, and then makes the change
+    /// that the call waits for.
+    nonisolated let idleWaits = IdleWaitCount()
 
     /// Reports each change of a state of this session that sends no event of
     /// its own: a mail that ``mail(_:)`` put in the queue, a stop of the
@@ -466,23 +469,25 @@ actor RoutedSessionActor: RoutedSession {
     /// The work the pump runs now, or `nil` between works.
     var pumpWork: PumpWork?
 
-    /// The id of the last work the pump started. Ids are monotonic.
+    /// The id of the last work the pump started. Ids are monotonic. A cancel
+    /// of the running work names the work by its id.
     var lastWorkId: UInt64 = 0
-
-    /// The count of the requested compactions
-    /// (``RoutedSession/compact(prompt:budget:)``) that wait in ``signals``
-    /// or run. The idle check reads it (``awaitIdle()``).
-    nonisolated let openRequestedCompactions = Mutex(0)
 
     /// The work state that the work events of this session reported last
     /// (``SessionEvent/workStarted`` and ``SessionEvent/workEnded``), and the
-    /// count of the work starts. See ``noteWorkStarted()``.
+    /// count of the begins of the leases of the own work. See
+    /// ``beginWork(_:id:)``.
     ///
     /// A lock keeps it, because ``mail(_:)`` and ``compact(prompt:budget:)``
     /// start work from any task. Each work event goes out while the lock is
     /// held, so the order of the events on the output is the order of the
     /// changes of this state.
     nonisolated let workEvents = Mutex(WorkEventState())
+
+    /// The lease of the work of the children of the relays of this session
+    /// (`WorkKind.relayedChild`), or `nil` while no child of a relay works.
+    /// See ``updateRelayedChildWork()``.
+    var relayedChildWork: BackgroundWork?
 
     /// The questions of the runs of this session that the journal recorded
     /// and that are possibly open, with the state of each one. See
@@ -919,8 +924,13 @@ actor RoutedSessionActor: RoutedSession {
         // key here.
         adopt(backend)
         // Before any pump or signal runs: from here on, each run mail of the
-        // outbox is pending in the output of this session before its put.
+        // outbox is pending in the output of this session before its put,
+        // and each run mail that can start an answer holds a lease in the
+        // registry of this session.
         outbox.bind(outputHub: outputHub)
+        outbox.bind(workRegistry: runPlane.workRegistry, runPlane: runPlane)
+        // Before any lease begins, so the task reads each transition.
+        observeWorkTransitions()
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
@@ -962,6 +972,13 @@ actor RoutedSessionActor: RoutedSession {
             ).persistable,
             to: recordingDirectory
         )
+    }
+
+    /// Closes the work registry of a session that ``close()`` never closed,
+    /// so the task that reads its transitions ends
+    /// (``observeWorkTransitions()``).
+    deinit {
+        runPlane.workRegistry.close()
     }
 
     /// See ``RoutedSession/openElicitationIds()``. The open questions of

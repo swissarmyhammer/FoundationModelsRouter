@@ -2,7 +2,8 @@ import FoundationModelsExtras
 import Synchronization
 
 /// The work state that the work events of a session reported last, and the
-/// count of the work starts (``RoutedSessionActor/workEvents``).
+/// count of the begins of the leases of the own work of the session
+/// (``RoutedSessionActor/workEvents``).
 struct WorkEventState: Sendable {
     /// The work state that the last work event reported.
     enum Phase: Sendable, Equatable {
@@ -20,10 +21,11 @@ struct WorkEventState: Sendable {
     /// The work state that the last work event reported.
     var phase = Phase.idle
 
-    /// The count of the work starts (``RoutedSessionActor/noteWorkStarted()``).
-    /// A check for the end of the work compares it before and after its reads,
-    /// so a start during the reads stops the work-end event.
-    var starts: UInt64 = 0
+    /// The count of the begins of the leases of the own work of the session
+    /// (``RoutedSessionActor/beginWork(_:id:)``). The check of the work end
+    /// compares it before and after its read of the run plane, so a begin
+    /// during the read stops the work-end event.
+    var begins: UInt64 = 0
 }
 
 /// One answer of the user to an open question of a run.
@@ -302,66 +304,169 @@ struct AskedQuestions: Sendable {
     }
 }
 
+/// The kinds of the leases that the own work of a session holds in its work
+/// registry (``RoutedSessionActor/workRegistry``). The tooling gives the
+/// kinds of the tool work (`WorkKind.backgroundRun` and the others).
+extension WorkKind {
+    /// An answer of the pump: from the take of its mail to its terminal
+    /// event, with each submission and each continuation of it. A short
+    /// lease of a tool inside the answer thus never ends the work.
+    public static let generation = WorkKind("generation")
+
+    /// One queued mail that can start an answer: user-type mail, and run mail
+    /// that can start a submission by itself (a terminal or a message of a
+    /// background run). The lease begins before the put of the mail, and
+    /// ends when the mail leaves the queue for good (it is delivered,
+    /// withdrawn or cancelled) or goes on hold. Held mail starts no answer
+    /// by itself, so it holds no lease.
+    public static let mail = WorkKind("mail")
+
+    /// A requested compaction (``RoutedSession/compact(prompt:budget:)``),
+    /// from the request to the end of the compaction, or to its skip at a
+    /// close.
+    public static let compaction = WorkKind("compaction")
+
+    /// The work of the children of the relays of the session
+    /// (``SubagentQuestionRelay``): open while the child of one relay works.
+    /// The child is a session of its own with a registry of its own. This
+    /// lease is only the view of this session on that work.
+    public static let relayedChild = WorkKind("relayedChild")
+
+    /// An answer or a completion of the user that resumes a run that waits
+    /// only for the user, from before the run plane gets it until the run
+    /// plane resumed the run. The resumed run holds its own lease after that.
+    public static let questionAnswer = WorkKind("questionAnswer")
+
+    /// The sweep of the background runs of ``RoutedSession/cancelAll()``,
+    /// from its start to the journal of the terminal of each swept run.
+    public static let sweep = WorkKind("sweep")
+}
+
 /// ``RoutedSessionActor``'s work events: ``SessionEvent/workStarted`` when the
 /// session gets work while it had none, and ``SessionEvent/workEnded`` when
-/// the session has no work any more. The rules of the work are the rules of
-/// ``isIdle()``, so the work-end event comes when ``awaitIdle()`` can return
-/// `true`.
+/// the session has no work any more. The work registry of the session
+/// (``workRegistry``) decides: the session has work while one lease of the
+/// registry is open.
 ///
-/// Each place where work starts calls ``noteWorkStarted()`` before the first
-/// output of the work: the start of an answer of the pump, the put of
-/// user-type mail (``mail(_:)``), a requested compaction
-/// (``compact(prompt:budget:)``), and an answer that resumes a run that waits
-/// only for the user (``noteWorkStart(answering:with:)``).
+/// The registry gives one `WorkTransition` for each change, and a task of the
+/// session reads them in order (``observeWorkTransitions()``). A transition to
+/// work sends ``SessionEvent/workStarted`` when the last work event said that
+/// the session had no work. A transition to no work runs the check of the
+/// work end (``reportWorkEndIfNoWork()``).
 ///
-/// Each change of the work that can end the work calls ``workDidChange()``
-/// after the last output of the change: the end of the pump, the settlement
-/// of a run, the end of a requested compaction, the end of a sweep, and a
-/// question of a run. The check of the end (``reportWorkEndIfIdle()``) does
-/// the reads of ``isIdle()``, and then, under the lock of ``workEvents``, the
-/// last check of ``isIdle()``. Each start takes the same lock. Thus a start
-/// never comes between the last check and the work-end event, and the events
-/// come in turns.
+/// ``SessionEvent/workStarted`` comes before each output of the new work. The
+/// task of the transitions can come late, so two more places send it at
+/// once: the begin of each lease of the own work of the session
+/// (``beginWork(_:id:)``), and each output of the session while the registry
+/// has work (``reportWorkStartIfBusy()``).
+///
+/// ``SessionEvent/workEnded`` is the no-work event: it comes after each
+/// output of the work that ended. Each lease ends after the last output of
+/// its work, so the transition to no work comes after that output.
+///
+/// The phase of the work events and each work event are under the lock of
+/// ``workEvents``, so the events come in turns, and ``SessionEvent/workStarted``
+/// comes first.
 extension RoutedSessionActor {
-    /// Records that work starts, and sends ``SessionEvent/workStarted`` when
-    /// the last work event said that the session had no work. It also counts
-    /// the start, so a check of the end that read the session before this
-    /// start sends no work-end event.
+    /// Begins a lease of the own work of the session in the registry, and
+    /// sends ``SessionEvent/workStarted`` when it is due. The caller calls it
+    /// before the first output of the work, and ends the lease after the
+    /// last output of the work, in a `defer` or at the one place where the
+    /// work ends.
     ///
-    /// The caller calls it before the first output of the work. After
+    /// The call also counts the begin (``WorkEventState/begins``). A check of
+    /// the work end that read the run plane before this begin then sends no
+    /// work-end event, because the work that this lease starts can resume a
+    /// run and make a new question.
+    ///
+    /// - Parameters:
+    ///   - kind: The kind of the work.
+    ///   - id: The id of the work.
+    /// - Returns: The lease.
+    nonisolated func beginWork(_ kind: WorkKind, id: String) -> BackgroundWork {
+        workEvents.withLock { $0.begins &+= 1 }
+        let lease = workRegistry.begin(kind, id: id)
+        reportWorkStartIfBusy()
+        return lease
+    }
+
+    /// Sends ``SessionEvent/workStarted`` when the last work event said that
+    /// the session had no work, and the registry has work now. After
     /// ``close()`` started, it sends nothing.
-    nonisolated func noteWorkStarted() {
+    nonisolated func reportWorkStartIfBusy() {
         workEvents.withLock { state in
-            state.starts &+= 1
-            guard state.phase == .idle else { return }
+            guard state.phase == .idle, workRegistry.hasWork else { return }
             state.phase = .working
             emitWorkEvent(.workStarted)
         }
     }
 
-    /// Reports one change of the work of this session: to each
-    /// ``awaitIdle()`` call that waits, and to the work events
-    /// (``reportWorkEndIfIdle()``).
-    func workDidChange() async {
-        signalWorkChange()
-        await reportWorkEndIfIdle()
+    /// Reads the transitions of the registry in order, until the registry
+    /// closes, and reports each one (``workTransitioned(_:)``). The session
+    /// starts this task one time, when it is made, before any lease begins.
+    /// The task keeps no strong reference to the session between two
+    /// transitions.
+    nonisolated func observeWorkTransitions() {
+        let transitions = workRegistry.transitions()
+        Task { [weak self] in
+            for await transition in transitions {
+                await self?.workTransitioned(transition)
+            }
+        }
     }
 
-    /// Sends ``SessionEvent/workEnded`` when the last work event said that
-    /// the session has work, and the session has no work now (``isIdle()``).
+    /// Reports one transition of the registry: a transition to work sends
+    /// ``SessionEvent/workStarted`` when the last work event said that the
+    /// session had no work, also when the work ended again since. A
+    /// transition to no work runs the check of the work end. Each transition
+    /// is a change of the work (``signalWorkChange()``).
     ///
-    /// The reads of the session suspend. The last check of ``isIdle()`` and
-    /// the event come under the lock of ``workEvents``, and only when no work
-    /// started during the reads (``WorkEventState/starts``).
-    func reportWorkEndIfIdle() async {
-        let startsBefore = workEvents.withLock { $0.phase == .working ? $0.starts : nil }
-        guard let startsBefore, let snapshot = await readIdleState() else { return }
-        workEvents.withLock { state in
-            guard state.phase == .working, state.starts == startsBefore,
-                isIdle(startedAt: snapshot.workId, reading: snapshot.reads)
-            else { return }
-            state.phase = .idle
-            emitWorkEvent(.workEnded)
+    /// - Parameter transition: The transition.
+    func workTransitioned(_ transition: WorkTransition) async {
+        switch transition {
+        case .workStarted:
+            workEvents.withLock { state in
+                guard state.phase == .idle else { return }
+                state.phase = .working
+                emitWorkEvent(.workStarted)
+            }
+        case .noWork:
+            _ = await reportWorkEndIfNoWork()
+        }
+        signalWorkChange()
+    }
+
+    /// The check of the work end. Sends ``SessionEvent/workEnded`` when the
+    /// last work event said that the session has work, and the session has
+    /// no work now: the registry has no open lease, and the journal recorded
+    /// each open question of the runs.
+    ///
+    /// The run plane suspends the lease of a run when the run asks the user,
+    /// before the question is on the output. The question is no work only
+    /// after its ``SessionEvent/elicitationRequested(_:)``, so the check reads
+    /// the open questions (`RunPlane.openElicitations()`), and the record of
+    /// the question (``noteQuestionAsked(_:mailID:)``) runs the check again.
+    ///
+    /// The read of the questions suspends. The last check and the event come
+    /// under the lock of ``workEvents``, and only when the registry still has
+    /// no open lease and no lease of the own work began during the read
+    /// (``WorkEventState/begins``). An answer of the user begins such a lease
+    /// before the run plane resumes the run, so a run that resumed and asked
+    /// a new question during the read stops the event. The next transition
+    /// to no work runs the check again.
+    ///
+    /// - Returns: `true` when the session has no work now.
+    @discardableResult
+    func reportWorkEndIfNoWork() async -> Bool {
+        let beginsBefore = workEvents.withLock { $0.begins }
+        guard await isIdle() else { return false }
+        return workEvents.withLock { state in
+            guard state.begins == beginsBefore, !workRegistry.hasWork else { return false }
+            if state.phase == .working {
+                state.phase = .idle
+                emitWorkEvent(.workEnded)
+            }
+            return true
         }
     }
 
@@ -371,45 +476,32 @@ extension RoutedSessionActor {
         workEvents.withLock { $0.phase = .closed }
     }
 
-    /// Records that `answer` to the question `id` is about to go to the run
-    /// plane, and notes the start of work (``noteWorkStarted()``) when the
-    /// answer resumes the run that asks the question. The start comes before
-    /// the run plane resumes the run, so it comes before each output of the
-    /// resumed run.
+    /// Whether `answer` to the question `id` resumes the run that asks it:
+    /// the question is open in the run plane, and the answer is one that
+    /// resumes the run (``AskedQuestions/resumesRun(answering:with:)``).
     ///
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - answer: The answer of the user.
-    /// - Returns: `true` when this call noted a start of work.
-    func noteWorkStart(answering id: ULID, with answer: QuestionAnswer) async -> Bool {
+    /// - Returns: `true` when the answer resumes the run.
+    func answerResumesRun(_ id: ULID, with answer: QuestionAnswer) async -> Bool {
         let isOpen = await runPlane.openElicitations().contains { $0.elicitationId == id }
-        guard isOpen, askedQuestions.resumesRun(answering: id, with: answer) else { return false }
-        noteWorkStarted()
-        return true
+        return isOpen && askedQuestions.resumesRun(answering: id, with: answer)
     }
 
     /// Records what the run plane did with an answer to the question `id`
-    /// (``AskedQuestions/noteAnswered(_:outcome:)``). When
-    /// ``noteWorkStart(answering:with:)`` noted a start and the run did not
-    /// resume, for example because another answer came first, or because a
-    /// cancel of the run plane ended the question first, the work changed
-    /// back (``workDidChange()``).
+    /// (``AskedQuestions/noteAnswered(_:outcome:)``).
     ///
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - outcome: What the run plane did with the answer.
-    ///   - startedWork: What ``noteWorkStart(answering:with:)`` returned.
-    func noteAnswer(to id: ULID, outcome: QuestionAnswerOutcome, startedWork: Bool) async {
+    func noteAnswer(to id: ULID, outcome: QuestionAnswerOutcome) {
         askedQuestions.noteAnswered(id, outcome: outcome)
-        guard startedWork, outcome != .resumedRun else { return }
-        await workDidChange()
     }
 
-    /// Records a question that a run asked, after its live event, and
-    /// reports the change of the work: the run can now wait only for the
-    /// user, and then it is no work (``isIdle(startedAt:reading:)`` reads
-    /// ``askedQuestions``). The question mail starts no answer, so no end of
-    /// the pump reports this change.
+    /// Records a question that a run asked, after its live event, and runs
+    /// the check of the work end (``reportWorkEndIfNoWork()``): the run can
+    /// now wait only for the user, and then it is no work.
     ///
     /// A question that a ``SubagentQuestionRelay`` sent up is now recorded,
     /// so the relay can read the next event of its child
@@ -426,7 +518,8 @@ extension RoutedSessionActor {
                 relayChanges.signal()
             }
         }
-        await workDidChange()
+        await reportWorkEndIfNoWork()
+        signalWorkChange()
     }
 
     /// Sends one work event to the output, with the origin

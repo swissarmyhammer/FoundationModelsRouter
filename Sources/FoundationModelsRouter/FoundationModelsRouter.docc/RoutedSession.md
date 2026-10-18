@@ -361,7 +361,13 @@ resumes. Use ``awaitTerminal(of:)-(SignalID)`` to wait for the result. Only
 
 ### Lifecycle and forking
 
-``awaitIdle()`` returns when the session has no work. A background run that
+``awaitIdle()`` returns when the session has no work. Each session owns one
+`WorkRegistry`, and its work is the set of the open leases of that registry:
+an answer that runs, each queued mail that can start an answer, a requested
+compaction, and each lease of the tooling (a background run, a pending shell
+command, an inner call, a notice, an MCP call, a child session). A fork, a
+restored session and a child session own a registry of their own, so their
+work never makes the parent busy. A background run that
 waits only for the user is no work, also a run whose subagent waits only for
 the user: the ``SubagentQuestionRelay`` of that run reads the work events of the
 subagent, and the session has work again while the subagent works. The work
@@ -370,8 +376,8 @@ that drives the subagent, until the subagent stops. Thus a parent whose
 subagents wait only for the user is idle too, level by level up to the root.
 ``streamSessionEvents()`` reports the same
 state with no call: ``SessionEvent/workStarted`` comes when the session gets
-work while it had none, and ``SessionEvent/workEnded`` comes when it has no
-work any more. Both have the origin ``Origin-enum/system``, and they come in turns,
+work while it had none, and ``SessionEvent/workEnded``, the no-work event,
+comes when it has no work any more. Both have the origin ``Origin-enum/system``, and they come in turns,
 in order with the other outputs.
 
 - ``fork(workingDirectory:)``

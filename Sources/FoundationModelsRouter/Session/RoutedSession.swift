@@ -586,24 +586,32 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// the answer that the mail starts is visible only on
     /// ``streamSessionEvents()``.
     ///
-    /// The session is idle when these three are all true, read together on
-    /// the session:
+    /// The session is idle when it has no work. The work of a session is the
+    /// set of the open leases of its own work registry (`WorkRegistry`): one
+    /// registry for each session, also for each fork, each restored session
+    /// and each child session. The session is idle when no lease is open:
     ///
-    /// 1. No background run is open, except a run that waits only for the
-    ///    user: a run whose question (``SessionEvent/elicitationRequested(_:)``)
-    ///    is open. Only the user can move that run, so it is no work. Its
-    ///    result still comes to the model later. A run that drives a
-    ///    subagent through a ``SubagentQuestionRelay`` is work while the
-    ///    subagent works, also when the run has an open question. So a
-    ///    session whose subagents wait only for the user is idle, level by
-    ///    level up to the root.
-    /// 2. No pump work runs or waits: no answer, no requested compaction
-    ///    that waits or runs, no end of all work of ``close()``, and no
-    ///    user-type mail in the queue.
-    /// 3. No queued run mail can start an answer by itself. Run mail that the
+    /// 1. Nothing is queued to generate: no answer runs (a generation lease),
+    ///    and no requested compaction waits or runs.
+    /// 2. Nothing in the mailbox can start work: no user-type mail waits, and
+    ///    no queued run mail can start an answer by itself. Run mail that the
     ///    session holds, for example after
     ///    ``SessionEvent/mailDeliveryPaused(_:)``, waits for the next
-    ///    user-type mail, so it counts as idle.
+    ///    user-type mail, so it is no work.
+    /// 3. No background tool work is open: no background run, no pending
+    ///    shell command, no unawaited inner call, no notice that waits for
+    ///    its delivery, no MCP call, and no child session that a tool call
+    ///    started. Each one holds a lease of the tooling. A run that waits
+    ///    only for the user (a run whose question
+    ///    ``SessionEvent/elicitationRequested(_:)`` is open) is no work: only
+    ///    the user can move it. Its result still comes to the model later. A
+    ///    run that drives a subagent through a ``SubagentQuestionRelay`` is
+    ///    work while the subagent works, also when the run has an open
+    ///    question. So a session whose subagents wait only for the user is
+    ///    idle, level by level up to the root.
+    ///
+    /// The work of a fork or of a child session is in the registry of that
+    /// session, never in the registry of its parent.
     ///
     /// A run that settles inside the answer that runs can ride that answer,
     /// or start an answer of its own. The call waits for the answer of the
@@ -611,12 +619,13 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)`` of
     /// the last answer is already on ``streamSessionEvents()``.
     ///
-    /// The call returns at once when the session is idle. Else it waits for
-    /// each change of the work of the session, with no poll and no timer.
-    /// A consumer of ``streamSessionEvents()`` can follow the same rules
-    /// with no call: ``SessionEvent/workStarted`` and
-    /// ``SessionEvent/workEnded`` report each change, in order with the
-    /// other outputs.
+    /// The call returns at once when the session is idle. Else it waits
+    /// until the registry has no open lease, with no poll and no timer. When
+    /// the call returns `true`, ``SessionEvent/workEnded`` of the last work is
+    /// already on ``streamSessionEvents()``. A consumer of
+    /// ``streamSessionEvents()`` can follow the same rules with no call:
+    /// ``SessionEvent/workStarted`` and ``SessionEvent/workEnded`` report
+    /// each change, in order with the other outputs.
     /// A cancel of the calling task ends the wait at once. ``close()`` ends
     /// each wait with `false`. A call after
     /// ``close()`` started, also a call after ``close()`` returned, returns

@@ -391,40 +391,4 @@ struct SessionIdleWaitTests {
         #expect(await outbox.pending().events.map(\.isHeld) == [true])
         #expect(await session.isIdle())
     }
-
-    @Test("a new answer between the first and the second read of the session state makes the check say not idle")
-    func aNewAnswerBetweenTheReadsIsWork() async throws {
-        let fixture = try await Self.makeFixture(tools: [])
-        defer { await fixture.end() }
-        let session = try fixture.sessionActor()
-        let workId = await session.lastWorkId
-        let reads = await session.readRunsAndMail()
-
-        #expect(await session.isIdle(startedAt: workId, reading: reads))
-        #expect(await session.isIdle(startedAt: workId &+ 1, reading: reads) == false)
-    }
-
-    @Test("a pump that runs at the second read of the session state makes the check say not idle")
-    func aPumpAtTheSecondReadIsWork() async throws {
-        let holdFirstAnswer = RunLatch()
-        let fixture = try await Self.makeFixture(
-            tools: [], container: BackgroundingLLMContainer(holdFirstAnswer: holdFirstAnswer))
-        defer { await fixture.end(opening: [holdFirstAnswer]) }
-        let session = try fixture.sessionActor()
-        let workId = await session.lastWorkId
-        let reads = await session.readRunsAndMail()
-        let responded = Self.startResponding(on: fixture.session, reportingTo: fixture.backend.changes)
-        // The wait also ends when the respond ended with no prompt (rule T1).
-        // The backend holds the first answer, so in a test that passes the
-        // respond does not end first.
-        try await fixture.backend.changes.wait(
-            until: { fixture.backend.receivedPrompts.count == 1 }, endingOn: { responded.value != nil })
-
-        let workIdOfTheAnswer = await session.lastWorkId
-        #expect(workIdOfTheAnswer != workId)
-        #expect(await session.isIdle(startedAt: workIdOfTheAnswer, reading: reads) == false)
-
-        await holdFirstAnswer.open()
-        #expect(try await Self.result(of: responded) == true)
-    }
 }

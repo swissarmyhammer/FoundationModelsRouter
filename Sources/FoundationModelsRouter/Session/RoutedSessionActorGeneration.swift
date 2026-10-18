@@ -353,6 +353,11 @@ extension RoutedSessionActor {
     /// that ends with ``SessionEvent/cancelled(_:)`` adds one to the counter
     /// of cancelled mail (``RouterMetrics/recordCancelledMail(_:)``).
     ///
+    /// Each event that is not a work event first sends
+    /// ``SessionEvent/workStarted`` when it is due
+    /// (``reportWorkStartIfBusy()``): an output while the registry has work
+    /// never comes before the work-start event of that work.
+    ///
     /// - Parameters:
     ///   - event: The event to send.
     ///   - error: The error that ended a failed answer, when `event` is its
@@ -362,6 +367,11 @@ extension RoutedSessionActor {
     nonisolated func emitSessionScopedEvent(
         _ event: SessionEvent, failure error: (any Error)? = nil, audience: Set<MailID> = []
     ) {
+        // A work event goes out under the lock of ``workEvents``, so it must
+        // not take that lock again.
+        if event != .workStarted, event != .workEnded {
+            reportWorkStartIfBusy()
+        }
         let ended = outputHub.emit(
             SessionOutput(origin: OriginContext.current, event: event), failure: error, audience: audience)
         let records = Self.terminalRecords(of: event, ending: ended)

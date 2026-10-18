@@ -18,10 +18,10 @@ import FoundationModelsExtras
 /// - The child ended or completed its copy first: the relay sent that end or
 ///   that completion up, and the task does nothing in the child.
 ///
-/// The table also keeps the work state of the child of each relay. The idle
-/// check reads it: the session has work while the child of one of its
-/// relays works, also when the run that drives the child waits only for the
-/// user or is not open any more.
+/// The table also keeps the work state of the child of each relay. The
+/// session holds one `WorkKind.relayedChild` lease while the child of one of
+/// its relays works, also when the run that drives the child waits only for
+/// the user or is not open any more.
 ///
 /// A question leaves the table when its task settled (``settle(_:resumedWith:)``),
 /// and a relay leaves it when the relay read the end of the feed of its child
@@ -263,8 +263,8 @@ extension ElicitationRequest {
 /// the work events that the work of a child gives this session.
 ///
 /// A ``SubagentQuestionRelay`` calls these methods. Each one changes the
-/// table in one step on this actor, so a check of the work
-/// (``isIdle(startedAt:reading:)``) reads one state of the table.
+/// table in one step on this actor, and the `WorkKind.relayedChild` lease
+/// of the session changes in the same step (``updateRelayedChildWork()``).
 extension RoutedSessionActor {
     /// Records a relay that starts to send the questions of `child` to a run
     /// of this session.
@@ -277,38 +277,50 @@ extension RoutedSessionActor {
         let relay = ULID.generate()
         relayedQuestions.openRelay(relay, childWorks: childWorks)
         relayChildren[relay] = child
+        updateRelayedChildWork()
         return relay
     }
 
     /// Records a new work state of the child of `relay`, and reports it as
-    /// work of this session. When the child starts to work, this session
-    /// notes a start of work (``noteWorkStarted()``): the session has work
-    /// again while the child works, also when the run that drives the child
+    /// work of this session (``updateRelayedChildWork()``): the session has
+    /// work while the child works, also when the run that drives the child
     /// waits only for the user or is not open any more. When the child
-    /// stops, the change can end the work of this session
-    /// (``workDidChange()``).
+    /// stops, the change can end the work of this session.
     ///
     /// - Parameters:
     ///   - relay: The id of the relay.
     ///   - works: Whether the child works now.
     func noteChild(of relay: ULID, works: Bool) async {
         relayedQuestions.noteChild(of: relay, works: works)
-        guard works else {
-            await workDidChange()
-            return
-        }
-        noteWorkStarted()
+        updateRelayedChildWork()
+        signalWorkChange()
     }
 
     /// Takes `relay` out of the table, after it read the end of the feed of
     /// its child and each question that it sent up settled. The end of the
-    /// relay can end the work of this session (``workDidChange()``).
+    /// relay can end the work of this session (``updateRelayedChildWork()``).
     ///
     /// - Parameter relay: The id of the relay.
     func closeRelay(_ relay: ULID) async {
         relayedQuestions.closeRelay(relay)
         relayChildren[relay] = nil
-        await workDidChange()
+        updateRelayedChildWork()
+        signalWorkChange()
+    }
+
+    /// Makes the `WorkKind.relayedChild` lease agree with the table: the
+    /// lease is open while the child of one open relay works
+    /// (``RelayedQuestions/hasWorkingChild``), and ended when no child of a
+    /// relay works. Each change of the work state of a child or of the open
+    /// relays calls it in the same step as the change of the table.
+    private func updateRelayedChildWork() {
+        if relayedQuestions.hasWorkingChild {
+            guard relayedChildWork == nil else { return }
+            relayedChildWork = beginWork(.relayedChild, id: id.description)
+        } else {
+            relayedChildWork?.end()
+            relayedChildWork = nil
+        }
     }
 
     /// Records a question that `relay` sends up, before its task asks it in
