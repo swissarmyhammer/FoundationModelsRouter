@@ -23,7 +23,7 @@ The whole design is in `../FoundationModelsMultitool/session.md`: the tool, the 
 - **The mail types are in FoundationModelsExtras.** `Mail`, `MailSender` with `.session(ULID)`, `MailBody.agentMessage(from:content:)`, `MailSink`, and `Origin.mail(Set<MailID>)` (`FoundationModelsExtras/Sources/FoundationModelsExtras/Mail/`). Router has a file `Session/SessionMessage.swift`, but no type with the name `SessionMessage`. Thus the new Extras type has no clash.
 - **The transcripts.** `TranscriptRecorder` (`Recording/TranscriptRecorder.swift:25`), `JSONLAppend.swift`, `TranscriptFileDiscovery.swift` and the other files of `Recording/` write and read the transcript of each session on disk.
 - **The record of past sessions is not in Router.** ACPAgent keeps it in `FoundationModelsACPAgent/Sources/FoundationModelsACPAgent/Transcripts/`: `SessionIndex.swift` (the file `sessions.jsonl`), `ProjectRegistry.swift` (the file `projects.jsonl`), and their helper `JSONLines.swift`. `TranscriptStore.swift` uses them for `session/list` and `session/resume`. These types have no ACP type.
-- **No GraphQL.** The Router package does not link GraphQL.
+- **No GraphQL.** The Router package does not link GraphQL today. ROUTER-10 adds it to the Router library target (D73).
 - **Test support.** `Tests/FoundationModelsRouterTestSupport` has the scripted models. The new tests use them, and no test needs a real model.
 
 ## 3. Dependencies that come first
@@ -35,7 +35,7 @@ These changes are in FoundationModelsExtras. Router cannot start the directory b
 | EXTRAS-3 | `Sources/FoundationModelsExtras/Sessions/`: the `SessionDirectory` protocol and its value types (plan section 6). `Sendable` and `Codable`, no Router type, no ACP type. | ROUTER-1 (the enums of kind and origin), ROUTER-3 and all later changes |
 | EXTRAS-2 | The `GraphQLEndpoint` protocol (Step 1 of the build). | ROUTER-10 |
 | EXTRAS-5 | `GraphQLViewer`, given to `execute` and `subscribe` of `GraphQLEndpoint` (plan section 11.3). | ROUTER-10 |
-| EXTRAS-4 | `InMemorySessionDirectory`, a fake for tests. | Not Router. The tests of ROUTER-10 can use it. |
+| EXTRAS-4 | `InMemorySessionDirectory`, a public test double in the existing Extras library target (no test-support product, D73). | Not Router. The tests of ROUTER-10 can use it. |
 
 The protocol, as EXTRAS-3 defines it:
 
@@ -167,9 +167,9 @@ The states are `working`, `needsInput`, `idle` and `archived`. The events are `s
 - **Depends on:** ROUTER-1, ROUTER-3, ROUTER-5 (the archived refusal is a delivery rule).
 - **Tests:** an archive of a working session stops its turn, removes it from the live list and sends `archived`; after a restart, the facts have `archivedAt` and the state is `archived`; a send to it is refused with the reason "archived"; the query finds it only with `includesRecorded`; a second archive sends no event.
 
-### 5.9 ROUTER-10 The `FoundationModelsSessionsGraph` target
+### 5.9 ROUTER-10 The `sessions` GraphQL endpoint (`SessionsGraph`)
 
-- **Spec:** A new target and product `FoundationModelsSessionsGraph` in this package, in `Sources/FoundationModelsSessionsGraph/`. It links only the `FoundationModelsExtras` product, `GraphQL` (GraphQLSwift, `from: "4.3.0"`) and `Graphiti` (`from: "3.1.0"`), with the same pins as FoundationModelsKanban, so that the app resolves one copy. It does not link the `FoundationModelsRouter` target, so the Router library and its users stay free of GraphQL.
+- **Spec:** `SessionsGraph` goes into the existing `FoundationModelsRouter` library target (`Sources/FoundationModelsRouter/`), next to `RouterSessionDirectory`. There is no new target and no new product (D73). The Router target links `GraphQL` (GraphQLSwift, `from: "4.3.0"`) and `Graphiti` (`from: "3.1.0"`), with the same pins as FoundationModelsKanban, so that the app resolves one copy. Thus each user of Router links GraphQL.
 
   `SessionsGraph(directory: any SessionDirectory)` conforms to `GraphQLEndpoint`: name `sessions`, version 1, scope server, the SDL of plan section 11.2. Queries: `sessions`, `session` and `inbox`. Mutations: `start`, `tag`, `untag`, `send`, `reply` and `archive(sessionId: ID!): Session!`. Subscription: `sessionChanges`, which reads `directory.events()`. The resolvers call only the `SessionDirectory` protocol.
 
@@ -180,9 +180,9 @@ The states are `working`, `needsInput`, `idle` and `archived`. The events are `s
   - A mutation never changes the owner of a session (D11).
 
   The `inbox` query does not mark messages read.
-- **Why:** D62 and D67 (UIs use the directory through the `sessions` GraphQL endpoint, the same pattern as `kanban`, D55), D11 (owner rules), D68 (Session > Archive). Plan section 5.7 tells why the target goes in the Router package.
+- **Why:** D62 and D67 (UIs use the directory through the `sessions` GraphQL endpoint, the same pattern as `kanban`, D55), D11 (owner rules), D68 (Session > Archive). D73 (no new target in a package). Plan section 5.7 tells why the graph goes in the Router library target.
 - **Depends on:** EXTRAS-2, EXTRAS-3, EXTRAS-5, ROUTER-3. It uses the behavior of all changes above.
-- **Tests:** use a fake directory (EXTRAS-4) and fake viewers, with no ACP and no model. The SDL matches a golden file. Each query, each mutation and the subscription with a `userDevice` viewer. The visibility rules for an `external` viewer. The mutation rules, also `archive`. Each `openInTab` case. A mutation does not change the owner. A test checks that the target does not link the Router target.
+- **Tests:** in the existing `FoundationModelsRouterTests` target. Use the fake directory (`InMemorySessionDirectory`, EXTRAS-4) and fake viewers, with no ACP and no model. The SDL matches a golden file. Each query, each mutation and the subscription with a `userDevice` viewer. The visibility rules for an `external` viewer. The mutation rules, also `archive`. Each `openInTab` case. A mutation does not change the owner. A source scan checks that the files of `SessionsGraph` use only the Extras `SessionDirectory` protocol, and no `RouterSessionDirectory` or other Router type.
 
 ## 6. What other packages do (not in this plan)
 
