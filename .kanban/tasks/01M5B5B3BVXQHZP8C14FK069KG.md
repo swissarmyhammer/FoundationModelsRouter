@@ -39,8 +39,24 @@ comments:
     - warnings: only the known mlx "missing creator for mutated node". No Swift compiler warning.
     - next: review
   timestamp: 2026-10-19T22:57:29.910272+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m5b6ax9h1s8vbavg93x5s1qx
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (efa0402b). 0 findings, 0 confirmed, 1 refuted. 5 files reviewed. 2 .kanban files are excluded by .reviewignore.
+    - next: none. The task is in done.
+  timestamp: 2026-10-19T23:00:52.145297+00:00
+- actor: claude-code
+  id: 01m5b6b9esnc010z7jf8s8y30p
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files
+    - test: green — swift test, 1916 passed, 0 failed; IntegrationTests build complete
+    - commit: efa0402b
+    - review: clean — 0 findings
+  timestamp: 2026-10-19T23:01:04.601698+00:00
+position_column: done
+position_ordinal: ffffffff9980
 title: 'FoundationModelsRouterTestSupport: a public scripted container with the tool hook layer'
 ---
 ## Context
