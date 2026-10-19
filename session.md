@@ -23,7 +23,7 @@ The whole design is in `../FoundationModelsMultitool/session.md`: the tool, the 
 - **The mail types are in FoundationModelsExtras.** `Mail`, `MailSender` with `.session(ULID)`, `MailBody.agentMessage(from:content:)`, `MailSink`, and `Origin.mail(Set<MailID>)` (`FoundationModelsExtras/Sources/FoundationModelsExtras/Mail/`). Router has a file `Session/SessionMessage.swift`, but no type with the name `SessionMessage`. Thus the new Extras type has no clash.
 - **The transcripts.** `TranscriptRecorder` (`Recording/TranscriptRecorder.swift:25`), `JSONLAppend.swift`, `TranscriptFileDiscovery.swift` and the other files of `Recording/` write and read the transcript of each session on disk.
 - **The record of past sessions is not in Router.** ACPAgent keeps it in `FoundationModelsACPAgent/Sources/FoundationModelsACPAgent/Transcripts/`: `SessionIndex.swift` (the file `sessions.jsonl`), `ProjectRegistry.swift` (the file `projects.jsonl`), and their helper `JSONLines.swift`. `TranscriptStore.swift` uses them for `session/list` and `session/resume`. These types have no ACP type.
-- **No GraphQL.** The Router package does not link GraphQL today. ROUTER-10 adds it to the Router library target (D73).
+- **No GraphQL.** The Router package does not link GraphQL, and this plan does not add it (D74). The `sessions` GraphQL endpoint (`SessionsGraph`) is in the FoundationModelsMultitool library target, next to the `sessions` tool (MT-10). It uses only the Extras `SessionDirectory` protocol, so it needs no Router type.
 - **Test support.** `Tests/FoundationModelsRouterTestSupport` has the scripted models. The new tests use them, and no test needs a real model.
 
 ## 3. Dependencies that come first
@@ -33,9 +33,9 @@ These changes are in FoundationModelsExtras. Router cannot start the directory b
 | Change | What | Needed by |
 |--------|------|-----------|
 | EXTRAS-3 | `Sources/FoundationModelsExtras/Sessions/`: the `SessionDirectory` protocol and its value types (plan section 6). `Sendable` and `Codable`, no Router type, no ACP type. | ROUTER-1 (the enums of kind and origin), ROUTER-3 and all later changes |
-| EXTRAS-2 | The `GraphQLEndpoint` protocol (Step 1 of the build). | ROUTER-10 |
-| EXTRAS-5 | `GraphQLViewer`, given to `execute` and `subscribe` of `GraphQLEndpoint` (plan section 11.3). | ROUTER-10 |
-| EXTRAS-4 | `InMemorySessionDirectory`, a public test double in the existing Extras library target (no test-support product, D73). | Not Router. The tests of ROUTER-10 can use it. |
+| EXTRAS-4 | `InMemorySessionDirectory`, a public test double in the existing Extras library target (no test-support product, D73). | Not Router. The tests of the `sessions` tool and of `SessionsGraph` in Multitool use it. |
+
+EXTRAS-2 (`GraphQLEndpoint`), EXTRAS-5 (`GraphQLViewer`) and EXTRAS-6 (the GraphQL toolkit) are not needed by Router. MT-10 in Multitool uses them.
 
 The protocol, as EXTRAS-3 defines it:
 
@@ -162,39 +162,23 @@ The states are `working`, `needsInput`, `idle` and `archived`. The events are `s
 
 - **Spec:** `RouterSessionDirectory.archive(_:by:)` ends a session. It stops a running turn of the session (as a cancel does), removes the session from the live list, writes `archivedAt` to `facts.json`, and sends `archived(id:)`. A later send to the session gives `refused` with the reason "archived", and the directory does not restore it. `by` is the session or the user that archives it, for the audit. An archive of a session that is already archived gives its summary again and sends no event.
 
-  The `archive session` operation of the `sessions` tool and the `archive` mutation of the `sessions` graph (Session > Archive in the app) call it. Both can archive any session that the caller can see. Router has no built-in limit for an archive. Only a deny rule (D64) can stop a model call, through the risk check of the `runCode` snippet (MT-1, in Multitool).
+  The `archive session` operation of the `sessions` tool and the `archive` mutation of the `sessions` graph (Session > Archive in the app; both in Multitool) call it. Both can archive any session that the caller can see. Router has no built-in limit for an archive. Only a deny rule (D64) can stop a model call, through the risk check of the `runCode` snippet (MT-1, in Multitool).
 - **Why:** D68 (Close Tab closes only the view; only Session > Archive ends a session), D72 (Q-S5: archive in the tool and the graph, for any session, rules only).
 - **Depends on:** ROUTER-1, ROUTER-3, ROUTER-5 (the archived refusal is a delivery rule).
 - **Tests:** an archive of a working session stops its turn, removes it from the live list and sends `archived`; after a restart, the facts have `archivedAt` and the state is `archived`; a send to it is refused with the reason "archived"; the query finds it only with `includesRecorded`; a second archive sends no event.
 
-### 5.9 ROUTER-10 The `sessions` GraphQL endpoint (`SessionsGraph`)
-
-- **Spec:** `SessionsGraph` goes into the existing `FoundationModelsRouter` library target (`Sources/FoundationModelsRouter/`), next to `RouterSessionDirectory`. There is no new target and no new product (D73). The Router target links `GraphQL` (GraphQLSwift, `from: "4.3.0"`) and `Graphiti` (`from: "3.1.0"`), with the same pins as FoundationModelsKanban, so that the app resolves one copy. Thus each user of Router links GraphQL.
-
-  `SessionsGraph(directory: any SessionDirectory)` conforms to `GraphQLEndpoint`: name `sessions`, version 1, scope server, the SDL of plan section 11.2. Queries: `sessions`, `session` and `inbox`. Mutations: `start`, `tag`, `untag`, `send`, `reply` and `archive(sessionId: ID!): Session!`. Subscription: `sessionChanges`, which reads `directory.events()`. The resolvers call only the `SessionDirectory` protocol.
-
-  The resolvers apply the rules of plan section 11.3 with the `GraphQLViewer` of each call (EXTRAS-5):
-  - Visibility: a `userDevice` viewer sees all sessions. An `external` viewer sees the sessions that it owns, their subagents, and the sessions that they started, to any depth. A hidden session never shows, and `parent` or `startedBy` of a hidden session is `null`.
-  - `start`: `userDevice` only. `tag` and `untag`: `userDevice`, or `external` on a session that it owns. `send` and `reply`: the sender is `user(clientID)`, and an `external` viewer sends only to sessions that it owns. `archive`: any session that the viewer can see.
-  - `openInTab` (plan section 11.5 step 9): true only for the requesting client of a UI start; for a start by a tool or a message, true only for the owner of the first owned session in the `startedBy` chain, then the `parentID` chain; false for a trigger and a subagent.
-  - A mutation never changes the owner of a session (D11).
-
-  The `inbox` query does not mark messages read.
-- **Why:** D62 and D67 (UIs use the directory through the `sessions` GraphQL endpoint, the same pattern as `kanban`, D55), D11 (owner rules), D68 (Session > Archive). D73 (no new target in a package). Plan section 5.7 tells why the graph goes in the Router library target.
-- **Depends on:** EXTRAS-2, EXTRAS-3, EXTRAS-5, ROUTER-3. It uses the behavior of all changes above.
-- **Tests:** in the existing `FoundationModelsRouterTests` target. Use the fake directory (`InMemorySessionDirectory`, EXTRAS-4) and fake viewers, with no ACP and no model. The SDL matches a golden file. Each query, each mutation and the subscription with a `userDevice` viewer. The visibility rules for an `external` viewer. The mutation rules, also `archive`. Each `openInTab` case. A mutation does not change the owner. A source scan checks that the files of `SessionsGraph` use only the Extras `SessionDirectory` protocol, and no `RouterSessionDirectory` or other Router type.
-
 ## 6. What other packages do (not in this plan)
 
-- **FoundationModelsMultitool:** the `sessions` tool (MT-2) and its mount (MT-9), over the Extras protocol.
+- **FoundationModelsMultitool:** the `sessions` tool (MT-2), its mount (MT-9), and the `sessions` GraphQL endpoint `SessionsGraph` (MT-10), all over the Extras protocol (D74).
 - **FoundationModelsAgents:** `send agent` and `send caller` call `SessionDirectory.send` (AG-1). AG-7 removes the subagent cap.
 - **FoundationModelsACPAgent:** the launcher (ACPA-9), the attach of a live session on `session/resume` (ACPA-11), the viewer of the tunnel (ACPA-13), the use of the Router record for `session/list` and `session/resume` (ACPA-14), and messages in the transcript (ACPA-6).
 - **TestudoApp:** the endpoint registry (APP-16) and the trigger handler (APP-10).
 
 ## 7. Open questions that touch Router
 
-- **Q-S2. The tab rule.** Does each `start session` of a model open a tab? A coordinator can start many sessions. Proposal: `openInTab` is true for the first 3 starts of one turn, and false after that. The answer changes the `openInTab` resolver of ROUTER-10.
-- **Q-S8. Trust of an external client.** Is the visibility rule of ROUTER-10 correct for an `external` client? Can it see sessions that the user started on the Mac?
+- **Q-S2. The tab rule.** Does each `start session` of a model open a tab? A coordinator can start many sessions. Proposal: `openInTab` is true for the first 3 starts of one turn, and false after that. The answer changes the `openInTab` resolver of MT-10 (in Multitool).
+- **Q-S8. Trust of an external client.** Is the visibility rule of MT-10 correct for an `external` client? Can it see sessions that the user started on the Mac?
+- **Q37 (design). Can a profile get to its `Router`?** ROUTER-3 says that each session that a profile of this router vends registers itself. Sessions come from `RoutedLLM.makeSession` through `owningProfile`. Nobody has confirmed that a profile can get to its `Router`. If it cannot, ROUTER-3 must add that link.
 - **Q1 (design).** Can a session on one server send to a session on another server (D17)? ROUTER-4 covers one server only.
 
 Q-S9 and Q12 do not touch Router: Q-S9 is about the launcher in ACPAgent, and Q12 is about ACPA-6.
