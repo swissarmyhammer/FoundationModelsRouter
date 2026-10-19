@@ -246,18 +246,9 @@ struct CompactionSignalTests {
             } onCancel: {
                 cancelled.signal()
             }
-            sentDuringClose.keep(Self.compact(session))
+            sentDuringClose.keep(Fixtures.requestSummarizingCompaction(of: session))
             throw CancellationError()
         }
-    }
-
-    /// Sends a compaction with the summarizing prompt and budget of the
-    /// fixtures.
-    ///
-    /// - Parameter session: The session to compact.
-    /// - Returns: The id of the signal.
-    private static func compact(_ session: any RoutedSession) -> SignalID {
-        session.compact(prompt: Fixtures.compactionSummarizerPrompt, budget: Fixtures.summarizingCompactionBudget)
     }
 
     /// The terminal event of `id` in the ledger of the output of `session`,
@@ -343,7 +334,7 @@ struct CompactionSignalTests {
 
         // The call is synchronous: the id comes back while the summarizer
         // call is still held.
-        let id = Self.compact(session)
+        let id = Fixtures.requestSummarizingCompaction(of: session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         #expect(try Self.recordedTerminal(of: id, on: session) == nil)
 
@@ -370,7 +361,7 @@ struct CompactionSignalTests {
         defer { await session.close() }
         let (log, drain) = await OutputLog.watch(session)
 
-        let id = Self.compact(session)
+        let id = Fixtures.requestSummarizingCompaction(of: session)
         _ = try await session.awaitTerminal(of: id)
         await session.close()
         await drain.value
@@ -401,7 +392,7 @@ struct CompactionSignalTests {
             throw Fixtures.ProbeError.summarizerFailed
         }
 
-        let id = Self.compact(session)
+        let id = Fixtures.requestSummarizingCompaction(of: session)
         let terminal = try await session.awaitTerminal(of: id)
 
         let expected = CompactionFailure(
@@ -429,7 +420,7 @@ struct CompactionSignalTests {
             await session.close()
         }
 
-        let id = Self.compact(session)
+        let id = Fixtures.requestSummarizingCompaction(of: session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         let mailID = try session.send(Self.waitingPrompt)
 
@@ -471,7 +462,7 @@ struct CompactionSignalTests {
             await session.close()
         }
 
-        let compactID = Self.compact(session)
+        let compactID = Fixtures.requestSummarizingCompaction(of: session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: compactID) })
         let mailID = try session.send(Self.waitingPrompt)
         let cancelID = session.cancelAll()
@@ -523,7 +514,7 @@ struct CompactionSignalTests {
         let transcriptBefore = Array(await session.transcript)
         let recordedBefore = await fixture.recorder.events.count
 
-        let id = Self.compact(session)
+        let id = Fixtures.requestSummarizingCompaction(of: session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: id) })
         // The summarizer call ends only on a cancel, so close returns only
         // when it cancels the call. The close waits for the end of the
@@ -566,9 +557,9 @@ struct CompactionSignalTests {
             fixture, session: session, inside: inside, sentDuringClose: sentDuringClose)
         defer { await session.close() }
 
-        let running = Self.compact(session)
+        let running = Fixtures.requestSummarizingCompaction(of: session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: running) })
-        let waiting = Self.compact(session)
+        let waiting = Fixtures.requestSummarizingCompaction(of: session)
         // The summarizer call ends only on a cancel, so close returns only
         // when it cancels the running compaction.
         await session.close()
@@ -672,7 +663,7 @@ struct CompactionSignalTests {
         let stop = session.cancelAll()
         #expect(try await session.awaitTerminal(of: stop) == .signalDone(stop))
 
-        let compactID = Self.compact(session)
+        let compactID = Fixtures.requestSummarizingCompaction(of: session)
         guard case .compaction = try await session.awaitTerminal(of: compactID) else {
             Issue.record("expected the compaction after cancelAll to complete")
             return
@@ -732,7 +723,7 @@ struct CompactionSignalTests {
         let (fixture, session) = try await Self.makeSession(dir: dir)
         defer { await session.close() }
 
-        let terminal = try await session.awaitTerminal(of: Self.compact(session))
+        let terminal = try await session.awaitTerminal(of: Fixtures.requestSummarizingCompaction(of: session))
 
         guard case .compaction(let result) = terminal else {
             Issue.record("expected the compaction to complete, got \(terminal)")
@@ -756,7 +747,7 @@ struct CompactionSignalTests {
             throw Fixtures.ProbeError.summarizerFailed
         }
 
-        let terminal = try await session.awaitTerminal(of: Self.compact(session))
+        let terminal = try await session.awaitTerminal(of: Fixtures.requestSummarizingCompaction(of: session))
 
         guard case .compaction(let result) = terminal else {
             Issue.record("expected the compaction to complete, got \(terminal)")
@@ -782,9 +773,9 @@ struct CompactionSignalTests {
             await session.close()
         }
 
-        let first = Self.compact(session)
+        let first = Fixtures.requestSummarizingCompaction(of: session)
         try await Self.waitForTheHold(inside, endingOn: { try await session.awaitTerminal(of: first) })
-        let second = Self.compact(session)
+        let second = Fixtures.requestSummarizingCompaction(of: session)
         // The second compaction waits for the first: it did not start.
         #expect(await log.firstIndex { Self.startsCompaction($0, second) } == nil)
 

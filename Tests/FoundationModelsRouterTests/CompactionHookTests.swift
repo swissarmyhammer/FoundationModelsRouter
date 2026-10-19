@@ -72,7 +72,7 @@ struct CompactionHookTests {
 
     /// A warmed-up compaction session of a router with a dispatcher, and
     /// what the test reads.
-    private struct HookedSession {
+    private struct HookedSession: HookedSessionFixture {
         /// The fixture behind the session.
         let fixture: Fixtures.Fixture
 
@@ -84,13 +84,6 @@ struct CompactionHookTests {
 
         /// The visitor registered on ``dispatcher``.
         let visitor: CompactionRecordingVisitor
-
-        /// Closes the session, and waits until the dispatcher delivered each
-        /// post event.
-        func closeAndDrain() async {
-            await session.close()
-            await dispatcher.drain()
-        }
     }
 
     /// Makes a warmed-up compaction session through a router with a
@@ -125,15 +118,6 @@ struct CompactionHookTests {
         try await body(HookedSession(fixture: fixture, session: session, dispatcher: dispatcher, visitor: visitor))
     }
 
-    /// Sends a compaction with the summarizing prompt and budget of the
-    /// fixtures.
-    ///
-    /// - Parameter session: The session to compact.
-    /// - Returns: The id of the signal.
-    private static func compact(_ session: any RoutedSession) -> SignalID {
-        session.compact(prompt: Fixtures.compactionSummarizerPrompt, budget: Fixtures.summarizingCompactionBudget)
-    }
-
     // MARK: - Completed
 
     /// The production change that makes this test fail: a requested
@@ -142,7 +126,7 @@ struct CompactionHookTests {
     @Test("a requested compaction gives CompactionStarted and then CompactionEnded(completed) with the same id")
     func aRequestedCompactionGivesStartedAndCompleted() async throws {
         try await Self.withHookedSession { hooked in
-            let id = Self.compact(hooked.session)
+            let id = Fixtures.requestSummarizingCompaction(of: hooked.session)
             let terminal = try await hooked.session.awaitTerminal(of: id)
             await hooked.closeAndDrain()
 
@@ -190,7 +174,7 @@ struct CompactionHookTests {
                 guard Fixtures.isSummarizerCall(prompt) else { return }
                 throw Fixtures.ProbeError.summarizerFailed
             }
-            let id = Self.compact(hooked.session)
+            let id = Fixtures.requestSummarizingCompaction(of: hooked.session)
             _ = try await hooked.session.awaitTerminal(of: id)
             await hooked.closeAndDrain()
 
@@ -214,7 +198,7 @@ struct CompactionHookTests {
             let sawCancellation = Fixtures.suspendInsideCancellationAwareTool(
                 hooked.fixture, suspendingOn: Fixtures.firstSummarizerCall(), insideTool: inside)
             let session = hooked.session
-            let id = Self.compact(session)
+            let id = Fixtures.requestSummarizingCompaction(of: session)
             let ending = Task { _ = try? await session.awaitTerminal(of: id) }
             defer { ending.cancel() }
             try await RecordedWaitResult.wait(forPermitOf: inside, endingOnEndOf: ending)
@@ -250,7 +234,7 @@ struct CompactionHookTests {
         defer { await session.close() }
 
         #expect(try #require(session as? RoutedSessionActor).hooks == nil)
-        let terminal = try await session.awaitTerminal(of: Self.compact(session))
+        let terminal = try await session.awaitTerminal(of: Fixtures.requestSummarizingCompaction(of: session))
         let result = try #require([terminal].compactionResults.first, "the compaction ended with \(terminal)")
         #expect(result.summaryEntryId != nil)
     }

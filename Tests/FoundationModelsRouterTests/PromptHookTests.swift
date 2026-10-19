@@ -140,7 +140,7 @@ struct PromptHookTests {
     }
 
     /// A session of a router with a dispatcher, and what the test reads.
-    private struct HookedSession {
+    private struct HookedSession: HookedSessionFixture {
         /// The session under test.
         let session: any RoutedSession
 
@@ -178,13 +178,6 @@ struct PromptHookTests {
             let prompts = try prompts
             try await session.stateChanges.wait(
                 until: { !ids.contains(where: prompts.isScreening) }, endingWhenWorkEnds: session)
-        }
-
-        /// Closes the session, and waits until the dispatcher delivered each
-        /// post event.
-        func closeAndDrain() async {
-            await session.close()
-            await dispatcher.drain()
         }
     }
 

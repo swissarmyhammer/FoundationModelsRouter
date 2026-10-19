@@ -213,6 +213,16 @@ extension AnswerCancellationTests {
         compactionBudget(targetTokens: TokenBudget(limit: characterCount(of: warmUpEntries())).targetTokens)
     }
 
+    /// Sends a requested compaction with ``compactionSummarizerPrompt`` and
+    /// ``summarizingCompactionBudget``, so the compaction makes its one
+    /// summarizer call (see ``isSummarizerCall``).
+    ///
+    /// - Parameter session: The session to compact.
+    /// - Returns: The id of the signal.
+    static func requestSummarizingCompaction(of session: any RoutedSession) -> SignalID {
+        session.compact(prompt: compactionSummarizerPrompt, budget: summarizingCompactionBudget)
+    }
+
     /// A session whose measured ``RoutedSession/contextFill`` has already cleared
     /// `budget`'s trigger, holding ``compactionWarmUpAnswerCount`` answers of real content —
     /// so the *next* answer on it compacts proactively, before running any model work of
