@@ -624,6 +624,11 @@ actor RoutedSessionActor: RoutedSession {
     /// record. See ``ToolCallRunJoin``.
     var toolCallRunJoin = ToolCallRunJoin()
 
+    /// The SDK tool calls that a hooked tool call of this session already
+    /// claimed. ``claimHookedToolCall(named:)`` reads it for each tool call
+    /// that runs through the tool hooks (task ^8d73hct).
+    var toolHookClaims = OpenToolCallClaims()
+
     /// The number of the last submission this session opened. The next
     /// ``SubmissionID`` takes the next number. See
     /// ``beginSubmission(cause:mailIds:)``.

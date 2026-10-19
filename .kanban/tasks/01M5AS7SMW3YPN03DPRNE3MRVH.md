@@ -77,10 +77,27 @@ comments:
     - no formatter run. No commit. No retry. No loop.
     - next: review.
   timestamp: 2026-10-19T21:22:11.316747+00:00
+- actor: claude-code
+  id: 01m5b0rkcv0xgd1aynym49gavb
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 64f43c1f): 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). The two prior findings are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-19T21:23:29.307911+00:00
+- actor: claude-code
+  id: 01m5b0rzfbez0wv7vmehdb68g5
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 5 files
+    - test: green — swift test, 1881 passed, 0 failed
+    - commit: 64f43c1f
+    - review: clean — 0 findings
+    - push: origin/main = 64f43c1f
+  timestamp: 2026-10-19T21:23:41.675485+00:00
 depends_on:
 - 01M5ARTSQ3ZSQMRH1Z5QSTWWJ1
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff9680
 title: Router emits CompactionStarted and CompactionEnded
 ---
 ## Context

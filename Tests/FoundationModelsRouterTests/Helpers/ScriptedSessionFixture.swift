@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsHooks
 import Tracing
 
 @testable import FoundationModelsRouter
@@ -62,6 +63,8 @@ struct ScriptedSessionFixture: SessionDirectoryFixture {
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
+    ///   - hooks: The hook dispatcher of the router, or `nil` (the default)
+    ///     for a router with no hooks.
     /// - Returns: The vended session, its scripted model's log, and the temp
     ///   directory. The caller ends the fixture.
     /// - Throws: Whatever profile resolution throws. Before it throws, it
@@ -71,7 +74,8 @@ struct ScriptedSessionFixture: SessionDirectoryFixture {
         mounting tools: [any Tool],
         tempDirPrefix: String,
         budget: TokenBudget? = nil,
-        tracer: (any Tracer)? = nil
+        tracer: (any Tracer)? = nil,
+        hooks: HookDispatcher? = nil
     ) async throws -> ScriptedSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = ScriptedAnswerLog()
@@ -83,7 +87,8 @@ struct ScriptedSessionFixture: SessionDirectoryFixture {
             recorder: recorder,
             loader: StubModelLoader(
                 container: container, dimension: RouterTestFixtures.stubDimension),
-            tracer: tracer
+            tracer: tracer,
+            hooks: hooks
         )
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())

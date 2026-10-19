@@ -858,13 +858,16 @@ extension RoutedSessionActor {
         // the model reads next goes through it (see ``noteToolResult(_:)``).
         // The no-op check and then the repetition check run before each tool
         // body of the call (see ``checkToolCallForNoOp(toolName:arguments:)``
-        // and ``checkToolCallForRepetition(_:)``).
+        // and ``checkToolCallForRepetition(_:)``). The tool hooks of the
+        // session run around each tool body of the call, and each tool body
+        // reads the hook session of this session (see ``makeToolCallHooks()``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
             boundary: ToolResultAppendBoundary { await self.noteToolResult($0) },
             checks: ModelCallToolChecks(
                 noOp: ToolCallNoOpCheck { try await self.checkToolCallForNoOp(toolName: $0, arguments: $1) },
-                repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) }),
+                repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) },
+                hooks: makeToolCallHooks()),
             context: ambientToolContext,
             serviceContext: submissionServiceContext,
             origin: origin,

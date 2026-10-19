@@ -126,16 +126,6 @@ struct HookLineageTests {
                 router: router, profile: profile, dispatcher: dispatcher, visitor: visitor, directory: directory))
     }
 
-    /// The parent call of a sub-agent that `parent` starts.
-    ///
-    /// - Parameter parent: The session that starts the sub-agent.
-    /// - Returns: The context of the `start agent` call of `parent`.
-    private static func startAgentCall(of parent: any RoutedSession) -> ToolContext {
-        ToolContext(
-            sessionID: parent.id, runPlane: RunPlane(), sink: DroppingEventSink(), tool: "agents",
-            op: "start agent", completionToken: ToolContext.makeCompletionToken(), isCancelled: { false })
-    }
-
     /// The `SessionStart` of one session.
     ///
     /// - Parameters:
@@ -283,7 +273,7 @@ struct HookLineageTests {
             let parent = hooked.profile.standard.makeSession(
                 configuration: SessionConfiguration(hookSessionKey: Self.replacementKey))
             let child = hooked.profile.standard.makeSession(
-                configuration: SessionConfiguration(parentCall: Self.startAgentCall(of: parent)))
+                configuration: SessionConfiguration(parentCall: .startAgentCall(of: parent)))
             await hooked.dispatcher.drain()
 
             let start = try Self.start(of: child.id, in: hooked.visitor)

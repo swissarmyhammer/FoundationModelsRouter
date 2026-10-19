@@ -74,11 +74,12 @@ struct ScriptedToolCallingModel: LanguageModel {
         }
 
         /// The text content of every `.toolOutput` entry in `transcript`, in
-        /// transcript order.
+        /// transcript order. A test also reads the tool outputs of a recorded
+        /// transcript with it.
         ///
         /// - Parameter transcript: The transcript this call was handed.
         /// - Returns: One joined string per tool output entry, in order.
-        private static func toolOutputTexts(in transcript: Transcript) -> [String] {
+        static func toolOutputTexts(in transcript: Transcript) -> [String] {
             transcript.compactMap { entry -> String? in
                 guard case .toolOutput(let output) = entry else { return nil }
                 let texts = output.segments.compactMap { segment -> String? in

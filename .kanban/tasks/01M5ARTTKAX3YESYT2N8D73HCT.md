@@ -1,8 +1,48 @@
 ---
+comments:
+- actor: claude-code
+  id: 01m5b142k4v56fr508tdpeb0rt
+  text: |-
+    Research done. Discoveries:
+    - The SDK tool list is `SessionCheckedTool(wrapped: ToolFailureDelivery decorator(capping(mount(tool))))`. The failure-delivery decorator of Extras is the outermost mount layer. It changes each throw (except a cancel of the task of the call) into failure text. Thus `SessionCheckedTool` never sees a throw of the tool body. To send `PostToolUse(succeeded: false)`, the hook layer must sit beneath the failure delivery. Plan: `Tool.sessionChecked` takes the throwing tool (`ToolFailureDelivery.throwingTool(of:)`), puts a hook layer on it, and puts a new failure-delivery decorator on the hook layer. The checks stay outermost, so PreToolUse still comes after the no-op check and the repetition check.
+    - The SDK records a `String` output as a text segment, and each other output as a structure. Thus a `String` tool keeps `String` as its output (a replaced output is text). A tool with another output gets a wrapper output (`.original` or `.replaced(text)`) that gives the same prompt and the same generated content as the original, so the transcript does not change when no visitor replaces the output.
+    - The tool call ID: `ToolCallRunJoin` already reads the live transcript inside the tool call (safe inside a tool body, see the memory note on transcript reads). The hook layer gets the `Transcript.ToolCall` (id and argumentsJSON) of the call the same way, with a claim set of its own. The id is the id of the `toolCall` session event. Note: the card says the id is also the `correlationID` of `toolCallReport`, but `SessionEvent.toolCallReport` documents that its correlationID is the run completion token, never a `Transcript.ToolCall.id`. The acceptance criterion names only the `toolCall` session event, so the test checks that id.
+  timestamp: 2026-10-19T21:29:45.316646+00:00
+- actor: claude-code
+  id: 01m5b1wtq2axj5fhnwnsapddec
+  text: |-
+    Implementation landed (TDD: 14 new tests, 11 failed RED for the expected reasons, all 14 pass GREEN).
+
+    Design as built:
+    - `Session/ToolCallHooks.swift` (new): `ToolCallHooks` (task-local `current`, the `SessionHooks` of the session, and a claim closure for the SDK tool call), the hook flow (`PreToolUse` -> body -> `PreToolResult` -> `PostToolUse`), `HookedOutputForm`, `HookedToolOutput` (`.original` / `.replaced(text)`, same prompt and generated content as the original), the hook layers `HookedTextTool` (String output stays String) and `HookedResultTool`, and `ToolCallHooking.hooked(_:)`.
+    - `ToolCallHooking.hooked(_:)` takes the throwing tool beneath the Extras failure delivery (`ToolFailureDelivery.throwingTool(of:)`), puts the hook layer on it, and puts a new failure delivery over it. Reason: the failure delivery changes each throw into failure text, so a hook layer over it cannot see a throw. The checks of `SessionCheckedTool` stay outermost, so PreToolUse comes after the no-op and repetition checks. The new failure delivery gives the final (replaced) text to the tool-result append boundary.
+    - `ModelCallToolChecks` has a new `hooks: ToolCallHooks?`. `bound(_:)` also binds `ToolCallHooks.$current` and `HookSession.$current` (both nil for a router with no dispatcher). `RoutedSessionActorAnswerExecution` passes `makeToolCallHooks()`.
+    - Tool call ID: `RoutedSessionActor.claimHookedToolCall(named:)` (new file `RoutedSessionActorToolHooks.swift`) claims the first open call of the live transcript with the tool name, with its own claim set `toolHookClaims`. The claim logic moved out of `ToolCallRunJoin` into `OpenToolCallClaims`, which both use. PreToolUse/PreToolResult/PostToolUse carry the id and `arguments.jsonString` of that `Transcript.ToolCall`, so they equal the `toolCall` session event.
+
+    Decisions not on the card: a block on `PreToolResult` gives the model the reason, and `PostToolUse` then has `succeeded: false`. A block or a decode failure on `PreToolUse` gives `PostToolUse(output: reason or decode error, succeeded: false)`. A replaced output is not capped by `ToolOutputCapping` (the capping layer is beneath the hook layer, so `PreToolResult` sees the capped output).
+
+    Discoveries: the SDK records a replaced output of a structured tool (`HookedToolOutput.replaced`, generated content of kind string) as a text segment, not a structure. The card asks the id to equal the `correlationID` of `toolCallReport`, but that correlationID is the run completion token by contract (`SessionEvent.toolCallReport` docs), so the test checks the `toolCall` event id only. The shared helper `ToolContext.startAgentCall(of:)` (`Tests/.../Helpers/SubagentParentCall.swift`) replaces the private copy in `HookLineageTests`; `CatalogNoticeDeliveryTests` and `SessionWorkRegistryTests` still hold their own copies (not touched). `ScriptedSessionFixture.make` got a `hooks:` parameter.
+  timestamp: 2026-10-19T21:43:16.450503+00:00
+- actor: claude-code
+  id: 01m5b1x0r156nhx24pfnxpnr7h
+  text: |-
+    ### implement — changed
+    - evidence: `swift test --filter FoundationModelsRouterTests.ToolHookTests` 14 tests passed (RED run before: 11 of 14 failed); full `swift test`: 1895 tests in 235 suites passed (9 known issues are the existing withKnownIssue tests), 0 warnings. Files: Sources/FoundationModelsRouter/Session/{ToolCallHooks.swift (new), RoutedSessionActorToolHooks.swift (new), SessionCheckedTool.swift, ToolCallRunJoin.swift, RoutedSessionActor.swift, RoutedSessionActorAnswerExecution.swift}; Tests/FoundationModelsRouterTests/{ToolHookTests.swift (new), Helpers/SubagentParentCall.swift (new), Helpers/ScriptedSessionFixture.swift, Helpers/ScriptedToolCallingModel.swift, HookLineageTests.swift}
+    - next: /review
+  timestamp: 2026-10-19T21:43:22.625807+00:00
+- actor: claude-code
+  id: 01m5b20630cfbhg4xwgjvvt7jw
+  text: |-
+    ### test — green
+    - evidence: touched changed Swift files, then ran `swift test` one time in the root package. Result: 1895 tests in 235 suites passed, 0 failed, 0 skipped. The run has 9 known issues. They come from existing tests of wait helpers and the RealModelHarness embedding slot, which use withKnownIssue on purpose. Two more targets passed: 26 tests and 19 tests.
+    - evidence: `cd IntegrationTests && swift build --build-tests` finished with Build complete, 0 errors.
+    - warnings: the only warning in both builds is the known mlx "missing creator for mutated node" line. The change added no new warning.
+    - next: review.
+  timestamp: 2026-10-19T21:45:06.400400+00:00
 depends_on:
 - 01M5ARTSQ3ZSQMRH1Z5QSTWWJ1
-position_column: todo
-position_ordinal: '8180'
+position_column: doing
+position_ordinal: '80'
 title: Router emits the tool events at SessionCheckedTool (PreToolUse, PreToolResult, PostToolUse)
 ---
 ## Context
@@ -26,19 +66,19 @@ Implementation notes (implementation details; the implementer chooses, inside th
 3. **Verbs in `runCode`.** One `runCode` snippet is one tool call here. Hooks for one verb inside a snippet need a Multitool change (`MultiTool.performInvocation`) and are out of scope.
 
 ## Acceptance Criteria
-- [ ] With no dispatcher, the Router tests pass unchanged.
-- [ ] A tool call outside a model call (nothing bound) runs no hook.
-- [ ] Inside a tool body, `HookSession.current` is the `HookSession` of the session that made the call, also for a fork and a sub-agent.
-- [ ] A recording visitor gets `PreToolUse`, `PreToolResult` and `PostToolUse` in order for one tool call, with the same `toolCallID` as the `toolCall` session event.
-- [ ] A block on `PreToolUse` does not run the tool body, and the model gets the reason as the output.
-- [ ] A replaced `argumentsJSON` is what the tool body gets. A replacement that does not decode gives the decode error as the output.
-- [ ] A replaced `output` on `PreToolResult` is what the model gets, and what the transcript records.
-- [ ] A tool body that throws gives `PostToolUse` with `succeeded: false`.
-- [ ] A sub-agent session (`parentCall`) also emits the tool events.
+- [x] With no dispatcher, the Router tests pass unchanged.
+- [x] A tool call outside a model call (nothing bound) runs no hook.
+- [x] Inside a tool body, `HookSession.current` is the `HookSession` of the session that made the call, also for a fork and a sub-agent.
+- [x] A recording visitor gets `PreToolUse`, `PreToolResult` and `PostToolUse` in order for one tool call, with the same `toolCallID` as the `toolCall` session event.
+- [x] A block on `PreToolUse` does not run the tool body, and the model gets the reason as the output.
+- [x] A replaced `argumentsJSON` is what the tool body gets. A replacement that does not decode gives the decode error as the output.
+- [x] A replaced `output` on `PreToolResult` is what the model gets, and what the transcript records.
+- [x] A tool body that throws gives `PostToolUse` with `succeeded: false`.
+- [x] A sub-agent session (`parentCall`) also emits the tool events.
 
 ## Tests
-- [ ] `Tests/FoundationModelsRouterTests/ToolHookTests.swift` (Swift Testing): each criterion above, with a scripted model that makes tool calls to a test tool.
-- [ ] Run `swift test` in `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter`. All tests pass.
+- [x] `Tests/FoundationModelsRouterTests/ToolHookTests.swift` (Swift Testing): each criterion above, with a scripted model that makes tool calls to a test tool.
+- [x] Run `swift test` in `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter`. All tests pass.
 
 ## Workflow
 - Use `/tdd`. Write the failing tests first, then implement.
