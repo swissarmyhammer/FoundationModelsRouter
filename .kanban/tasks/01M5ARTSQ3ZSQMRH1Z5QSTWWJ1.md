@@ -35,6 +35,42 @@ comments:
     - evidence: touched the 11 changed Swift files, then `swift build --build-tests` (root) — no warning but the known mlx "missing creator" line. `swift test` (root) — 1866 tests in 232 suites passed with 9 known issues (the withKnownIssue tests of the wait helpers and RealModelHarness, not in the changed files); 26 tests and 19 tests of the other two runs passed; 0 failed, 0 skipped. `cd IntegrationTests && swift build --build-tests` — first run failed (cannot find WorkRegistry, WorkKind, BackgroundWork) because the git-ignored IntegrationTests/Package.resolved pinned FoundationModelsExtras at f9b5496, older than the root pin 23baf04. After `swift package --manifest-cache local update FoundationModelsExtras` (sourcekit-lsp of the repo stopped first) the build completed with no warning but the known mlx line. No tracked file was changed by this step.
     - next: review, then commit.
   timestamp: 2026-10-19T20:31:41.047995+00:00
+- actor: claude-code
+  id: 01m5ay1ggxran192e55xm40r1a
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 7d062740); 1 finding (1 confirmed, 2 refuted) — Tests/FoundationModelsRouterTests/HookLineageTests.swift:28
+    - next: implement the open item in the "Review Findings (2026-10-19 15:32)" section, then review again.
+  timestamp: 2026-10-19T20:35:55.549781+00:00
+- actor: claude-code
+  id: 01m5ay1ypvy42ffbmczbx52gdt
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 11 files
+    - test: green — swift test, 1866 passed, 0 failed; IntegrationTests build complete
+    - commit: 7d062740
+    - review: findings — Tests/FoundationModelsRouterTests/HookLineageTests.swift:28
+  timestamp: 2026-10-19T20:36:10.075653+00:00
+- actor: claude-code
+  id: 01m5ay5y5y33ncy4q10ww18ejs
+  text: 'Finding fixed: `HookLineageTests.swift:28` duplication/duplication. A shared `BasicLLMContainer` is now in `Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift` at file scope. It has a named constant `responseText = "stub response"`. The private copy in `HookLineageTests.swift` is deleted, and the suite uses the shared type. The other suites keep their private nested copies. A nested type hides the file-scope type, so the build has no ambiguity. Task ^gq6pj50 (no tag) holds the other copies: PlanRestorationTests, SessionTreeRestorationLostRunTests, ElicitationRoutingTests (equal copies), and BackgroundRunTranscriptTests, SessionConfigurationTests, SessionRestorationTests, PendingEventInjectionTests, SessionMailQueueTests (copies with a different behavior). The only warning in the build is the known `missing creator for mutated node … mlx-swift_Cmlx.bundle` warning. It was in the earlier builds too.'
+  timestamp: 2026-10-19T20:38:20.606120+00:00
+- actor: claude-code
+  id: 01m5ay60j4hbnv0ynztr2knjxs
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, Tests/FoundationModelsRouterTests/HookLineageTests.swift. `swift build --build-tests` exit 0; it recompiled the test product, and the only warning is the known mlx bundle warning. `swift test --filter 'FoundationModelsRouterTests.HookLineageTests'`: "Test run with 11 tests in 1 suite passed". Finding flipped to [x]. New task ^gq6pj50 holds the other copies.
+    - next: /test, then /review
+  timestamp: 2026-10-19T20:38:23.044239+00:00
+- actor: claude-code
+  id: 01m5ay88dsrff5jvwhvcggrjy6
+  text: |-
+    ### test — green
+    - evidence: touched all Tests/FoundationModelsRouterTests/*.swift so the compiler built them fresh. Ran `swift test` one time. Build complete (22.75 sec), exit 0. Swift Testing: 1866 tests in 232 suites passed, 0 failures. Two more runs passed (26 tests and 19 tests). XCTest: 0 tests, 0 failures.
+    - warnings: only the known mlx "missing creator for mutated node" line. No compiler warning in the test files.
+    - skipped: 0. The 9 "known issues" come from tests that use withKnownIssue on purpose (RealModelHarness, PromptWaitTests, ManualRunClockWaitTests, TaskEndEventWaitTests). They do not use BasicLLMContainer.
+    - next: review and commit.
+  timestamp: 2026-10-19T20:39:36.633192+00:00
 position_column: doing
 position_ordinal: '80'
 title: Router holds a HookDispatcher, gives it to each session, and emits SessionStart and SessionEnd
@@ -73,3 +109,12 @@ Router holds one `HookDispatcher`, gives it to each `RoutedSession` on each slot
 - Use `/tdd`. Write the failing tests first, then implement.
 
 #hooks
+
+## Review Findings (2026-10-19 15:32)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 11 file(s) reviewed, 14 not reviewed.
+
+> 14 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 14 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/HookLineageTests.swift:28` `duplication/duplication` — The new private struct BasicLLMContainer is a copy of a stub that already exists in other test files. The copy can drift out of sync with the others. Move one shared BasicLLMContainer into Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift. Delete the copy in HookLineageTests.swift and use the shared type. Do not edit the other files in this change. Report the other copies as a separate task.

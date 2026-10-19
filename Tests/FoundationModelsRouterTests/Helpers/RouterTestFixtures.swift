@@ -63,6 +63,25 @@ struct StubModelLoader: ModelLoader {
     func preload(container: any LoadedModelContainer) async throws {}
 }
 
+/// A plain ``LoadedLLMContainer`` stub: each session that it makes is a
+/// ``StubSessionBackend`` that answers with ``responseText``.
+///
+/// This is the shared copy for each suite that needs a container with no
+/// special behavior, so the stub has one location only.
+struct BasicLLMContainer: PlainTranscriptStubContainer {
+    /// The fixed text of each answer.
+    static let responseText = "stub response"
+
+    /// Makes a stub backend that answers with ``responseText``.
+    ///
+    /// - Parameter instructions: The instructions of the session. The stub
+    ///   does not use them.
+    /// - Returns: The new stub backend.
+    func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+        StubSessionBackend(responseText: Self.responseText)
+    }
+}
+
 /// Shared fixtures for building a stub-backed ``Router`` and resolved
 /// profile in tests: the canned repo metadata a ``StubMetadataSource``
 /// serves, the standard test ``ProfileDefinition``, and factories for the

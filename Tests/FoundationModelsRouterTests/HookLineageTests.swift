@@ -24,13 +24,6 @@ struct HookLineageTests {
     /// The session key that a host gives to a model-switch replacement.
     private static let replacementKey = "k"
 
-    /// A plain stub container: each session answers with one fixed text.
-    private struct BasicLLMContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: "stub response")
-        }
-    }
-
     /// A visitor that records each `SessionStart` and each `SessionEnd`, in
     /// the order of delivery.
     final class RecordingHookVisitor: HookVisitor {
