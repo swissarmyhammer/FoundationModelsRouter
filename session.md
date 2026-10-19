@@ -181,6 +181,6 @@ The states are `working`, `needsInput`, `idle` and `archived`. The events are `s
 - **Q-S2. The tab rule.** Does each `start session` of a model open a tab? A coordinator can start many sessions. Proposal: `openInTab` is true for the first 3 starts of one turn, and false after that. The answer changes the `openInTab` resolver of MT-10 (in Multitool).
 - **Q-S8. Trust of an external client.** Is the visibility rule of MT-10 correct for an `external` client? Can it see sessions that the user started on the Mac?
 - **Q37 (design). Can a profile get to its `Router`?** ROUTER-3 says that each session that a profile of this router vends registers itself. Sessions come from `RoutedLLM.makeSession` through `owningProfile`. Nobody has confirmed that a profile can get to its `Router`. If it cannot, ROUTER-3 must add that link.
-- **Q1 (design).** Can a session on one server send to a session on another server (D17)? ROUTER-4 covers one server only.
+- **Q1 (closed, TestudoApp D88).** A message to a session on another Mac is a later feature. ROUTER-4 covers one server only.
 
 Q-S9 and Q12 do not touch Router: Q-S9 is about the launcher in ACPAgent, and Q12 is about ACPA-6.
