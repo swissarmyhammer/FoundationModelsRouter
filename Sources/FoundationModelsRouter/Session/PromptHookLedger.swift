@@ -2,8 +2,9 @@ import FoundationModelsExtras
 import Synchronization
 
 /// The prompt hook state of one session: the mail whose `PrePrompt` chain
-/// runs now ("screening" mail), and the mail that got a `PrePrompt` and waits
-/// for its one `PostPrompt`.
+/// runs now ("screening" mail), the screening mail that a `replace(_:with:)`
+/// signal changed, and the mail that got a `PrePrompt` and waits for its one
+/// `PostPrompt`.
 ///
 /// A screening mail stays in the mail queue, and the pump takes no mail from
 /// the first screening mail on (``RoutedSessionActor/takeScreenedMail(admitting:)``).
@@ -30,6 +31,10 @@ final class PromptHookLedger: Sendable {
         /// The ids of the mail that got a `PrePrompt` and did not get its
         /// `PostPrompt` yet.
         var prompted: Set<MailID> = []
+
+        /// The ids of the screening mail that a `replace(_:with:)` signal
+        /// changed while it was screening (``noteReplace(of:)``).
+        var replaced: Set<MailID> = []
     }
 
     /// The state of the ledger.
@@ -92,6 +97,28 @@ final class PromptHookLedger: Sendable {
         }
     }
 
+    /// Records that a `replace(_:with:)` signal changed the body of the mail
+    /// `id`. A replace is not screened, so when the mail is screening, the
+    /// replaced body wins over the text of its chain
+    /// (``isReplaced(_:)``). A mail that is not screening does not change.
+    ///
+    /// - Parameter id: The id of the mail.
+    func noteReplace(of id: MailID) {
+        state.withLock { state in
+            guard state.screening.contains(id) else { return }
+            state.replaced.insert(id)
+        }
+    }
+
+    /// Whether a `replace(_:with:)` signal changed the body of the mail `id`
+    /// while the mail was screening.
+    ///
+    /// - Parameter id: The id of a mail.
+    /// - Returns: `true` when the mail is screening and a replace changed it.
+    func isReplaced(_ id: MailID) -> Bool {
+        state.withLock { $0.replaced.contains(id) }
+    }
+
     /// Ends the screen of the mail `id`: its chain let it go on. The mail
     /// still waits for its `PostPrompt`.
     ///
@@ -101,6 +128,7 @@ final class PromptHookLedger: Sendable {
     func endScreen(of id: MailID) -> Bool {
         state.withLock { state in
             state.screens[id] = nil
+            state.replaced.remove(id)
             return state.screening.remove(id) != nil
         }
     }
@@ -116,6 +144,7 @@ final class PromptHookLedger: Sendable {
     func forget(_ id: MailID) -> Bool {
         let (screen, wasPrompted) = state.withLock { state in
             state.screening.remove(id)
+            state.replaced.remove(id)
             return (state.screens.removeValue(forKey: id), state.prompted.remove(id) != nil)
         }
         screen?.cancel()

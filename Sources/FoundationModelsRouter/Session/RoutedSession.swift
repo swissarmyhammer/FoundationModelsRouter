@@ -537,6 +537,13 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// does not change, and the signal then sends only
     /// ``SessionEvent/signalDone(_:)``.
     ///
+    /// A replace is not screened. The new body goes to the model as you give
+    /// it, with no new `PrePrompt` hook event, so a guard visitor does not
+    /// see the replaced text. When the `PrePrompt` chain of the mail runs
+    /// at the time of the replace, the new body wins over the text of the
+    /// chain, but a block of the chain still blocks the mail. The mail still
+    /// gets one `PostPrompt`.
+    ///
     /// - Parameters:
     ///   - id: The id of the mail.
     ///   - body: The new body.

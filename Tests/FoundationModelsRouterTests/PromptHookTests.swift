@@ -43,6 +43,9 @@ struct PromptHookTests {
     /// The reason that a blocking visitor gives.
     private static let blockReason = "the prompt is not allowed"
 
+    /// The text that a `replace(_:with:)` signal puts in place of the prompt.
+    private static let signalPrompt = "edited question"
+
     // MARK: - Fixtures
 
     /// A visitor that records each session event and each prompt event, in
@@ -207,6 +210,27 @@ struct PromptHookTests {
         }
     }
 
+    /// A visitor whose chain waits until the test opens `gate`, and then
+    /// gives the decision `decide`.
+    ///
+    /// - Parameters:
+    ///   - gate: The latch that the test opens to let the chain end.
+    ///   - decide: The decision for each `PrePrompt`.
+    /// - Returns: The new visitor.
+    private static func gatedVisitor(
+        _ gate: RunLatch, deciding decide: @escaping @Sendable (PrePrompt) -> PreDecision<PrePrompt>
+    ) -> PromptRecordingVisitor {
+        PromptRecordingVisitor { event in
+            await gate.waitUntilOpen()
+            return decide(event)
+        }
+    }
+
+    /// The body that a `replace(_:with:)` signal gives a mail in these tests.
+    private static var signalBody: MailBody {
+        .userMessage(prompt: signalPrompt, options: UserMessageOptions())
+    }
+
     /// The text of each `.prompt` entry of `transcript`, in order.
     ///
     /// - Parameter transcript: The transcript of a session.
@@ -348,14 +372,9 @@ struct PromptHookTests {
     @Test("a cancel of a mail while its PrePrompt chain runs ends the mail as cancelled, with no pass")
     func aCancelWhileTheChainRunsEndsTheMail() async throws {
         let gate = RunLatch()
-        let visitor = PromptRecordingVisitor { _ in
-            await gate.waitUntilOpen()
-            return .proceed
-        }
-        try await Self.withHookedSession(visitor: visitor) { hooked in
+        try await Self.withHookedSession(visitor: Self.gatedVisitor(gate) { _ in .proceed }) { hooked in
             let id = try hooked.session.send(Self.firstPrompt)
-            try await visitor.recorder.changes.wait(
-                until: { visitor.prePromptMailIDs == [hooked.hookID(id)] }, endingWhenWorkEnds: hooked.session)
+            try await Self.waitForTheChain(of: id, on: hooked)
             _ = hooked.session.cancel(id)
             let terminal = try await hooked.session.awaitTerminal(of: id)
             await gate.open()
@@ -365,6 +384,148 @@ struct PromptHookTests {
             #expect(hooked.backend.prompts.isEmpty)
             #expect(hooked.visitor.postPrompts == [.post(mailID: hooked.hookID(id), outcome: .cancelled)])
         }
+    }
+
+    // MARK: - Replace signals
+
+    /// What a test reads after a mail ended.
+    private struct EndedMail {
+        /// The terminal event of the mail.
+        let terminal: SessionEvent
+
+        /// The prompts that the backend got, in order.
+        let modelPrompts: [String]
+
+        /// The text of each `.prompt` entry of the transcript, in order.
+        let transcriptPrompts: [String]
+
+        /// The recorded `PrePrompt` events of the mail.
+        let prePrompts: [PromptRecordingVisitor.Event]
+
+        /// The recorded `PostPrompt` events of the mail.
+        let postPrompts: [PromptRecordingVisitor.Event]
+    }
+
+    /// Waits until the `PrePrompt` chain of the mail `id` started: the
+    /// visitor recorded the `PrePrompt` of the mail.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the mail.
+    ///   - hooked: The session under test.
+    /// - Throws: The error of `#require` when the work of the session ended
+    ///   first.
+    private static func waitForTheChain(of id: MailID, on hooked: HookedSession) async throws {
+        let visitor = hooked.visitor
+        try await visitor.recorder.changes.wait(
+            until: { visitor.prePromptMailIDs.contains(hooked.hookID(id)) }, endingWhenWorkEnds: hooked.session)
+    }
+
+    /// Sends ``signalBody`` to the mail `id` with a `replace(_:with:)` signal,
+    /// and waits until the signal ended.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the mail.
+    ///   - hooked: The session under test.
+    /// - Throws: When the signal did not end with its `signalDone` event.
+    private static func replace(_ id: MailID, on hooked: HookedSession) async throws {
+        let signal = hooked.session.replace(id, with: signalBody)
+        #expect(try await hooked.session.awaitTerminal(of: signal) == .signalDone(signal))
+    }
+
+    /// Waits for the terminal event of the mail `id`, closes the session,
+    /// and collects what the test reads.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the mail.
+    ///   - hooked: The session under test.
+    /// - Returns: What the test reads.
+    /// - Throws: What the wait for the terminal event throws.
+    private static func endedMail(_ id: MailID, on hooked: HookedSession) async throws -> EndedMail {
+        let terminal = try await hooked.session.awaitTerminal(of: id)
+        let transcriptPrompts = promptTexts(in: await hooked.session.transcript)
+        await hooked.closeAndDrain()
+        let events = hooked.visitor.recorder.events
+        return EndedMail(
+            terminal: terminal, modelPrompts: hooked.backend.prompts, transcriptPrompts: transcriptPrompts,
+            prePrompts: events.filter { event in
+                guard case .pre(let mailID, _) = event else { return false }
+                return mailID == hooked.hookID(id)
+            },
+            postPrompts: hooked.visitor.postPrompts.filter { event in
+                guard case .post(let mailID, _) = event else { return false }
+                return mailID == hooked.hookID(id)
+            })
+    }
+
+    /// Sends ``firstPrompt``, holds its `PrePrompt` chain on a gate, sends a
+    /// `replace(_:with:)` signal while the chain runs, and then lets the
+    /// chain end with `decide`.
+    ///
+    /// - Parameter decide: The decision of the chain.
+    /// - Returns: The id of the mail, and what the test reads.
+    /// - Throws: What the session or a wait throws.
+    private static func replaceWhileTheChainRuns(
+        deciding decide: @escaping @Sendable (PrePrompt) -> PreDecision<PrePrompt>
+    ) async throws -> (id: MailID, ended: EndedMail) {
+        let gate = RunLatch()
+        var result: (id: MailID, ended: EndedMail)?
+        try await withHookedSession(visitor: gatedVisitor(gate, deciding: decide)) { hooked in
+            let id = try hooked.session.send(firstPrompt)
+            try await waitForTheChain(of: id, on: hooked)
+            try await replace(id, on: hooked)
+            await gate.open()
+            result = (id, try await endedMail(id, on: hooked))
+        }
+        return try #require(result)
+    }
+
+    @Test("a replace after the screen ended goes to the model, with no second PrePrompt")
+    func aReplaceAfterTheScreenGoesToTheModel() async throws {
+        let latch = RunLatch()
+        try await Self.withHookedSession(script: [1: .hold(latch)]) { hooked in
+            try await MailQueueFixtures.startHeldAnswer(Self.heldPrompt, on: hooked.session, backend: hooked.backend)
+            let id = try hooked.session.send(Self.firstPrompt)
+            try await hooked.waitForTheScreens(of: [id])
+            try await Self.replace(id, on: hooked)
+            await latch.open()
+            let ended = try await Self.endedMail(id, on: hooked)
+
+            #expect(MailQueueFixtures.answer(of: ended.terminal) != nil, "the message ended with \(ended.terminal)")
+            #expect(ended.modelPrompts == [Self.heldPrompt, Self.signalPrompt])
+            #expect(ended.prePrompts == [.pre(mailID: hooked.hookID(id), text: Self.firstPrompt)])
+            #expect(ended.postPrompts == [.post(mailID: hooked.hookID(id), outcome: .answered)])
+        }
+    }
+
+    @Test("a replace while the chain runs wins over the text of the chain")
+    func aReplaceWhileTheChainRunsWinsOverTheChainText() async throws {
+        let (id, ended) = try await Self.replaceWhileTheChainRuns { event in
+            .replace(PrePrompt(mailID: event.mailID, text: Self.replacedPrompt))
+        }
+
+        #expect(MailQueueFixtures.answer(of: ended.terminal) != nil, "the message ended with \(ended.terminal)")
+        #expect(ended.modelPrompts == [Self.signalPrompt])
+        #expect(ended.transcriptPrompts == [Self.signalPrompt])
+        #expect(ended.postPrompts == [.post(mailID: id.description, outcome: .answered)])
+    }
+
+    @Test("a replace while the chain runs goes to the model when the chain lets the mail go on")
+    func aReplaceWhileTheChainRunsGoesToTheModel() async throws {
+        let (id, ended) = try await Self.replaceWhileTheChainRuns { _ in .proceed }
+
+        #expect(MailQueueFixtures.answer(of: ended.terminal) != nil, "the message ended with \(ended.terminal)")
+        #expect(ended.modelPrompts == [Self.signalPrompt])
+        #expect(ended.transcriptPrompts == [Self.signalPrompt])
+        #expect(ended.postPrompts == [.post(mailID: id.description, outcome: .answered)])
+    }
+
+    @Test("a replace while the chain runs does not stop a block of the chain")
+    func aReplaceWhileTheChainRunsKeepsTheBlock() async throws {
+        let (id, ended) = try await Self.replaceWhileTheChainRuns { _ in .block(reason: Self.blockReason) }
+
+        #expect(ended.terminal == .cancelled(id))
+        #expect(ended.modelPrompts.isEmpty)
+        #expect(ended.postPrompts == [.post(mailID: id.description, outcome: .blocked(reason: Self.blockReason))])
     }
 
     // MARK: - Run mail

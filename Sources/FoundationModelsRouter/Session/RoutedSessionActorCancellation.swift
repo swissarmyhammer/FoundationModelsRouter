@@ -209,11 +209,16 @@ extension RoutedSessionActor {
     /// (``MailRecord/replaced(_:body:)``), and the pump wakes, because the new
     /// body can start an answer. Mail that is not queued does not change.
     ///
+    /// A replace is not screened: the new body gets no `PrePrompt`. When the
+    /// `PrePrompt` chain of the mail runs, the new body wins over the text
+    /// of the chain (``notePromptReplace(of:)``).
+    ///
     /// - Parameters:
     ///   - id: The id of the mail.
     ///   - body: The new body.
     func performReplace(_ id: MailID, with body: MailBody) {
         guard outbox.queue.replace(id, with: body) else { return }
+        notePromptReplace(of: id)
         recordMail([.replaced(id, body: body)])
         wakePump()
     }

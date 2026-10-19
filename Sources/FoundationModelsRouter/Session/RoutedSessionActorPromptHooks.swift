@@ -17,6 +17,12 @@ import FoundationModelsHooks
 ///   mail, the mark goes, and the pump wakes. When the chain blocks the mail,
 ///   the mail leaves the queue with ``SessionEvent/cancelled(_:)``, and its
 ///   one `PostPrompt` is `blocked`.
+/// - A replace is not screened. The body that a ``replace(_:with:)`` signal
+///   gives a queued mail goes to the model as the caller gave it, with no
+///   new `PrePrompt`, so a guard visitor does not see the replaced text. A
+///   replace that comes while the chain runs wins over the text of the
+///   chain (``notePromptReplace(of:)``), but a block of the chain still
+///   blocks the mail. The mail still gets one `PostPrompt`.
 /// - The terminal event of a mail that got a `PrePrompt` sends its
 ///   `PostPrompt` (``endPrompts(_:by:)``). A withdraw of a mail while its
 ///   chain runs ends the mail as now, and the session ignores the result of
@@ -38,6 +44,17 @@ extension RoutedSessionActor {
             return false
         }
         return hooks.prompts.beginScreen(of: mail.id)
+    }
+
+    /// Records that a ``replace(_:with:)`` signal changed the body of the
+    /// queued mail `id`. ``performReplace(_:with:)`` calls it after the
+    /// change. A replace is not screened: it gets no `PrePrompt`. When the
+    /// mail is screening, the replaced body wins over the text of its chain
+    /// (``admitScreenedPrompt(_:text:)``).
+    ///
+    /// - Parameter id: The id of the mail.
+    nonisolated func notePromptReplace(of id: MailID) {
+        hooks?.prompts.noteReplace(of: id)
     }
 
     /// Removes the mark of a mail that the queue refused.
@@ -80,17 +97,20 @@ extension RoutedSessionActor {
     /// (``MailRecord/replaced(_:body:)``). Then the mark goes, and the pump
     /// wakes.
     ///
-    /// The new body comes from the body that the chain read, so a replace
-    /// signal that came while the chain ran is lost when the chain changed
-    /// the text.
+    /// A replace is not screened, and it wins over the chain: when a
+    /// ``replace(_:with:)`` signal changed the mail while the chain ran
+    /// (``PromptHookLedger/isReplaced(_:)``), the replaced body stays, and
+    /// the session ignores the text of the chain. This function and
+    /// ``performReplace(_:with:)`` both run on this actor, so a replace
+    /// cannot come between the check and the change of the body.
     ///
     /// - Parameters:
     ///   - mail: The mail, as ``mail(_:)`` put it in the queue.
     ///   - text: The final text of the chain.
     private func admitScreenedPrompt(_ mail: Mail, text: String) {
         guard let hooks, hooks.prompts.isScreening(mail.id) else { return }
-        if let body = mail.body.replacingHookPromptText(with: text), body != mail.body,
-            outbox.queue.replace(mail.id, with: body)
+        if !hooks.prompts.isReplaced(mail.id), let body = mail.body.replacingHookPromptText(with: text),
+            body != mail.body, outbox.queue.replace(mail.id, with: body)
         {
             recordMail([.replaced(mail.id, body: body)])
         }
