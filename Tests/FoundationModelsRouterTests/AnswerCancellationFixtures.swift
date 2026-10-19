@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsHooks
 import Synchronization
 import Testing
 
@@ -327,11 +328,14 @@ extension AnswerCancellationTests {
     ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
     ///   - runClock: The clock of the run plane and of the stall watch of
     ///     each session, or `nil` (the default) for the real time.
+    ///   - hooks: The hook dispatcher of the router, or `nil` (the default)
+    ///     for a router with no hooks.
     static func makeFixture(
         cacheDir: URL,
         appendsPromptBeforeToolCall: Bool = true,
         pool: ModelPool = ModelPool(),
-        runClock: (any RunClock)? = nil
+        runClock: (any RunClock)? = nil,
+        hooks: HookDispatcher? = nil
     ) async throws -> Fixture {
         let hook = AnswerHook()
         let observer = AnswerObserver()
@@ -344,7 +348,8 @@ extension AnswerCancellationTests {
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(container: container, dimension: stubDimension),
-            pool: pool
+            pool: pool,
+            hooks: hooks
         )
         if let runClock {
             await router.useRunClock(runClock)

@@ -304,6 +304,19 @@ final class SessionHooks: Sendable {
         }
     }
 
+    /// Sends one post event of the session to the dispatcher, when the
+    /// `SessionStart` of the session went out and its `SessionEnd` did not.
+    /// Thus the dispatcher gets no event of a session that it did not see
+    /// start, and no event after the end of the session.
+    ///
+    /// - Parameter event: The post event.
+    func post<Event: HookEvent>(_ event: Event) {
+        phase.withLock { phase in
+            guard case .open(postedStart: true) = phase else { return }
+            routerHooks.dispatcher.post(event, session: session)
+        }
+    }
+
     /// Sends the `SessionEnd` of the session when its `SessionStart` went
     /// out, and forgets the session. Only the first call does this.
     func end() {

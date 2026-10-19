@@ -2,6 +2,7 @@ import Foundation
 import Tracing
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsHooks
 import Logging
 
 /// Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``.
@@ -255,7 +256,8 @@ extension RoutedSessionActor {
     ///
     /// 1. The mail queue pauses (``MailQueue/pause()``). While it is paused,
     ///    the pump takes no mail, so new mail waits; output still flows.
-    /// 2. ``SessionEvent/compactionStarted(_:)``.
+    /// 2. ``SessionEvent/compactionStarted(_:)``, and the `CompactionStarted`
+    ///    post hook with the same id (``SessionHooks/post(_:)``).
     /// 3. The compaction runs in a task of its own (``activeCompaction``),
     ///    which only ``close()`` cancels. It does not wait for a safe point
     ///    and does not stop a running answer: the next submission of an
@@ -265,7 +267,10 @@ extension RoutedSessionActor {
     ///    ``SessionEvent/compactionFailed(_:)``, the terminal event of the
     ///    signal. The output ledger keeps it, so
     ///    ``RoutedSession/awaitTerminal(of:)-(SignalID)`` gives it, also after
-    ///    the end.
+    ///    the end. The `CompactionEnded` post hook goes with it: `completed`,
+    ///    `failed`, or `cancelled` when ``close()`` cancelled the compaction.
+    ///    Close sends the `SessionEnd` only after the compaction ended, so
+    ///    the `CompactionEnded` comes first.
     /// 5. The mail queue resumes (``MailQueue/resume()``), and the pump wakes.
     ///    When signals came while the compaction ran, the resume comes after
     ///    their work (``SignalExecutor/whenNoSignalWaits(_:)``): a
@@ -298,7 +303,9 @@ extension RoutedSessionActor {
         }
         outbox.queue.pause()
         let pausedAt = ContinuousClock.now
-        emitCompactionEvent(.compactionStarted(CompactionStart(id: id.description, reason: order.reason)), of: order)
+        let start = CompactionStart(id: id.description, reason: order.reason)
+        emitCompactionEvent(.compactionStarted(start), of: order)
+        hooks?.post(CompactionStarted(start))
         // The task inherits the origin of the signal and the tracing context
         // of the caller. It is in no model call: a mark of the model call of
         // a caller (a tool that asked for the compaction) would refuse its
@@ -340,13 +347,14 @@ extension RoutedSessionActor {
                 result = result.withOverflowRetryTarget(overflowRetryTarget)
             }
             emitCompactionEvent(.compaction(result), of: order)
+            hooks?.post(CompactionEnded(result))
             return .success(result)
         } catch {
             let outcome: CompactionFailure.Outcome =
                 Task.isCancelled || error is CancellationError ? .cancelled : .failed(String(describing: error))
-            emitCompactionEvent(
-                .compactionFailed(CompactionFailure(id: id.description, reason: order.reason, outcome: outcome)),
-                of: order)
+            let failure = CompactionFailure(id: id.description, reason: order.reason, outcome: outcome)
+            emitCompactionEvent(.compactionFailed(failure), of: order)
+            hooks?.post(CompactionEnded(failure))
             return .failure(error)
         }
     }
