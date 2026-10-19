@@ -182,6 +182,34 @@ struct MailTranscriptTests {
         withExtendedLifetime(keep) {}
     }
 
+    @Test(
+        "a catalog notice records mailQueued, then mailDelivered on the prompt entry of the next message, before its text"
+    )
+    func aCatalogNoticeRecordsItsLife() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = InMemoryRecorder()
+        let backend = Backend(script: [:])
+        let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+        defer { await session.close() }
+        let notice = CatalogChangeNotice(
+            kind: .skills, added: [CatalogEntry(name: "review", description: "reviews code")], removed: [],
+            changed: [])
+
+        await (session as! RoutedSessionActor).outbox.post(catalogNotice: notice)
+        let noticeID = try #require(await session.pendingMessages().first?.id)
+        let id = try session.send(Self.firstPrompt)
+        _ = try await session.awaitTerminal(of: id)
+        await session.close()
+
+        let events = await recorder.events
+        #expect(Self.records(of: noticeID, in: events) == ["mailQueued", "mailDelivered", "answerEnded"])
+        let prompt = try #require(events.first { $0.kind == .prompt })
+        #expect(prompt.mailRecords.map(\.mailID) == [noticeID, id])
+        #expect(prompt.text == notice.text + ContextRenderer.blockSeparator + Self.firstPrompt)
+        withExtendedLifetime(keep) {}
+    }
+
     @Test("the delivered records are in take order, on the prompt entry of the submission that delivers the mail")
     func deliveredRecordsAreInTakeOrder() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)

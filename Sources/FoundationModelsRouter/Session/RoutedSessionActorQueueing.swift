@@ -48,7 +48,7 @@ extension RoutedSessionActor {
         let arrival = helperTasks.reserve()
         // The lease begins before the put: from the put on, the pump can take
         // the mail and end the lease.
-        let leased = !mail.isRunMail && outbox.beginMailWork(mail.id)
+        let leased = mail.isUserMail && outbox.beginMailWork(mail.id)
         do {
             try outbox.queue.put(mail)
         } catch {
@@ -107,6 +107,19 @@ extension RoutedSessionActor {
             outbox.endMailWork([id])
         }
         return refusal
+    }
+
+    /// Records the arrival of a catalog-change mail that the outbox put in
+    /// the queue (``SessionOutbox/post(catalogNotice:)``): its
+    /// ``MailRecord/mailQueued(_:)`` record, a change of ``stateChanges``,
+    /// and the new depth of the queue. It wakes no pump: the mail starts no
+    /// answer, and it rides the next submission that other mail starts.
+    ///
+    /// - Parameter mail: The catalog-change mail.
+    func catalogNoticeDidArrive(_ mail: Mail) {
+        recordMail([.mailQueued(mail)])
+        stateChanges.signal()
+        recordMailQueueDepth()
     }
 
     /// Records the new depth of the queue and wakes the pump, after

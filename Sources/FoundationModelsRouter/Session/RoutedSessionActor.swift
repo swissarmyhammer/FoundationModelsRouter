@@ -929,6 +929,7 @@ actor RoutedSessionActor: RoutedSession {
         // registry of this session.
         outbox.bind(outputHub: outputHub)
         outbox.bind(workRegistry: runPlane.workRegistry, runPlane: runPlane)
+        outbox.bind(catalogNoticeArrival: { [weak self] mail in await self?.catalogNoticeDidArrive(mail) })
         // Before any lease begins, so the task reads each transition.
         observeWorkTransitions()
 

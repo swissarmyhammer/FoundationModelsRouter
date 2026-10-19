@@ -44,7 +44,8 @@ struct SubmissionOptions: Sendable, Equatable {
     }
 
     /// The options that the submission of `mail` fixes at its start, or
-    /// `nil` for run mail, which has no options of its own.
+    /// `nil` for run mail and catalog-change mail, which have no options of
+    /// their own: they ride the submission that other mail starts.
     ///
     /// A user message gives its own options. A guided session never streams:
     /// a user message in stream mode runs as a reply under the grammar, and
@@ -60,7 +61,7 @@ struct SubmissionOptions: Sendable, Equatable {
             self.init(isStream: options.mode == .stream && !isGuided, requestedMaxTokens: options.maxTokens)
         case .agentMessage, .elicitationAnswer:
             self = .mailDelivery
-        case .runEvent:
+        case .runEvent, .catalogChange:
             return nil
         }
     }
@@ -83,18 +84,34 @@ extension Mail {
         return event
     }
 
-    /// Whether the mail is run mail (``MailBody/runEvent(_:)``). All other
-    /// mail is user-type mail: a user message, an agent message or an
-    /// elicitation answer. User-type mail always starts an answer, and the
-    /// first user-type mail of a batch decides its options.
+    /// Whether the mail is run mail (``MailBody/runEvent(_:)``).
     var isRunMail: Bool {
         runEvent != nil
     }
 
-    /// The text of user-type mail in the prompt of a submission, or `nil`
-    /// for run mail, which renders as one line of its event instead
+    /// Whether the mail is user-type mail: a user message, an agent message
+    /// or an elicitation answer. User-type mail always starts an answer, and
+    /// the first user-type mail of a batch decides its options.
+    ///
+    /// Catalog-change mail (``MailBody/catalogChange(_:)``) is neither
+    /// user-type mail nor run mail: it never starts an answer, holds no
+    /// `WorkKind.mail` lease, and rides the next submission that other mail
+    /// starts.
+    var isUserMail: Bool {
+        switch body {
+        case .userMessage, .agentMessage, .elicitationAnswer:
+            return true
+        case .runEvent, .catalogChange:
+            return false
+        }
+    }
+
+    /// The text of the mail as one block of the prompt of a submission, or
+    /// `nil` for run mail, which renders as one line of its event instead
     /// (``ContextRenderer/promptText(delivering:followedBy:)``).
     ///
+    /// - A catalog-change notice is the text of the notice
+    ///   (``CatalogChangeNotice/text``).
     /// - A user message is its prompt.
     /// - An agent message is one line that names the session id of the
     ///   sender, then its content.
@@ -113,6 +130,8 @@ extension Mail {
             return
                 "[answer to elicitation \(elicitationID.ulidString)] \(response.action.rawValue): \(Self.contentText(of: response))"
                 + Self.reasonText(of: response)
+        case .catalogChange(let notice):
+            return notice.text
         case .runEvent:
             return nil
         }
@@ -158,7 +177,7 @@ struct SubmissionBatch: Sendable {
     /// The user-type mail of the batch, in queue order. None when only run
     /// mail starts the submission.
     var userMail: [Mail] {
-        mail.filter { !$0.isRunMail }
+        mail.filter(\.isUserMail)
     }
 
     /// The run mail of the batch, in queue order.

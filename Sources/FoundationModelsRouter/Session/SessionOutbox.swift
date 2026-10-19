@@ -70,6 +70,14 @@ import Tracing
 /// is never mail, never combined and never journaled, and a withdraw never
 /// removes it.
 ///
+/// The outbox is also a `CatalogNoticeSink` (an Extras protocol): the
+/// `CatalogNoticeBoard` of a `CatalogNoticing` tool that the session mounted
+/// posts each change of its catalog through ``post(catalogNotice:)``. Each
+/// notice is one ``MailBody/catalogChange(_:)`` mail. It is neither
+/// user-type mail nor run mail: it wakes no pump, starts no answer and holds
+/// no `WorkKind.mail` lease, so a session whose only queued mail is notices
+/// has no work. It rides the next submission that other mail starts.
+///
 /// The outbox also hands the completion of an accepted URL-mode question
 /// (``post(elicitationCompleted:)``) and the end of a question that a cancel
 /// of the run plane ended (``post(elicitationEnded:response:)``) to the
@@ -112,7 +120,7 @@ struct BackgroundRunTokens: Sendable, Equatable {
     }
 }
 
-actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdrawing {
+actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdrawing, CatalogNoticeSink {
     /// One queued run mail, as the pump reads it.
     struct PendingEvent: Sendable {
         /// The id of the mail. It stays the same across the in-place
@@ -170,6 +178,11 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// mail makes the id of the mail pending in it before the put
     /// (``stage(event:as:)``).
     private nonisolated let outputHub = Mutex<SessionOutputHub?>(nil)
+
+    /// What the session that owns this outbox does after the put of each
+    /// catalog-change mail, or `nil` before the session binds it
+    /// (``bind(catalogNoticeArrival:)``).
+    private nonisolated let catalogNoticeArrival = Mutex<(@Sendable (Mail) async -> Void)?>(nil)
 
     /// The task-locals of the caller of a queued mail that the answer that
     /// delivers the mail needs. The pump task inherits no task-local of the
@@ -572,6 +585,47 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         for mail in queue.pending {
             hub.beginPending(.mail(mail.id))
         }
+    }
+
+    /// Binds what the session that owns this outbox does after the put of
+    /// each catalog-change mail: it records the arrival of the mail in its
+    /// transcript.
+    ///
+    /// The session calls it one time, when it is made, before any tool of
+    /// the session can post a notice.
+    ///
+    /// - Parameter arrival: The step after the put of each catalog-change
+    ///   mail.
+    nonisolated func bind(catalogNoticeArrival arrival: @escaping @Sendable (Mail) async -> Void) {
+        catalogNoticeArrival.withLock { $0 = arrival }
+    }
+
+    /// Puts one ``MailBody/catalogChange(_:)`` mail with `notice` in the
+    /// queue, and returns after the session recorded its arrival.
+    ///
+    /// The mail wakes no pump and holds no `WorkKind.mail` lease: it starts
+    /// no answer by itself, so it is no work, and a session that waits for
+    /// no work after its last prompt still gets there. The next submission
+    /// carries it, a first submission or a continuation, and its prompt
+    /// renders it as ``CatalogChangeNotice/text``. After the session closed,
+    /// the queue refuses the mail and the notice is dropped.
+    ///
+    /// - Parameter notice: The notice.
+    func post(catalogNotice notice: CatalogChangeNotice) async {
+        let mail = Mail(catalogNotice: notice)
+        // The id is pending before the put, as for run mail
+        // (``stage(event:as:)``): the delivery of the mail ends it.
+        let hub = outputHub.withLock { $0 }
+        let madePending = hub?.beginPending(.mail(mail.id)) ?? false
+        do {
+            try queue.put(mail)
+        } catch {
+            if madePending {
+                hub?.endPending(.mail(mail.id))
+            }
+            return
+        }
+        await catalogNoticeArrival.withLock({ $0 })?(mail)
     }
 
     /// Whether the progress event `newer` replaces the queued event `older`.

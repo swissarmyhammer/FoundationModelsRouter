@@ -333,7 +333,7 @@ extension RoutedSessionActor {
             beginSubmission(cause: delivery.cause, mailIds: delivery.mailIds)
             // With user-type mail, `ownPrompt` is the text of that mail, and
             // the render of the mail already holds it.
-            let sessionText = deliveredMail.contains { !$0.isRunMail } ? nil : ownPrompt
+            let sessionText = deliveredMail.contains(where: \.isUserMail) ? nil : ownPrompt
             return try await runOpenedSubmission(attempt, deliveredMail: deliveredMail, sessionText: sessionText, body)
         }
         let joining = takeMailJoiningTheAnswer()
@@ -491,7 +491,8 @@ extension RoutedSessionActor {
                 return try await continueAfterWatchStop(watchStop, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
-            // The retry delivers the user-type mail of this attempt again, and
+            // The retry delivers the user-type mail and the catalog-change
+            // mail of this attempt again (neither goes back to the queue), and
             // its join takes the run mail again. So only the prompt of the
             // retry records that mail, and the transcript holds each mail one
             // time, on the prompt that the model reads at last.

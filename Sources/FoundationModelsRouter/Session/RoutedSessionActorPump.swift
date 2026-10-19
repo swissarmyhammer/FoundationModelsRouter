@@ -166,7 +166,7 @@ extension RoutedSessionActor: SessionMailObserver {
             return false
         }
         guard !batch.userMail.isEmpty || mailOnlyAnswersInARow < mailOnlyAnswerLimit else {
-            pauseMailDelivery(holding: batch.runMail)
+            pauseMailDelivery(holding: batch.mail)
             endPumpWork()
             return false
         }
@@ -188,7 +188,7 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - Returns: The batch, or `nil` when nothing can start an answer.
     private func takeNextBatch(runTokens: BackgroundRunTokens) -> SubmissionBatch? {
         let pending = outbox.queue.pending
-        guard pending.contains(where: { !$0.isRunMail }) || runMailCanStart(pending, runTokens: runTokens) else {
+        guard pending.contains(where: \.isUserMail) || runMailCanStart(pending, runTokens: runTokens) else {
             return nil
         }
         let isGuided = grammar != nil
@@ -228,7 +228,7 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - Returns: `true` when `candidate` comes with the batch.
     static func joinsNewBatch(_ candidate: Mail, _ batch: [Mail], isGuided: Bool) -> Bool {
         guard let options = SubmissionOptions(for: candidate, isGuided: isGuided) else { return true }
-        guard let leader = batch.first(where: { !$0.isRunMail }),
+        guard let leader = batch.first(where: \.isUserMail),
             let leaderOptions = SubmissionOptions(for: leader, isGuided: isGuided)
         else { return true }
         return leaderOptions.admits(options)
@@ -304,7 +304,7 @@ extension RoutedSessionActor: SessionMailObserver {
     private func deliver(_ mail: [Mail]) -> [MailID: SessionOutbox.MailCaller] {
         openAnswerMail.append(mail.map(\.id))
         openAnswerRunMail += mail.filter(\.isRunMail)
-        openAnswerDeliveredUserMail = openAnswerDeliveredUserMail || mail.contains { !$0.isRunMail }
+        openAnswerDeliveredUserMail = openAnswerDeliveredUserMail || mail.contains(where: \.isUserMail)
         let callers = outbox.takeCallers(of: mail.map(\.id))
         openAnswerCallerWork = callers.values.reduce(openAnswerCallerWork) { $0.union($1.ownWork) }
         outbox.forget(mail.map(\.id))
@@ -354,16 +354,18 @@ extension RoutedSessionActor: SessionMailObserver {
         Set(await runPlane.backgroundRuns().map(\.completionToken))
     }
 
-    /// Holds the run mail of a batch that only run mail started, because
+    /// Holds the mail of a batch that only run mail started, because
     /// ``mailOnlyAnswersInARow`` reached ``mailOnlyAnswerLimit``
     /// (`generation-queue.md`, section 5.4). The mail goes back into the
     /// queue, held, so it starts no submission by itself, and the next
-    /// user-type mail carries it. The session reports the hold with
+    /// user-type mail carries it. The catalog-change mail of the batch goes
+    /// back too. The session reports the hold with
     /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
     ///
     /// No answer runs now, so the event goes to the session-wide feed only.
     ///
-    /// - Parameter mail: The run mail the pump took.
+    /// - Parameter mail: The mail the pump took: run mail and catalog-change
+    ///   mail, with no user-type mail.
     private func pauseMailDelivery(holding mail: [Mail]) {
         settleCancelledMail(outbox.putBack(holding: mail).map(\.id))
         let pause = MailDeliveryPause(limit: mailOnlyAnswerLimit, heldMail: mail.compactMap(\.runEvent))
