@@ -43,8 +43,7 @@ struct SessionCheckedTool<Wrapped: Tool>: Tool, SubmissionBoundaryTool, ToolDeco
     /// - Throws: `CancellationError` when a check stopped the model call, and
     ///   what the wrapped tool throws.
     func call(arguments: Wrapped.Arguments) async throws -> Wrapped.Output {
-        let content = (arguments as? any ConvertibleToGeneratedContent)?.generatedContent
-        try await ToolCallNoOpCheck.current?.run(toolName: name, arguments: content)
+        try await ToolCallNoOpCheck.current?.run(toolName: name, arguments: ToolArgumentsContent.of(arguments))
         try await ToolCallRepetitionCheck.current?.run(for: ToolCallIdentity(toolName: name, arguments: arguments))
         return try await wrapped.call(arguments: arguments)
     }

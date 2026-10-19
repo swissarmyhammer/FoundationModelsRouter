@@ -55,7 +55,7 @@ struct ToolHookTests {
         }
 
         /// The recorded events, each with the hook session of its context.
-        private let recorded = Mutex<[(session: HookSession, event: Event)]>([])
+        let recorder = HookEventRecorder<Event>()
 
         /// The decision that the visitor gives a `PreToolUse`.
         private let decideUse: @Sendable (PreToolUse) -> PreDecision<PreToolUse>
@@ -78,23 +78,12 @@ struct ToolHookTests {
             self.decideResult = decideResult
         }
 
-        /// The recorded events, in the order of delivery.
-        var events: [Event] {
-            recorded.withLock { $0.map(\.event) }
-        }
-
-        /// The hook session of each recorded event, in the order of delivery.
-        var sessions: [HookSession] {
-            recorded.withLock { $0.map(\.session) }
-        }
-
-        /// Records one event.
-        ///
-        /// - Parameters:
-        ///   - event: The event.
-        ///   - session: The hook session of the context of the event.
-        private func record(_ event: Event, of session: HookSession) {
-            recorded.withLock { $0.append((session, event)) }
+        /// The recorded `PostToolUse` events, in the order of delivery.
+        var posts: [PostToolUse] {
+            recorder.events.compactMap { event in
+                guard case .post(let post) = event else { return nil }
+                return post
+            }
         }
 
         /// Records a `PreToolUse`, and gives the decision of the test.
@@ -102,7 +91,7 @@ struct ToolHookTests {
         /// - Parameter context: The session and the event.
         /// - Returns: The decision of the test.
         func pre(_ context: HookContext<PreToolUse>) async -> PreDecision<PreToolUse> {
-            record(.use(context.event), of: context.session)
+            recorder.record(.use(context.event), of: context.session)
             return decideUse(context.event)
         }
 
@@ -111,7 +100,7 @@ struct ToolHookTests {
         /// - Parameter context: The session and the event.
         /// - Returns: The decision of the test.
         func pre(_ context: HookContext<PreToolResult>) async -> PreDecision<PreToolResult> {
-            record(.result(context.event), of: context.session)
+            recorder.record(.result(context.event), of: context.session)
             return decideResult(context.event)
         }
 
@@ -119,7 +108,7 @@ struct ToolHookTests {
         ///
         /// - Parameter context: The session and the event.
         func post(_ context: HookContext<PostToolUse>) async {
-            record(.post(context.event), of: context.session)
+            recorder.record(.post(context.event), of: context.session)
         }
     }
 
@@ -227,6 +216,40 @@ struct ToolHookTests {
         try await body(HookedToolSession(fixture: fixture, dispatcher: dispatcher, visitor: visitor))
     }
 
+    /// Runs the one scripted answer, whose one call names `tool`, on a
+    /// session through a router with a dispatcher that holds `visitor`, and
+    /// then runs `check`.
+    ///
+    /// - Parameters:
+    ///   - tool: The one tool of the session, which the scripted call names.
+    ///   - visitor: The visitor of the dispatcher.
+    ///   - check: The assertions of the test. It gets the hooked session and
+    ///     the events of the answer.
+    /// - Throws: What the resolve, the answer or `check` throws.
+    private static func withAnswer(
+        calling tool: some Tool,
+        visitor: ToolRecordingVisitor = ToolRecordingVisitor(),
+        _ check: (HookedToolSession, [SessionEvent]) async throws -> Void
+    ) async throws {
+        try await withHookedSession(calling: tool.name, mounting: [tool], visitor: visitor) { hooked in
+            let events = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
+            try await check(hooked, events)
+        }
+    }
+
+    /// Runs the one scripted answer that calls `tool` with a visitor that
+    /// replaces each output (``outputReplacingVisitor()``), and expects that
+    /// the model and the transcript get ``replacedOutput``.
+    ///
+    /// - Parameter tool: The one tool of the session.
+    /// - Throws: What the answer throws.
+    private static func checkReplacedOutput(of tool: some Tool) async throws {
+        try await withAnswer(calling: tool, visitor: outputReplacingVisitor()) { hooked, _ in
+            #expect(hooked.fixture.log.deliveredToolOutputs == [replacedOutput])
+            #expect(recordedToolOutputs(of: hooked.fixture) == [replacedOutput])
+        }
+    }
+
     /// A script with one round that calls `toolName` one time with
     /// ``ScriptedToolFixture/firstStepName``.
     ///
@@ -328,7 +351,7 @@ struct ToolHookTests {
 
             #expect(output == ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName))
             #expect(probe.seenSessions == [nil])
-            #expect(hooked.visitor.events.isEmpty)
+            #expect(hooked.visitor.recorder.events.isEmpty)
         }
     }
 
@@ -339,16 +362,14 @@ struct ToolHookTests {
     /// the id of its ``SessionEvent/toolCall(id:name:argumentsJSON:)``.
     @Test("one tool call gives PreToolUse, PreToolResult and PostToolUse in order, with the id of its toolCall event")
     func oneToolCallGivesTheThreeEventsInOrder() async throws {
-        let tool = MarkerEmittingTool()
-        try await Self.withHookedSession(calling: MarkerEmittingTool.toolName, mounting: [tool]) { hooked in
-            let events = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
+        try await Self.withAnswer(calling: MarkerEmittingTool()) { hooked, events in
             await hooked.closeAndDrain()
 
             let call = try #require(Self.toolCalls(in: events).first)
             let name = MarkerEmittingTool.toolName
             let output = ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)
             #expect(
-                hooked.visitor.events == [
+                hooked.visitor.recorder.events == [
                     .use(PreToolUse(toolCallID: call.id, toolName: name, argumentsJSON: call.argumentsJSON)),
                     .result(
                         PreToolResult(
@@ -366,10 +387,9 @@ struct ToolHookTests {
     @Test("inside a tool body HookSession.current is the hook session of the calling session")
     func aToolBodySeesTheHookSessionOfItsSession() async throws {
         let probe = HookSessionProbeTool()
-        try await Self.withHookedSession(calling: HookSessionProbeTool.toolName, mounting: [probe]) { hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
-
-            #expect(probe.seenSessions == [try Self.hookSession(of: hooked.session)])
+        try await Self.withAnswer(calling: probe) { hooked, _ in
+            let session = try Self.hookSession(of: hooked.session)
+            #expect(probe.seenSessions == [session])
         }
     }
 
@@ -432,8 +452,8 @@ struct ToolHookTests {
             let childSession = try await Self.runSubagentAnswer(of: hooked, mounting: probe)
             await hooked.closeAndDrain()
 
-            #expect(hooked.visitor.events.count == 3)
-            #expect(hooked.visitor.sessions == Array(repeating: childSession, count: 3))
+            #expect(hooked.visitor.recorder.events.count == 3)
+            #expect(hooked.visitor.recorder.sessions == Array(repeating: childSession, count: 3))
         }
     }
 
@@ -445,18 +465,12 @@ struct ToolHookTests {
     func aBlockDoesNotRunTheBody() async throws {
         let tool = MarkerEmittingTool()
         let visitor = ToolRecordingVisitor(decideUse: { _ in .block(reason: Self.blockReason) })
-        try await Self.withHookedSession(calling: MarkerEmittingTool.toolName, mounting: [tool], visitor: visitor) {
-            hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
+        try await Self.withAnswer(calling: tool, visitor: visitor) { hooked, _ in
             await hooked.closeAndDrain()
 
             #expect(tool.calledSteps.isEmpty)
             #expect(hooked.fixture.log.deliveredToolOutputs == [Self.blockReason])
-            let post = try #require(
-                hooked.visitor.events.compactMap { event -> PostToolUse? in
-                    guard case .post(let post) = event else { return nil }
-                    return post
-                }.first)
+            let post = try #require(hooked.visitor.posts.first)
             #expect(post.output == Self.blockReason)
             #expect(!post.succeeded)
         }
@@ -473,10 +487,7 @@ struct ToolHookTests {
                     toolCallID: event.toolCallID, toolName: event.toolName,
                     argumentsJSON: #"{"value":"\#(Self.replacedStep)"}"#))
         })
-        try await Self.withHookedSession(calling: MarkerEmittingTool.toolName, mounting: [tool], visitor: visitor) {
-            hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
-
+        try await Self.withAnswer(calling: tool, visitor: visitor) { hooked, _ in
             #expect(tool.calledSteps == [Self.replacedStep])
             #expect(hooked.fixture.log.deliveredToolOutputs == [ScriptedToolFixture.marker(for: Self.replacedStep)])
         }
@@ -497,10 +508,7 @@ struct ToolHookTests {
             try AmbientToolArguments(GeneratedContent(json: Self.undecodableArguments))
         }
         let expectedOutput = String(describing: try #require(decodeError))
-        try await Self.withHookedSession(calling: MarkerEmittingTool.toolName, mounting: [tool], visitor: visitor) {
-            hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
-
+        try await Self.withAnswer(calling: tool, visitor: visitor) { hooked, _ in
             #expect(tool.calledSteps.isEmpty)
             #expect(hooked.fixture.log.deliveredToolOutputs == [expectedOutput])
         }
@@ -512,31 +520,21 @@ struct ToolHookTests {
     /// that the model or the transcript does not get.
     @Test("a replaced output on PreToolResult is what the model gets and what the transcript records")
     func aReplacedOutputReachesTheModelAndTheTranscript() async throws {
-        let tool = MarkerEmittingTool()
-        let visitor = Self.outputReplacingVisitor()
-        try await Self.withHookedSession(calling: MarkerEmittingTool.toolName, mounting: [tool], visitor: visitor) {
-            hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
-
-            #expect(hooked.fixture.log.deliveredToolOutputs == [Self.replacedOutput])
-            #expect(Self.recordedToolOutputs(of: hooked.fixture) == [Self.replacedOutput])
-        }
+        try await Self.checkReplacedOutput(of: MarkerEmittingTool())
     }
 
     /// The production change that makes this test fail: a tool body that
     /// throws and gives no `PostToolUse`, or one that says it succeeded.
     @Test("a tool body that throws gives PostToolUse with succeeded false")
     func aThrowingBodyGivesAFailedPostToolUse() async throws {
-        let tool = ThrowingMarkerTool()
-        try await Self.withHookedSession(calling: ThrowingMarkerTool.toolName, mounting: [tool]) { hooked in
-            let events = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
+        try await Self.withAnswer(calling: ThrowingMarkerTool()) { hooked, events in
             await hooked.closeAndDrain()
 
             let call = try #require(Self.toolCalls(in: events).first)
             let name = ThrowingMarkerTool.toolName
             let failure = ThrowingMarkerTool.CallFailure(step: ScriptedToolFixture.firstStepName).description
             #expect(
-                hooked.visitor.events == [
+                hooked.visitor.recorder.events == [
                     .use(PreToolUse(toolCallID: call.id, toolName: name, argumentsJSON: call.argumentsJSON)),
                     .post(
                         PostToolUse(
@@ -554,10 +552,7 @@ struct ToolHookTests {
     /// replaced.
     @Test("a structured output that no visitor replaces is recorded as before")
     func aStructuredOutputIsRecordedAsBefore() async throws {
-        let tool = StructuredMarkerTool()
-        try await Self.withHookedSession(calling: StructuredMarkerTool.toolName, mounting: [tool]) { hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
-
+        try await Self.withAnswer(calling: StructuredMarkerTool()) { hooked, _ in
             let expected = StructuredMarker(value: ScriptedToolFixture.firstStepName).generatedContent.jsonString
             #expect(Self.recordedStructures(of: hooked.fixture) == [expected])
         }
@@ -568,14 +563,6 @@ struct ToolHookTests {
     /// SDK records the replaced text as a text segment.
     @Test("a replaced output of a structured tool is what the model gets and what the transcript records")
     func aReplacedStructuredOutputIsRecorded() async throws {
-        let tool = StructuredMarkerTool()
-        let visitor = Self.outputReplacingVisitor()
-        try await Self.withHookedSession(calling: StructuredMarkerTool.toolName, mounting: [tool], visitor: visitor) {
-            hooked in
-            _ = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
-
-            #expect(hooked.fixture.log.deliveredToolOutputs == [Self.replacedOutput])
-            #expect(Self.recordedToolOutputs(of: hooked.fixture) == [Self.replacedOutput])
-        }
+        try await Self.checkReplacedOutput(of: StructuredMarkerTool())
     }
 }

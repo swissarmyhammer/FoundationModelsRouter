@@ -69,10 +69,9 @@ struct ToolCallHooks: Sendable {
     /// - Returns: The identity of the call.
     private func identify<Arguments>(toolName: String, arguments: Arguments) async -> HookedToolCall {
         guard let toolCall = await claimToolCall(toolName) else {
-            let content = (arguments as? any ConvertibleToGeneratedContent)?.generatedContent
             return HookedToolCall(
                 id: ULID.generate().description, toolName: toolName,
-                argumentsJSON: content?.jsonString ?? HookedToolCall.emptyArgumentsJSON)
+                argumentsJSON: ToolArgumentsContent.of(arguments)?.jsonString ?? HookedToolCall.emptyArgumentsJSON)
         }
         return HookedToolCall(id: toolCall.id, toolName: toolName, argumentsJSON: toolCall.arguments.jsonString)
     }

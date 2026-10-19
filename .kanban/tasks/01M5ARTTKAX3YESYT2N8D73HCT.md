@@ -39,6 +39,45 @@ comments:
     - warnings: the only warning in both builds is the known mlx "missing creator for mutated node" line. The change added no new warning.
     - next: review.
   timestamp: 2026-10-19T21:45:06.400400+00:00
+- actor: claude-code
+  id: 01m5b29ze61bnbktwz1b8t6w4s
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (2bd35d78): 3 findings (3 confirmed, 7 refuted) — Sources/FoundationModelsRouter/Session/ToolCallHooks.swift:72, Tests/FoundationModelsRouterTests/ToolHookTests.swift:46, Tests/FoundationModelsRouterTests/ToolHookTests.swift:570
+    - next: implement the 3 open items in "Review Findings (2026-10-19 16:45)", then review again.
+  timestamp: 2026-10-19T21:50:27.270798+00:00
+- actor: claude-code
+  id: 01m5b2ak6x67e4am9ytbnfp4v1
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 11 files
+    - test: green — swift test, 1895 passed, 0 failed; IntegrationTests build complete
+    - commit: 2bd35d78
+    - review: findings — Sources/FoundationModelsRouter/Session/ToolCallHooks.swift:72, Tests/FoundationModelsRouterTests/ToolHookTests.swift:46, Tests/FoundationModelsRouterTests/ToolHookTests.swift:570
+  timestamp: 2026-10-19T21:50:47.517689+00:00
+- actor: claude-code
+  id: 01m5b2mhxrw4b9pbx5yy7605d7
+  text: |-
+    Review findings (2026-10-19 16:45) fixed:
+    1. Reuse: new `ToolArgumentsContent.of(_:)` (`Sources/FoundationModelsRouter/Session/ToolArgumentsContent.swift`) holds the one conversion of tool arguments to `GeneratedContent`. `SessionCheckedTool.call`, `ToolCallHooks.identify` and `ToolCallIdentity.init?(toolName:arguments:)` (a third copy in `IdenticalToolCallRun.swift`) call it.
+    2. Duplication: new `HookEventRecorder<Event>` (`Tests/FoundationModelsRouterTests/Helpers/HookEventRecorder.swift`) holds the locked event list, the hook session of each event, a `ChangeSignal`, and `record(_:of:)`. `PromptRecordingVisitor` and `ToolRecordingVisitor` hold one `recorder` and keep their decision closures. Call sites read `visitor.recorder.events` / `.sessions` / `.changes`. `HookLineageTests.RecordingHookVisitor` and `CompactionHookTests.CompactionRecordingVisitor` have the same shape; they are existing tests outside the finding and were not changed.
+    3. Duplication: `checkReplacedOutput(of:)` holds the shared body of the two replaced-output tests. The same cause (withHookedSession + collectEvents prefix) was in 8 tests of `ToolHookTests`; a new `withAnswer(calling:visitor:_:)` helper holds it, and `ToolRecordingVisitor.posts` replaces an inline post filter.
+    Note: a single-expression check closure with `#expect(... try ...)` did not compile ("errors thrown from here are not handled"); the `try` moved to a `let` before the `#expect`.
+  timestamp: 2026-10-19T21:56:13.880816+00:00
+- actor: claude-code
+  id: 01m5b2mr8xpwz6bme4ecp2khp2
+  text: |-
+    ### implement — changed
+    - evidence: `swift test --filter 'FoundationModelsRouterTests.(ToolHookTests|PromptHookTests|ToolCallRepetitionStopTests|NoOpToolCall|IdenticalToolCall)'` 51 tests in 7 suites passed (Tool hooks and Prompt hooks suites included), 0 failed. The build compiled the changed source and test files fresh; the only warning is the known mlx "missing creator for mutated node" line. Files: Sources/FoundationModelsRouter/Session/{ToolArgumentsContent.swift (new), ToolCallHooks.swift, SessionCheckedTool.swift, IdenticalToolCallRun.swift}; Tests/FoundationModelsRouterTests/{Helpers/HookEventRecorder.swift (new), ToolHookTests.swift, PromptHookTests.swift}. All 3 findings flipped to [x].
+    - next: /review
+  timestamp: 2026-10-19T21:56:20.381230+00:00
+- actor: claude-code
+  id: 01m5b2qxhv0aak60rk9p22h8wn
+  text: |-
+    ### test — green
+    - evidence: Changed files touched. Root `swift test` ran one time: 1895 tests in 235 suites passed, 0 failed, 0 skipped. Two more small runs passed (26 tests in 14 suites, 19 tests in 3 suites). 9 known issues come from `withKnownIssue` in unchanged files (PromptWaitTests, TaskEndEventWaitTests, ManualRunClockWaitTests, RealModelHarnessTests). Each test there expects the issue, and each passed. `cd IntegrationTests && swift build --build-tests`: Build complete, 0 errors. Only warning in both builds: the known mlx "missing creator" line.
+    - next: none. No code was changed by the test step. No commit was made. `swift format` was not run.
+  timestamp: 2026-10-19T21:58:04.091428+00:00
 depends_on:
 - 01M5ARTSQ3ZSQMRH1Z5QSTWWJ1
 position_column: doing
@@ -84,3 +123,14 @@ Implementation notes (implementation details; the implementer chooses, inside th
 - Use `/tdd`. Write the failing tests first, then implement.
 
 #hooks
+
+## Review Findings (2026-10-19 16:45)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 11 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/ToolCallHooks.swift:72` `reuse/reuse` — The new identify function repeats the expression that turns tool arguments into GeneratedContent. The same expression already exists in SessionCheckedTool.call. Two copies of this conversion can drift apart, for example if one later handles a new argument type and the other does not. Move the conversion into one shared helper, for example a static function or an extension on the arguments type, and call it from both SessionCheckedTool.call and ToolCallHooks.identify.
+- [x] `Tests/FoundationModelsRouterTests/ToolHookTests.swift:46` `duplication/duplication` — ToolRecordingVisitor copies the recording scaffolding of PromptRecordingVisitor: a Mutex-guarded event list, a private record function, and pre and post methods that append one event each. The copies must stay in step, and each one adds maintenance cost. Pull the locked event list and the record function into one shared recorder type with a generic event, and have both visitors use it. Keep the decision closures in each visitor. If that cannot be done in this change, extract the recorder into a new helper file in Tests/FoundationModelsRouterTests/Helpers and use it from ToolRecordingVisitor only.
+- [x] `Tests/FoundationModelsRouterTests/ToolHookTests.swift:570` `duplication/duplication` — aReplacedStructuredOutputIsRecorded repeats the body of aReplacedOutputReachesTheModelAndTheTranscript (line 514). Both mount a tool, run the outputReplacingVisitor, and assert that deliveredToolOutputs and recordedToolOutputs equal [replacedOutput]. Only the tool differs (StructuredMarkerTool instead of MarkerEmittingTool). If the expectation changes, one copy can drift from the other. Extract one helper that takes the tool and the expected output, for example checkReplacedOutput(of tool: some Tool). Call it from both tests, and delete the second copy's body.

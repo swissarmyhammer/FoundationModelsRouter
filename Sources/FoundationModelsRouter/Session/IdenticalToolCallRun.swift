@@ -49,16 +49,15 @@ struct ToolCallIdentity: Sendable, Equatable {
     /// Creates the identity of a call from the arguments that the tool body
     /// gets, or `nil` when the arguments do not give their generated content.
     ///
-    /// The arguments of a tool are `Generable` or `GeneratedContent` in the
-    /// usual case, and each one gives its generated content, whose JSON text
-    /// compares the arguments.
+    /// The JSON text of the generated content of the arguments
+    /// (``ToolArgumentsContent``) compares the arguments.
     ///
     /// - Parameters:
     ///   - toolName: The name of the tool.
     ///   - arguments: The arguments of the call.
     init?(toolName: String, arguments: some Any) {
-        guard let content = arguments as? any ConvertibleToGeneratedContent else { return nil }
-        self.init(toolName: toolName, argumentsJSON: content.generatedContent.jsonString)
+        guard let content = ToolArgumentsContent.of(arguments) else { return nil }
+        self.init(toolName: toolName, argumentsJSON: content.jsonString)
     }
 }
 

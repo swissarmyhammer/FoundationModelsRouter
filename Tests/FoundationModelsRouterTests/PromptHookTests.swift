@@ -2,7 +2,6 @@ import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsHooks
-import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -63,10 +62,7 @@ struct PromptHookTests {
         }
 
         /// The recorded events.
-        private let recorded = Mutex<[Event]>([])
-
-        /// Signals after each recorded event.
-        let changes = ChangeSignal()
+        let recorder = HookEventRecorder<Event>()
 
         /// The decision that the visitor gives a `PrePrompt`.
         private let decide: @Sendable (PrePrompt) async -> PreDecision<PrePrompt>
@@ -79,14 +75,9 @@ struct PromptHookTests {
             self.decide = decide
         }
 
-        /// The recorded events, in the order of delivery.
-        var events: [Event] {
-            recorded.withLock { $0 }
-        }
-
         /// The ids of the mail of the recorded `PrePrompt` events, in order.
         var prePromptMailIDs: [String] {
-            events.compactMap { event in
+            recorder.events.compactMap { event in
                 guard case .pre(let mailID, _) = event else { return nil }
                 return mailID
             }
@@ -94,18 +85,10 @@ struct PromptHookTests {
 
         /// The recorded `PostPrompt` events, in order.
         var postPrompts: [Event] {
-            events.filter { event in
+            recorder.events.filter { event in
                 guard case .post = event else { return false }
                 return true
             }
-        }
-
-        /// Records one event, and signals the change.
-        ///
-        /// - Parameter event: The event.
-        private func record(_ event: Event) {
-            recorded.withLock { $0.append(event) }
-            changes.signal()
         }
 
         /// Records a `PrePrompt`, and gives the decision of the test.
@@ -113,7 +96,7 @@ struct PromptHookTests {
         /// - Parameter context: The session and the event.
         /// - Returns: The decision of the test.
         func pre(_ context: HookContext<PrePrompt>) async -> PreDecision<PrePrompt> {
-            record(.pre(mailID: context.event.mailID, text: context.event.text))
+            recorder.record(.pre(mailID: context.event.mailID, text: context.event.text), of: context.session)
             return await decide(context.event)
         }
 
@@ -121,21 +104,21 @@ struct PromptHookTests {
         ///
         /// - Parameter context: The session and the event.
         func post(_ context: HookContext<PostPrompt>) async {
-            record(.post(mailID: context.event.mailID, outcome: context.event.outcome))
+            recorder.record(.post(mailID: context.event.mailID, outcome: context.event.outcome), of: context.session)
         }
 
         /// Records a `SessionStart`.
         ///
         /// - Parameter context: The session and the event.
         func post(_ context: HookContext<SessionStart>) async {
-            record(.start)
+            recorder.record(.start, of: context.session)
         }
 
         /// Records a `SessionEnd`.
         ///
         /// - Parameter context: The session and the event.
         func post(_ context: HookContext<SessionEnd>) async {
-            record(.end)
+            recorder.record(.end, of: context.session)
         }
     }
 
@@ -246,7 +229,7 @@ struct PromptHookTests {
 
             #expect(MailQueueFixtures.answer(of: terminal) != nil, "the message ended with \(terminal)")
             #expect(
-                hooked.visitor.events == [
+                hooked.visitor.recorder.events == [
                     .start, .pre(mailID: hooked.hookID(id), text: Self.firstPrompt),
                     .post(mailID: hooked.hookID(id), outcome: .answered), .end,
                 ])
@@ -354,7 +337,8 @@ struct PromptHookTests {
             await hooked.closeAndDrain()
 
             #expect(MailQueueFixtures.answer(of: terminal) != nil, "the message ended with \(terminal)")
-            #expect(hooked.visitor.events.contains(.pre(mailID: hooked.hookID(agentMail.id), text: Self.firstPrompt)))
+            #expect(
+                hooked.visitor.recorder.events.contains(.pre(mailID: hooked.hookID(agentMail.id), text: Self.firstPrompt)))
             let prompt = try #require(hooked.backend.prompts.first)
             #expect(prompt.contains(Self.replacedPrompt))
             #expect(!prompt.contains(Self.firstPrompt))
@@ -370,7 +354,7 @@ struct PromptHookTests {
         }
         try await Self.withHookedSession(visitor: visitor) { hooked in
             let id = try hooked.session.send(Self.firstPrompt)
-            try await visitor.changes.wait(
+            try await visitor.recorder.changes.wait(
                 until: { visitor.prePromptMailIDs == [hooked.hookID(id)] }, endingWhenWorkEnds: hooked.session)
             _ = hooked.session.cancel(id)
             let terminal = try await hooked.session.awaitTerminal(of: id)
