@@ -14,14 +14,6 @@ import Testing
 /// ``InMemoryRecorder`` — so the suite needs no network and no GPU.
 @Suite("Background run journaling: a posted event becomes a correlated transcript entry")
 struct BackgroundRunTranscriptTests {
-    // MARK: - Stub container
-
-    private struct BasicLLMContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend()
-        }
-    }
-
     // MARK: - Fixtures
 
     /// Builds a fresh router + resolved profile + vended session over a plain

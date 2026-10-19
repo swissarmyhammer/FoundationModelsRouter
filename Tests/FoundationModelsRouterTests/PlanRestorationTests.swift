@@ -16,16 +16,6 @@ import Testing
 /// suite needs no network and no GPU.
 @Suite("The plan of a run across a restore")
 struct PlanRestorationTests {
-    // MARK: - Stub container
-
-    /// Vends a plain ``StubSessionBackend`` for every session. A restored
-    /// backend holds the transcript that the restore seeds it with.
-    private struct BasicLLMContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: "stub response")
-        }
-    }
-
     // MARK: - Fixtures
 
     /// The prompt the recorded session answers. Its answer attaches the

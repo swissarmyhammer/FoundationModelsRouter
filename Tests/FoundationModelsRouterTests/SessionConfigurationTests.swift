@@ -17,15 +17,6 @@ import Testing
 /// ^ne5g9jn persists.
 @Suite("SessionConfiguration drives makeSession")
 struct SessionConfigurationTests {
-    // MARK: - Stub container
-
-    /// Vends a plain ``StubSessionBackend`` for every session.
-    private struct BasicLLMContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend()
-        }
-    }
-
     // MARK: - Fixtures
 
     /// A tiny JSON-schema grammar the xgrammar-subset validation accepts.

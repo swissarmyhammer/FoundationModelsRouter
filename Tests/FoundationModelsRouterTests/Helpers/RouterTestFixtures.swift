@@ -64,21 +64,48 @@ struct StubModelLoader: ModelLoader {
 }
 
 /// A plain ``LoadedLLMContainer`` stub: each session that it makes is a
-/// ``StubSessionBackend`` that answers with ``responseText``.
+/// ``StubSessionBackend`` that answers with ``responseText`` and meters
+/// ``usageIncrement``.
 ///
 /// This is the shared copy for each suite that needs a container with no
-/// special behavior, so the stub has one location only.
+/// special behavior, so the stub has one location only. A suite that needs a
+/// different answer text or a usage gives it to the init.
 struct BasicLLMContainer: PlainTranscriptStubContainer {
-    /// The fixed text of each answer.
-    static let responseText = "stub response"
+    /// The answer text of a container that gets no other text.
+    static let defaultResponseText = "stub response"
 
-    /// Makes a stub backend that answers with ``responseText``.
+    /// The fixed text of each answer of each session that this container
+    /// makes.
+    let responseText: String
+
+    /// The token counts that each submission of a vended backend meters, or
+    /// `nil` to meter nothing. A session whose backend meters nothing sends a
+    /// ``SessionEvent/submissionEnded(_:)`` with no usage.
+    let usageIncrement: (input: Int, output: Int)?
+
+    /// Makes a container.
+    ///
+    /// - Parameters:
+    ///   - responseText: The fixed text of each answer. The default is
+    ///     ``defaultResponseText``.
+    ///   - usageIncrement: The token counts that each submission meters, or
+    ///     `nil` (the default) to meter nothing.
+    init(
+        responseText: String = Self.defaultResponseText,
+        usageIncrement: (input: Int, output: Int)? = nil
+    ) {
+        self.responseText = responseText
+        self.usageIncrement = usageIncrement
+    }
+
+    /// Makes a stub backend that answers with ``responseText`` and meters
+    /// ``usageIncrement``.
     ///
     /// - Parameter instructions: The instructions of the session. The stub
     ///   does not use them.
     /// - Returns: The new stub backend.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-        StubSessionBackend(responseText: Self.responseText)
+        StubSessionBackend(responseText: responseText, usageIncrement: usageIncrement)
     }
 }
 

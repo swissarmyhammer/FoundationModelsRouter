@@ -97,12 +97,6 @@ struct ElicitationRoutingTests {
 
     // MARK: - Stub scaffolding (real sessions over a stub backend)
 
-    private final class BasicLLMContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: "stub response")
-        }
-    }
-
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
         func embed(texts: [String]) async throws -> [[Float]] {

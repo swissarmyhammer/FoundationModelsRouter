@@ -26,26 +26,6 @@ import Testing
 struct SessionMailQueueTests {
     // MARK: - Stub containers
 
-    private final class BasicLLMContainer: PlainTranscriptStubContainer {
-        let responseText: String
-
-        /// The token counts of each submission the vended backend meters, or `nil` to
-        /// meter nothing. A session whose backend meters nothing sends a
-        /// ``SessionEvent/submissionEnded(_:)`` with no usage, so a test that
-        /// wants a usage sets this.
-        let usageIncrement: (input: Int, output: Int)?
-
-        init(responseText: String = "stub response", usageIncrement: (input: Int, output: Int)? = nil) {
-            self.responseText = responseText
-            self.usageIncrement = usageIncrement
-        }
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = StubSessionBackend(responseText: responseText)
-            backend.usageIncrement = usageIncrement
-            return backend
-        }
-    }
-
     /// A backend whose ``respond(to:maxTokens:)`` signals ``started`` the
     /// moment it is called — proof the pump already took the message for its
     /// submission — and then suspends on ``proceed`` until the test releases

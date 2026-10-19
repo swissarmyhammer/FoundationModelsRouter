@@ -35,12 +35,6 @@ import Testing
 struct SessionTreeRestorationLostRunTests {
     // MARK: - Stub container
 
-    private final class BasicLLMContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: "stub response")
-        }
-    }
-
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
         func embed(texts: [String]) async throws -> [[Float]] {

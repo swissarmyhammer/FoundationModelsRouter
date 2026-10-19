@@ -40,16 +40,6 @@ import Testing
 struct SessionRestorationTests {
     // MARK: - Stub container
 
-    /// Vends a plain ``StubSessionBackend`` for every session.
-    private struct BasicLLMContainer: PlainTranscriptStubContainer {
-        /// The scripted counter of this container: one token per `Character`.
-        let tokenCounter: any TokenCounter = CharacterTokenCounter()
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: "stub response")
-        }
-    }
-
     /// Records every transcript a restore seeds a model-facing backend from.
     ///
     /// A restore builds its backend through `makeSession(transcript:tools:)`,

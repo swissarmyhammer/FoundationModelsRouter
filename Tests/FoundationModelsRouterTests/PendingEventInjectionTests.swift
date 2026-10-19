@@ -16,16 +16,6 @@ import Testing
 struct PendingEventInjectionTests {
     // MARK: - Stub container
 
-    private final class BasicLLMContainer: PlainTranscriptStubContainer {
-        let responseText: String
-        init(responseText: String = "stub response") {
-            self.responseText = responseText
-        }
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: responseText)
-        }
-    }
-
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
         func embed(texts: [String]) async throws -> [[Float]] {
@@ -124,7 +114,7 @@ struct PendingEventInjectionTests {
     ///   removes the temp directory.
     private static func makeSession(
         recorder: any TranscriptRecorder,
-        responseText: String = "stub response",
+        responseText: String = BasicLLMContainer.defaultResponseText,
         pool: ModelPool = ModelPool()
     ) async throws -> SessionFixtureLifecycle.Started {
         let dir = Self.makeTempDir()
