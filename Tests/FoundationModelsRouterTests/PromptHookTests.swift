@@ -292,7 +292,9 @@ struct PromptHookTests {
                 hooked.backend.prompts == [
                     Self.heldPrompt, Self.firstPrompt + RoutedSessionActor.messageSeparator + Self.secondPrompt,
                 ])
-            #expect(hooked.visitor.prePromptMailIDs == [held, first, second].map(hooked.hookID))
+            // Each mail runs its chain in its own task, so the two chains of the
+            // batch can start in either order.
+            #expect(hooked.visitor.prePromptMailIDs.sorted() == [held, first, second].map(hooked.hookID).sorted())
         }
     }
 

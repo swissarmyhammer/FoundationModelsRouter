@@ -114,9 +114,20 @@ extension RoutedSessionActor {
         // between the two.
         guard hooks.prompts.isScreening(id), outbox.queue.cancel(id) != nil else { return }
         hooks.prompts.forget(id)
-        hooks.routerHooks.dispatcher.post(
-            PostPrompt(mailID: id.description, outcome: .blocked(reason: reason)), session: hooks.session)
+        postPrompt(id, outcome: .blocked(reason: reason), hooks: hooks)
         settleCancelledMail([id])
+    }
+
+    /// Sends the one `PostPrompt` of the mail `id` to the dispatcher of the
+    /// session.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the mail.
+    ///   - outcome: How the mail ended.
+    ///   - hooks: The hooks of the session.
+    private nonisolated func postPrompt(_ id: MailID, outcome: PromptOutcome, hooks: SessionHooks) {
+        hooks.routerHooks.dispatcher.post(
+            PostPrompt(mailID: id.description, outcome: outcome), session: hooks.session)
     }
 
     /// Sends the `PostPrompt` of each mail that `event` ended and that got a
@@ -133,8 +144,7 @@ extension RoutedSessionActor {
         let outcome = Self.promptOutcome(of: event)
         for case .mail(let id) in ended {
             guard hooks.prompts.forget(id), let outcome else { continue }
-            hooks.routerHooks.dispatcher.post(
-                PostPrompt(mailID: id.description, outcome: outcome), session: hooks.session)
+            postPrompt(id, outcome: outcome, hooks: hooks)
         }
     }
 

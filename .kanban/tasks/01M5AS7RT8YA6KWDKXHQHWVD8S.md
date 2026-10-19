@@ -48,6 +48,46 @@ comments:
     - note: no fix was needed. No code changed. No commit made. `swift format` was not run.
     - next: review
   timestamp: 2026-10-19T20:57:10.700230+00:00
+- actor: claude-code
+  id: 01m5azgc9ee5t380hwvb1ntpsx
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 4978a786). 1 finding (1 confirmed, 3 refuted): Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptHooks.swift:117 duplication/duplication.
+    - next: Do the open item in the "Review Findings (2026-10-19 15:57)" section. The task stays in review.
+  timestamp: 2026-10-19T21:01:31.310445+00:00
+- actor: claude-code
+  id: 01m5azgq7rd8vhdn16tm9qncvb
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 8 files
+    - test: green — swift test, 1876 passed, 0 failed; IntegrationTests build complete
+    - commit: 4978a786
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptHooks.swift:117
+  timestamp: 2026-10-19T21:01:42.520199+00:00
+- actor: claude-code
+  id: 01m5azmdn26mh95pd35148txzh
+  text: |-
+    Finding fixed: `RoutedSessionActorPromptHooks.swift` has a new private helper `postPrompt(_:outcome:hooks:)`. It holds the one `dispatcher.post(PostPrompt(...), session: hooks.session)` call. `blockScreenedPrompt` calls it with `.blocked(reason:)`, and `endPrompts` calls it with `outcome`. The file has no other copy of the post call.
+
+    Discovery: the first run of `PromptHookTests` after the change failed in "two mails in one batch give two PrePrompt events". The test compared the order of the PrePrompt ids, but each mail runs its chain in its own helper task, so `first` and `second` can start in either order. The refactor did not cause this: it touches only the post path. The card asks for two PrePrompt events, not an order. The assertion now compares the sorted ids (the `held` id is always first because the test waits for its answer before the sends). No sleep, retry or time limit was added.
+  timestamp: 2026-10-19T21:03:43.778750+00:00
+- actor: claude-code
+  id: 01m5azmhw1e0krfgdgnjb40bfc
+  text: |-
+    ### implement — changed
+    - evidence: `swift test --filter 'FoundationModelsRouterTests.PromptHookTests'` → "Test run with 10 tests in 1 suite passed" (the build recompiled the changed files: "Build complete! (17.78 sec)"; the only warning is the known mlx-swift_Cmlx bundle note). Files: Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptHooks.swift, Tests/FoundationModelsRouterTests/PromptHookTests.swift. The finding is `- [x]`. No commit. `swift format` was not run.
+    - next: /review (the task stays in doing).
+  timestamp: 2026-10-19T21:03:48.097761+00:00
+- actor: claude-code
+  id: 01m5azpnr3t4ncasce46qf89ne
+  text: |-
+    ### test - green
+    - evidence: touched RoutedSessionActorPromptHooks.swift and PromptHookTests.swift. The build recompiled ("Build complete! (12.85 sec)"). Ran `swift test` one time in the root package, exit 0. Result: 1876 tests in 233 suites passed, 0 failed. The 26-test and 19-test runs also passed. 0 skipped.
+    - evidence: the only warning is the known mlx "missing creator for mutated node" line. No compiler warning.
+    - note: the run shows 9 known issues. They are the same 9 as in the earlier test record. They come from existing `withKnownIssue` tests. The change did not cause them.
+    - note: no fix was needed. No code changed. No commit made. `swift format` was not run. No loop, no sleep, no retry, no time limit.
+    - next: review
+  timestamp: 2026-10-19T21:04:57.603216+00:00
 depends_on:
 - 01M5ARTSQ3ZSQMRH1Z5QSTWWJ1
 position_column: doing
@@ -96,3 +136,12 @@ Rules:
 - Use `/tdd`. Write the failing tests first, then implement.
 
 #hooks
+
+## Review Findings (2026-10-19 15:57)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptHooks.swift:117` `duplication/duplication` — The two-line `dispatcher.post(PostPrompt(...), session: hooks.session)` call is copied in blockScreenedPrompt and endPrompts. The copies differ only by the outcome value. If the post call changes, one copy can drift from the other. Extract a small helper, for example `postPrompt(_ id: MailID, outcome: PromptOutcome, hooks: SessionHooks)`, that wraps the `dispatcher.post(PostPrompt(...), session: hooks.session)` call. Call it from blockScreenedPrompt with `.blocked(reason:)` and from endPrompts with `outcome`.
