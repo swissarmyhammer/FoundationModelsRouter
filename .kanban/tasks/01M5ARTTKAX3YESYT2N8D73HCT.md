@@ -78,10 +78,26 @@ comments:
     - evidence: Changed files touched. Root `swift test` ran one time: 1895 tests in 235 suites passed, 0 failed, 0 skipped. Two more small runs passed (26 tests in 14 suites, 19 tests in 3 suites). 9 known issues come from `withKnownIssue` in unchanged files (PromptWaitTests, TaskEndEventWaitTests, ManualRunClockWaitTests, RealModelHarnessTests). Each test there expects the issue, and each passed. `cd IntegrationTests && swift build --build-tests`: Build complete, 0 errors. Only warning in both builds: the known mlx "missing creator" line.
     - next: none. No code was changed by the test step. No commit was made. `swift format` was not run.
   timestamp: 2026-10-19T21:58:04.091428+00:00
+- actor: claude-code
+  id: 01m5b2tyg43pxsvr6acstkpxs4
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (5c83c712), 0 findings (7 files reviewed, 0 confirmed, 0 refuted). All 3 prior findings are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-19T21:59:43.364999+00:00
+- actor: claude-code
+  id: 01m5b2veqyb4swzvtgd71jvt2m
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 7 files
+    - test: green — swift test, 1895 passed, 0 failed; IntegrationTests build complete
+    - commit: 5c83c712
+    - review: clean — 0 findings
+  timestamp: 2026-10-19T21:59:59.998660+00:00
 depends_on:
 - 01M5ARTSQ3ZSQMRH1Z5QSTWWJ1
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff9780
 title: Router emits the tool events at SessionCheckedTool (PreToolUse, PreToolResult, PostToolUse)
 ---
 ## Context
