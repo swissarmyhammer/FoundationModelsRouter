@@ -175,13 +175,25 @@ public struct SessionConfiguration: Sendable {
     /// `.new`. ``persistable`` does not record it.
     public var hookOrigin: SessionOrigin?
 
+    /// The settings of the one hint that tells a root session to give a code
+    /// change to an agent, or `nil` for no hint. See
+    /// ``AgentDelegationHint``.
+    ///
+    /// The default is `AgentDelegationHint()`. The hint needs an original
+    /// tool that is an `AgentLaunching` tool, so a session without one gets
+    /// no hint. A child session gets no hint. The value holds no live state,
+    /// but ``persistable`` does not record it: a fork and a restore give no
+    /// hint.
+    public var agentDelegationHint: AgentDelegationHint?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
     /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`,
     /// `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``,
-    /// `userPresence` defaults to ``UserPresence/interactive``, and
-    /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`.
+    /// `userPresence` defaults to ``UserPresence/interactive``,
+    /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`, and
+    /// `agentDelegationHint` defaults to `AgentDelegationHint()`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -198,7 +210,8 @@ public struct SessionConfiguration: Sendable {
         userPresence: UserPresence = .interactive,
         parentCall: ToolContext? = nil,
         hookSessionKey: String? = nil,
-        hookOrigin: SessionOrigin? = nil
+        hookOrigin: SessionOrigin? = nil,
+        agentDelegationHint: AgentDelegationHint? = AgentDelegationHint()
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -216,6 +229,7 @@ public struct SessionConfiguration: Sendable {
         self.parentCall = parentCall
         self.hookSessionKey = hookSessionKey
         self.hookOrigin = hookOrigin
+        self.agentDelegationHint = agentDelegationHint
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.

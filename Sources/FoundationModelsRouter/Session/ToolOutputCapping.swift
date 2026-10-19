@@ -202,15 +202,20 @@ extension ToolMounting {
     ///   - tokenLimit: The tokens each call's result may hold, or `nil` for
     ///     no cap.
     ///   - tokenCounter: The counter of the owning session.
+    ///   - delegationAdvisor: The advisor of the hint to give a code change
+    ///     to an agent, or `nil` for no hint. Its decorator sits over the
+    ///     capping layer, so the cap never cuts the hint.
     /// - Returns: The model-facing tool.
     static func makeSessionMounted(
         tool: any Tool,
         site: MountSite,
         cappedToTokenLimit tokenLimit: Int?,
-        tokenCounter: any TokenCounter
+        tokenCounter: any TokenCounter,
+        delegationAdvisor: AgentDelegationAdvisor? = nil
     ) -> any Tool {
         let mounted = makeWrapped(tool: tool, site: site, configuration: .synchronous)
         let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit, counter: tokenCounter)
-        return ToolFailureDelivery.makeWrapped(tool: capped)
+        let hinted = delegationAdvisor?.makeWrapped(tool: capped) ?? capped
+        return ToolFailureDelivery.makeWrapped(tool: hinted)
     }
 }

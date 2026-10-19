@@ -118,7 +118,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             userPresence: configuration.userPresence,
             parentCall: configuration.parentCall,
             hookSessionKey: configuration.hookSessionKey,
-            hookOrigin: configuration.hookOrigin)
+            hookOrigin: configuration.hookOrigin,
+            agentDelegationHint: configuration.agentDelegationHint)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -148,6 +149,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     `nil`. See ``SessionConfiguration/hookSessionKey``.
     ///   - hookOrigin: The hook origin that the host gives, or `nil`. See
     ///     ``SessionConfiguration/hookOrigin``.
+    ///   - agentDelegationHint: The settings of the hint to give a code change
+    ///     to an agent, or `nil` for no hint. See
+    ///     ``SessionConfiguration/agentDelegationHint``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -167,7 +171,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         userPresence: UserPresence = .interactive,
         parentCall: ToolContext? = nil,
         hookSessionKey: String? = nil,
-        hookOrigin: SessionOrigin? = nil
+        hookOrigin: SessionOrigin? = nil,
+        agentDelegationHint: AgentDelegationHint? = nil
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -205,7 +210,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tokenCounter: container.tokenCounter,
             inlineSettleGrace: inlineSettleGrace,
             userPresence: userPresence,
-            parentCall: parentCall
+            parentCall: parentCall,
+            delegationAdvisor: AgentDelegationAdvisor.make(
+                hint: agentDelegationHint, tools: tools, isRoot: parentCall == nil && agentSpawn == nil)
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -343,6 +350,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session.
     ///   - parentCall: The context of the call that starts the session as a
     ///     child, or `nil` for a root session.
+    ///   - delegationAdvisor: The advisor of the hint to give a code change
+    ///     to an agent, or `nil` for no hint. It is the call witness of the
+    ///     root site, and each `String`-output tool counts its calls in it.
     /// - Returns: The outbox and the run plane of the session, and the
     ///   mounted tools.
     func makeSessionToolWiring(
@@ -352,7 +362,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tokenCounter: any TokenCounter,
         inlineSettleGrace: TimeInterval,
         userPresence: UserPresence,
-        parentCall: ToolContext?
+        parentCall: ToolContext?,
+        delegationAdvisor: AgentDelegationAdvisor? = nil
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
         let runPlane = RunPlane(
@@ -363,10 +374,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             }
             ?? MountSite(
                 sessionID: sessionID, runPlane: runPlane, sink: outbox, tracer: tracer,
-                inlineSettleGrace: inlineSettleGrace)
+                inlineSettleGrace: inlineSettleGrace, callWitness: delegationAdvisor)
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
-                tool: tool, site: site, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter)
+                tool: tool, site: site, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter,
+                delegationAdvisor: delegationAdvisor)
         }
         return (outbox, runPlane, instancedTools)
     }
