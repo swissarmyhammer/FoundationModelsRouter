@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsHooks
 
 /// A failure producing text from a resident generation model.
 public enum GenerationError: Error, Equatable {
@@ -115,7 +116,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             inlineSettleGrace: configuration.inlineSettleGrace,
             isNoOpToolCall: configuration.isNoOpToolCall,
             userPresence: configuration.userPresence,
-            parentCall: configuration.parentCall)
+            parentCall: configuration.parentCall,
+            hookSessionKey: configuration.hookSessionKey,
+            hookOrigin: configuration.hookOrigin)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -141,6 +144,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - parentCall: The context of the tool call that starts the session
     ///     as a child, or `nil` for a root session. See
     ///     ``SessionConfiguration/parentCall``.
+    ///   - hookSessionKey: The hook session key that the host gives, or
+    ///     `nil`. See ``SessionConfiguration/hookSessionKey``.
+    ///   - hookOrigin: The hook origin that the host gives, or `nil`. See
+    ///     ``SessionConfiguration/hookOrigin``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -158,12 +165,23 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         userPresence: UserPresence = .interactive,
-        parentCall: ToolContext? = nil
+        parentCall: ToolContext? = nil,
+        hookSessionKey: String? = nil,
+        hookOrigin: SessionOrigin? = nil
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
         let sessionId = ULID.generate()
         let recordingDirectory = self.recordingDirectory(forSessionId: sessionId, recordingRoot: recordingRoot)
+        let effectiveWorkingDirectory = workingDirectory ?? recordingDirectory
+        // A session that a parent call or a recorded spawn starts is a
+        // sub-agent of that parent session.
+        let sessionHooks = hooks.map { routerHooks in
+            routerHooks.makeSessionHooks(
+                sessionID: sessionId, workingDirectory: effectiveWorkingDirectory,
+                parent: (parentCall?.sessionID ?? agentSpawn?.parentSessionId).map(routerHooks.subagentParent(of:)),
+                requestedKey: hookSessionKey, requestedOrigin: hookOrigin, isRestored: false)
+        }
 
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
@@ -206,7 +224,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             id: sessionId,
             parentId: nil,
             recordingDirectory: recordingDirectory,
-            workingDirectory: workingDirectory ?? recordingDirectory,
+            workingDirectory: effectiveWorkingDirectory,
             backend: backend,
             slot: slot,
             model: chosen,
@@ -260,7 +278,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tokenCounter: container.tokenCounter,
             // This handle's own tracer, so every span the session opens
             // reports to the backend the router was constructed with.
-            tracer: tracer
+            tracer: tracer,
+            // The hooks of the router, with the lineage of this session.
+            hooks: sessionHooks
         )
     }
 

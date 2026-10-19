@@ -75,6 +75,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// resolving router (``Router/runClock``), and the real time by default.
     let runClock: any RunClock
 
+    /// The hooks of the resolving router (``Router/hooks``), or `nil` when the
+    /// router has no dispatcher. Each session vended or restored from this
+    /// handle takes its own ``SessionHooks`` from it.
+    let hooks: RouterHooks?
+
     /// The router's durable transcripts root, or `nil` when recording to
     /// memory or none.
     var recordingsRoot: URL? { durableRecording?.root }
@@ -147,6 +152,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     that resolved nothing and therefore holds no residency.
     ///   - runClock: The clock of the run plane of each vended session. The
     ///     default is the real time.
+    ///   - hooks: The hooks of the resolving router, or `nil` (the default)
+    ///     for a handle whose sessions send no hook event.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -159,9 +166,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         residencyHolds: [ModelHold] = [],
-        runClock: any RunClock = ContinuousRunClock()
+        runClock: any RunClock = ContinuousRunClock(),
+        hooks: RouterHooks? = nil
     ) {
         self.runClock = runClock
+        self.hooks = hooks
         self.slot = slot
         self.chosen = chosen
         self.footprintBytes = footprintBytes

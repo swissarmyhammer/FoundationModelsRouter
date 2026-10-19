@@ -178,6 +178,7 @@ extension RoutedSessionActor {
         // parent chain — the child's `workingDirectory` override never moves it.
         let childRecordingDirectory = recordingDirectory
             .appendingPathComponent(childId.description, isDirectory: true)
+        let childWorkingDirectory = workingDirectory ?? childRecordingDirectory
         // The child lands its own sidecar as it is constructed, from the
         // `entryCountAtFork` baseline passed below — so `fork()` never returns a
         // durable child directory a transcript can land in with no sidecar
@@ -190,7 +191,7 @@ extension RoutedSessionActor {
             id: childId,
             parentId: id,
             recordingDirectory: childRecordingDirectory,
-            workingDirectory: workingDirectory ?? childRecordingDirectory,
+            workingDirectory: childWorkingDirectory,
             backend: forkedBackend,
             slot: slot,
             model: model,
@@ -254,7 +255,11 @@ extension RoutedSessionActor {
             // The parent's own tracer: a fork continues its parent's
             // conversation, so its spans belong in the same trace and must
             // reach the same backend.
-            tracer: tracer
+            tracer: tracer,
+            // A fork goes to the dispatcher of its parent, with the `.forked`
+            // origin and the parent as its parent session. It keeps the key
+            // of its parent only in the working directory of its parent.
+            hooks: hooks?.makeForkHooks(sessionID: childId, workingDirectory: childWorkingDirectory)
         )
         // The stall report interval is a host setting, as the other settings
         // above are, so the child starts with the interval of this session.
@@ -477,5 +482,8 @@ extension RoutedSessionActor {
         // question any more, so each relay that still waits for one reads
         // on (``endRelayWaits()``).
         endRelayWaits()
+        // After all work of the session ended: the `SessionEnd` of the hooks.
+        // A second close finds the hooks ended, so it sends no second one.
+        hooks?.end()
     }
 }

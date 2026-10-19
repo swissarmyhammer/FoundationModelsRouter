@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsHooks
 import FoundationModelsRouterTestSupport
 import Tracing
 
@@ -184,6 +185,8 @@ enum RouterTestFixtures {
     ///     backend it makes, or `nil` (the default) for the provider default.
     ///   - pool: The resident-model pool. Defaults to a fresh pool, so
     ///     parallel suites never share residents.
+    ///   - hooks: The hook dispatcher of the router, or `nil` (the default)
+    ///     for a router with no hooks.
     /// - Returns: The router.
     static func makeRouter(
         id: ULID = .generate(),
@@ -193,7 +196,8 @@ enum RouterTestFixtures {
         loader: any ModelLoader,
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
-        pool: ModelPool = ModelPool()
+        pool: ModelPool = ModelPool(),
+        hooks: HookDispatcher? = nil
     ) -> Router {
         Router(
             id: id,
@@ -205,7 +209,8 @@ enum RouterTestFixtures {
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: loader,
             samplingMode: samplingMode,
-            pool: pool
+            pool: pool,
+            hooks: hooks
         )
     }
 

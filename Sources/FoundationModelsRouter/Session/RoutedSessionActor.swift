@@ -175,6 +175,11 @@ func withSessionSpan<Result, Failure: Error>(
 /// this call. See `withSessionSpan`, the one helper both paths open their span
 /// through.
 ///
+/// **The hooks of the session.** `hooks` carries no default, for the same
+/// reason as `tracer`: a site that forgot it would make sessions that a host
+/// hook never sees. When `hooks` is not `nil`, the factory starts them after
+/// the construction, so each shape sends its `SessionStart` here.
+///
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
     profile: LanguageModelProfile,
@@ -210,7 +215,8 @@ func makeRoutedSessionActor(
     isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
     recordingRoot: URL? = nil,
     tokenCounter: any TokenCounter,
-    tracer: (any Tracer)?
+    tracer: (any Tracer)?,
+    hooks: SessionHooks?
 ) -> RoutedSessionActor {
     // The construction itself, so the one parameter list below is written once
     // whether or not this factory is the site that opens the session's span.
@@ -248,22 +254,29 @@ func makeRoutedSessionActor(
             isNoOpToolCall: isNoOpToolCall,
             recordingRoot: recordingRoot,
             tokenCounter: tokenCounter,
-            tracer: tracer
+            tracer: tracer,
+            hooks: hooks
         )
     }
     // A restored node's span is already open around the transcript read that
     // runs before this call, so it gets no second span here. See this
     // function's own doc comment.
-    guard origin != .restored else { return construct() }
-    return withSessionSpan(
-        routerId: routerId,
-        sessionId: id,
-        parentId: parentId,
-        model: model,
-        origin: origin,
-        tracer: tracer,
-        construct
-    )
+    let session =
+        origin == .restored
+        ? construct()
+        : withSessionSpan(
+            routerId: routerId,
+            sessionId: id,
+            parentId: parentId,
+            model: model,
+            origin: origin,
+            tracer: tracer,
+            construct
+        )
+    // The session exists now, so its `SessionStart` goes out. Each shape
+    // (vended, forked, restored) comes through here.
+    hooks?.start()
+    return session
 }
 
 /// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.
@@ -838,6 +851,12 @@ actor RoutedSessionActor: RoutedSession {
     /// (``SessionSidecar/agentSpawn``). A fork's is always `nil`.
     nonisolated let agentSpawn: SessionSidecar.AgentSpawn?
 
+    /// The hooks of this session, or `nil` when the router has no hook
+    /// dispatcher. The session factory starts them (`SessionStart`), and
+    /// ``close()`` ends them (`SessionEnd`, one time only). A fork takes its
+    /// own hooks from them (``SessionHooks/makeForkHooks(sessionID:workingDirectory:)``).
+    nonisolated let hooks: SessionHooks?
+
     /// Creates a session and writes its `session.json` when the session is new.
     /// A failed sidecar write is logged and dropped.
     ///
@@ -877,8 +896,10 @@ actor RoutedSessionActor: RoutedSession {
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         recordingRoot: URL? = nil,
         tokenCounter: any TokenCounter,
-        tracer: (any Tracer)?
+        tracer: (any Tracer)?,
+        hooks: SessionHooks? = nil
     ) {
+        self.hooks = hooks
         self.toolOutputProtection = toolOutputProtection
         self.isNoOpToolCall = isNoOpToolCall
         self.repetitionDetection = repetitionDetection

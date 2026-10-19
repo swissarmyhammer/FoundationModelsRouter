@@ -44,6 +44,12 @@ let metricsPackage = "swift-metrics"
 // the fork's own `IntegrationTesting.xcodeproj`.
 let transformersPackage = "swift-transformers"
 
+// The hook package of the family (see the `dependencies` list). The library
+// target links it to emit the hook events, and the unit test target links it
+// to register a recording visitor.
+let hooksPackage = "FoundationModelsHooks"
+let hooksProduct: Target.Dependency = .product(name: hooksPackage, package: hooksPackage)
+
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
 // The fork is referenced by URL on its `stable` branch (see the `dependencies`
 // list), so every checkout of the router — this machine, another machine, CI —
@@ -159,12 +165,21 @@ let package = Package(
             url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
             branch: "main"
         ),
+        // The hook vocabulary of the family: the events, `HookSession`,
+        // `HookVisitor` and `HookDispatcher`. The router holds one optional
+        // dispatcher, gives it to each session, and emits the session events
+        // through it. The hooks package depends on no family package, thus
+        // this edge makes no cycle.
+        .package(
+            url: "git@github.com:swissarmyhammer/\(hooksPackage).git",
+            branch: "main"
+        ),
     ],
     targets: [
         .target(
             name: packageName,
             dependencies: mlxProducts + [
-                ulidProduct, tracingProduct, loggingProduct, metricsProduct,
+                ulidProduct, tracingProduct, loggingProduct, metricsProduct, hooksProduct,
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
             ],
             path: "Sources/\(packageName)",
@@ -194,6 +209,9 @@ let package = Package(
                 // read the recorded values back from that `TestMetrics`.
                 loggingProduct, metricsProduct, metricsTestKitProduct,
                 .product(name: "TelemetryTestSupport", package: "FoundationModelsExtras"),
+                // The hook tests register a recording visitor on a
+                // `HookDispatcher` and read the hook events back.
+                hooksProduct,
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests",
             // `Fixtures` holds recordings. A test reads them from disk, at a

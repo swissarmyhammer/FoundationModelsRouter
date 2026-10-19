@@ -262,6 +262,33 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // ``RestoredSession/ContextMismatch`` for why this is a typed
         // warning rather than a `modelMismatch`-style error.
         var contextMismatches: [RestoredSession.ContextMismatch] = []
+        // The hooks of each restored node, so that a recorded fork finds the
+        // hooks of its parent. The walk restores a parent before its forks.
+        var hooksById: [ULID: SessionHooks] = [:]
+
+        /// The hooks of one restored node, or `nil` when the router has no
+        /// hook dispatcher. The origin is `.resumed`. A recorded fork follows
+        /// the fork rule against its restored parent, and a node with a
+        /// recorded spawn parent follows the sub-agent rule. The key of a
+        /// restored root is its recorded id, the same key as before the
+        /// restore.
+        ///
+        /// - Parameters:
+        ///   - node: The loaded node.
+        ///   - routedLLM: The generation handle its recorded slot resolved to.
+        /// - Returns: The hooks of the node, or `nil`.
+        func restoredHooks(for node: SessionNode, on routedLLM: RoutedLLM) -> SessionHooks? {
+            guard let routerHooks = routedLLM.hooks else { return nil }
+            let parent =
+                node.parentId.flatMap { hooksById[$0]?.forkParent }
+                ?? node.sidecar.agentSpawn.map { routerHooks.subagentParent(of: $0.parentSessionId) }
+            let hooks = routerHooks.makeSessionHooks(
+                sessionID: node.id, workingDirectory: node.sidecar.workingDirectory, parent: parent,
+                isRestored: true)
+            hooksById[node.id] = hooks
+            return hooks
+        }
+
         func restore(_ node: SessionNode) async throws -> any RoutedSession {
             let slot = node.sidecar.slot
             let model = node.sidecar.model
@@ -533,7 +560,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // The restoring handle's own tracer, exactly as a freshly
                 // vended session takes it: a restored node reports where the
                 // live router reports.
-                tracer: routedLLM.tracer
+                tracer: routedLLM.tracer,
+                // The hooks of the restoring router: a `.resumed` start with
+                // the recorded id, and the fork or sub-agent lineage.
+                hooks: restoredHooks(for: node, on: routedLLM)
             )
             // Crash-edge mail durability (`mailbox.md`, section 5, problem
             // 14): each mail of this node that the transcript holds as queued

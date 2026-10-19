@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsHooks
 import Logging
 import Metrics
 import Tracing
@@ -91,6 +92,13 @@ public actor Router {
     /// ``pool``, and around each acquire of a resolve.
     nonisolated let promptCacheSizing: PromptCacheSizing
 
+    /// The hooks of this router, or `nil` for a router with no dispatcher.
+    ///
+    /// Each handle that a resolve vends holds this one value, so each session
+    /// on each slot sends its hook events to the same dispatcher, and a
+    /// sub-agent finds the key of its parent session. See ``RouterHooks``.
+    let hooks: RouterHooks?
+
     /// Creates a router.
     ///
     /// The router starts one task that reads the footprints of `pool` and
@@ -117,6 +125,11 @@ public actor Router {
     ///   - pool: The resident-model pool to resolve into. The default,
     ///     ``ModelPool/shared``, is one pool for the whole process. Pass a
     ///     fresh ``ModelPool`` for a router that must not share residents.
+    ///   - hooks: The hook dispatcher that each session of this router sends
+    ///     its hook events to, or `nil` (the default) for no hooks. Each
+    ///     session sends `SessionStart` when it is made, forked or restored,
+    ///     and `SessionEnd` when it closes. When the value is `nil`, or when
+    ///     the dispatcher has no visitor, no session sends an event.
     public init(
         id: ULID = .generate(),
         cacheDir: URL? = nil,
@@ -129,7 +142,8 @@ public actor Router {
         metadataSource: any MetadataSource = HuggingFaceMetadataSource(),
         loader: any ModelLoader = UnconfiguredModelLoader(),
         samplingMode: GenerationOptions.SamplingMode? = nil,
-        pool: ModelPool = .shared
+        pool: ModelPool = .shared,
+        hooks: HookDispatcher? = nil
     ) {
         self.id = id
         let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
@@ -153,6 +167,7 @@ public actor Router {
         self.samplingMode = samplingMode
         self.pool = pool
         self.promptCacheSizing = PromptCacheSizing(pool: pool, loader: loader, probe: probe)
+        self.hooks = hooks.map(RouterHooks.init(dispatcher:))
     }
 
     /// Resolves an authored profile into a resident ``LanguageModelProfile``
@@ -932,7 +947,8 @@ public actor Router {
     }
 
     /// Builds a routed model handle for `slot` over `container`, with this
-    /// router's id, recorder, tracer, sampling mode, and transcripts root.
+    /// router's id, recorder, tracer, sampling mode, transcripts root, and
+    /// hooks.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -966,7 +982,8 @@ public actor Router {
             tracer: tracer,
             samplingMode: samplingMode,
             residencyHolds: admitted.holds,
-            runClock: runClock
+            runClock: runClock,
+            hooks: hooks
         )
     }
 

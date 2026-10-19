@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsHooks
 import Logging
 
 /// One value that carries everything a session is vended with.
@@ -155,13 +156,32 @@ public struct SessionConfiguration: Sendable {
     /// session.
     public var parentCall: ToolContext?
 
+    /// The key of the hook lineage of the session, or `nil` (the default) to
+    /// let the router give the key.
+    ///
+    /// A host sets it for a model-switch replacement: the key of the session
+    /// that the new session replaces, so the hooks see one lineage. With
+    /// `nil`, a sub-agent gets the key of its parent, and each other new
+    /// session gets its own id. The router sends the key in the
+    /// `HookSession` of each hook event of the session. The value is for the
+    /// hooks only, thus ``persistable`` does not record it.
+    public var hookSessionKey: String?
+
+    /// The origin of the `SessionStart` hook event of the session, or `nil`
+    /// (the default) to let the router give the origin.
+    ///
+    /// A host sets `.replacement` for a model-switch replacement. With
+    /// `nil`, a sub-agent is `.subagent`, and each other new session is
+    /// `.new`. ``persistable`` does not record it.
+    public var hookOrigin: SessionOrigin?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
     /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`,
     /// `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``,
     /// `userPresence` defaults to ``UserPresence/interactive``, and
-    /// `parentCall` defaults to `nil`.
+    /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -176,7 +196,9 @@ public struct SessionConfiguration: Sendable {
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         isNoOpToolCall: @escaping NoOpToolCallCheck = defaultIsNoOpToolCall,
         userPresence: UserPresence = .interactive,
-        parentCall: ToolContext? = nil
+        parentCall: ToolContext? = nil,
+        hookSessionKey: String? = nil,
+        hookOrigin: SessionOrigin? = nil
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -192,6 +214,8 @@ public struct SessionConfiguration: Sendable {
         self.isNoOpToolCall = isNoOpToolCall
         self.userPresence = userPresence
         self.parentCall = parentCall
+        self.hookSessionKey = hookSessionKey
+        self.hookOrigin = hookOrigin
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.

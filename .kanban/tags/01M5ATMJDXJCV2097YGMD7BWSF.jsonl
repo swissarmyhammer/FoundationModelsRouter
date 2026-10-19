@@ -1,0 +1,1 @@
+{"id":"01M5ATMJDXXTGNTBHR5ZGKD2YY","timestamp":"2026-10-19T19:36:25.789562Z","op":"create","item_id":"01M5ATMJDXJCV2097YGMD7BWSF","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: e36209\n+tag_name: blocked-external\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: e36209\n-tag_name: blocked-external\n","transaction_id":null}
