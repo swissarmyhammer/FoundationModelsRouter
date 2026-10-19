@@ -46,6 +46,8 @@ public protocol SessionDirectory: Sendable {
     func start(_ request: SessionStartRequest) async throws -> SessionSummary
     func addTags(_ tags: Set<String>, to id: ULID) async throws -> SessionSummary
     func removeTags(_ tags: Set<String>, from id: ULID) async throws -> SessionSummary
+    /// Sets the title of `id` (Rename, a control action: TestudoApp D84).
+    func setTitle(_ title: String, of id: ULID) async throws -> SessionSummary
     func send(_ message: OutgoingSessionMessage) async throws -> [SessionSendReceipt]
     func inbox(of id: ULID, markRead: Bool) async throws -> [SessionMessage]
     func archive(_ id: ULID, by: SessionMessageSender) async throws -> SessionSummary
@@ -91,7 +93,7 @@ The states are `working`, `needsInput`, `idle` and `archived`. The events are `s
 
 ### 5.3 ROUTER-2 Session tags
 
-- **Spec:** Tags at creation (`SessionConfiguration.tags`). Later changes only through `addTags` and `removeTags` of the directory. Each change writes `facts.json` and sends `factsChanged`. A tag has 1 to 64 characters: letters, digits, `-`, `_`, `:` and `.`. Another tag gives `invalidTag`. Examples: `reviewer`, `travel`, `kanban:task-42`.
+- **Spec:** Tags at creation (`SessionConfiguration.tags`). Later changes only through `addTags` and `removeTags` of the directory. Each change writes `facts.json` and sends `factsChanged`. A tag has 1 to 64 characters: letters, digits, `-`, `_`, `:` and `.`. Another tag gives `invalidTag`. Examples: `reviewer`, `travel`, `kanban:task-42`. `setTitle` changes the title in the same way: it writes `facts.json` and sends `factsChanged`. Rename and tags are control actions, so a UI can call them through the `sessions` graph (TestudoApp D84).
 - **Why:** D23. One path for each change, so that each change gives an event.
 - **Depends on:** ROUTER-1, ROUTER-3.
 - **Tests:** add, remove, persist to `facts.json`, read back after a restore, an invalid tag, the `factsChanged` event, and the query by tag.
