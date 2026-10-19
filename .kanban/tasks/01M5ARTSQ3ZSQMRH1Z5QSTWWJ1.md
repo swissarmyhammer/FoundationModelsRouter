@@ -71,8 +71,25 @@ comments:
     - skipped: 0. The 9 "known issues" come from tests that use withKnownIssue on purpose (RealModelHarness, PromptWaitTests, ManualRunClockWaitTests, TaskEndEventWaitTests). They do not use BasicLLMContainer.
     - next: review and commit.
   timestamp: 2026-10-19T20:39:36.633192+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m5ayac216z5djat3rxkfb20a
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (368a1fae): 0 findings, 0 confirmed, 0 refuted; 7 attempted, 0 failed. 2 files reviewed. The prior finding (2026-10-19 15:32) is checked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-19T20:40:45.889836+00:00
+- actor: claude-code
+  id: 01m5ayaznyf306qtz0tsyb4yye
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files
+    - test: green — swift test, 1866 passed, 0 failed
+    - commit: 368a1fae
+    - review: clean — 0 findings
+    - push: origin/main = 368a1fae
+  timestamp: 2026-10-19T20:41:05.982578+00:00
+position_column: done
+position_ordinal: ffffffff9480
 title: Router holds a HookDispatcher, gives it to each session, and emits SessionStart and SessionEnd
 ---
 ## Context

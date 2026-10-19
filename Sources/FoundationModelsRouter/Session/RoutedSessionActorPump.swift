@@ -177,9 +177,11 @@ extension RoutedSessionActor: SessionMailObserver {
     /// Takes the next batch from ``SessionOutbox/queue``, with no suspension
     /// point.
     ///
-    /// The queue is read first (``MailQueue/pending``). When it holds no
-    /// user-type mail and its run mail cannot start a submission, nothing is
-    /// taken. Else the take runs the batch rule (``joinsNewBatch(_:_:isGuided:)``).
+    /// The queue is read first, up to its first screening mail
+    /// (``screenedPendingMail``). When that mail holds no user-type mail and
+    /// its run mail cannot start a submission, nothing is taken. Else the take
+    /// runs the batch rule (``joinsNewBatch(_:_:isGuided:)``), and stops at
+    /// the first screening mail (``takeScreenedMail(admitting:)``).
     /// The queue can change between the read and the take, so the batch is
     /// checked again: a batch with no user-type mail that cannot start a
     /// submission goes back to the queue as it was.
@@ -187,12 +189,12 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - Parameter runTokens: The completion tokens of the background runs.
     /// - Returns: The batch, or `nil` when nothing can start an answer.
     private func takeNextBatch(runTokens: BackgroundRunTokens) -> SubmissionBatch? {
-        let pending = outbox.queue.pending
+        let pending = screenedPendingMail
         guard pending.contains(where: \.isUserMail) || runMailCanStart(pending, runTokens: runTokens) else {
             return nil
         }
         let isGuided = grammar != nil
-        let batch = SubmissionBatch(mail: outbox.queue.take { Self.joinsNewBatch($0, $1, isGuided: isGuided) })
+        let batch = SubmissionBatch(mail: takeScreenedMail { Self.joinsNewBatch($0, $1, isGuided: isGuided) })
         guard !batch.mail.isEmpty else { return nil }
         guard batch.userMail.isEmpty, !runMailCanStart(batch.mail, runTokens: runTokens) else { return batch }
         settleCancelledMail(outbox.putBack(untouched: batch.mail).map(\.id))
@@ -416,7 +418,9 @@ extension RoutedSessionActor: SessionMailObserver {
     /// answer admit (`generation-queue.md`, section 5.5,
     /// ``joinsRunningAnswer(_:options:isGuided:)``). The mail joins the open
     /// answer, so the terminal event of the answer ends it. User-type mail
-    /// that the options do not admit waits for the next answer. An answer
+    /// that the options do not admit waits for the next answer. The take
+    /// stops at the first screening mail (``takeScreenedMail(admitting:)``),
+    /// so a mail joins only after its `PrePrompt` chain ended. An answer
     /// that ``cancelAll()`` stopped takes no more mail: its readers already
     /// have its end.
     ///
@@ -424,7 +428,7 @@ extension RoutedSessionActor: SessionMailObserver {
     func takeMailJoiningTheAnswer() -> [Mail] {
         guard case .answer(let options) = pumpWork?.kind, !openAnswerMail.isSilenced else { return [] }
         let isGuided = grammar != nil
-        let joining = outbox.queue.take { candidate, _ in
+        let joining = takeScreenedMail { candidate, _ in
             Self.joinsRunningAnswer(candidate, options: options, isGuided: isGuided)
         }
         deliver(joining)

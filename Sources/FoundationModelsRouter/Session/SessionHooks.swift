@@ -246,6 +246,10 @@ final class SessionHooks: Sendable {
     /// The hook lineage of the session.
     let lineage: HookLineage
 
+    /// The prompt hook state of the session: the screening mail, and the
+    /// mail that waits for its `PostPrompt`.
+    let prompts = PromptHookLedger()
+
     /// The phase of the session. The lock also keeps the order of the
     /// `SessionStart` and the `SessionEnd` posts.
     private let phase = Mutex(Phase.made)

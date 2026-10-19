@@ -49,17 +49,20 @@ extension RoutedSessionActor {
         // The lease begins before the put: from the put on, the pump can take
         // the mail and end the lease.
         let leased = mail.isUserMail && outbox.beginMailWork(mail.id)
+        // The screening mark comes before the put too: the pump never takes
+        // a mail whose `PrePrompt` chain did not end.
+        let screened = beginPromptScreen(of: mail)
         do {
             try outbox.queue.put(mail)
         } catch {
             throw withdrawRefusedMail(
                 mail.id, refusal: error, arrival: arrival, subscription: key, madePending: madePending,
-                leased: leased)
+                leased: leased, screened: screened)
         }
         if openAnswerMail.contains(mail.id), outbox.queue.cancel(mail.id) != nil {
             throw withdrawRefusedMail(
                 mail.id, refusal: MailRefusal.duplicateID(mail.id), arrival: arrival, subscription: key,
-                madePending: madePending, leased: leased)
+                madePending: madePending, leased: leased, screened: screened)
         }
         reportWorkStartIfBusy()
         outbox.noteCaller(
@@ -69,15 +72,27 @@ extension RoutedSessionActor {
         // holds the arrival of the mail before its delivery.
         recordMail([.mailQueued(mail)])
         stateChanges.signal()
-        _ = arrival.start { await self.mailDidArrive() }
+        // A screening mail runs its `PrePrompt` chain in the same helper
+        // task, after the wake: the pump takes no mail from it on until the
+        // chain ends.
+        let arrivalTask = arrival.start {
+            await self.mailDidArrive()
+            if screened {
+                await self.screenPrompt(of: mail)
+            }
+        }
+        if screened {
+            keepPromptScreen(arrivalTask, of: mail.id)
+        }
         return subscription
     }
 
     /// Undoes what ``mail(_:)`` did for mail that the session refused: the
     /// reserved wake of the pump ends with no task, the subscription
-    /// finishes, and the pending record and the lease of the id end when
-    /// ``mail(_:)`` made them. A record that other mail with the same id made stays, because that
-    /// mail still waits for its terminal event.
+    /// finishes, and the pending record, the lease and the screening mark of
+    /// the id end when ``mail(_:)`` made them. A record that other mail with
+    /// the same id made stays, because that mail still waits for its terminal
+    /// event.
     ///
     /// Each refusal path of ``mail(_:)`` throws the result, so all the paths
     /// do the same cleanup.
@@ -89,6 +104,7 @@ extension RoutedSessionActor {
     ///   - key: The key of the subscription of the refused mail.
     ///   - madePending: Whether ``mail(_:)`` made the id pending.
     ///   - leased: Whether ``mail(_:)`` began the lease of the id.
+    ///   - screened: Whether ``mail(_:)`` marked the id as screening.
     /// - Returns: `refusal`, for the caller to throw.
     private nonisolated func withdrawRefusedMail(
         _ id: MailID,
@@ -96,7 +112,8 @@ extension RoutedSessionActor {
         arrival: consuming HelperTaskTracker.Reservation,
         subscription key: ULID,
         madePending: Bool,
-        leased: Bool
+        leased: Bool,
+        screened: Bool
     ) -> any Error {
         arrival.cancel()
         outputHub.unsubscribe(key)
@@ -105,6 +122,9 @@ extension RoutedSessionActor {
         }
         if leased {
             outbox.endMailWork([id])
+        }
+        if screened {
+            dropPromptScreen(of: id)
         }
         return refusal
     }

@@ -351,7 +351,9 @@ extension RoutedSessionActor {
     /// (``recordMail(_:)``). This is the one place where the output sends a
     /// terminal event, so each terminal event gets one record, and each mail
     /// that ends with ``SessionEvent/cancelled(_:)`` adds one to the counter
-    /// of cancelled mail (``RouterMetrics/recordCancelledMail(_:)``).
+    /// of cancelled mail (``RouterMetrics/recordCancelledMail(_:)``). Each
+    /// ended mail that got a `PrePrompt` gets its one `PostPrompt` here too
+    /// (``endPrompts(_:by:)``).
     ///
     /// Each event that is not a work event first sends
     /// ``SessionEvent/workStarted`` when it is due
@@ -377,6 +379,7 @@ extension RoutedSessionActor {
         let records = Self.terminalRecords(of: event, ending: ended)
         recordMail(records)
         sessionMetrics.recordCancelledMail(records.filter(\.isCancellation).count)
+        endPrompts(ended, by: event)
     }
 
     /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each mail
