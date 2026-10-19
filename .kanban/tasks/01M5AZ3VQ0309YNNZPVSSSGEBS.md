@@ -64,10 +64,26 @@ comments:
   id: 01m5b4ejq8jmxxta0jdwm120w4
   text: "### test — green\n- evidence: touched PromptHookTests.swift, then ran `swift test` one time (exit 0, build 13.73 s). Swift Testing: 1911 tests in 236 suites passed, 0 failed. Two more Swift Testing runs: 26 tests and 19 tests passed. XCTest: 0 tests, 0 failures. \n- warnings: only the known mlx \"missing creator\" line. No compiler warning from the changed file.\n- known issues: 9 recorded known issues come from tests that check the failure path of wait helpers (withKnownIssue) and the harness embedding slot. They existed before this change.\n- no format run, no pin change, no commit.\n- next: review."
   timestamp: 2026-10-19T22:27:55.240456+00:00
+- actor: claude-code
+  id: 01m5b4gh3y9ggkn7cr417d6js5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (c6aa7888): 0 findings (7 attempted, 0 failed). The prior finding (PromptHookTests.swift reuse/reuse) is checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-19T22:28:59.134892+00:00
+- actor: claude-code
+  id: 01m5b4gzjae8117g6sgqc1mjb6
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file
+    - test: green — swift test, 1911 passed, 0 failed
+    - commit: c6aa7888
+    - review: clean — 0 findings
+  timestamp: 2026-10-19T22:29:13.930587+00:00
 depends_on:
 - 01M5AS7RT8YA6KWDKXHQHWVD8S
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff9880
 title: A replace of a queued mail is not screened, and a replace during the chain is not lost
 ---
 ## Context
