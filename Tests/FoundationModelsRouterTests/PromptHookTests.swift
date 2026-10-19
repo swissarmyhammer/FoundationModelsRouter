@@ -421,15 +421,16 @@ struct PromptHookTests {
     }
 
     /// Sends ``signalBody`` to the mail `id` with a `replace(_:with:)` signal,
-    /// and waits until the signal ended.
+    /// and waits until the signal ended. The signal-end check is the shared
+    /// ``AnswerCancellationTests/expectSignalEnds(_:on:)``.
     ///
     /// - Parameters:
     ///   - id: The id of the mail.
     ///   - hooked: The session under test.
-    /// - Throws: When the signal did not end with its `signalDone` event.
+    /// - Throws: When the wait for the terminal event of the signal fails.
     private static func replace(_ id: MailID, on hooked: HookedSession) async throws {
-        let signal = hooked.session.replace(id, with: signalBody)
-        #expect(try await hooked.session.awaitTerminal(of: signal) == .signalDone(signal))
+        try await AnswerCancellationTests.expectSignalEnds(
+            hooked.session.replace(id, with: signalBody), on: hooked.session)
     }
 
     /// Waits for the terminal event of the mail `id`, closes the session,

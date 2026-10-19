@@ -33,6 +33,37 @@ comments:
     - warnings: only the known mlx "missing creator for mutated node". There are no other compiler warnings.
     - next: review.
   timestamp: 2026-10-19T22:22:28.922462+00:00
+- actor: claude-code
+  id: 01m5b48c4t0tdrj5zn59qrfw4j
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 3bb6fdef); 1 finding (1 confirmed, 0 refuted) — Tests/FoundationModelsRouterTests/PromptHookTests.swift:430 reuse/reuse
+    - next: implement the open item in "Review Findings (2026-10-19 17:23)", then review again
+  timestamp: 2026-10-19T22:24:31.898625+00:00
+- actor: claude-code
+  id: 01m5b48vynhc2kf1rbmq7c7mx0
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files
+    - test: green — swift test, 1911 passed, 0 failed; IntegrationTests build complete
+    - commit: 3bb6fdef
+    - review: findings — Tests/FoundationModelsRouterTests/PromptHookTests.swift:430
+  timestamp: 2026-10-19T22:24:48.085164+00:00
+- actor: claude-code
+  id: 01m5b4ckf1v22pnmcsfw9eby3h
+  text: 'Finding PromptHookTests.swift:430 reuse/reuse: corrected. The test target already has a shared signal-end check: `AnswerCancellationTests.expectSignalEnds(_:on:)` is internal, and `SessionDrainTests`, `AnswerCancellationEntryPointTests` and `AnswerCancellationCompactionTests` call it already. `PromptHookTests.replace(_:on:)` now calls it, and has no inline `awaitTerminal == .signalDone` check. No new helper is added. Other private copies (`OriginAndTerminalEventTests.awaitSignalEnd`, `SessionMessagePumpTests.expectSignalEnds`, `SessionMailQueueTests.expectSignalDone`) are in tests that existed before. The review rule drops refactors of those tests, so they did not change.'
+  timestamp: 2026-10-19T22:26:50.465739+00:00
+- actor: claude-code
+  id: 01m5b4cn3hp81ghav21d10yd1n
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/PromptHookTests.swift. `swift test --filter 'FoundationModelsRouterTests.PromptHookTests'`: 14 tests in 1 suite passed, with a fresh compile and no warning or error. The finding is `- [x]`.
+    - next: review
+  timestamp: 2026-10-19T22:26:52.145059+00:00
+- actor: claude-code
+  id: 01m5b4ejq8jmxxta0jdwm120w4
+  text: "### test — green\n- evidence: touched PromptHookTests.swift, then ran `swift test` one time (exit 0, build 13.73 s). Swift Testing: 1911 tests in 236 suites passed, 0 failed. Two more Swift Testing runs: 26 tests and 19 tests passed. XCTest: 0 tests, 0 failures. \n- warnings: only the known mlx \"missing creator\" line. No compiler warning from the changed file.\n- known issues: 9 recorded known issues come from tests that check the failure path of wait helpers (withKnownIssue) and the harness embedding slot. They existed before this change.\n- no format run, no pin change, no commit.\n- next: review."
+  timestamp: 2026-10-19T22:27:55.240456+00:00
 depends_on:
 - 01M5AS7RT8YA6KWDKXHQHWVD8S
 position_column: doing
@@ -68,3 +99,12 @@ The session screens each `userMessage` and `agentMessage` mail with one `PreProm
 - Use `/tdd`. Write the failing tests first, then implement.
 
 #hooks
+
+## Review Findings (2026-10-19 17:23)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/PromptHookTests.swift:430` `reuse/reuse` — The new `replace(_:on:)` test helper sends a `replace(_:with:)` signal and asserts that it ends with `signalDone`. Other test suites already hold the same wait-for-signal-end check, so this is a second copy of a behavior that has one canonical form in the test code. Copies diverge when the signal contract changes. Reuse the existing signal-end helper, or move one shared helper into Tests/FoundationModelsRouterTests/Helpers/ and have the `replace(_:on:)` helper call it. Do not add a fourth copy.
