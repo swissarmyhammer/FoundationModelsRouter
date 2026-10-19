@@ -90,8 +90,9 @@ final class AgentDelegationAdvisor: ToolCallWitness, Sendable {
         let isStart = tool == hint.agentsToolName && op == hint.startAgentOp
         let isEdit = hint.editOps.contains(op)
         let isRead =
-            hint.readOps.contains(op) || hint.readTools.contains(tool)
-            || lastWord.map(hint.readTools.contains) == true
+            !hint.nonReadOps.contains(op)
+            && (hint.readOps.contains(op) || hint.readTools.contains(tool)
+                || lastWord.map(hint.readTools.contains) == true)
         state.withLock { state in
             if isStart { state.startedAgent = true }
             if isEdit { state.edits += 1 }

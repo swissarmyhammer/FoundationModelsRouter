@@ -58,6 +58,11 @@ public struct AgentDelegationHint: Sendable, Equatable {
     /// each op of `code_context`.
     public var readTools: Set<String>
 
+    /// The ops that read no code, for example the housekeeping of
+    /// `code_context`. A call with one of these ops is never a read, also
+    /// when ``readTools`` names its tool.
+    public var nonReadOps: Set<String>
+
     /// The file edit that gives the hint: `1` gives it at the first edit.
     /// `nil` means that no edit count gives the hint.
     public var editsBeforeHint: Int?
@@ -85,6 +90,7 @@ public struct AgentDelegationHint: Sendable, Equatable {
     ///   - editOps: The ops of a file edit.
     ///   - readOps: The ops of a code read.
     ///   - readTools: The tools whose each call is a code read.
+    ///   - nonReadOps: The ops that read no code.
     ///   - editsBeforeHint: The file edit that gives the hint, or `nil`.
     ///   - readsBeforeHint: The code read that gives the hint, or `nil`.
     ///   - codeAgentKeywords: The words that tell a code agent.
@@ -99,6 +105,11 @@ public struct AgentDelegationHint: Sendable, Equatable {
             "read file", "grep files", "search files", "read files", "grep file", "search file",
         ],
         readTools: Set<String> = ["code_context"],
+        nonReadOps: Set<String> = [
+            "detectProjects code_context", "getStatus code_context", "getLspStatus code_context",
+            "rebuildIndex code_context", "clearStatus code_context",
+            "detect projects", "get status", "lsp status", "rebuild index", "clear status",
+        ],
         editsBeforeHint: Int? = 1,
         readsBeforeHint: Int? = 3,
         codeAgentKeywords: [String] = ["code", "coder", "fix", "bug"],
@@ -109,6 +120,7 @@ public struct AgentDelegationHint: Sendable, Equatable {
         self.editOps = editOps
         self.readOps = readOps
         self.readTools = readTools
+        self.nonReadOps = nonReadOps
         self.editsBeforeHint = editsBeforeHint
         self.readsBeforeHint = readsBeforeHint
         self.codeAgentKeywords = codeAgentKeywords

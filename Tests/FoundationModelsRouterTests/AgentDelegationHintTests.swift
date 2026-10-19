@@ -130,6 +130,24 @@ struct AgentDelegationHintTests {
         }
     }
 
+    @Test("a code_context call that reads no code is not a read")
+    func aCodeContextHousekeepingCallIsNotARead() async throws {
+        let fixture = try await Self.makeFixture()
+        try await fixture.endingAfter {
+            for code in [
+                "detectProjects code_context", "getStatus code_context", "getSymbol code_context",
+                "searchSymbol code_context",
+            ] {
+                #expect(
+                    await fixture.call("runCode", #"{"code": "\#(code)", "path": "a.py"}"#) == "ran \(code) a.py")
+            }
+            #expect(
+                await fixture.call("runCode", #"{"code": "grepCode code_context", "path": "a.py"}"#)
+                    == "ran grepCode code_context a.py" + AgentDelegationAdvisor.separator
+                    + Self.hint(naming: "coder"))
+        }
+    }
+
     @Test("a session that started an agent gets no hint")
     func aStartedAgentGivesNoHint() async throws {
         let fixture = try await Self.makeFixture()
