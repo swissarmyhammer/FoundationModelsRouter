@@ -49,7 +49,7 @@ final class MountCallingBackend: LanguageModelSessionBackend {
     }
 
     /// The stub that records the transcript entries of each submission.
-    private let inner = StubSessionBackend()
+    private let inner: StubSessionBackend
 
     /// The composed tool list of the session.
     private let tools: [any Tool]
@@ -72,7 +72,10 @@ final class MountCallingBackend: LanguageModelSessionBackend {
     /// - Parameters:
     ///   - tools: The composed tool list of the session.
     ///   - calls: The calls of the first submission, in order.
-    init(tools: [any Tool], calls: [ScriptedMountCall]) {
+    ///   - entries: The transcript to start from, or `nil` (the default) for
+    ///     an empty transcript.
+    init(tools: [any Tool], calls: [ScriptedMountCall], seededFrom entries: [Transcript.Entry]? = nil) {
+        self.inner = StubSessionBackend(entries: entries)
         self.tools = tools
         self.calls = calls
     }
@@ -129,6 +132,19 @@ final class MountCallingBackend: LanguageModelSessionBackend {
 
     func makeFork() -> any LanguageModelSessionBackend {
         inner.makeFork()
+    }
+
+    /// A fork over `tools`, seeded from `transcript`, whose first submission
+    /// makes the calls of this backend again. The live backend also gives a
+    /// fork the tools of the fork, so a fork of a session runs its tool calls
+    /// through the tools that the session composed for the fork.
+    ///
+    /// - Parameters:
+    ///   - tools: The composed tool list of the fork.
+    ///   - transcript: The transcript to seed the fork from.
+    /// - Returns: The fork.
+    func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
+        MountCallingBackend(tools: tools, calls: calls, seededFrom: Array(transcript))
     }
 
     func transcriptEntries() -> [Transcript.Entry] {

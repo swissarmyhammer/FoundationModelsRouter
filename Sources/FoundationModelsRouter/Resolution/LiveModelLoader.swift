@@ -331,7 +331,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
             model: model, generationQueue: generationQueue, contextWindow: contextWindow,
             instructions: instructions, tools: tools, samplingMode: samplingMode
         ) { sessionModel in
-            LanguageModelSession(model: sessionModel, tools: Self.checkedTools(tools), instructions: instructions)
+            LanguageModelSession(model: sessionModel, tools: SessionToolLayers.checked(tools), instructions: instructions)
         }
     }
 
@@ -364,21 +364,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
             instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
             tools: tools, samplingMode: samplingMode
         ) { sessionModel in
-            LanguageModelSession(model: sessionModel, tools: Self.checkedTools(tools), transcript: transcript)
+            LanguageModelSession(model: sessionModel, tools: SessionToolLayers.checked(tools), transcript: transcript)
         }
-    }
-
-    /// `tools` as the SDK session receives them: each one in a
-    /// ``SessionCheckedTool``, so the no-op check (task ^rw72f4j) and the
-    /// repetition check (task ^dzw15st) of the model call run before each
-    /// tool body. The decorator wraps the tool that the SDK calls, over every
-    /// layer of the session mount, and the backend keeps ``tools`` as its
-    /// caller gave them.
-    ///
-    /// - Parameter tools: The tools of the session.
-    /// - Returns: The checked tools, in the same order.
-    private static func checkedTools(_ tools: [any FoundationModels.Tool]) -> [any FoundationModels.Tool] {
-        tools.map(\.sessionChecked)
     }
 
     /// Generates a complete text response through ``liveSession``.

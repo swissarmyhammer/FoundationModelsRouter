@@ -99,3 +99,25 @@ extension Tool {
         return checked(ToolCallHooking.hooked(self))
     }
 }
+
+/// The one code path that puts the session layers on the tools of a backend.
+///
+/// The live backend gives its SDK session each tool through this code path.
+/// The scripted container of the test support library
+/// (`HookLayeredLLMContainer`) also uses it, so the layers of a scripted test
+/// and of the live loader cannot be different. ``Tool/sessionChecked`` stays
+/// internal to this module.
+package enum SessionToolLayers {
+    /// `tools` as the SDK session receives them: each one in a
+    /// ``SessionCheckedTool`` (``Tool/sessionChecked``), so the no-op check
+    /// (task ^rw72f4j) and the repetition check (task ^dzw15st) of the model
+    /// call run before each tool body, and the hook layer (task ^8d73hct)
+    /// runs beneath the checks. The decorator wraps the tool that the SDK
+    /// calls, over every layer of the session mount.
+    ///
+    /// - Parameter tools: The tools of the session.
+    /// - Returns: The checked tools, in the same order.
+    package static func checked(_ tools: [any Tool]) -> [any Tool] {
+        tools.map(\.sessionChecked)
+    }
+}
