@@ -8,12 +8,12 @@ import ULID
 @testable import FoundationModelsRouter
 
 /// Exercises the ``AgentDelegationHint``: a root session that can start an
-/// agent, and that does a code change by hand, gets one hint in a tool
-/// result to give the change to an agent.
+/// agent, and that does a code change by hand, gets one hint to give the
+/// change to an agent.
 ///
-/// Each test calls the mounted, model-facing tools of a real session
-/// directly, so the suite needs no model output. The scripted
-/// ``BackgroundingLLMContainer`` only vends the backend.
+/// The advisor tests count calls directly. The session tests drive a real
+/// tool loop with the scripted ``ScriptedRoundsModel``: the hint is the
+/// prompt of the next submission of the answer, never text in a tool result.
 @Suite("A root session that does a code change by hand gets one hint to give it to an agent")
 struct AgentDelegationHintTests {
     // MARK: - Helpers
@@ -33,233 +33,281 @@ struct AgentDelegationHintTests {
             of: AgentDelegationHint.agentPlaceholder, with: agent)
     }
 
-    /// A started session and the tools it mounted, by name.
+    /// An advisor over an agents tool that can start `agents`.
+    ///
+    /// - Parameters:
+    ///   - agents: The agents that the tool can start.
+    ///   - hint: The settings of the hint.
+    /// - Returns: The advisor.
+    static func makeAdvisor(
+        agents: [CatalogEntry] = [coder], hint: AgentDelegationHint = AgentDelegationHint()
+    ) -> AgentDelegationAdvisor {
+        AgentDelegationAdvisor(hint: hint, launcher: HintAgentsTool(agents: agents))
+    }
+
+    /// One inner call of a run, as the witness of the mount site reports it.
+    ///
+    /// - Parameters:
+    ///   - tool: The name of the inner tool.
+    ///   - op: The mount op of the call.
+    ///   - arguments: The arguments, or `nil`.
+    /// - Returns: The witnessed call.
+    static func innerCall(_ tool: String, op: String, arguments: GeneratedContent? = nil) -> WitnessedToolCall {
+        WitnessedToolCall(tool: tool, op: op, arguments: arguments, sessionID: ULID.generate())
+    }
+
+    // MARK: - The advisor
+
+    @Test("the third code read makes the hint due, one time")
+    func theThirdReadMakesTheHintDue() async {
+        let advisor = Self.makeAdvisor()
+        advisor.record(tool: "files", op: "read file")
+        advisor.record(tool: "files", op: "read file")
+        #expect(await advisor.takeHint() == nil)
+        advisor.record(tool: "files", op: "read file")
+        #expect(await advisor.takeHint() == Self.hint(naming: "coder"))
+        advisor.record(tool: "files", op: "edit file")
+        #expect(await advisor.takeHint() == nil)
+    }
+
+    @Test("the first file edit makes the hint due")
+    func theFirstEditMakesTheHintDue() async {
+        let advisor = Self.makeAdvisor()
+        advisor.record(tool: "files", op: "edit file")
+        #expect(await advisor.takeHint() == Self.hint(naming: "coder"))
+    }
+
+    @Test("an inner edit and inner reads of a run count through the witness")
+    func innerCallsCountThroughTheWitness() async {
+        let edit = Self.makeAdvisor()
+        edit.toolCallWillBegin(Self.innerCall("edit", op: "edit files"))
+        #expect(await edit.takeHint() == Self.hint(naming: "coder"))
+
+        let reads = Self.makeAdvisor()
+        reads.toolCallWillBegin(Self.innerCall("read", op: "read files"))
+        reads.toolCallWillBegin(Self.innerCall("grep", op: "grep files"))
+        #expect(await reads.takeHint() == nil)
+        reads.toolCallWillBegin(Self.innerCall("getSymbol", op: "getSymbol code_context"))
+        #expect(await reads.takeHint() == Self.hint(naming: "coder"))
+    }
+
+    @Test("a code_context call that reads no code is not a read")
+    func aCodeContextHousekeepingCallIsNotARead() async {
+        let advisor = Self.makeAdvisor()
+        for op in ["detectProjects code_context", "getStatus code_context", "getSymbol code_context"] {
+            advisor.toolCallWillBegin(Self.innerCall(String(op.split(separator: " ")[0]), op: op))
+        }
+        advisor.toolCallWillBegin(Self.innerCall("searchSymbol", op: "searchSymbol code_context"))
+        #expect(await advisor.takeHint() == nil)
+        advisor.toolCallWillBegin(Self.innerCall("grepCode", op: "grepCode code_context"))
+        #expect(await advisor.takeHint() == Self.hint(naming: "coder"))
+    }
+
+    @Test("a start of an agent, outer or inner, stops the hint")
+    func aStartOfAnAgentStopsTheHint() async {
+        let outer = Self.makeAdvisor()
+        outer.record(tool: "agents", op: "start agent")
+        outer.record(tool: "files", op: "edit file")
+        #expect(await outer.takeHint() == nil)
+
+        let inner = Self.makeAdvisor()
+        inner.toolCallWillBegin(
+            Self.innerCall("agents", op: "agents", arguments: GeneratedContent(properties: ["op": "start agent"])))
+        inner.record(tool: "files", op: "edit file")
+        #expect(await inner.takeHint() == nil)
+    }
+
+    @Test("a released hint is due again")
+    func aReleasedHintIsDueAgain() async {
+        let advisor = Self.makeAdvisor()
+        advisor.record(tool: "files", op: "edit file")
+        #expect(await advisor.takeHint() != nil)
+        advisor.releaseHint()
+        #expect(await advisor.takeHint() == Self.hint(naming: "coder"))
+    }
+
+    @Test("the hint names an agent only when exactly one launchable agent is a code agent")
+    func theHintNamesOneCodeAgent() async {
+        for agents in [[Self.researcher], [Self.coder, CatalogEntry(name: "fixer", description: "fixes bugs")]] {
+            let advisor = Self.makeAdvisor(agents: agents)
+            advisor.record(tool: "files", op: "edit file")
+            #expect(await advisor.takeHint() == Self.hint(naming: AgentDelegationHint.unnamedAgent))
+        }
+        let advisor = Self.makeAdvisor(agents: [Self.researcher, Self.coder])
+        advisor.record(tool: "files", op: "edit file")
+        #expect(await advisor.takeHint() == Self.hint(naming: "coder"))
+    }
+
+    @Test("an agents tool that can start no agent gives no hint, and the hint stays due")
+    func noLaunchableAgentGivesNoHint() async {
+        let advisor = Self.makeAdvisor(agents: [])
+        advisor.record(tool: "files", op: "edit file")
+        #expect(await advisor.takeHint() == nil)
+    }
+
+    @Test("the trigger is configurable")
+    func theTriggerIsConfigurable() async {
+        let advisor = Self.makeAdvisor(hint: AgentDelegationHint(editsBeforeHint: nil, readsBeforeHint: 1))
+        advisor.record(tool: "files", op: "edit file")
+        #expect(await advisor.takeHint() == nil)
+        advisor.record(tool: "files", op: "read file")
+        #expect(await advisor.takeHint() == Self.hint(naming: "coder"))
+    }
+
+    @Test("only a root session with settings and an AgentLaunching tool gets an advisor")
+    func onlyARootSessionGetsAnAdvisor() {
+        let tools: [any Tool] = [HintFilesTool(), HintAgentsTool(agents: [Self.coder])]
+        #expect(AgentDelegationAdvisor.make(hint: AgentDelegationHint(), tools: tools, isRoot: true) != nil)
+        #expect(AgentDelegationAdvisor.make(hint: AgentDelegationHint(), tools: tools, isRoot: false) == nil)
+        #expect(AgentDelegationAdvisor.make(hint: nil, tools: tools, isRoot: true) == nil)
+        #expect(AgentDelegationAdvisor.make(hint: AgentDelegationHint(), tools: [HintFilesTool()], isRoot: true) == nil)
+    }
+
+    // MARK: - The session
+
+    /// A session over a ``ScriptedRoundsModel`` and its log.
     struct Fixture {
         /// The started session.
         let started: SessionFixtureLifecycle.Started
 
-        /// The session as its concrete type.
-        var session: RoutedSessionActor {
-            get throws { try #require(started.session as? RoutedSessionActor) }
-        }
+        /// The log of the renders of the model.
+        let log: RenderProbeLog
 
-        /// Calls the mounted tool `name` with `json` as its arguments, the way
-        /// the model calls it. A failure of the call is an issue of the test.
-        ///
-        /// - Parameters:
-        ///   - name: The name of the tool.
-        ///   - json: The arguments, as a JSON object.
-        /// - Returns: The text of the result, or `nil` when the call failed.
-        func call(_ name: String, _ json: String) async -> String? {
-            do {
-                let tool = try #require(try session.tools.first { $0.name == name })
-                return try await Self.call(tool, json)
-            } catch {
-                Issue.record(error)
-                return nil
-            }
-        }
+        /// The session.
+        var session: any RoutedSession { started.session }
 
-        /// Calls `tool` with `json` as its arguments.
-        private static func call<T: Tool>(_ tool: T, _ json: String) async throws -> String {
-            let arguments = try T.Arguments(GeneratedContent(json: json))
-            return try #require(try await tool.call(arguments: arguments) as? String)
-        }
-
-        /// Runs `body`, then ends the session.
-        func endingAfter(_ body: () async throws -> Void) async throws {
-            do {
-                try await body()
-            } catch {
-                await SessionFixtureLifecycle.end(started, opening: [])
-                throw error
-            }
+        /// Ends the session.
+        func end() async {
             await SessionFixtureLifecycle.end(started, opening: [])
         }
     }
 
-    /// Starts a session with a files tool, an agents tool that launches
-    /// `agents`, and a script tool.
+    /// Starts a session whose model plays `rounds`.
     ///
     /// - Parameters:
-    ///   - agents: The agents that the agents tool can start.
-    ///   - hint: The hint settings, or `nil` for none.
+    ///   - rounds: The rounds of tool calls of the model.
     ///   - parentCall: The parent call, or `nil` for a root session.
-    ///   - agentSpawn: The spawn lineage, or `nil`.
     /// - Returns: The fixture.
-    static func makeFixture(
-        agents: [CatalogEntry] = [coder],
-        hint: AgentDelegationHint? = AgentDelegationHint(),
-        parentCall: ToolContext? = nil,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
-    ) async throws -> Fixture {
-        let configuration = SessionConfiguration(
-            tools: [HintFilesTool(), HintAgentsTool(agents: agents), HintScriptTool()],
-            agentSpawn: agentSpawn,
-            parentCall: parentCall,
-            agentDelegationHint: hint)
-        return Fixture(
-            started: try await SessionFixtureLifecycle.start(
-                over: BackgroundingLLMContainer(), configuration: configuration, prefix: "AgentDelegationHintTests"))
+    static func makeFixture(rounds: [[ScriptedRoundCall]], parentCall: ToolContext? = nil) async throws -> Fixture {
+        let log = RenderProbeLog()
+        let started = try await SessionFixtureLifecycle.start(
+            over: LiveBackendContainer(model: ScriptedRoundsModel(log: log, rounds: rounds)),
+            configuration: SessionConfiguration(
+                tools: [HintFilesTool(), HintAgentsTool(agents: [coder]), HintScriptTool()], parentCall: parentCall),
+            prefix: "AgentDelegationHintTests")
+        return Fixture(started: started, log: log)
     }
 
-    // MARK: - Tests
+    /// A call of the files tool with `op`.
+    static func files(_ op: String) -> ScriptedRoundCall {
+        ScriptedRoundCall(name: "files", arguments: #"{"op": "\#(op)", "path": "a.py"}"#)
+    }
 
-    @Test("the third code read gets the hint, and no other read gets it")
-    func theThirdReadGetsTheHint() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            let read = #"{"op": "read file", "path": "a.py"}"#
-            #expect(await fixture.call("files", read) == "read file a.py")
-            #expect(await fixture.call("files", read) == "read file a.py")
-            #expect(
-                await fixture.call("files", read)
-                    == "read file a.py" + AgentDelegationAdvisor.separator + Self.hint(naming: "coder"))
-            #expect(await fixture.call("files", read) == "read file a.py")
-            #expect(await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
+    /// A call of the script tool whose inner call has `code` as its op.
+    static func script(_ code: String) -> ScriptedRoundCall {
+        ScriptedRoundCall(name: "runCode", arguments: #"{"code": "\#(code)", "path": "a.py"}"#)
+    }
+
+    /// The text of each tool output of `transcript`.
+    static func outputTexts(_ transcript: Transcript) -> [String] {
+        transcript.compactMap { entry in
+            guard case .toolOutput(let output) = entry else { return nil }
+            return Summarization.text(of: output.segments)
         }
     }
 
-    @Test("the first file edit gets the hint")
-    func theFirstEditGetsTheHint() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            #expect(
-                await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#)
-                    == "edit file a.py" + AgentDelegationAdvisor.separator + Self.hint(naming: "coder"))
-        }
+    /// The hint prompt of the default settings.
+    static let hintPrompt = RoutedSessionActor.delegationHintPrompt(hint(naming: "coder"))
+
+    @Test("the hint is the prompt of the next submission after the round of the edit, and no tool output holds it")
+    func theHintIsThePromptAfterTheRound() async throws {
+        let fixture = try await Self.makeFixture(rounds: [[Self.files("edit file")], [Self.files("read file")]])
+        defer { await fixture.end() }
+
+        let answer = try await fixture.session.respond(to: "fix the bug")
+
+        #expect(answer == ScriptedRoundsModel.Executor.answerText)
+        let transcript = await fixture.session.transcript
+        #expect(transcript.promptTexts.filter { $0 == Self.hintPrompt }.count == 1)
+        #expect(Self.outputTexts(transcript) == ["edit file a.py", "read file a.py"])
+        #expect(!Self.outputTexts(transcript).contains { $0.contains("Give it to an agent") })
+        let hintRender = try #require(fixture.log.renders.first { $0.promptTexts.last == Self.hintPrompt })
+        #expect(Self.outputTexts(hintRender) == ["edit file a.py"])
     }
 
-    @Test("a code_context call that reads no code is not a read")
-    func aCodeContextHousekeepingCallIsNotARead() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            for code in [
-                "detectProjects code_context", "getStatus code_context", "getSymbol code_context",
-                "searchSymbol code_context",
-            ] {
-                #expect(
-                    await fixture.call("runCode", #"{"code": "\#(code)", "path": "a.py"}"#) == "ran \(code) a.py")
-            }
-            #expect(
-                await fixture.call("runCode", #"{"code": "grepCode code_context", "path": "a.py"}"#)
-                    == "ran grepCode code_context a.py" + AgentDelegationAdvisor.separator
-                    + Self.hint(naming: "coder"))
-        }
+    @Test("an inner edit of a script gives the hint after the round of the script")
+    func anInnerEditGivesTheHint() async throws {
+        let fixture = try await Self.makeFixture(rounds: [[Self.script("edit files")]])
+        defer { await fixture.end() }
+
+        _ = try await fixture.session.respond(to: "fix the bug")
+
+        let transcript = await fixture.session.transcript
+        #expect(transcript.promptTexts.last == Self.hintPrompt)
+        #expect(Self.outputTexts(transcript) == ["ran edit files a.py"])
+    }
+
+    @Test("the hint waits for every result of its round")
+    func theHintWaitsForTheRound() async throws {
+        let fixture = try await Self.makeFixture(rounds: [[Self.files("edit file"), Self.files("read file")]])
+        defer { await fixture.end() }
+
+        _ = try await fixture.session.respond(to: "fix the bug")
+
+        let transcript = await fixture.session.transcript
+        #expect(transcript.promptTexts.last == Self.hintPrompt)
+        #expect(Set(Self.outputTexts(transcript)) == ["edit file a.py", "read file a.py"])
     }
 
     @Test("a session that started an agent gets no hint")
     func aStartedAgentGivesNoHint() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            _ = await fixture.call("agents", #"{"op": "start agent", "name": "coder"}"#)
-            #expect(await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-        }
-    }
+        let fixture = try await Self.makeFixture(rounds: [
+            [ScriptedRoundCall(name: "agents", arguments: #"{"op": "start agent", "name": "coder"}"#)],
+            [Self.files("edit file")],
+        ])
+        defer { await fixture.end() }
 
-    @Test("an inner edit of a script gets the hint on the result of the script")
-    func anInnerEditGetsTheHint() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            #expect(
-                await fixture.call("runCode", #"{"code": "edit files", "path": "a.py"}"#)
-                    == "ran edit files a.py" + AgentDelegationAdvisor.separator + Self.hint(naming: "coder"))
-        }
-    }
+        _ = try await fixture.session.respond(to: "fix the bug")
 
-    @Test("an inner start of an agent of a script stops the hint")
-    func anInnerStartGivesNoHint() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            _ = await fixture.call("runCode", #"{"code": "start agent", "path": "coder"}"#)
-            #expect(await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-        }
-    }
-
-    @Test("the hint names no agent when no one launchable agent is a code agent")
-    func theHintNamesNoAgentWithoutOneCodeAgent() async throws {
-        for agents in [
-            [Self.researcher],
-            [Self.coder, CatalogEntry(name: "fixer", description: "fixes bugs")],
-        ] {
-            let fixture = try await Self.makeFixture(agents: agents)
-            try await fixture.endingAfter {
-                #expect(
-                    await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#)
-                        == "edit file a.py" + AgentDelegationAdvisor.separator
-                        + Self.hint(naming: AgentDelegationHint.unnamedAgent))
-            }
-        }
-    }
-
-    @Test("a session whose agents tool can start no agent gets no hint")
-    func noLaunchableAgentGivesNoHint() async throws {
-        let fixture = try await Self.makeFixture(agents: [])
-        try await fixture.endingAfter {
-            #expect(await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-        }
+        #expect(await !fixture.session.transcript.promptTexts.contains(Self.hintPrompt))
     }
 
     @Test("a child session gets no hint")
     func aChildSessionGetsNoHint() async throws {
-        let root = try await Self.makeFixture(hint: nil)
-        try await root.endingAfter {
-            let parentCall = ToolContext(
-                sessionID: try root.session.id, runPlane: try root.session.runPlane,
-                sink: DroppingEventSink(), tool: "agents", op: "start agent",
-                completionToken: ToolContext.makeCompletionToken(), isCancelled: { false })
-            let child = try await Self.makeFixture(parentCall: parentCall)
-            try await child.endingAfter {
-                #expect(await child.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-            }
-        }
+        let root = try await Self.makeFixture(rounds: [])
+        defer { await root.end() }
+        let parentCall = ToolContext(
+            sessionID: root.session.id, runPlane: root.session.runPlane,
+            sink: DroppingEventSink(), tool: "agents", op: "start agent",
+            completionToken: ToolContext.makeCompletionToken(), isCancelled: { false })
+        let child = try await Self.makeFixture(rounds: [[Self.files("edit file")]], parentCall: parentCall)
+        defer { await child.end() }
+
+        _ = try await child.session.respond(to: "fix the bug")
+
+        #expect(await !child.session.transcript.promptTexts.contains(Self.hintPrompt))
     }
 
-    @Test("a session with a spawn lineage gets no hint")
-    func aSpawnedSessionGetsNoHint() async throws {
-        let fixture = try await Self.makeFixture(
-            agentSpawn: SessionSidecar.AgentSpawn(parentSessionId: ULID.generate(), parentToolCallId: "call-1"))
-        try await fixture.endingAfter {
-            #expect(await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-        }
-    }
-
-    @Test("the trigger is configurable, and no settings give no hint")
-    func theTriggerIsConfigurable() async throws {
-        let readFirst = try await Self.makeFixture(
-            hint: AgentDelegationHint(editsBeforeHint: nil, readsBeforeHint: 1))
-        try await readFirst.endingAfter {
-            #expect(await readFirst.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-            #expect(
-                await readFirst.call("files", #"{"op": "read file", "path": "a.py"}"#)
-                    == "read file a.py" + AgentDelegationAdvisor.separator + Self.hint(naming: "coder"))
-        }
-        let off = try await Self.makeFixture(hint: nil)
-        try await off.endingAfter {
-            #expect(await off.call("files", #"{"op": "edit file", "path": "a.py"}"#) == "edit file a.py")
-        }
-    }
-
-    @Test("the hint is no work: it takes no lease and queues no mail")
+    @Test("the hint is no work: the session ends the answer at no work")
     func theHintIsNoWork() async throws {
-        let fixture = try await Self.makeFixture()
-        try await fixture.endingAfter {
-            _ = await fixture.call("files", #"{"op": "edit file", "path": "a.py"}"#)
-            let session = try fixture.session
-            #expect(session.runPlane.workRegistry.hasWork == false)
-            #expect(await session.pendingMessages().isEmpty)
-            #expect(await session.awaitIdle())
-        }
+        let fixture = try await Self.makeFixture(rounds: [[Self.files("edit file")]])
+        defer { await fixture.end() }
+
+        _ = try await fixture.session.respond(to: "fix the bug")
+
+        #expect(await fixture.session.awaitIdle())
+        #expect(fixture.session.runPlane.workRegistry.hasWork == false)
+        #expect(await fixture.session.pendingMessages().isEmpty)
     }
 }
 
-/// The arguments of each tool of the suite.
+/// The arguments of the files tool of the suite.
 @Generable
 struct HintToolArguments {
     /// The op of the call.
     let op: String
 
-    /// The path, or the agent name of a start.
+    /// The path of the call.
     let path: String
 }
 
@@ -318,10 +366,9 @@ struct HintInnerFilesTool: Tool {
 struct HintScriptWithoutContext: Error {}
 
 /// A script tool: each call makes one inner call through
-/// `ToolContext.mount`, the way `runCode` calls `tools.*`. A `code` of
-/// `start agent` calls an inner agents tool with that op in its arguments.
-/// Each other `code` calls an inner files tool mounted under that op. The
-/// arguments have no `op`, so the outer call is neither a read nor an edit.
+/// `ToolContext.mount`, the way `runCode` calls `tools.*`, mounted under the
+/// op `code`. The arguments have no `op`, so the outer call is neither a
+/// read nor an edit.
 struct HintScriptTool: Tool {
     let name = "runCode"
     let description = "test-only script tool"
@@ -331,17 +378,12 @@ struct HintScriptTool: Tool {
         /// The op of the inner call.
         let code: String
 
-        /// The path, or the agent name of a start.
+        /// The path of the inner call.
         let path: String
     }
 
     func call(arguments: Arguments) async throws -> String {
         guard let context = ToolContext.current else { throw HintScriptWithoutContext() }
-        if arguments.code == "start agent" {
-            let inner = context.mount(HintAgentsTool(agents: []))
-            let content = GeneratedContent(properties: ["op": arguments.code, "name": arguments.path])
-            return "ran " + (try await inner.call(arguments: HintAgentsTool.Arguments(content)))
-        }
         let inner = context.mount(HintInnerFilesTool(), op: arguments.code)
         let content = GeneratedContent(properties: ["path": arguments.path])
         return "ran \(arguments.code) " + (try await inner.call(arguments: HintInnerArguments(content)))

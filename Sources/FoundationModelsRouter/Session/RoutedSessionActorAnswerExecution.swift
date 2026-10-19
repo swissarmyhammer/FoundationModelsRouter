@@ -481,14 +481,23 @@ extension RoutedSessionActor {
                 entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, onEvent: onEvent
             ).finishReason
         } catch {
+            // Taken first, so that each failure clears it. Another stop of
+            // the attempt wins over it, and the hint stays due.
+            let hintStop = takeDelegationHintStop()
             if let noOpStop = takeNoOpToolCallStop() {
+                if hintStop != nil { releaseDelegationHint() }
                 return try await continueAfterNoOpToolCallStop(noOpStop, attempt: attempt, body: body)
             }
             if let yield = takeCompactionYield() {
+                if hintStop != nil { releaseDelegationHint() }
                 return try await continueAfterCompactionYield(yield, attempt: attempt, body: body)
             }
             if let watchStop = takeWatchStop() {
+                if hintStop != nil { releaseDelegationHint() }
                 return try await continueAfterWatchStop(watchStop, attempt: attempt, body: body)
+            }
+            if let hintStop {
+                return try await continueAfterDelegationHint(hintStop, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
             // The retry delivers the user-type mail and the catalog-change
@@ -855,7 +864,9 @@ extension RoutedSessionActor {
             endGenerationStallWatch(id: stallWatchId)
         }
         // The tool-result append boundary of this model call: each tool result
-        // the model reads next goes through it (see ``noteToolResult(_:)``).
+        // the model reads next goes through it (see ``noteToolResult(_:)``),
+        // and then the check of the delegate hint
+        // (``noteDelegationHintDue()``).
         // The no-op check and then the repetition check run before each tool
         // body of the call (see ``checkToolCallForNoOp(toolName:arguments:)``
         // and ``checkToolCallForRepetition(_:)``). The tool hooks of the
@@ -863,7 +874,10 @@ extension RoutedSessionActor {
         // reads the hook session of this session (see ``makeToolCallHooks()``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
-            boundary: ToolResultAppendBoundary { await self.noteToolResult($0) },
+            boundary: ToolResultAppendBoundary {
+                await self.noteToolResult($0)
+                await self.noteDelegationHintDue()
+            },
             checks: ModelCallToolChecks(
                 noOp: ToolCallNoOpCheck { try await self.checkToolCallForNoOp(toolName: $0, arguments: $1) },
                 repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) },

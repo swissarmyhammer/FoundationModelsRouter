@@ -230,7 +230,7 @@ extension RoutedSessionActor {
     ///
     /// Read from a tool body of this session's own open model call, where the
     /// SDK waits in the tool call and writes no transcript.
-    private func currentRoundCalls() -> Transcript.ToolCalls? {
+    func currentRoundCalls() -> Transcript.ToolCalls? {
         for entry in backend.transcriptEntries().reversed()
         where !toolResultWatch.entryIdsBeforeAttempt.contains(entry.id) {
             guard case .toolCalls(let calls) = entry else { continue }

@@ -5,9 +5,12 @@ import Foundation
 ///
 /// A root session that can start an agent, and that has not started one,
 /// can still do a code change by hand: it reads the code, and then edits
-/// it. The hint is one short text that the session appends to a
-/// model-facing tool result at the moment the session does that work. It
-/// tells the model to call the `agents` tool with `start agent`.
+/// it. The hint is one short text that tells the model to call the `agents`
+/// tool with `start agent`. At the end of the round of tool calls in which
+/// the session does that work, the session stops the model call, and the
+/// hint is the prompt of the next submission of the same answer. It is not
+/// text in a tool result, so a model that reads tool results as data still
+/// reads the hint as a message.
 ///
 /// The session gives the hint at most one time. It gives the hint only when
 /// all of these are true:
@@ -24,8 +27,8 @@ import Foundation
 ///   both as an outer call of the model and as an inner call of a run, for
 ///   example a `tools.files.edit` call of a script.
 ///
-/// The hint is advice in a tool result. It never blocks, delays or changes a
-/// call. It takes no lease and queues no mail, so it is not work, and the
+/// The hint is advice. It never blocks or changes a call, and each result
+/// of the round stays in the context. It takes no lease and queues no mail, so it is not work, and the
 /// no-work idle of the session does not change.
 public struct AgentDelegationHint: Sendable, Equatable {
     /// The text in ``template`` that the session replaces with the name of

@@ -203,8 +203,8 @@ extension ToolMounting {
     ///     no cap.
     ///   - tokenCounter: The counter of the owning session.
     ///   - delegationAdvisor: The advisor of the hint to give a code change
-    ///     to an agent, or `nil` for no hint. Its decorator sits over the
-    ///     capping layer, so the cap never cuts the hint.
+    ///     to an agent, or `nil` for no hint. Its decorator counts each call
+    ///     of the model, and changes no output.
     /// - Returns: The model-facing tool.
     static func makeSessionMounted(
         tool: any Tool,

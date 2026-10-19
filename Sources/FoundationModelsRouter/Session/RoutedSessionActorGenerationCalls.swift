@@ -94,6 +94,7 @@ extension RoutedSessionActor {
         toolResultWatch = ToolResultWatch(entryIdsBeforeAttempt: Set(backend.transcriptEntries().map(\.id)))
         noOpToolCallStop = nil
         noOpToolCallRound = NoOpToolCallRound()
+        delegationHintStop = nil
     }
 
     /// Closes the ledger of the attempt.

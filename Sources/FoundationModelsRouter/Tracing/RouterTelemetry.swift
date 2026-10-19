@@ -322,6 +322,10 @@ enum RouterTelemetry {
         /// A model call that stops so that its answer can compact.
         case compactionYield = "CompactionYield"
 
+        /// A model call that stops so that the next prompt gives the delegate
+        /// hint (``AgentDelegationHint``).
+        case delegationHint = "DelegationHint"
+
         /// The resident-model pool.
         case modelPool = "ModelPool"
 

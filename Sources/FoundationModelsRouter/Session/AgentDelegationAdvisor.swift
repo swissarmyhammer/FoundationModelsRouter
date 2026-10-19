@@ -15,9 +15,6 @@ import Synchronization
 ///
 /// The advisor takes no lease and posts no event, so the hint is not work.
 final class AgentDelegationAdvisor: ToolCallWitness, Sendable {
-    /// The text between a tool result and the hint.
-    static let separator = "\n\n"
-
     /// The counts of the session.
     private struct State {
         /// The file edits so far.
@@ -157,6 +154,13 @@ final class AgentDelegationAdvisor: ToolCallWitness, Sendable {
             of: AgentDelegationHint.agentPlaceholder, with: agentName(among: agents))
     }
 
+    /// Gives back a hint that ``takeHint()`` gave and that the session could
+    /// not deliver, because another stop of the model call won. The hint is
+    /// due again.
+    func releaseHint() {
+        state.withLock { $0.gaveHint = false }
+    }
+
     /// The name of the one code agent of `agents`, or
     /// ``AgentDelegationHint/unnamedAgent`` when not exactly one agent has a
     /// word of ``AgentDelegationHint/codeAgentKeywords``.
@@ -175,14 +179,10 @@ final class AgentDelegationAdvisor: ToolCallWitness, Sendable {
 }
 
 /// A `Tool` decorator that counts each outer call of a root session in its
-/// ``AgentDelegationAdvisor``, and appends the hint to the first result that
-/// is due.
-///
-/// It sits over the capping layer, so the cap never cuts the hint, and
-/// beneath the failure delivery, so a failed call gets no hint. A rendered
-/// ``PendingRunEnvelope`` is control-plane data: it gets no hint, and the
-/// hint stays due for the next result. The decorator never changes the
-/// arguments, and adds only the hint to the output.
+/// ``AgentDelegationAdvisor``, before the call runs. It never changes the
+/// arguments or the output: the session gives the hint as a prompt
+/// (``RoutedSessionActor/noteDelegationHintDue()``), not as text in a tool
+/// result.
 struct AgentDelegationHintTool<
     Arguments: ConvertibleFromGeneratedContent
 >: Tool, SubmissionBoundaryTool, ToolDecorator {
@@ -196,16 +196,12 @@ struct AgentDelegationHintTool<
     var parameters: GenerationSchema { wrapped.parameters }
     var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
-    /// Counts the call, calls `wrapped`, and appends the hint when it is due.
+    /// Counts the call, then calls `wrapped`.
     ///
     /// - Throws: Whatever `wrapped` throws, unmodified.
     func call(arguments: Arguments) async throws -> String {
         let content = (arguments as? any ConvertibleToGeneratedContent)?.generatedContent
         advisor.record(tool: name, op: AgentDelegationAdvisor.op(of: content) ?? name)
-        let output = try await wrapped.call(arguments: arguments)
-        guard PendingRunEnvelope.makeDecoded(fromRendered: output) == nil, let hint = await advisor.takeHint() else {
-            return output
-        }
-        return output + AgentDelegationAdvisor.separator + hint
+        return try await wrapped.call(arguments: arguments)
     }
 }

@@ -203,6 +203,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // tool's binding-only decorator of the Extras tool hosting, binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
+        let delegationAdvisor = AgentDelegationAdvisor.make(
+            hint: agentDelegationHint, tools: tools, isRoot: parentCall == nil && agentSpawn == nil)
         let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
             tools,
             sessionID: sessionId,
@@ -211,8 +213,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             inlineSettleGrace: inlineSettleGrace,
             userPresence: userPresence,
             parentCall: parentCall,
-            delegationAdvisor: AgentDelegationAdvisor.make(
-                hint: agentDelegationHint, tools: tools, isRoot: parentCall == nil && agentSpawn == nil)
+            delegationAdvisor: delegationAdvisor
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -225,7 +226,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let backend = container.makeSession(
             instructions: instructions, tools: instancedTools, samplingMode: samplingMode)
 
-        return makeRoutedSessionActor(
+        let session = makeRoutedSessionActor(
             profile: owningProfile,
             routerId: routerId,
             id: sessionId,
@@ -289,6 +290,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // The hooks of the router, with the lineage of this session.
             hooks: sessionHooks
         )
+        // Before the session is returned, so no answer runs yet.
+        session.bind(delegationAdvisor: delegationAdvisor)
+        return session
     }
 
     /// Mints one session's fresh outbox and run plane and instances `tools`

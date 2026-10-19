@@ -702,6 +702,16 @@ actor RoutedSessionActor: RoutedSession {
     /// (``noteRealToolResult(_:)``).
     nonisolated let noOpRoundChanges = ChangeSignal()
 
+    /// The advisor of the hint to give a code change to an agent, or `nil`
+    /// when the session gets no hint. The vending site binds it before it
+    /// returns the session (``bind(delegationAdvisor:)``). See
+    /// ``AgentDelegationAdvisor``.
+    nonisolated let delegationAdvisorSlot = Mutex<AgentDelegationAdvisor?>(nil)
+
+    /// The stop marker of the model call in flight when the delegate hint
+    /// stopped it, else `nil`. See ``DelegationHintStop``.
+    var delegationHintStop: DelegationHintStop?
+
     /// How many answers that run mail alone started also started a new
     /// background run, since the last answer that delivered user-type mail.
     /// The pump counts it, and holds new mail when it reaches
