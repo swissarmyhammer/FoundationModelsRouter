@@ -201,6 +201,10 @@ enum MailOnlyAnswerFixtures {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends one ``Backend`` for the session a test makes, with the composed

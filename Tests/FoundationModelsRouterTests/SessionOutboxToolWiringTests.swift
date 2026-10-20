@@ -332,6 +332,10 @@ struct SessionOutboxToolWiringTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends one retained ``ToolInvokingBackend`` per session, handing it

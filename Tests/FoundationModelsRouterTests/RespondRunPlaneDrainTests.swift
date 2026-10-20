@@ -123,6 +123,10 @@ struct RespondRunPlaneDrainTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Tracks fake runs on a run plane and holds each one running until

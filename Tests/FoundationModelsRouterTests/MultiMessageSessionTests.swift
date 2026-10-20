@@ -75,6 +75,11 @@ struct MultiMessageSessionTests {
             backend.usageTokenCounts()
         }
 
+        /// Proxies ``LanguageModelSessionBackend/cachedInputTokenCount()``.
+        func cachedInputTokenCount() -> Int? {
+            backend.cachedInputTokenCount()
+        }
+
         /// Forks the wrapped stub and wraps the result the same way, recording
         /// it into ``lastFork`` so a test holding this (parent) instance can
         /// reach the child.

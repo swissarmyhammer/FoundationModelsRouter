@@ -213,6 +213,10 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     func usageTokenCounts() -> (input: Int, output: Int)? {
         inner.usageTokenCounts()
     }
+
+    func cachedInputTokenCount() -> Int? {
+        inner.cachedInputTokenCount()
+    }
 }
 
 /// Vends one retained ``BackgroundingBackend`` per session, handing it the

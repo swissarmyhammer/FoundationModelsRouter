@@ -94,6 +94,11 @@ struct GuidedGenerationTests {
             backend.usageTokenCounts()
         }
 
+        /// Proxies ``LanguageModelSessionBackend/cachedInputTokenCount()``.
+        func cachedInputTokenCount() -> Int? {
+            backend.cachedInputTokenCount()
+        }
+
         func makeFork() -> any LanguageModelSessionBackend {
             // `StubSessionBackend.makeFork()` always concretely returns another
             // `StubSessionBackend` (see its doc comment); preserve that identity

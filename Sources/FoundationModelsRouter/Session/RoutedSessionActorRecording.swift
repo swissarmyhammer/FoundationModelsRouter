@@ -504,6 +504,8 @@ extension RoutedSessionActor {
     ///   - since: The start instant of the submission used to stamp `ms`, or `nil`.
     ///   - entry: The structural payload that mirrors `Transcript.Entry`, or `nil`.
     ///   - tokensIn: The input token delta of the submission, or `nil`.
+    ///   - tokensCached: The part of `tokensIn` the prompt cache reused, or
+    ///     `nil`. Only the `.generationCall` kind carries one.
     ///   - tokensOut: The output token delta of the submission, or `nil`.
     ///   - agentSpawn: The spawn context to stamp, or `nil`. Only the
     ///     `.session` kind carries one.
@@ -515,6 +517,7 @@ extension RoutedSessionActor {
         since: Date? = nil,
         entry: TranscriptEntryPayload? = nil,
         tokensIn: Int? = nil,
+        tokensCached: Int? = nil,
         tokensOut: Int? = nil,
         agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> TranscriptEvent.Partial {
@@ -528,6 +531,7 @@ extension RoutedSessionActor {
             grammar: grammar?.source,
             text: text,
             tokensIn: tokensIn,
+            tokensCached: tokensCached,
             tokensOut: tokensOut,
             ms: since.map { Int(Date().timeIntervalSince($0) * Self.millisecondsPerSecond) },
             entry: entry,

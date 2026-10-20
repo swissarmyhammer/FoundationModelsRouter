@@ -11,6 +11,10 @@ struct MeteredGenerationCall: Sendable, Hashable {
 
     /// The output token count the call reports.
     let tokensOut: Int
+
+    /// The part of ``tokensIn`` the call reports its prompt cache reused, as
+    /// the MLX executor reports its `cachedTokenCount`.
+    var tokensCached: Int = 0
 }
 
 /// A deterministic `LanguageModel` that makes one generation call for each
@@ -139,7 +143,7 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
                 .response(
                     entryID: responseEntryID,
                     action: .updateUsage(
-                        input: .init(totalTokenCount: call.tokensIn, cachedTokenCount: 0),
+                        input: .init(totalTokenCount: call.tokensIn, cachedTokenCount: call.tokensCached),
                         output: .init(totalTokenCount: call.tokensOut, reasoningTokenCount: 0))))
         }
     }

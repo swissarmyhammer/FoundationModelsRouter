@@ -21,6 +21,11 @@ public struct GenerationCallUsage: Sendable, Equatable {
     /// The tokens the call fed the model: the whole context of the call.
     public let tokensIn: Int
 
+    /// The part of ``tokensIn`` that the prompt cache of the backend reused,
+    /// or `nil` when the backend reports no cache count. The tokens the call
+    /// prefilled are ``tokensIn`` minus this count.
+    public let tokensCached: Int?
+
     /// The tokens the call generated.
     public let tokensOut: Int
 
@@ -52,14 +57,18 @@ public struct GenerationCallUsage: Sendable, Equatable {
     ///   - entryKind: What the call left in the transcript.
     ///   - contextFill: The measured context after the call, as a fraction of
     ///     the working context.
+    ///   - tokensCached: The part of `tokensIn` the prompt cache reused, or
+    ///     `nil` (the default) when the backend reports no cache count.
     public init(
         tokensIn: Int,
         tokensOut: Int,
         finishReason: FinishReason,
         entryKind: GenerationCallEntryKind,
-        contextFill: Double
+        contextFill: Double,
+        tokensCached: Int? = nil
     ) {
         self.tokensIn = tokensIn
+        self.tokensCached = tokensCached
         self.tokensOut = tokensOut
         self.finishReason = finishReason
         self.entryKind = entryKind
@@ -70,8 +79,14 @@ public struct GenerationCallUsage: Sendable, Equatable {
 extension GenerationCallUsage: CustomStringConvertible {
     /// One line that names every field, for the run journal.
     public var description: String {
-        "fed \(tokensIn) tokens, generated \(tokensOut) tokens, \(stopDescription), "
+        "fed \(tokensIn) tokens\(cachedDescription), generated \(tokensOut) tokens, \(stopDescription), "
             + "left \(entryDescription), context \(contextTokens) tokens"
+    }
+
+    /// The words for ``tokensCached``, or nothing when the backend reports no
+    /// cache count.
+    private var cachedDescription: String {
+        tokensCached.map { " (\($0) cached)" } ?? ""
     }
 
     /// The words for ``finishReason``.

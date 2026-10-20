@@ -40,22 +40,31 @@ struct RouterMetrics: Sendable {
         explicitFactory ?? MetricsSystem.factory
     }
 
-    /// Records one generation call: its tokens in and out, and its output
-    /// rate.
+    /// Records one generation call: its tokens in, cached and out, and its
+    /// output rate.
     ///
     /// A call with no duration records no rate, because the rate of a call
-    /// that took no time has no value.
+    /// that took no time has no value. A call whose backend reports no cache
+    /// count records no cached tokens.
     ///
     /// - Parameters:
     ///   - tokensIn: The tokens the call fed the model.
+    ///   - tokensCached: The part of `tokensIn` the prompt cache reused, or
+    ///     `nil` when the backend reports no cache count.
     ///   - tokensOut: The tokens the call generated.
     ///   - duration: How long the call ran.
     ///   - model: The model of the call.
     ///   - slot: The slot of the model.
-    func recordGenerationCall(tokensIn: Int, tokensOut: Int, duration: Duration, model: ModelRef, slot: ModelSlot) {
+    func recordGenerationCall(
+        tokensIn: Int, tokensCached: Int?, tokensOut: Int, duration: Duration, model: ModelRef, slot: ModelSlot
+    ) {
         let dimensions = Self.dimensions(model: model, slot: slot)
         Counter(label: RouterTelemetry.MetricName.generationTokensIn, dimensions: dimensions, factory: factory)
             .increment(by: tokensIn)
+        if let tokensCached {
+            Counter(label: RouterTelemetry.MetricName.generationTokensCached, dimensions: dimensions, factory: factory)
+                .increment(by: tokensCached)
+        }
         Counter(label: RouterTelemetry.MetricName.generationTokensOut, dimensions: dimensions, factory: factory)
             .increment(by: tokensOut)
         let seconds = duration.seconds

@@ -833,6 +833,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         return (usage.input.totalTokenCount, usage.output.totalTokenCount)
     }
 
+    /// Returns the cumulative input tokens that the prompt cache of the
+    /// executor reused for ``liveSession``. Call it only where
+    /// ``LanguageModelSessionBackend/cachedInputTokenCount()`` allows.
+    func cachedInputTokenCount() -> Int? {
+        liveSession.usage.input.cachedTokenCount
+    }
+
     /// Returns the output token count of the last generation call of the most
     /// recent generating method. Call it only from the pump of the owning
     /// session.

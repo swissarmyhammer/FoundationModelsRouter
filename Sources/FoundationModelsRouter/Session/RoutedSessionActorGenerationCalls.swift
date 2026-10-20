@@ -11,11 +11,19 @@ struct GenerationCallLedger {
     /// The cumulative usage of the backend when the attempt started.
     let usageBefore: (input: Int, output: Int)
 
+    /// The cumulative cached input count of the backend when the attempt
+    /// started, or `nil` for a backend that reports no cache count
+    /// (``LanguageModelSessionBackend/cachedInputTokenCount()``).
+    var cachedBefore: Int? = nil
+
     /// The token ceiling the attempt gave the backend, or `nil`.
     let responseTokenCeiling: Int?
 
     /// The usage of the calls reported so far, summed.
     var reported: (input: Int, output: Int) = (0, 0)
+
+    /// The cached input tokens of the calls reported so far, summed.
+    var reportedCached = 0
 
     /// The usage of the newest call that ended, or `nil` before one ended.
     ///
@@ -42,6 +50,19 @@ struct GenerationCallLedger {
         let output = usageAfter.output - usageBefore.output - reported.output
         guard input > 0 || output > 0 else { return nil }
         return (input, output)
+    }
+
+    /// The cached input tokens of the call that ended since the last report.
+    ///
+    /// - Parameters:
+    ///   - cachedAfter: The cumulative cached input count of the backend now.
+    ///   - input: The fed tokens of that call. The cached count is never
+    ///     more than them.
+    /// - Returns: The cached part of the fed tokens of that call, or `nil`
+    ///   when the backend reports no cache count.
+    func cachedOfEndedCall(cachedAfter: Int?, input: Int) -> Int? {
+        guard let cachedBefore, let cachedAfter else { return nil }
+        return min(max(cachedAfter - cachedBefore - reportedCached, 0), input)
     }
 }
 
@@ -89,7 +110,9 @@ extension RoutedSessionActor {
     ///     backend, or `nil`.
     func openGenerationCallLedger(usageBefore: (input: Int, output: Int)?, responseTokenCeiling: Int?) {
         generationCallLedger = usageBefore.map {
-            GenerationCallLedger(usageBefore: $0, responseTokenCeiling: responseTokenCeiling)
+            GenerationCallLedger(
+                usageBefore: $0, cachedBefore: backend.cachedInputTokenCount(),
+                responseTokenCeiling: responseTokenCeiling)
         }
         toolResultWatch = ToolResultWatch(entryIdsBeforeAttempt: Set(backend.transcriptEntries().map(\.id)))
         noOpToolCallStop = nil
@@ -103,9 +126,9 @@ extension RoutedSessionActor {
     }
 
     /// Takes the usage of the generation call that ended since the last
-    /// report, adds it to the ledger, and records its metrics: its tokens in
-    /// and out, and its output rate over its duration
-    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensOut:duration:model:slot:)``).
+    /// report, adds it to the ledger, and records its metrics: its tokens in,
+    /// cached and out, and its output rate over its duration
+    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:duration:model:slot:)``).
     ///
     /// Reads ``backend`` from a task of the running submission at a
     /// tool-call open. The model waits in the tool at that moment, so no
@@ -122,11 +145,12 @@ extension RoutedSessionActor {
         else {
             return nil
         }
-        noteEndedCall(call, backendUsage: call, of: ledger)
+        let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
+        noteEndedCall(call, cached: cached, backendUsage: call, of: ledger)
         let finishReason = FinishReason(
             submissionEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
             lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
-        return generationCallUsage(of: call, finishReason: finishReason, entryKind: entryKind)
+        return generationCallUsage(of: call, cached: cached, finishReason: finishReason, entryKind: entryKind)
     }
 
     /// Takes the usage of the generation call that a watch stop cancelled
@@ -164,8 +188,9 @@ extension RoutedSessionActor {
             input: reported.input > 0 ? reported.input : counted.input,
             output: reported.output > 0 ? reported.output : counted.output
         )
-        noteEndedCall(call, backendUsage: reported, of: ledger)
-        let usage = generationCallUsage(of: call, finishReason: finishReason, entryKind: entryKind)
+        let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
+        noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
+        let usage = generationCallUsage(of: call, cached: cached, finishReason: finishReason, entryKind: entryKind)
         return (usage, (input: call.input - reported.input, output: call.output - reported.output))
     }
 
@@ -175,21 +200,25 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - call: The fed and generated tokens of the call, as the session
     ///     reports them.
+    ///   - cached: The cached part of the fed tokens of the call, or `nil`
+    ///     when the backend reports no cache count. The ledger adds it.
     ///   - backendUsage: The part of the cumulative usage of the backend that
     ///     the call accounts for. The ledger adds it, so the next call starts
     ///     where the backend count is.
     ///   - ledger: The ledger of the attempt, as it was before the call ended.
     private func noteEndedCall(
-        _ call: (input: Int, output: Int), backendUsage: (input: Int, output: Int), of ledger: GenerationCallLedger
+        _ call: (input: Int, output: Int), cached: Int?, backendUsage: (input: Int, output: Int),
+        of ledger: GenerationCallLedger
     ) {
         let endedAt = ContinuousClock.now
         sessionMetrics.recordGenerationCall(
-            tokensIn: call.input, tokensOut: call.output, duration: ledger.callStartedAt.duration(to: endedAt),
-            model: model, slot: slot)
+            tokensIn: call.input, tokensCached: cached, tokensOut: call.output,
+            duration: ledger.callStartedAt.duration(to: endedAt), model: model, slot: slot)
         generationCallLedger?.callStartedAt = endedAt
         generationCallLedger?.reported = (
             ledger.reported.input + backendUsage.input, ledger.reported.output + backendUsage.output
         )
+        generationCallLedger?.reportedCached = ledger.reportedCached + (cached ?? 0)
         generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
     }
@@ -198,11 +227,13 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - call: The fed and generated tokens of the call.
+    ///   - cached: The cached part of the fed tokens, or `nil`.
     ///   - finishReason: Why the call stopped.
     ///   - entryKind: What the call left in the transcript.
     /// - Returns: The report, with the fill of the render after the call.
     private func generationCallUsage(
-        of call: (input: Int, output: Int), finishReason: FinishReason, entryKind: GenerationCallEntryKind
+        of call: (input: Int, output: Int), cached: Int?, finishReason: FinishReason,
+        entryKind: GenerationCallEntryKind
     ) -> GenerationCallUsage {
         GenerationCallUsage(
             tokensIn: call.input,
@@ -210,7 +241,8 @@ extension RoutedSessionActor {
             finishReason: finishReason,
             entryKind: entryKind,
             contextFill: ContextUsageState.measured(input: call.input, output: call.output)
-                .fill(contextTokens: contextTokens))
+                .fill(contextTokens: contextTokens),
+            tokensCached: cached)
     }
 
     /// Writes `usage` to the run journal and delivers it live.
@@ -220,7 +252,7 @@ extension RoutedSessionActor {
         await append(
             partial: makePartialEvent(
                 kind: .generationCall, grammar: grammar, text: usage.description,
-                tokensIn: usage.tokensIn, tokensOut: usage.tokensOut))
+                tokensIn: usage.tokensIn, tokensCached: usage.tokensCached, tokensOut: usage.tokensOut))
         deliverLive(.generationCall(usage))
     }
 

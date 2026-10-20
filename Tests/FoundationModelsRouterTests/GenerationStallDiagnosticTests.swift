@@ -103,6 +103,10 @@ struct GenerationStallDiagnosticTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends one retained ``StallingBackend`` per session.
@@ -269,6 +273,10 @@ struct GenerationStallDiagnosticTests {
 
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
+        }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
         }
     }
 

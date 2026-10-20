@@ -154,6 +154,10 @@ final class MountCallingBackend: LanguageModelSessionBackend {
     func usageTokenCounts() -> (input: Int, output: Int)? {
         inner.usageTokenCounts()
     }
+
+    func cachedInputTokenCount() -> Int? {
+        inner.cachedInputTokenCount()
+    }
 }
 
 /// Vends one ``MountCallingBackend`` for each session, over the composed

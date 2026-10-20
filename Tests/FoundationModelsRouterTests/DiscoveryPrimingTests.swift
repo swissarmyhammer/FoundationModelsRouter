@@ -211,6 +211,10 @@ struct DiscoveryPrimingTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends ``PrimingObservingBackend``s over one shared ``PrimingLog``.

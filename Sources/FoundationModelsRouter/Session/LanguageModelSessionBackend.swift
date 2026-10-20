@@ -172,6 +172,17 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// are running totals since the session began, not the delta of one submission.
     func usageTokenCounts() -> (input: Int, output: Int)?
 
+    /// The part of the cumulative input count of ``usageTokenCounts()`` that
+    /// the prompt cache of the backend reused, or `nil` when the backend
+    /// reports no cache count.
+    ///
+    /// Call this only where ``usageTokenCounts()`` allows. The count is a
+    /// running total since the session began, like the input count.
+    ///
+    /// There is a default implementation that gives `nil`. A backend that
+    /// wraps another forwards it.
+    func cachedInputTokenCount() -> Int?
+
     /// The output token count of the last generation call that the most
     /// recent generating method of this backend made, or `nil` when the
     /// backend cannot tell.
@@ -283,6 +294,12 @@ extension LanguageModelSessionBackend {
     /// Default ``lastGenerationCallOutputTokenCount()``: `nil`, because a
     /// backend that does not override it has no count of one call.
     public func lastGenerationCallOutputTokenCount() -> Int? {
+        nil
+    }
+
+    /// Default ``cachedInputTokenCount()``: `nil`, because a backend that
+    /// does not say otherwise reports no cache count.
+    public func cachedInputTokenCount() -> Int? {
         nil
     }
 

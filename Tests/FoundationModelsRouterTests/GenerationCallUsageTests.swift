@@ -193,9 +193,50 @@ struct GenerationCallUsageTests {
             firstRecord.text
                 == GenerationCallUsage(
                     tokensIn: 100, tokensOut: 30, finishReason: .completed, entryKind: .toolCall,
-                    contextFill: Self.fill(afterContextOf: 130)
+                    contextFill: Self.fill(afterContextOf: 130), tokensCached: 0
                 ).description)
-        #expect(firstRecord.text == "fed 100 tokens, generated 30 tokens, ended by the model, left a tool call, context 130 tokens")
+        #expect(
+            firstRecord.text
+                == "fed 100 tokens (0 cached), generated 30 tokens, ended by the model, left a tool call, context 130 tokens")
+    }
+
+    // MARK: - The prompt cache
+
+    /// Three calls of one tool loop whose prompt cache reuses the render of
+    /// the call before: the first call reuses nothing, each later call reuses
+    /// the whole context of the call before it.
+    private static let cachedCalls = [
+        MeteredGenerationCall(tokensIn: 100, tokensOut: 30, tokensCached: 0),
+        MeteredGenerationCall(tokensIn: 200, tokensOut: 50, tokensCached: 130),
+        MeteredGenerationCall(tokensIn: 300, tokensOut: 70, tokensCached: 250),
+    ]
+
+    @Test("each call reports the fed tokens its prompt cache reused, live and in the run journal")
+    func eachCallReportsItsCachedTokens() async throws {
+        let fixture = try await Self.makeFixture(calls: Self.cachedCalls)
+        defer { await fixture.end() }
+
+        let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
+
+        let calls = Self.generationCalls(in: events)
+        #expect(calls.map(\.tokensIn) == [100, 200, 300])
+        #expect(calls.map(\.tokensCached) == [0, 130, 250])
+        let journal = await fixture.recorder.events
+        let records = journal.filter { $0.kind == .generationCall }
+        #expect(records.map(\.tokensCached) == [0, 130, 250])
+        #expect(
+            records.map(\.text)[1]
+                == "fed 200 tokens (130 cached), generated 50 tokens, ended by the model, left a tool call, context 250 tokens")
+        #expect(journal.filter { $0.kind != .generationCall }.allSatisfy { $0.tokensCached == nil })
+    }
+
+    @Test("the description of a call whose backend reports no cache count names no cached tokens")
+    func descriptionWithoutACacheCount() {
+        let usage = GenerationCallUsage(
+            tokensIn: 12, tokensOut: 4, finishReason: .completed, entryKind: .text, contextFill: 0.5)
+
+        #expect(usage.tokensCached == nil)
+        #expect(usage.description.hasPrefix("fed 12 tokens, generated 4 tokens"))
     }
 
     @Test("the last call's journal event follows the response entry the call left")

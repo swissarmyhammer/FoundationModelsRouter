@@ -157,6 +157,10 @@ struct SubmissionBoundaryToolTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends one retained ``OrderRecordingBackend`` per session, sharing the

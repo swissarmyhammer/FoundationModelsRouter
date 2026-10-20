@@ -119,6 +119,10 @@ struct RoutedSessionToolContextBindingTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends one retained ``ContextProbingBackend`` per session.
@@ -285,6 +289,10 @@ struct RoutedSessionToolContextBindingTests {
 
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
+        }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
         }
     }
 

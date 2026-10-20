@@ -8,8 +8,8 @@ import Foundation
 /// total order. `ts` is the wall-clock instant. Each event encodes as one
 /// self-contained JSON object. Schema v2 is additive over v1: `entry`
 /// decodes as `nil` when absent, and ``Kind/toolCall`` still decodes.
-/// ``agentSpawn`` is a later optional key within v2 and decodes as `nil`
-/// when absent by the same rule.
+/// ``agentSpawn`` and ``tokensCached`` are later optional keys within v2
+/// and decode as `nil` when absent by the same rule.
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
@@ -42,7 +42,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// One generation call of a submission ended (see
         /// ``SessionEvent/generationCall(_:)``). Router-only.
         /// ``TranscriptEvent/tokensIn`` and ``TranscriptEvent/tokensOut`` hold
-        /// the counts of that one call, and ``TranscriptEvent/text`` holds the
+        /// the counts of that one call, ``TranscriptEvent/tokensCached`` holds
+        /// the part of its fed tokens that the prompt cache reused when the
+        /// backend reports one, and ``TranscriptEvent/text`` holds the
         /// ``GenerationCallUsage/description``. A reader of the usage of the submission
         /// stamp skips it: the stamp stays on the last `.response` event.
         case generationCall
@@ -120,6 +122,10 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let text: String?
     /// Prompt/input tokens metered for this event, when applicable.
     public let tokensIn: Int?
+    /// The part of ``tokensIn`` the prompt cache of the backend reused. Set
+    /// only on a ``Kind/generationCall`` event whose backend reports a cache
+    /// count; `nil` otherwise and on a recording made before this key existed.
+    public let tokensCached: Int?
     /// Completion/output tokens metered for this event, when applicable.
     public let tokensOut: Int?
     /// Wall-clock duration of the event in milliseconds, when applicable.
@@ -184,6 +190,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         grammar: String? = nil,
         text: String? = nil,
         tokensIn: Int? = nil,
+        tokensCached: Int? = nil,
         tokensOut: Int? = nil,
         ms: Int? = nil,
         entry: TranscriptEntryPayload? = nil,
@@ -200,6 +207,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         self.grammar = grammar
         self.text = text
         self.tokensIn = tokensIn
+        self.tokensCached = tokensCached
         self.tokensOut = tokensOut
         self.ms = ms
         self.entry = entry
@@ -227,6 +235,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         public let text: String?
         /// Input tokens metered, or `nil`.
         public let tokensIn: Int?
+        /// The part of ``tokensIn`` the prompt cache reused, or `nil`; see
+        /// ``TranscriptEvent/tokensCached``.
+        public let tokensCached: Int?
         /// Output tokens metered, or `nil`.
         public let tokensOut: Int?
         /// Duration in milliseconds, or `nil`.
@@ -249,6 +260,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             grammar: String? = nil,
             text: String? = nil,
             tokensIn: Int? = nil,
+            tokensCached: Int? = nil,
             tokensOut: Int? = nil,
             ms: Int? = nil,
             entry: TranscriptEntryPayload? = nil,
@@ -263,6 +275,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.grammar = grammar
             self.text = text
             self.tokensIn = tokensIn
+            self.tokensCached = tokensCached
             self.tokensOut = tokensOut
             self.ms = ms
             self.entry = entry
@@ -307,6 +320,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 grammar: grammar,
                 text: text ?? self.text,
                 tokensIn: tokensIn ?? self.tokensIn,
+                tokensCached: tokensCached,
                 tokensOut: tokensOut ?? self.tokensOut,
                 ms: ms,
                 entry: entry ?? self.entry,
@@ -330,6 +344,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 grammar: grammar,
                 text: text,
                 tokensIn: tokensIn,
+                tokensCached: tokensCached,
                 tokensOut: tokensOut,
                 ms: ms,
                 entry: entry,

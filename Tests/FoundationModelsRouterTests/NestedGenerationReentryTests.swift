@@ -337,6 +337,10 @@ struct NestedGenerationReentryTests {
         func usageTokenCounts() -> (input: Int, output: Int)? {
             inner.usageTokenCounts()
         }
+
+        func cachedInputTokenCount() -> Int? {
+            inner.cachedInputTokenCount()
+        }
     }
 
     /// Vends one ``ToolCallingBackend`` per session, handing it the composed

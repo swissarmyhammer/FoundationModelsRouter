@@ -580,6 +580,12 @@ enum RouterTelemetry {
         /// The counter of the tokens that each generation call fed the model.
         static let generationTokensIn = prefix + "generation.tokens.in"
 
+        /// The counter of the part of the fed tokens of each generation call
+        /// that the prompt cache of the backend reused. The tokens the calls
+        /// prefilled are ``generationTokensIn`` minus this count. A backend
+        /// that reports no cache count adds nothing.
+        static let generationTokensCached = prefix + "generation.tokens.cached"
+
         /// The counter of the tokens that each generation call generated.
         static let generationTokensOut = prefix + "generation.tokens.out"
 
@@ -619,9 +625,9 @@ enum RouterTelemetry {
 
         /// Every name above.
         static let allNames = [
-            generationTokensIn, generationTokensOut, generationTokensPerSecond, timeToFirstToken, loadDuration,
-            residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount, mailQueuePauseDuration,
-            mailCancelled,
+            generationTokensIn, generationTokensCached, generationTokensOut, generationTokensPerSecond,
+            timeToFirstToken, loadDuration, residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount,
+            mailQueuePauseDuration, mailCancelled,
         ]
     }
 

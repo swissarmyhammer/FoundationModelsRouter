@@ -66,4 +66,9 @@ final class HeldSessionBackend: LanguageModelSessionBackend {
     func usageTokenCounts() -> (input: Int, output: Int)? {
         inner.usageTokenCounts()
     }
+
+    /// The cached input token count of the inner backend.
+    func cachedInputTokenCount() -> Int? {
+        inner.cachedInputTokenCount()
+    }
 }

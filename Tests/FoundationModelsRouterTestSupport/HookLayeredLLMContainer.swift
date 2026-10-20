@@ -238,6 +238,11 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
         wrapped.usageTokenCounts()
     }
 
+    /// The cached input token count of the wrapped backend.
+    func cachedInputTokenCount() -> Int? {
+        wrapped.cachedInputTokenCount()
+    }
+
     /// The output token count of the last generation call of the wrapped
     /// backend.
     func lastGenerationCallOutputTokenCount() -> Int? {

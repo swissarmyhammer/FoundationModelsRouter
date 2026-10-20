@@ -26,10 +26,13 @@ struct RouterMetricsTests {
 
     /// The scripted usage of the three generation calls of the metered answer.
     private static let meteredCalls = [
-        MeteredGenerationCall(tokensIn: 100, tokensOut: 30),
-        MeteredGenerationCall(tokensIn: 200, tokensOut: 50),
-        MeteredGenerationCall(tokensIn: 300, tokensOut: 70),
+        MeteredGenerationCall(tokensIn: 100, tokensOut: 30, tokensCached: 0),
+        MeteredGenerationCall(tokensIn: 200, tokensOut: 50, tokensCached: 130),
+        MeteredGenerationCall(tokensIn: 300, tokensOut: 70, tokensCached: 250),
     ]
+
+    /// The sum of the cached fed tokens of ``meteredCalls``: 0 + 130 + 250.
+    private static let meteredTokensCached: Int64 = 380
 
     /// The sum of the fed tokens of ``meteredCalls``: 100 + 200 + 300.
     private static let meteredTokensIn: Int64 = 600
@@ -149,7 +152,7 @@ struct RouterMetricsTests {
 
     // MARK: - Generation calls
 
-    @Test("each generation call adds its tokens in and out, and records its tokens per second and the time to first token")
+    @Test("each generation call adds its tokens in, cached and out, and records its tokens per second and the time to first token")
     func generationCallsRecordTokensAndTimes() async throws {
         let metrics = try await TelemetryCapture.run(forbidding: [Self.meteredPrompt]) { context in
             let fixture = try await MeteredToolLoopSessionFixture.make(
@@ -166,6 +169,8 @@ struct RouterMetricsTests {
         let tokensOut = try factory.expectCounter("FoundationModelsRouter.generation.tokens.out", dimensions)
         #expect(tokensIn.totalValue == Self.meteredTokensIn)
         #expect(tokensOut.totalValue == Self.meteredTokensOut)
+        let tokensCached = try factory.expectCounter("FoundationModelsRouter.generation.tokens.cached", dimensions)
+        #expect(tokensCached.totalValue == Self.meteredTokensCached)
         let tokensPerSecond = try factory.expectRecorder(
             "FoundationModelsRouter.generation.tokens_per_second", dimensions)
         #expect(tokensPerSecond.values.count == Self.meteredCalls.count)
