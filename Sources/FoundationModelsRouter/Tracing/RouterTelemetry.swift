@@ -593,9 +593,28 @@ enum RouterTelemetry {
         /// generated tokens divided by its duration, in tokens per second.
         static let generationTokensPerSecond = prefix + "generation.tokens_per_second"
 
-        /// The timer from the start of the submission of a model call to its
-        /// first observable progress.
-        static let timeToFirstToken = prefix + "generation.time_to_first_token"
+        /// The timer from the start of a submission to its first observable
+        /// progress: one value for each submission, and not one for each
+        /// generation call. A submission that calls tools makes more than one
+        /// generation call, and only the first of them counts here. The name
+        /// stays as it was, so a dashboard built on it keeps working;
+        /// ``generationCallTimeToFirstToken`` is the time of each call.
+        static let submissionTimeToFirstToken = prefix + "generation.time_to_first_token"
+
+        /// The timer of the prefill of each generation call: from the start
+        /// of its pass to its first output token
+        /// (``GenerationCallUsage/timeToFirstToken``). The prefill rate is
+        /// ``generationTokensIn`` minus ``generationTokensCached``, divided by
+        /// this time. A call whose first output token the session did not
+        /// see records nothing.
+        static let generationCallTimeToFirstToken = prefix + "generation.call.time_to_first_token"
+
+        /// The timer of the decode of each generation call: from its first
+        /// output token to its end (``GenerationCallUsage/decodeTime``). The
+        /// decode rate is ``generationTokensOut`` divided by this time. A
+        /// call whose first output token the session did not see records
+        /// nothing.
+        static let generationCallDecodeTime = prefix + "generation.call.decode_time"
 
         /// The timer of each model load of a resolve.
         static let loadDuration = prefix + "load.duration"
@@ -626,8 +645,9 @@ enum RouterTelemetry {
         /// Every name above.
         static let allNames = [
             generationTokensIn, generationTokensCached, generationTokensOut, generationTokensPerSecond,
-            timeToFirstToken, loadDuration, residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount,
-            mailQueuePauseDuration, mailCancelled,
+            submissionTimeToFirstToken, generationCallTimeToFirstToken, generationCallDecodeTime, loadDuration,
+            residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount, mailQueuePauseDuration,
+            mailCancelled,
         ]
     }
 

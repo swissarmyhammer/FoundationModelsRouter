@@ -1,5 +1,27 @@
 import FoundationModels
 
+/// The prefill and the decode time of one generation call
+/// (``GenerationCallUsage/timeToFirstToken`` and
+/// ``GenerationCallUsage/decodeTime``). Each is `nil` when the session saw
+/// no output token of the call.
+struct GenerationCallTiming: Sendable, Equatable {
+    /// The time from the start of the call to its first output token.
+    let timeToFirstToken: Duration?
+
+    /// The time from the first output token of the call to its end.
+    let decodeTime: Duration?
+
+    /// The timing of a call whose first output token the session did not see.
+    static let unobserved = GenerationCallTiming(timeToFirstToken: nil, decodeTime: nil)
+}
+
+extension GenerationCallUsage {
+    /// The prefill and the decode time of the call.
+    var timing: GenerationCallTiming {
+        GenerationCallTiming(timeToFirstToken: timeToFirstToken, decodeTime: decodeTime)
+    }
+}
+
 /// The generation calls of one generate attempt, as ``RoutedSessionActor``
 /// reports them one by one through ``SessionEvent/generationCall(_:)``.
 ///
@@ -39,6 +61,47 @@ struct GenerationCallLedger {
     /// The duration of a call runs from here to the report of the call, and
     /// the output rate of the call is measured over it.
     var callStartedAt = ContinuousClock.now
+
+    /// When the pass of the generation call that runs now started, on the
+    /// clock of the pass observer, or `nil` before the backend reported one.
+    /// A pass is one generation call (``GenerationCallPhase/passStarted(at:)``).
+    var passStartedAt: ContinuousClock.Instant?
+
+    /// When that pass gave its first output token, on the same clock, or
+    /// `nil` before the backend reported one
+    /// (``GenerationCallPhase/firstOutput(at:)``).
+    var firstOutputAt: ContinuousClock.Instant?
+
+    /// Applies one reported phase of the model call: the start of a pass
+    /// starts the times of a new generation call, and the first output of
+    /// the pass ends its prefill.
+    ///
+    /// - Parameter phase: The phase the model call reported.
+    mutating func apply(_ phase: GenerationCallPhase) {
+        switch phase {
+        case .passStarted(let instant):
+            passStartedAt = instant
+            firstOutputAt = nil
+        case .firstOutput(let instant):
+            firstOutputAt = firstOutputAt ?? instant
+        case .submissionQueued, .submissionStarted, .passEnded:
+            break
+        }
+    }
+
+    /// The prefill and the decode time of the generation call that ends at
+    /// `endedAt`.
+    ///
+    /// - Parameter endedAt: When the call ended, on the clock of the pass
+    ///   observer.
+    /// - Returns: The time from the start of the pass to its first output,
+    ///   and from that output to `endedAt`, or ``GenerationCallTiming/unobserved``
+    ///   when the backend reported no start or no first output of the pass.
+    func timingOfEndedCall(endedAt: ContinuousClock.Instant) -> GenerationCallTiming {
+        guard let passStartedAt, let firstOutputAt else { return .unobserved }
+        return GenerationCallTiming(
+            timeToFirstToken: passStartedAt.duration(to: firstOutputAt), decodeTime: firstOutputAt.duration(to: endedAt))
+    }
 
     /// The usage of the call that ended since the last report.
     ///
@@ -127,8 +190,12 @@ extension RoutedSessionActor {
 
     /// Takes the usage of the generation call that ended since the last
     /// report, adds it to the ledger, and records its metrics: its tokens in,
-    /// cached and out, and its output rate over its duration
-    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:duration:model:slot:)``).
+    /// cached and out, its output rate, and its prefill and decode times
+    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:duration:timing:model:slot:)``).
+    ///
+    /// It first applies the pass phases that the backend reported
+    /// (``drainGenerationPassPhases()``), so the ledger holds the start and
+    /// the first output of the pass of the call.
     ///
     /// Reads ``backend`` from a task of the running submission at a
     /// tool-call open. The model waits in the tool at that moment, so no
@@ -140,17 +207,19 @@ extension RoutedSessionActor {
     /// - Returns: The usage of that call, or `nil` when no ledger is open,
     ///   the backend reports no usage, or no call ended.
     func takeGenerationCall(leaving entryKind: GenerationCallEntryKind) -> GenerationCallUsage? {
+        drainGenerationPassPhases()
         guard let ledger = generationCallLedger, let usageAfter = backend.usageTokenCounts(),
             let call = ledger.usageOfEndedCall(usageAfter: usageAfter)
         else {
             return nil
         }
         let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
-        noteEndedCall(call, cached: cached, backendUsage: call, of: ledger)
+        let timing = noteEndedCall(call, cached: cached, backendUsage: call, of: ledger)
         let finishReason = FinishReason(
             submissionEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
             lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
-        return generationCallUsage(of: call, cached: cached, finishReason: finishReason, entryKind: entryKind)
+        return generationCallUsage(
+            of: call, cached: cached, timing: timing, finishReason: finishReason, entryKind: entryKind)
     }
 
     /// Takes the usage of the generation call that a watch stop cancelled
@@ -180,6 +249,7 @@ extension RoutedSessionActor {
         counted: (input: Int, output: Int), endedAtToolCall: Bool, finishReason: FinishReason,
         entryKind: GenerationCallEntryKind
     ) -> (usage: GenerationCallUsage, addedUsage: (input: Int, output: Int))? {
+        drainGenerationPassPhases()
         guard let ledger = generationCallLedger, let usageAfter = backend.usageTokenCounts() else { return nil }
         let backendUsage = ledger.usageOfEndedCall(usageAfter: usageAfter)
         guard backendUsage != nil || !endedAtToolCall else { return nil }
@@ -189,13 +259,18 @@ extension RoutedSessionActor {
             output: reported.output > 0 ? reported.output : counted.output
         )
         let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
-        noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
-        let usage = generationCallUsage(of: call, cached: cached, finishReason: finishReason, entryKind: entryKind)
+        let timing = noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
+        let usage = generationCallUsage(
+            of: call, cached: cached, timing: timing, finishReason: finishReason, entryKind: entryKind)
         return (usage, (input: call.input - reported.input, output: call.output - reported.output))
     }
 
     /// Records the metrics of one generation call that ended, and moves the
     /// ledger past it.
+    ///
+    /// The prefill and the decode time of the call are read on the clock of
+    /// the pass observer (``GenerationPassObserver/clock``), which stamped
+    /// the start and the first output of the pass.
     ///
     /// - Parameters:
     ///   - call: The fed and generated tokens of the call, as the session
@@ -206,21 +281,26 @@ extension RoutedSessionActor {
     ///     the call accounts for. The ledger adds it, so the next call starts
     ///     where the backend count is.
     ///   - ledger: The ledger of the attempt, as it was before the call ended.
+    /// - Returns: The prefill and the decode time of the call.
     private func noteEndedCall(
         _ call: (input: Int, output: Int), cached: Int?, backendUsage: (input: Int, output: Int),
         of ledger: GenerationCallLedger
-    ) {
+    ) -> GenerationCallTiming {
         let endedAt = ContinuousClock.now
+        let timing = ledger.timingOfEndedCall(endedAt: generationPassObserver.clock.now)
         sessionMetrics.recordGenerationCall(
             tokensIn: call.input, tokensCached: cached, tokensOut: call.output,
-            duration: ledger.callStartedAt.duration(to: endedAt), model: model, slot: slot)
+            duration: ledger.callStartedAt.duration(to: endedAt), timing: timing, model: model, slot: slot)
         generationCallLedger?.callStartedAt = endedAt
+        generationCallLedger?.passStartedAt = nil
+        generationCallLedger?.firstOutputAt = nil
         generationCallLedger?.reported = (
             ledger.reported.input + backendUsage.input, ledger.reported.output + backendUsage.output
         )
         generationCallLedger?.reportedCached = ledger.reportedCached + (cached ?? 0)
         generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
+        return timing
     }
 
     /// The usage report of one generation call.
@@ -228,12 +308,13 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - call: The fed and generated tokens of the call.
     ///   - cached: The cached part of the fed tokens, or `nil`.
+    ///   - timing: The prefill and the decode time of the call.
     ///   - finishReason: Why the call stopped.
     ///   - entryKind: What the call left in the transcript.
     /// - Returns: The report, with the fill of the render after the call.
     private func generationCallUsage(
-        of call: (input: Int, output: Int), cached: Int?, finishReason: FinishReason,
-        entryKind: GenerationCallEntryKind
+        of call: (input: Int, output: Int), cached: Int?, timing: GenerationCallTiming,
+        finishReason: FinishReason, entryKind: GenerationCallEntryKind
     ) -> GenerationCallUsage {
         GenerationCallUsage(
             tokensIn: call.input,
@@ -242,7 +323,9 @@ extension RoutedSessionActor {
             entryKind: entryKind,
             contextFill: ContextUsageState.measured(input: call.input, output: call.output)
                 .fill(contextTokens: contextTokens),
-            tokensCached: cached)
+            tokensCached: cached,
+            timeToFirstToken: timing.timeToFirstToken,
+            decodeTime: timing.decodeTime)
     }
 
     /// Writes `usage` to the run journal and delivers it live.
@@ -252,7 +335,8 @@ extension RoutedSessionActor {
         await append(
             partial: makePartialEvent(
                 kind: .generationCall, grammar: grammar, text: usage.description,
-                tokensIn: usage.tokensIn, tokensCached: usage.tokensCached, tokensOut: usage.tokensOut))
+                tokensIn: usage.tokensIn, tokensCached: usage.tokensCached, tokensOut: usage.tokensOut,
+                callTiming: usage.timing))
         deliverLive(.generationCall(usage))
     }
 

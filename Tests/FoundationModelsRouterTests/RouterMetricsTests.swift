@@ -15,7 +15,9 @@ import Testing
 /// for its task. A session pump is a detached task, so each test gives the
 /// factory of the capture to its sessions as their explicit factory
 /// (``RoutedSession/useCaptureMetrics(for:)``). A time value is only checked
-/// to be recorded and not negative: no test waits on the clock.
+/// to be recorded and not negative. The calls of the paced answer wait a
+/// little, so the session sees the first token of each call, and no test
+/// reads the length of a wait.
 @Suite("The router records its metrics through swift-metrics with the names of its vocabulary")
 struct RouterMetricsTests {
     /// The prefix of each temp directory this suite makes.
@@ -178,6 +180,37 @@ struct RouterMetricsTests {
         let firstToken = try factory.expectTimer("FoundationModelsRouter.generation.time_to_first_token", dimensions)
         #expect(!firstToken.values.isEmpty)
         #expect(firstToken.values.allSatisfy { $0 >= 0 })
+    }
+
+    /// The scripted calls of the paced answer: the calls of the metered
+    /// answer, each with a prefill and a decode, so the session sees the first
+    /// token of each call.
+    private static let pacedCalls = meteredCalls.map { call in
+        MeteredGenerationCall(
+            tokensIn: call.tokensIn, tokensOut: call.tokensOut, tokensCached: call.tokensCached,
+            pacing: MeteredCallPacing(prefill: .milliseconds(20), decode: .milliseconds(20)))
+    }
+
+    @Test("each generation call records its time to first token and its decode time")
+    func generationCallsRecordPrefillAndDecodeTimes() async throws {
+        let metrics = try await TelemetryCapture.run(forbidding: [Self.meteredPrompt]) { context in
+            let fixture = try await MeteredToolLoopSessionFixture.make(
+                calls: Self.pacedCalls, context: Self.meteredContextTokens, tempDirPrefix: Self.tempDirPrefix)
+            defer { await fixture.end() }
+            await fixture.session.useCaptureMetrics(for: context.metricsFactory)
+
+            for try await _ in await fixture.session.streamEvents(to: Self.meteredPrompt, maxTokens: nil) {}
+            return (context.metricsFactory, Self.sessionDimensions(of: fixture.session))
+        }
+
+        let (factory, dimensions) = metrics
+        let firstToken = try factory.expectTimer(
+            "FoundationModelsRouter.generation.call.time_to_first_token", dimensions)
+        let decode = try factory.expectTimer("FoundationModelsRouter.generation.call.decode_time", dimensions)
+        #expect(firstToken.values.count == Self.pacedCalls.count)
+        #expect(decode.values.count == Self.pacedCalls.count)
+        #expect(firstToken.values.allSatisfy { $0 >= 0 })
+        #expect(decode.values.allSatisfy { $0 >= 0 })
     }
 
     // MARK: - Compactions

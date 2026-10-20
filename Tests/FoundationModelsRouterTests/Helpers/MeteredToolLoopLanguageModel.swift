@@ -15,6 +15,26 @@ struct MeteredGenerationCall: Sendable, Hashable {
     /// The part of ``tokensIn`` the call reports its prompt cache reused, as
     /// the MLX executor reports its `cachedTokenCount`.
     var tokensCached: Int = 0
+
+    /// How the call paces its output, or `nil` (the default) for a call that
+    /// sends its output at once.
+    var pacing: MeteredCallPacing?
+}
+
+/// The pace of one generation call of a ``MeteredToolLoopLanguageModel``, as
+/// a real model paces a call: it prefills, sends its first output token, and
+/// then decodes the rest.
+struct MeteredCallPacing: Sendable, Hashable {
+    /// The text of the first output token, which the call sends after
+    /// ``prefill``. The rest of the output follows after ``decode``.
+    static let firstTokenText = "Looking. "
+
+    /// How long the call waits before it sends its first output token.
+    let prefill: Duration
+
+    /// How long the call waits after its first output token before it sends
+    /// the rest of its output and its usage.
+    let decode: Duration
 }
 
 /// A deterministic `LanguageModel` that makes one generation call for each
@@ -103,6 +123,25 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
             }.count
         }
 
+        /// Waits the prefill of `pacing`, sends the first output token of the
+        /// call as response text, and then waits the decode of `pacing`.
+        ///
+        /// - Parameters:
+        ///   - pacing: The pace of the call.
+        ///   - entryID: The id of the response entry of the call.
+        ///   - channel: The generation channel this call emits into.
+        /// - Throws: `CancellationError` when the call is cancelled in a wait.
+        private static func sendFirstToken(
+            after pacing: MeteredCallPacing, entryID: String, into channel: LanguageModelExecutorGenerationChannel
+        ) async throws {
+            try await Task.sleep(for: pacing.prefill)
+            await channel.send(
+                .response(
+                    entryID: entryID,
+                    action: .appendText(MeteredCallPacing.firstTokenText, tokenCount: emittedTokenCount)))
+            try await Task.sleep(for: pacing.decode)
+        }
+
         /// Sends the scripted call at the position `request` asks for.
         ///
         /// - Parameters:
@@ -122,6 +161,10 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
                 throw UnscriptedCall(callIndex: callIndex)
             }
             let responseEntryID = "metered-response-\(callIndex)"
+            let call = configuration.calls[callIndex]
+            if let pacing = call.pacing {
+                try await Self.sendFirstToken(after: pacing, entryID: responseEntryID, into: channel)
+            }
             if callIndex == configuration.calls.count - 1 {
                 await channel.send(
                     .response(
@@ -138,7 +181,6 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
                                 #"{"value":"\#(Self.toolStep(callIndex: callIndex))"}"#,
                                 tokenCount: Self.emittedTokenCount))))
             }
-            let call = configuration.calls[callIndex]
             await channel.send(
                 .response(
                     entryID: responseEntryID,

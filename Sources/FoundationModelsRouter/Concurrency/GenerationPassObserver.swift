@@ -19,6 +19,12 @@ enum GenerationCallPhase: Sendable, Equatable {
     /// The pass ended.
     case passEnded
 
+    /// The running pass gave its first output token: the first text of its
+    /// reasoning, of its response or of its tool-call arguments. `at` is when
+    /// the session saw it. A pass reports it at most one time, and a pass
+    /// that gives no output reports it never.
+    case firstOutput(at: ContinuousClock.Instant)
+
     /// The event that tells the consumer of the session about this phase, or
     /// `nil` for a phase the consumer does not see.
     ///
@@ -36,7 +42,7 @@ enum GenerationCallPhase: Sendable, Equatable {
         switch self {
         case .submissionQueued:
             submission.map(SessionEvent.submissionQueued)
-        case .submissionStarted, .passStarted, .passEnded:
+        case .submissionStarted, .passStarted, .passEnded, .firstOutput:
             nil
         }
     }
@@ -156,6 +162,16 @@ final class GenerationPassObserver: Sendable {
         state.withLock { $0.openPasses -= 1 }
         record(.passEnded)
         passEnds.signal()
+    }
+
+    /// Records that the running pass gave its first output token now.
+    ///
+    /// The caller is the first-output watch of the backend of the session
+    /// (`MLXFoundationModelsSessionBackend`), which reads the transcript of
+    /// its session inside each pass and calls this method at the first read
+    /// that holds more output text than the pass started with.
+    func passProducedOutput() {
+        record(.firstOutput(at: clock.now))
     }
 
     /// Waits until no pass is open, or until the calling task is cancelled.

@@ -297,14 +297,22 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         makeSession: (SessionLanguageModel) -> LanguageModelSession
     ) {
         let sessionModel = SessionLanguageModel(wrapping: model)
-        self.liveSession = makeSession(sessionModel)
-        self.sessionModelState = sessionModel.state
+        let liveSession = makeSession(sessionModel)
+        let state = sessionModel.state
+        self.liveSession = liveSession
+        self.sessionModelState = state
         self.model = model
         self.generationQueue = generationQueue
         self.contextWindow = contextWindow
         self.instructions = instructions
         self.tools = tools
         self.samplingMode = samplingMode
+        // The session holds its wrapper, and the wrapper holds this watch, so
+        // the watch holds the session weakly: a strong hold would keep the
+        // session alive after the backend ends.
+        _ = state.addPassWatch { [weak liveSession] in
+            await Self.reportFirstOutput(of: liveSession, to: state.passObserver)
+        }
     }
 
     /// Creates a backend over a new session with `instructions`, which runs
@@ -539,6 +547,71 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// Gives the transcript of `session` to `continuation` now and after each
     /// change of it, until the task is cancelled.
     ///
+    /// - Parameters:
+    ///   - session: The session whose transcript to read.
+    ///   - continuation: The stream that gets each value.
+    private static func relayTranscript(
+        of session: LanguageModelSession,
+        into continuation: AsyncStream<[FoundationModels.Transcript.Entry]>.Continuation
+    ) async {
+        await observeTranscript(of: session) { entries in
+            continuation.yield(entries)
+            return true
+        }
+    }
+
+    /// Reports the first output token of each pass of `session` to
+    /// `observer` (``GenerationPassObserver/passProducedOutput()``), so the
+    /// session can split the time of each generation call into its prefill
+    /// and its decode.
+    ///
+    /// The watch runs beside each pass (``SessionLanguageModelState/addPassWatch(_:)``).
+    /// The executor channel of the SDK is opaque, so the watch reads the
+    /// transcript of the session instead: the first read gives the output
+    /// text the pass started with, and the first later read that holds more
+    /// output text (``outputTextLength(of:)``) is the first output token. An
+    /// event of the executor that adds no text, such as the metadata that the
+    /// MLX executor sends before its prefill, does not count. The transcript
+    /// holds the arguments of a tool call only when the call ends, so a pass
+    /// whose only output is a tool call reports its first output at its end.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose transcript to read, or `nil` when the
+    ///     session ended.
+    ///   - observer: The pass observer of the routed session, or `nil` when
+    ///     no routed session installed one; the watch then reads nothing.
+    private static func reportFirstOutput(
+        of session: LanguageModelSession?, to observer: GenerationPassObserver?
+    ) async {
+        guard let session, let observer else { return }
+        var startLength: Int?
+        await observeTranscript(of: session) { entries in
+            let length = outputTextLength(of: entries)
+            guard let start = startLength else {
+                startLength = length
+                return true
+            }
+            guard length > start else { return true }
+            observer.passProducedOutput()
+            return false
+        }
+    }
+
+    /// The length of the output text that `entries` hold, in UTF-8 bytes: the
+    /// reasoning, the response text and the tool-call arguments
+    /// (``WatchedText/attemptTexts(in:excluding:)``).
+    ///
+    /// - Parameter entries: A transcript.
+    /// - Returns: The summed length of its output text.
+    private static func outputTextLength(of entries: [FoundationModels.Transcript.Entry]) -> Int {
+        WatchedText.attemptTexts(in: entries, excluding: []).reduce(0) { total, watched in
+            total + watched.text.utf8.count
+        }
+    }
+
+    /// Gives the transcript of `session` to `read` now and after each change
+    /// of it, until `read` returns `false` or the task is cancelled.
+    ///
     /// The loop reads the transcript only on its own task, and a cancel ends
     /// the wait for the next change at once: the wait is on an `AsyncStream`,
     /// which ends at a cancel. A loop over `Observations` in its place hung
@@ -548,10 +621,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///
     /// - Parameters:
     ///   - session: The session whose transcript to read.
-    ///   - continuation: The stream that gets each value.
-    private static func relayTranscript(
-        of session: LanguageModelSession,
-        into continuation: AsyncStream<[FoundationModels.Transcript.Entry]>.Continuation
+    ///   - read: Takes each value, and returns whether to read the next one.
+    private static func observeTranscript(
+        of session: LanguageModelSession, _ read: ([FoundationModels.Transcript.Entry]) -> Bool
     ) async {
         let (changes, change) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         var wakes = changes.makeAsyncIterator()
@@ -562,7 +634,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
                 event.cancel()
                 change.yield()
             }
-            continuation.yield(entries)
+            guard read(entries) else { return }
         } while await wakes.next() != nil
     }
 

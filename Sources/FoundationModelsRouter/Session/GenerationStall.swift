@@ -161,10 +161,19 @@ extension Duration {
     /// Attoseconds in one second, the unit of `Duration.components.attoseconds`.
     private static let attosecondsPerSecond: Double = 1e18
 
+    /// Milliseconds in one second, the unit of ``wholeMilliseconds``.
+    private static let millisecondsPerSecond: Double = 1000
+
     /// This duration in whole and fractional seconds.
     var seconds: Double {
         let parts = components
         return Double(parts.seconds) + Double(parts.attoseconds) / Self.attosecondsPerSecond
+    }
+
+    /// This duration in whole milliseconds, rounded down, as the run journal
+    /// stores a time (``TranscriptEvent/ms``).
+    var wholeMilliseconds: Int {
+        Int(seconds * Self.millisecondsPerSecond)
     }
 }
 
@@ -189,9 +198,10 @@ struct GenerationStallWatch: Sendable {
     /// How many text fragments the session has counted for this call.
     var fragmentsObserved: Int = 0
 
-    /// Whether the session recorded the time to the first progress of this
-    /// call (``RouterTelemetry/MetricName/timeToFirstToken``). A call records
-    /// it one time.
+    /// Whether the session recorded the time to the first progress of the
+    /// submission of this call
+    /// (``RouterTelemetry/MetricName/submissionTimeToFirstToken``). A
+    /// submission records it one time.
     var recordedTimeToFirstProgress = false
 
     /// Whether this call produces fragments the session counts. Declared by
@@ -251,6 +261,11 @@ struct GenerationStallWatch: Sendable {
         case .passEnded:
             reportsPasses = true
             passRunningSince = nil
+        case .firstOutput:
+            // The appends of the call are its progress
+            // (``RoutedSessionActor/noteGenerationProgress(_:)``); the first
+            // output only times the generation call.
+            break
         }
     }
 }
@@ -299,8 +314,9 @@ extension RoutedSessionActor {
     ///
     /// The first append of the call records the time from the start of its
     /// submission (``GenerationStallWatch/submissionStartedAt``) to now
-    /// (``RouterMetrics/recordTimeToFirstToken(_:model:slot:)``). The record
-    /// is synchronous and adds no suspension point.
+    /// (``RouterMetrics/recordSubmissionTimeToFirstToken(_:model:slot:)``):
+    /// one value for the submission, and not one for each generation call.
+    /// The record is synchronous and adds no suspension point.
     ///
     /// - Parameter kind: The kind of the append.
     func noteGenerationProgress(_ kind: GenerationProgressKind) {
@@ -312,7 +328,8 @@ extension RoutedSessionActor {
         }
         if !watch.recordedTimeToFirstProgress, let submissionStartedAt = watch.submissionStartedAt {
             watch.recordedTimeToFirstProgress = true
-            sessionMetrics.recordTimeToFirstToken(submissionStartedAt.duration(to: now), model: model, slot: slot)
+            sessionMetrics.recordSubmissionTimeToFirstToken(
+                submissionStartedAt.duration(to: now), model: model, slot: slot)
         }
         watch.lastProgressAt = now
         watch.lastProgressKind = kind

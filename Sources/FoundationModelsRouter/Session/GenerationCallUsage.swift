@@ -29,6 +29,23 @@ public struct GenerationCallUsage: Sendable, Equatable {
     /// The tokens the call generated.
     public let tokensOut: Int
 
+    /// The time of the prefill of the call: from its start to its first
+    /// output token, reasoning included. `nil` when the session saw no output
+    /// token of the call, for example on a backend that reports no passes.
+    ///
+    /// The prefill rate of the call is ``tokensIn`` minus ``tokensCached``,
+    /// divided by this time.
+    public let timeToFirstToken: Duration?
+
+    /// The time of the decode of the call: from its first output token to its
+    /// end. `nil` by the rule of ``timeToFirstToken``. The decode rate of the
+    /// call is ``tokensOut`` divided by this time.
+    ///
+    /// The transcript shows the arguments of a tool call only when the call
+    /// ends, so a call whose only output is one tool call has a decode time
+    /// near zero.
+    public let decodeTime: Duration?
+
     /// Why the call stopped. ``FinishReason/maxTokens`` when the call spent
     /// its token ceiling, ``FinishReason/endedInsideReasoning`` when its
     /// output ended inside the reasoning before the ceiling, and
@@ -59,16 +76,25 @@ public struct GenerationCallUsage: Sendable, Equatable {
     ///     the working context.
     ///   - tokensCached: The part of `tokensIn` the prompt cache reused, or
     ///     `nil` (the default) when the backend reports no cache count.
+    ///   - timeToFirstToken: The time from the start of the call to its first
+    ///     output token, or `nil` (the default) when the session saw no such
+    ///     token.
+    ///   - decodeTime: The time from the first output token of the call to
+    ///     its end, or `nil` (the default) when the session saw no such token.
     public init(
         tokensIn: Int,
         tokensOut: Int,
         finishReason: FinishReason,
         entryKind: GenerationCallEntryKind,
         contextFill: Double,
-        tokensCached: Int? = nil
+        tokensCached: Int? = nil,
+        timeToFirstToken: Duration? = nil,
+        decodeTime: Duration? = nil
     ) {
         self.tokensIn = tokensIn
         self.tokensCached = tokensCached
+        self.timeToFirstToken = timeToFirstToken
+        self.decodeTime = decodeTime
         self.tokensOut = tokensOut
         self.finishReason = finishReason
         self.entryKind = entryKind

@@ -40,12 +40,13 @@ struct RouterMetrics: Sendable {
         explicitFactory ?? MetricsSystem.factory
     }
 
-    /// Records one generation call: its tokens in, cached and out, and its
-    /// output rate.
+    /// Records one generation call: its tokens in, cached and out, its
+    /// output rate, and its prefill and decode times.
     ///
     /// A call with no duration records no rate, because the rate of a call
     /// that took no time has no value. A call whose backend reports no cache
-    /// count records no cached tokens.
+    /// count records no cached tokens. A call whose first output token the
+    /// session did not see records no prefill and no decode time.
     ///
     /// - Parameters:
     ///   - tokensIn: The tokens the call fed the model.
@@ -53,12 +54,15 @@ struct RouterMetrics: Sendable {
     ///     `nil` when the backend reports no cache count.
     ///   - tokensOut: The tokens the call generated.
     ///   - duration: How long the call ran.
+    ///   - timing: The prefill and the decode time of the call.
     ///   - model: The model of the call.
     ///   - slot: The slot of the model.
     func recordGenerationCall(
-        tokensIn: Int, tokensCached: Int?, tokensOut: Int, duration: Duration, model: ModelRef, slot: ModelSlot
+        tokensIn: Int, tokensCached: Int?, tokensOut: Int, duration: Duration, timing: GenerationCallTiming,
+        model: ModelRef, slot: ModelSlot
     ) {
         let dimensions = Self.dimensions(model: model, slot: slot)
+        recordTiming(timing, dimensions: dimensions)
         Counter(label: RouterTelemetry.MetricName.generationTokensIn, dimensions: dimensions, factory: factory)
             .increment(by: tokensIn)
         if let tokensCached {
@@ -74,17 +78,40 @@ struct RouterMetrics: Sendable {
         ).record(Double(tokensOut) / seconds)
     }
 
-    /// Records the time from the start of the submission of a model call to
-    /// its first observable progress.
+    /// Records the prefill and the decode time of one generation call, each
+    /// one that the session saw.
+    ///
+    /// - Parameters:
+    ///   - timing: The prefill and the decode time of the call.
+    ///   - dimensions: The model and the slot of the call.
+    private func recordTiming(_ timing: GenerationCallTiming, dimensions: [(String, String)]) {
+        if let timeToFirstToken = timing.timeToFirstToken {
+            Metrics.Timer(
+                label: RouterTelemetry.MetricName.generationCallTimeToFirstToken, dimensions: dimensions,
+                factory: factory
+            ).record(duration: timeToFirstToken)
+        }
+        if let decodeTime = timing.decodeTime {
+            Metrics.Timer(
+                label: RouterTelemetry.MetricName.generationCallDecodeTime, dimensions: dimensions, factory: factory
+            ).record(duration: decodeTime)
+        }
+    }
+
+    /// Records the time from the start of a submission to its first
+    /// observable progress: one value for each submission
+    /// (``RouterTelemetry/MetricName/submissionTimeToFirstToken``). The time
+    /// of each generation call is a part of
+    /// ``recordGenerationCall(tokensIn:tokensCached:tokensOut:duration:timing:model:slot:)``.
     ///
     /// - Parameters:
     ///   - duration: The time to the first progress.
-    ///   - model: The model of the call.
+    ///   - model: The model of the submission.
     ///   - slot: The slot of the model.
-    func recordTimeToFirstToken(_ duration: Duration, model: ModelRef, slot: ModelSlot) {
+    func recordSubmissionTimeToFirstToken(_ duration: Duration, model: ModelRef, slot: ModelSlot) {
         Metrics.Timer(
-            label: RouterTelemetry.MetricName.timeToFirstToken, dimensions: Self.dimensions(model: model, slot: slot),
-            factory: factory
+            label: RouterTelemetry.MetricName.submissionTimeToFirstToken,
+            dimensions: Self.dimensions(model: model, slot: slot), factory: factory
         ).record(duration: duration)
     }
 

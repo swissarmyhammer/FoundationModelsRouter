@@ -230,6 +230,46 @@ struct GenerationCallUsageTests {
         #expect(journal.filter { $0.kind != .generationCall }.allSatisfy { $0.tokensCached == nil })
     }
 
+    // MARK: - The prefill and the decode of one call
+
+    /// The pace of each call of ``pacedCalls``: a prefill shorter than the
+    /// decode, so a time that puts the two together breaks one of the bounds
+    /// below.
+    private static let pacing = MeteredCallPacing(prefill: .milliseconds(100), decode: .milliseconds(300))
+
+    /// The least decode time a paced call may report: half of the decode
+    /// wait of ``pacing``. The session reads the first token a moment after
+    /// the call sends it, so the decode time it measures can be a little
+    /// shorter than the wait.
+    private static let leastDecodeTime = Duration.milliseconds(150)
+
+    /// Two calls of one tool loop, each paced by ``pacing``: one call that
+    /// asks for the tool, then the call that answers.
+    private static let pacedCalls = [
+        MeteredGenerationCall(tokensIn: 100, tokensOut: 30, pacing: pacing),
+        MeteredGenerationCall(tokensIn: 200, tokensOut: 50, pacing: pacing),
+    ]
+
+    @Test("each call reports the time to its first token and the time it decoded, live and in the run journal")
+    func eachCallReportsItsPrefillAndDecodeTimes() async throws {
+        let fixture = try await Self.makeFixture(calls: Self.pacedCalls)
+        defer { await fixture.end() }
+
+        let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
+
+        let calls = Self.generationCalls(in: events)
+        #expect(calls.count == Self.pacedCalls.count)
+        for call in calls {
+            let timeToFirstToken = try #require(call.timeToFirstToken)
+            let decodeTime = try #require(call.decodeTime)
+            #expect(timeToFirstToken >= Self.pacing.prefill)
+            #expect(decodeTime >= Self.leastDecodeTime)
+        }
+        let records = await fixture.recorder.events.filter { $0.kind == .generationCall }
+        #expect(records.map(\.timeToFirstTokenMs) == calls.map { $0.timeToFirstToken?.wholeMilliseconds })
+        #expect(records.map(\.decodeMs) == calls.map { $0.decodeTime?.wholeMilliseconds })
+    }
+
     @Test("the description of a call whose backend reports no cache count names no cached tokens")
     func descriptionWithoutACacheCount() {
         let usage = GenerationCallUsage(

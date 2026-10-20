@@ -54,13 +54,16 @@ extension RoutedSessionActor {
     }
 
     /// Applies each reported phase not yet applied, in the order of the
-    /// reports: to the stall watch of the model call in flight, and as an
-    /// event to the consumer when the phase has one
+    /// reports: to the stall watch of the model call in flight, to the
+    /// ledger of the generation calls of the attempt (the times of each
+    /// call, ``GenerationCallLedger/apply(_:)``), and as an event to the
+    /// consumer when the phase has one
     /// (``GenerationCallPhase/sessionEvent(submission:)``). The event names
     /// the running submission; a phase with no open submission gives none.
     func drainGenerationPassPhases() {
         for phase in generationPassObserver.takePhases() {
             generationStallWatch?.apply(phase)
+            generationCallLedger?.apply(phase)
             if let event = phase.sessionEvent(submission: runningSubmission?.start.submissionId) {
                 deliverLive(event)
             }
