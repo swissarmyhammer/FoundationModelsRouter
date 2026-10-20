@@ -189,7 +189,10 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// caller, so the mail carries them.
     struct MailCaller: Sendable {
         /// The tracing context of the caller, or `nil`. The span of the
-        /// submission that delivers the mail is a child of its span.
+        /// submission that delivers the mail is a child of its span. For run
+        /// mail it is the context of the poster (``stage(event:as:)``): the
+        /// span of each submission that delivers the mail links to it, and an
+        /// answer of run mail alone is its child.
         let serviceContext: ServiceContext?
 
         /// The own work of the caller (``SessionOwnWork/current``). Each
@@ -552,6 +555,11 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         // The lease also begins before the put: a take of the mail ends it.
         // The post ends it again when the run is an in-band run.
         let leased = Self.canStartASubmissionByItself(event) && beginMailWork(id)
+        // The tracing context of the poster, also before the put: the pump
+        // is a detached task, so the answer that delivers the mail gets the
+        // context only from here (task ^yx6931z). Its submission links to
+        // it, and an answer of run mail alone is its child.
+        noteCaller(MailCaller(serviceContext: ServiceContext.current, ownWork: .none), for: id)
         do {
             try queue.put(Mail(id: id, sender: .run(correlationID: event.correlationID), body: .runEvent(event)))
             return id
@@ -559,7 +567,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
             // The queue refuses mail only after the session closed. Then no
             // submission reads the mail anymore, and the journal still
             // records the event, so the refusal needs only the end of the
-            // pending record and of the lease.
+            // pending record, of the caller and of the lease.
+            _ = takeCallers(of: [id])
             if madePending {
                 hub?.endPending(.mail(id))
             }

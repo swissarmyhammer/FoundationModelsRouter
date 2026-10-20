@@ -27,7 +27,8 @@ struct RunningSubmission {
 extension RoutedSessionActor {
     /// Opens the next submission of the running answer: it takes the next
     /// ``SubmissionID`` and opens the span of the submission, a child of the
-    /// tracing context of the caller.
+    /// tracing context of the caller. The span links to the sender of each
+    /// mail of `mailIds` that has a sender context (``openAnswerMailSenders``).
     ///
     /// A submission can wait a long time in its model call, so it also writes
     /// one "enter" log record through ``sessionLogger(_:)`` when its span
@@ -52,6 +53,12 @@ extension RoutedSessionActor {
         span.attributes[RouterTelemetry.AttributeKey.submissionId] = start.submissionId.description
         span.attributes[RouterTelemetry.AttributeKey.submissionCause] = cause.rawValue
         span.attributes[RouterTelemetry.AttributeKey.submissionMailIds] = mailIds.map(\.description)
+        // One link to the span of the sender of each mail that the
+        // submission delivers (task ^yx6931z). Run mail can come from
+        // another trace, for example the session of a subagent.
+        for sender in mailIds.compactMap({ openAnswerMailSenders[$0] }) {
+            span.addLink(SpanLink(context: sender, attributes: [:]))
+        }
         RouterTelemetry.EnterRecord.write(
             for: span, named: RouterTelemetry.SpanName.submission, tracer: spanTracer, to: sessionLogger(.enter))
         runningSubmission = RunningSubmission(start: start, span: span)

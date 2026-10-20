@@ -569,6 +569,16 @@ actor RoutedSessionActor: RoutedSession {
     /// already runs. The pump clears it after the end of the answer.
     var openAnswerCallerWork = SessionOwnWork.none
 
+    /// The tracing context of the sender of each mail that the open answer
+    /// delivered, by the id of the mail (task ^yx6931z): the caller of a
+    /// user-type mail, or the poster of a run mail
+    /// (``SessionOutbox/MailCaller``). The user-type mail whose caller is the
+    /// parent of the answer is not in it. Each submission links to the
+    /// sender of each mail that it delivers
+    /// (``beginSubmission(cause:mailIds:)``). The pump clears it after the
+    /// end of the answer.
+    var openAnswerMailSenders: [MailID: ServiceContext] = [:]
+
     /// The output of this session: the feeds, the mail subscriptions and the
     /// ledger of the terminal events. See ``emitSessionScopedEvent(_:)``.
     nonisolated let outputHub = SessionOutputHub()

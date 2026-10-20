@@ -271,7 +271,7 @@ extension RoutedSessionActor: SessionMailObserver {
             batch.userMail.first.flatMap { SubmissionOptions(for: $0, isGuided: grammar != nil) } ?? .mailDelivery
         pumpWork?.kind = .answer(options: options)
         let callers = deliver(batch.mail)
-        let callerContext = batch.userMail.first.flatMap { callers[$0.id]?.serviceContext }
+        let callerContext = answerParentContext(of: batch, callers: callers)
         // The batch left the queue: the depth is synchronous, so it adds no
         // suspension point here.
         recordMailQueueDepth()
@@ -290,13 +290,42 @@ extension RoutedSessionActor: SessionMailObserver {
         openAnswerRunMail = []
         openAnswerDeliveredUserMail = false
         openAnswerCallerWork = .none
+        openAnswerMailSenders = [:]
         endPumpWork()
+    }
+
+    /// The tracing context that the spans of the answer to `batch` are
+    /// children of (task ^yx6931z).
+    ///
+    /// It is the context of the caller of the first user-type mail. When that
+    /// caller has none, or the batch has only run mail, it is the context of
+    /// the sender of the first mail of the batch that has one: a run mail
+    /// keeps the context of its poster (``SessionOutbox/MailCaller``). So a
+    /// batch of run mail alone does not start a new trace. The user-type mail
+    /// whose caller is the parent leaves ``openAnswerMailSenders``, so no
+    /// submission links to its own parent for it.
+    ///
+    /// - Parameters:
+    ///   - batch: What the first submission of the answer carries.
+    ///   - callers: The task-locals of the caller of each mail of `batch`
+    ///     that had one, by id.
+    /// - Returns: The parent context, or `nil` when no mail of `batch` has a
+    ///   sender context.
+    private func answerParentContext(
+        of batch: SubmissionBatch, callers: [MailID: SessionOutbox.MailCaller]
+    ) -> ServiceContext? {
+        if let leader = batch.userMail.first, let context = callers[leader.id]?.serviceContext {
+            openAnswerMailSenders[leader.id] = nil
+            return context
+        }
+        return batch.mail.lazy.compactMap { callers[$0.id]?.serviceContext }.first
     }
 
     /// Makes `mail` part of the open answer: its ids join
     /// ``openAnswerMail``, its run mail joins ``openAnswerRunMail``, the own
-    /// work of its senders joins ``openAnswerCallerWork``, and its hold and
-    /// callers are forgotten. The answer sends
+    /// work of its senders joins ``openAnswerCallerWork``, the tracing
+    /// context of its senders joins ``openAnswerMailSenders``, and its hold
+    /// and callers are forgotten. The answer sends
     /// ``SessionEvent/mailDelivered(_:)`` for each one.
     ///
     /// - Parameter mail: The mail that the pump took for the answer.
@@ -309,6 +338,9 @@ extension RoutedSessionActor: SessionMailObserver {
         openAnswerDeliveredUserMail = openAnswerDeliveredUserMail || mail.contains(where: \.isUserMail)
         let callers = outbox.takeCallers(of: mail.map(\.id))
         openAnswerCallerWork = callers.values.reduce(openAnswerCallerWork) { $0.union($1.ownWork) }
+        for (id, caller) in callers {
+            openAnswerMailSenders[id] = caller.serviceContext
+        }
         outbox.forget(mail.map(\.id))
         return callers
     }
