@@ -113,7 +113,7 @@ extension TelemetryContentSafetyTests {
                 // attempt, and ends the submission.
                 await session.beginSubmission(cause: .message, mailIds: [])
                 await session.recordSubmissionError(Self.contentBearingError)
-                await session.endSubmission(usage: nil, finishReason: .completed, measuredRender: nil, onEvent: nil)
+                await session.endSubmission(usage: nil, finishReason: .completed, onEvent: nil)
 
                 #expect(
                     Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.submission, in: context)

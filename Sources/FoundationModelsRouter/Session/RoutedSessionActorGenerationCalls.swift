@@ -58,8 +58,9 @@ struct GenerationCallLedger {
 
     /// When the generation call that runs now started: the open of the
     /// ledger, the end of the last call, or the close of the last tool call.
-    /// The duration of a call runs from here to the report of the call, and
-    /// the output rate of the call is measured over it.
+    /// The span of a call whose first output token the session did not see
+    /// runs from here to the report of the call. The output rate is not
+    /// measured over it: that rate is over the decode time alone.
     var callStartedAt = ContinuousClock.now
 
     /// When the pass of the generation call that runs now started, on the
@@ -190,8 +191,9 @@ extension RoutedSessionActor {
 
     /// Takes the usage of the generation call that ended since the last
     /// report, adds it to the ledger, and records its metrics: its tokens in,
-    /// cached and out, its output rate, and its prefill and decode times
-    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:duration:timing:model:slot:)``).
+    /// cached and out, its prefill and decode times, and its decode rate
+    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:timing:model:slot:)``),
+    /// and writes its span (``traceGenerationCall(_:duration:toolCallCount:)``).
     ///
     /// It first applies the pass phases that the backend reported
     /// (``drainGenerationPassPhases()``), so the ledger holds the start and
@@ -302,8 +304,8 @@ extension RoutedSessionActor {
             timing.timeToFirstToken.flatMap { prefill in timing.decodeTime.map { prefill + $0 } }
             ?? ledger.callStartedAt.duration(to: endedAt)
         sessionMetrics.recordGenerationCall(
-            tokensIn: call.input, tokensCached: cached, tokensOut: call.output,
-            duration: ledger.callStartedAt.duration(to: endedAt), timing: timing, model: model, slot: slot)
+            tokensIn: call.input, tokensCached: cached, tokensOut: call.output, timing: timing, model: model,
+            slot: slot)
         generationCallLedger?.callStartedAt = endedAt
         generationCallLedger?.passStartedAt = nil
         generationCallLedger?.firstOutputAt = nil

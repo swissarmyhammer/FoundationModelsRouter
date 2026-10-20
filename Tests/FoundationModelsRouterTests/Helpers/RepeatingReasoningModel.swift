@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
+import Tracing
 
 @testable import FoundationModelsRouter
 
@@ -458,6 +459,9 @@ struct RepeatingReasoningSessionFixture: SessionDirectoryFixture {
     ///   - tools: The tools the session mounts.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
+    ///   - tracer: The tracer every handle of the resolved profile carries, or
+    ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
+    ///     time.
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws. Before it throws, it
     ///   removes the temp directory.
@@ -466,7 +470,8 @@ struct RepeatingReasoningSessionFixture: SessionDirectoryFixture {
         repeatsAfterStop: Bool,
         detection: RepetitionDetection,
         tools: [any Tool] = [],
-        tempDirPrefix: String
+        tempDirPrefix: String,
+        tracer: (any Tracer)? = nil
     ) async throws -> RepeatingReasoningSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
@@ -476,7 +481,8 @@ struct RepeatingReasoningSessionFixture: SessionDirectoryFixture {
             cacheDir: directory,
             recorder: recorder,
             loader: StubModelLoader(
-                container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
+                container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension),
+            tracer: tracer)
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }

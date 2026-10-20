@@ -535,7 +535,7 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let compactionEnds = ChangeSignal()
 
     /// Wakes each wait of a compaction for the end of the open submission
-    /// (``endSubmission(usage:finishReason:measuredRender:onEvent:)``).
+    /// (``endSubmission(usage:finishReason:onEvent:)``).
     nonisolated let submissionCloses = ChangeSignal()
 
     /// The ids of the mail of the open answer, in delivery order: the mail

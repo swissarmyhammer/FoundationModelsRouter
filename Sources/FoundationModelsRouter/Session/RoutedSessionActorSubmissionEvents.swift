@@ -21,7 +21,7 @@ struct RunningSubmission {
 /// A submission is one attempt of the chain that answers the messages of the
 /// session. ``beginSubmission(cause:mailIds:)`` opens it when the attempt
 /// starts, ``submissionDidStart()`` reports its start when its SDK call
-/// starts, and ``endSubmission(usage:finishReason:measuredRender:onEvent:)``
+/// starts, and ``endSubmission(usage:finishReason:onEvent:)``
 /// ends it where the attempt is recorded. A summarizer call of a compaction
 /// opens no submission and sends no event of its own.
 extension RoutedSessionActor {
@@ -32,7 +32,7 @@ extension RoutedSessionActor {
     /// A submission can wait a long time in its model call, so it also writes
     /// one "enter" log record through ``sessionLogger(_:)`` when its span
     /// opens (``RouterTelemetry/EnterRecord``). This method opens the span and
-    /// ``endSubmission(usage:finishReason:measuredRender:onEvent:)`` ends it,
+    /// ``endSubmission(usage:finishReason:onEvent:)`` ends it,
     /// so `TracedCall.run` of FoundationModelsExtras, which ends its span when
     /// its body returns, does not fit: this method writes the same record.
     /// The log call is synchronous, so it adds no suspension point to the
@@ -132,24 +132,25 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - usage: The measured usage of the submission, or `nil` when the
     ///     backend reports none.
+    ///     The span carries its fed and generated tokens.
     ///   - finishReason: Why the submission stopped.
-    ///   - measuredRender: The fed and generated tokens of the newest
-    ///     generation call, when the submission measured the render; the span
-    ///     carries them.
     ///   - onEvent: The event sink of the answer, or `nil`.
     func endSubmission(
         usage: TokenUsage?,
         finishReason: FinishReason,
-        measuredRender: (input: Int, output: Int)?,
         onEvent: ((SessionEvent) -> Void)?
     ) {
         guard let running = runningSubmission else { return }
         runningSubmission = nil
         // A compaction that waits to apply its snapshot wakes.
         submissionCloses.signal()
-        if let measuredRender {
-            running.span.attributes[RouterTelemetry.AttributeKey.tokensIn] = measuredRender.input
-            running.span.attributes[RouterTelemetry.AttributeKey.tokensOut] = measuredRender.output
+        // The usage of the submission, summed over its generation calls, a
+        // call that a watch stop cancelled with them. The counted size of
+        // the render is not: after a watch stop it is the render of the next
+        // pass, with no output (task ^e5kyhwb).
+        if let usage {
+            running.span.attributes[RouterTelemetry.AttributeKey.tokensIn] = usage.tokensIn
+            running.span.attributes[RouterTelemetry.AttributeKey.tokensOut] = usage.tokensOut
         }
         onEvent?(
             .submissionEnded(

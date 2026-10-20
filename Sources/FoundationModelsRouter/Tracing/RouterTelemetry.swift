@@ -211,10 +211,12 @@ enum RouterTelemetry {
         /// The budget the fit ran against, in bytes.
         static let budgetBytes = "budget.bytes"
 
-        /// How many tokens went into the model call.
+        /// How many tokens went into the model call. On a submission span it
+        /// is the usage of the submission, summed over its generation calls.
         static let tokensIn = "tokens.in"
 
-        /// How many tokens came out of the model call.
+        /// How many tokens came out of the model call. On a submission span
+        /// it is summed over its generation calls by the rule of ``tokensIn``.
         static let tokensOut = "tokens.out"
 
         /// How many of the ``tokensIn`` of a generation call the prompt cache
@@ -619,8 +621,11 @@ enum RouterTelemetry {
         /// The counter of the tokens that each generation call generated.
         static let generationTokensOut = prefix + "generation.tokens.out"
 
-        /// The recorder of the output rate of each generation call: its
-        /// generated tokens divided by its duration, in tokens per second.
+        /// The recorder of the decode rate of each generation call: its
+        /// generated tokens divided by its decode time
+        /// (``generationCallDecodeTime``), in tokens per second. The prefill,
+        /// the wait for the worker and the tool bodies are not in it. A call
+        /// whose first output token the session did not see records nothing.
         static let generationTokensPerSecond = prefix + "generation.tokens_per_second"
 
         /// The timer from the start of a submission to its first observable

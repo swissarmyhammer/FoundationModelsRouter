@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import InMemoryTracing
 import Testing
 
 @testable import FoundationModelsRouter
@@ -195,6 +196,31 @@ struct WatchStopUsageTests {
         let stoppedCall = try #require(answer.events.generationCalls.first)
         #expect(stoppedCall.tokensOut == (try Self.reasoningTokensAfterStop(of: answer)))
         try await Self.expectStoppedCallReported(of: answer, finishReason: .reasoningTokenLimit)
+    }
+
+    @Test("after a reasoning stop, the span of the stopped submission carries the tokens that its call fed and generated")
+    func reasoningStopSpanCarriesTheStoppedCallTokens() async throws {
+        let tracer = InMemoryTracer()
+        let fixture = try await RepeatingReasoningSessionFixture.make(
+            script: Self.reasoningScript, repeatsAfterStop: false, detection: RepetitionDetection(),
+            tempDirPrefix: Self.tempDirPrefix, tracer: tracer)
+        defer { await fixture.end() }
+
+        let events = try await collect(fixture.session.streamEvents(to: Self.prompt))
+
+        #expect(events.reasoningStops.count == 1)
+        let stoppedCall = try #require(events.generationCalls.first)
+        #expect(stoppedCall.tokensOut > 0)
+        let stoppedSpan = try #require(
+            tracer.finishedSpans.first {
+                $0.operationName == RouterTelemetry.SpanName.submission
+                    && $0.attributes.get(RouterTelemetry.AttributeKey.submissionId)
+                        == .string(SubmissionID(1).description)
+            })
+        #expect(
+            stoppedSpan.attributes.get(RouterTelemetry.AttributeKey.tokensIn) == .int64(Int64(stoppedCall.tokensIn)))
+        #expect(
+            stoppedSpan.attributes.get(RouterTelemetry.AttributeKey.tokensOut) == .int64(Int64(stoppedCall.tokensOut)))
     }
 
     @Test("after a repetition stop, the fill of the stopped submission is the render that the recovery receives")

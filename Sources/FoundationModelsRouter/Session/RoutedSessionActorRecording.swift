@@ -122,7 +122,6 @@ extension RoutedSessionActor {
                     tokensIn: $0.input, tokensOut: $0.output, contextFill: contextFill, finishReason: finishReason)
             },
             finishReason: finishReason,
-            measuredRender: measuredRender ? renderedContext : nil,
             onEvent: onEvent)
         return (diffIncludedResponse, usage, deliveredMailAttached, finishReason)
     }

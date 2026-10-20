@@ -154,7 +154,7 @@ struct RouterMetricsTests {
 
     // MARK: - Generation calls
 
-    @Test("each generation call adds its tokens in, cached and out, and records its tokens per second and the time to first token")
+    @Test("each generation call adds its tokens in, cached and out, and each submission records its time to first token")
     func generationCallsRecordTokensAndTimes() async throws {
         let metrics = try await TelemetryCapture.run(forbidding: [Self.meteredPrompt]) { context in
             let fixture = try await MeteredToolLoopSessionFixture.make(
@@ -173,10 +173,6 @@ struct RouterMetricsTests {
         #expect(tokensOut.totalValue == Self.meteredTokensOut)
         let tokensCached = try factory.expectCounter("FoundationModelsRouter.generation.tokens.cached", dimensions)
         #expect(tokensCached.totalValue == Self.meteredTokensCached)
-        let tokensPerSecond = try factory.expectRecorder(
-            "FoundationModelsRouter.generation.tokens_per_second", dimensions)
-        #expect(tokensPerSecond.values.count == Self.meteredCalls.count)
-        #expect(tokensPerSecond.values.allSatisfy { $0 >= 0 })
         let firstToken = try factory.expectTimer("FoundationModelsRouter.generation.time_to_first_token", dimensions)
         #expect(!firstToken.values.isEmpty)
         #expect(firstToken.values.allSatisfy { $0 >= 0 })
@@ -211,6 +207,28 @@ struct RouterMetricsTests {
         #expect(decode.values.count == Self.pacedCalls.count)
         #expect(firstToken.values.allSatisfy { $0 >= 0 })
         #expect(decode.values.allSatisfy { $0 >= 0 })
+    }
+
+    @Test("the tokens per second of each generation call are its generated tokens over its decode time")
+    func tokensPerSecondDividesByTheDecodeTime() async throws {
+        let (factory, dimensions, calls) = try await TelemetryCapture.run(forbidding: [Self.meteredPrompt]) {
+            context in
+            let fixture = try await MeteredToolLoopSessionFixture.make(
+                calls: Self.pacedCalls, context: Self.meteredContextTokens, tempDirPrefix: Self.tempDirPrefix)
+            defer { await fixture.end() }
+            await fixture.session.useCaptureMetrics(for: context.metricsFactory)
+
+            let events = try await collect(fixture.session.streamEvents(to: Self.meteredPrompt, maxTokens: nil))
+            return (context.metricsFactory, Self.sessionDimensions(of: fixture.session), events.generationCalls)
+        }
+
+        let tokensPerSecond = try factory.expectRecorder(
+            "FoundationModelsRouter.generation.tokens_per_second", dimensions)
+        let expected = try calls.map { call in
+            Double(call.tokensOut) / (try #require(call.decodeTime)).seconds
+        }
+        #expect(calls.count == Self.pacedCalls.count)
+        #expect(tokensPerSecond.values == expected)
     }
 
     // MARK: - Compactions
