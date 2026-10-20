@@ -214,12 +214,17 @@ extension RoutedSessionActor {
             return nil
         }
         let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
-        let timing = noteEndedCall(call, cached: cached, backendUsage: call, of: ledger)
+        let ended = noteEndedCall(call, cached: cached, backendUsage: call, of: ledger)
+        let submissionEntries = unrecordedTranscriptEntries()
         let finishReason = FinishReason(
-            submissionEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
+            submissionEntries: submissionEntries, outputTokens: call.output,
             lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
-        return generationCallUsage(
-            of: call, cached: cached, timing: timing, finishReason: finishReason, entryKind: entryKind)
+        let usage = generationCallUsage(
+            of: call, cached: cached, timing: ended.timing, finishReason: finishReason, entryKind: entryKind)
+        traceGenerationCall(
+            usage, duration: ended.duration,
+            toolCallCount: GenerationCallEntryKind.toolCallCount(leftBy: submissionEntries))
+        return usage
     }
 
     /// Takes the usage of the generation call that a watch stop cancelled
@@ -241,13 +246,14 @@ extension RoutedSessionActor {
     ///   - endedAtToolCall: Whether the stopped call ended at a tool call.
     ///   - finishReason: The finish reason of the stop.
     ///   - entryKind: What the stopped call left in the transcript.
+    ///   - toolCallCount: How many tool calls the stopped call asked for.
     /// - Returns: The usage of the stopped call, and the tokens that it adds
     ///   to the usage that the backend reported. `nil` when no ledger is
     ///   open, the backend reports no usage, or a call that ended at a tool
     ///   call has no usage left to report.
     func takeStoppedGenerationCall(
         counted: (input: Int, output: Int), endedAtToolCall: Bool, finishReason: FinishReason,
-        entryKind: GenerationCallEntryKind
+        entryKind: GenerationCallEntryKind, toolCallCount: Int
     ) -> (usage: GenerationCallUsage, addedUsage: (input: Int, output: Int))? {
         drainGenerationPassPhases()
         guard let ledger = generationCallLedger, let usageAfter = backend.usageTokenCounts() else { return nil }
@@ -259,9 +265,10 @@ extension RoutedSessionActor {
             output: reported.output > 0 ? reported.output : counted.output
         )
         let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
-        let timing = noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
+        let ended = noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
         let usage = generationCallUsage(
-            of: call, cached: cached, timing: timing, finishReason: finishReason, entryKind: entryKind)
+            of: call, cached: cached, timing: ended.timing, finishReason: finishReason, entryKind: entryKind)
+        traceGenerationCall(usage, duration: ended.duration, toolCallCount: toolCallCount)
         return (usage, (input: call.input - reported.input, output: call.output - reported.output))
     }
 
@@ -281,13 +288,19 @@ extension RoutedSessionActor {
     ///     the call accounts for. The ledger adds it, so the next call starts
     ///     where the backend count is.
     ///   - ledger: The ledger of the attempt, as it was before the call ended.
-    /// - Returns: The prefill and the decode time of the call.
+    /// - Returns: The prefill and the decode time of the call, and how long
+    ///   the call ran: its prefill and its decode when the session saw its
+    ///   first output token, else the time since the ledger last moved
+    ///   (``GenerationCallLedger/callStartedAt``).
     private func noteEndedCall(
         _ call: (input: Int, output: Int), cached: Int?, backendUsage: (input: Int, output: Int),
         of ledger: GenerationCallLedger
-    ) -> GenerationCallTiming {
+    ) -> (timing: GenerationCallTiming, duration: Duration) {
         let endedAt = ContinuousClock.now
         let timing = ledger.timingOfEndedCall(endedAt: generationPassObserver.clock.now)
+        let duration =
+            timing.timeToFirstToken.flatMap { prefill in timing.decodeTime.map { prefill + $0 } }
+            ?? ledger.callStartedAt.duration(to: endedAt)
         sessionMetrics.recordGenerationCall(
             tokensIn: call.input, tokensCached: cached, tokensOut: call.output,
             duration: ledger.callStartedAt.duration(to: endedAt), timing: timing, model: model, slot: slot)
@@ -300,7 +313,7 @@ extension RoutedSessionActor {
         generationCallLedger?.reportedCached = ledger.reportedCached + (cached ?? 0)
         generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
-        return timing
+        return (timing, duration)
     }
 
     /// The usage report of one generation call.

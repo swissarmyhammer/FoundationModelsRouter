@@ -38,7 +38,8 @@ extension RoutedSessionActor {
         )
         let stoppedCall = takeStoppedGenerationCall(
             counted: counted, endedAtToolCall: Self.endsAtToolCall(marker.liveEntries),
-            finishReason: marker.report.finishReason, entryKind: GenerationCallEntryKind(leftBy: passOutput))
+            finishReason: marker.report.finishReason, entryKind: GenerationCallEntryKind(leftBy: passOutput),
+            toolCallCount: GenerationCallEntryKind.toolCallCount(leftBy: passOutput))
         return ReplacedBackendMeasure(
             stoppedCall: stoppedCall?.usage, addedUsage: stoppedCall?.addedUsage ?? (input: 0, output: 0),
             renderTokens: countedTokens(of: render, report: marker.report))

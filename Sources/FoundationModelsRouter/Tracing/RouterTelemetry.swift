@@ -75,6 +75,14 @@ enum RouterTelemetry {
         /// answers its messages, with every tool call inside it.
         static let submission = prefix + "submission"
 
+        /// One generation call inside a submission: one pass of the model,
+        /// from its start to the tool call or the text that ended it. A child
+        /// of the ``submission`` span. It carries ``AttributeKey/tokensIn``,
+        /// ``AttributeKey/tokensCached``, ``AttributeKey/tokensOut``,
+        /// ``AttributeKey/timeToFirstTokenMs``, ``AttributeKey/decodeMs``,
+        /// ``AttributeKey/finishReason`` and ``AttributeKey/toolCallCount``.
+        static let generationCall = prefix + "generation_call"
+
         /// One compaction of a session's transcript: a requested compaction,
         /// or an automatic compaction inside an answer.
         static let compact = prefix + "compact"
@@ -208,6 +216,28 @@ enum RouterTelemetry {
 
         /// How many tokens came out of the model call.
         static let tokensOut = "tokens.out"
+
+        /// How many of the ``tokensIn`` of a generation call the prompt cache
+        /// of the backend reused. A backend that reports no cache count
+        /// writes no such key.
+        static let tokensCached = "tokens.cached"
+
+        /// The time from the start of a generation call to its first output
+        /// token, in milliseconds. A call whose first output token the
+        /// session did not see writes no such key.
+        static let timeToFirstTokenMs = "generation.time_to_first_token_ms"
+
+        /// The time from the first output token of a generation call to its
+        /// end, in milliseconds. Written by the rule of ``timeToFirstTokenMs``.
+        static let decodeMs = "generation.decode_ms"
+
+        /// Why a generation call stopped: the name of its ``FinishReason``.
+        static let finishReason = "generation.finish_reason"
+
+        /// How many tool calls a generation call asked for: the calls of the
+        /// tool-calls entry it ended with, or 0 for a call that ended with
+        /// text.
+        static let toolCallCount = "generation.tool_call_count"
 
         /// The transcript's estimated size, in tokens, before a compaction ran.
         static let tokensBefore = "tokens.before"

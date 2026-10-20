@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Tracing
 
 @testable import FoundationModelsRouter
 
@@ -220,6 +221,9 @@ struct MeteredToolLoopSessionFixture: SessionDirectoryFixture {
     ///     default) for manual compaction only.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
+    ///   - tracer: The tracer every handle of the resolved profile carries, or
+    ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
+    ///     time.
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws. Before it throws, it
     ///   removes the temp directory.
@@ -227,7 +231,8 @@ struct MeteredToolLoopSessionFixture: SessionDirectoryFixture {
         calls: [MeteredGenerationCall],
         context: Int,
         budget: TokenBudget? = nil,
-        tempDirPrefix: String
+        tempDirPrefix: String,
+        tracer: (any Tracer)? = nil
     ) async throws -> MeteredToolLoopSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
@@ -236,7 +241,8 @@ struct MeteredToolLoopSessionFixture: SessionDirectoryFixture {
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             recorder: recorder,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension),
+            tracer: tracer)
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             try await router.resolve(
                 profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
