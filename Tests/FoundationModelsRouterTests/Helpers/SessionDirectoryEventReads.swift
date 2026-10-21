@@ -6,7 +6,7 @@ extension AsyncStream.Iterator where Element == SessionDirectoryEvent {
     ///
     /// - Parameter count: How many events to read.
     /// - Returns: The events, in stream order.
-    mutating func next(_ count: Int) async -> [SessionDirectoryEvent] {
+    mutating func next(count: Int) async -> [SessionDirectoryEvent] {
         var events: [SessionDirectoryEvent] = []
         while events.count < count, let event = await next() {
             events.append(event)

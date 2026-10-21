@@ -160,7 +160,7 @@ import Testing
 
         let summary = try await fixture.directory.start(Self.request())
         fixture.directory.emit(Self.marker)
-        let received = await events.next(2)
+        let received = await events.next(count: 2)
 
         #expect(received == [.started(summary, requestedByClient: Self.requestingClient), Self.marker])
         #expect(summary.tags == Self.tags)
@@ -215,7 +215,7 @@ import Testing
 
         let summary = try await fixture.directory.start(Self.request(startedBy: startedBy))
         fixture.directory.emit(Self.marker)
-        let received = await events.next(3)
+        let received = await events.next(count: 3)
 
         let session = try fixture.launchedSession()
         let facts = session.facts
@@ -242,7 +242,7 @@ import Testing
 
         let summary = try await router.sessionDirectory.start(Self.request())
         router.sessionDirectory.emit(Self.marker)
-        let received = await events.next(2)
+        let received = await events.next(count: 2)
 
         let session = try #require(launcher.sessions.only)
         #expect(try await router.sessionDirectory.summary(of: session.id) == summary)

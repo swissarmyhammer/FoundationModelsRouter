@@ -307,7 +307,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         session.bind(delegationAdvisor: delegationAdvisor)
         // Before the session is returned, so a query right after this call
         // finds it.
-        registerVendedSession(session, subagentParentID: subagentParentID, requestedByClient: requestedByClient)
+        registerVendedSession(session: session, subagentParentID: subagentParentID, requestedByClient: requestedByClient)
         return session
     }
 
@@ -323,7 +323,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - requestedByClient: The UI client that asked for the start, which
     ///     the `started` event of the registration carries, or `nil`.
     private func registerVendedSession(
-        _ session: any RoutedSession, subagentParentID: ULID?, requestedByClient: String?
+        session: any RoutedSession, subagentParentID: ULID?, requestedByClient: String?
     ) {
         let kind: SessionKind = subagentParentID == nil ? .root : .subagent
         sessionDirectory?.register(

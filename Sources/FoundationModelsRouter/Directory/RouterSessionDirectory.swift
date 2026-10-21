@@ -264,7 +264,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// registered itself when ``RoutedModel/makeSession(configuration:)``
     /// vended it, and that registration sent the one `started` of the
     /// session, so `start` sends no second `started`. A session that lacks a
-    /// fact of the request gets it here (``admit(_:startedFor:)``).
+    /// fact of the request gets it here (``admit(session:startedFor:)``).
     ///
     /// The first message is ``MailBody/agentMessage(from:content:)`` from
     /// the session `startedBy`, with the sender ``MailSender/session(_:)``,
@@ -282,7 +282,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
         guard let launcher else { throw SessionDirectoryError.noLauncher }
         let session = try await launcher.launchRootSession(request)
-        try admit(session, startedFor: request)
+        try admit(session: session, startedFor: request)
         _ = try session.mail(Self.firstMail(of: request))
         guard let summary = try await summary(of: session.id) else {
             throw SessionDirectoryError.unknownSession(session.id)
@@ -304,8 +304,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - session: The session that the launcher returned.
     ///   - request: The start request of the session.
     /// - Throws: The error of a write of `facts.json`.
-    private func admit(_ session: any RoutedSession, startedFor request: SessionStartRequest) throws {
-        guard isRegistered(session) else {
+    private func admit(session: any RoutedSession, startedFor request: SessionStartRequest) throws {
+        guard isRegistered(session: session) else {
             try Self.writeMissingFacts(of: request, to: session)
             register(session, kind: .root, parentID: nil, requestedByClient: request.requestedByClient)
             return
@@ -319,7 +319,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameter session: A session.
     /// - Returns: `true` when the live entry of its id is `session`.
-    private nonisolated func isRegistered(_ session: any RoutedSession) -> Bool {
+    private nonisolated func isRegistered(session: any RoutedSession) -> Bool {
         state.withLock { $0.entries[session.id]?.session === session }
     }
 
@@ -338,7 +338,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Writes each fact of `request` that `session` lacks to the facts of
-    /// `session` (``complete(_:with:)``).
+    /// `session` (``complete(facts:with:)``).
     ///
     /// Only a ``RoutedSessionActor`` can change its facts. Each session that
     /// a router vends is one, so another session that lacks a fact is a
@@ -355,7 +355,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         of request: SessionStartRequest, to session: any RoutedSession
     ) throws -> Bool {
         var completed = session.facts
-        complete(&completed, with: request)
+        complete(facts: &completed, with: request)
         guard completed != session.facts else { return false }
         guard let actor = session as? RoutedSessionActor else {
             assertionFailure("a launcher returned a session that lacks the facts of its request and cannot change them")
@@ -364,7 +364,7 @@ public actor RouterSessionDirectory: SessionDirectory {
                 metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
             return false
         }
-        try actor.updateFacts { complete(&$0, with: request) }
+        try actor.updateFacts { complete(facts: &$0, with: request) }
         return true
     }
 
@@ -376,7 +376,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameters:
     ///   - facts: The facts of a session.
     ///   - request: The start request of the session.
-    private static func complete(_ facts: inout SessionFacts, with request: SessionStartRequest) {
+    private static func complete(facts: inout SessionFacts, with request: SessionStartRequest) {
         facts.tags.formUnion(request.tags)
         facts.title = facts.title ?? request.title
         facts.startedBy = facts.startedBy ?? request.startedBy

@@ -15,6 +15,22 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/SessionLauncher.swift (new), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionDirectoryEventFanout.swift, Sources/FoundationModelsRouter/Session/SessionConfiguration.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Tracing/RouterTelemetry.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift (new), Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift (new)
     - next: /review
   timestamp: 2026-10-21T23:17:58.911914+00:00
+- actor: claude-code
+  id: 01m5gcm9y41mecdy83n05qp91q
+  text: |-
+    ### review — stuck
+    - evidence: review sha HEAD~1..HEAD (bacbe2fe), counts 8 findings / 8 confirmed / 0 refuted, all swift/fluent-usage — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:239, :307, :322, :379; Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:48, :57; Sources/FoundationModelsRouter/RoutedLLM.swift:325; Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift:9. Conflict: RouterSessionDirectory.swift:239 (useLauncher(_:)), SessionLauncher.swift:48 (launchRootSession(_:)) and SessionLauncher.swift:57 (restoreSession(_:)) are signatures fixed word for word by FoundationModelsRouter/session.md 5.4 and FoundationModelsMultitool/session.md ROUTER-8, which ACPAgent (ACPA-9) implements; the rule demands labels the documented contract forbids. Recorded under "## Blocker (2026-10-21 18:19)" in the description. No finding fell on a later card (^axhfdx1, ^17nh345, ^4vjph7b, ^bn9fc99).
+    - next: a person decides the three contract signatures (update the spec documents to the labeled forms, or correct the swift/fluent-usage rule), then /implement re-runs on all eight findings and /review re-runs.
+  timestamp: 2026-10-21T23:27:03.620546+00:00
+- actor: claude-code
+  id: 01m5gcvvx3ce07993chj8d3q49
+  text: |-
+    Labeled the five swift/fluent-usage findings that the spec does not name ('Omit the first argument label only for value-preserving conversions.'): admit(session:startedFor:), isRegistered(session:), complete(facts:with:) in RouterSessionDirectory.swift; registerVendedSession(session:subagentParentID:requestedByClient:) in RoutedLLM.swift; the test helper AsyncStream.Iterator.next(count:) in SessionDirectoryEventReads.swift. Updated every call site and the DocC symbol links (``admit(session:startedFor:)``, ``complete(facts:with:)``), plus the next(count:) callers in RouterSessionDirectoryEventTests and RouterSessionDirectoryLauncherTests. I swept the commit's other new `_` first parameters: the rest are SessionLauncher conformances in FakeSessionLauncher and the public-surface test, which must match the contract signatures, so they stay as they are. Per the human instruction I left the three contract findings (useLauncher(_:), launchRootSession(_:), restoreSession(_:)) unchanged and unchecked; they still wait on the Blocker. Note: the files tool's replace_all flag replaced only the first match, so each identical call site needed its own edit.
+
+    ### implement — changed
+    - evidence: swift build --build-tests clean (the only warning is SwiftPM's 'missing creator for mutated node' for the mlx-swift_Cmlx bundle, which comes from the build system, not from code); swift test --skip-build --filter "RouterSessionDirectory|SessionLauncherPublicSurface" 48 tests in 5 suites + 2 tests in 1 suite passed, 0 failed. Files: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift
+    - next: a person decides the three contract signatures in the Blocker; then /review
+  timestamp: 2026-10-21T23:31:11.395480+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
@@ -66,3 +82,29 @@ Add the `SessionLauncher` protocol that the host fills, so the directory can sta
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api #hosting
+
+## Review Findings (2026-10-21 18:19)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 11 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [ ] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:239` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Providing a launcher is not a value-preserving conversion. Change signature to `public func useLauncher(launcher: any SessionLauncher)` to label the parameter.
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:307` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Admitting a session is not a value-preserving conversion. Change signature to `private func admit(session: any RoutedSession, startedFor request: SessionStartRequest)` to label the parameter.
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:322` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Checking if a session is registered is not a value-preserving conversion. Change signature to `private nonisolated func isRegistered(session: any RoutedSession)` to label the parameter.
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:379` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Completing facts is not a value-preserving conversion. Change signature to `private static func complete(facts: inout SessionFacts, with request: SessionStartRequest)` to label the parameter.
+- [ ] `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:48` `swift/fluent-usage` — First parameter is unlabeled, but should be labeled: 'Omit the first argument label only for value-preserving conversions.' This method creates a session from a request, which is not a value-preserving conversion. Change signature to `func launchRootSession(request: SessionStartRequest) async throws -> any RoutedSession` to label the fundamental parameter.
+- [ ] `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:57` `swift/fluent-usage` — First parameter is unlabeled, but should be labeled: 'Omit the first argument label only for value-preserving conversions.' This method restores a session from an ID, which is not a value-preserving conversion. Change signature to `func restoreSession(id: ULID) async throws -> any RoutedSession` to label the fundamental parameter.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:325` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Registering a vended session is not a value-preserving conversion. Change signature to `private func registerVendedSession(session: any RoutedSession, subagentParentID: ULID?, requestedByClient: String?)` to label the first parameter.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift:9` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Reading the next N events is not a value-preserving conversion. Change signature to `mutating func next(count: Int) async` to label the parameter.
+
+## Blocker (2026-10-21 18:19) — rule fights a documented contract
+
+Three of the findings above, all from `swift/fluent-usage` ("Omit the first argument label only for value-preserving conversions."), ask to relabel public API whose exact signatures are fixed by the written cross-package spec:
+
+- `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:239` wants `useLauncher(launcher:)`. The spec says `directory.useLauncher(_:)`: /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/session.md section 5.4, /Users/wballard/github/swissarmyhammer/FoundationModelsMultitool/session.md (dependency-inversion bullet and ROUTER-8 Spec), and this card's title and What section.
+- `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:48` wants `launchRootSession(request:)`. The spec declares `func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession` in the same two session.md files.
+- `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:57` wants `restoreSession(id:)`. The spec declares `func restoreSession(_ id: ULID) async throws -> any RoutedSession` in the same two session.md files.
+
+ACPAgent implements `SessionLauncher` against that spec (ACPA-9), so the rule and the documented contract cannot both be obeyed. A person must decide: change the spec documents (Router session.md 5.4, Multitool session.md ROUTER-8, this card) to the labeled forms, or correct the rule. The other five findings (RouterSessionDirectory.swift:307, :322, :379, RoutedLLM.swift:325, SessionDirectoryEventReads.swift:9) are private/internal or test-helper signatures the spec does not name; they are not part of this conflict.
