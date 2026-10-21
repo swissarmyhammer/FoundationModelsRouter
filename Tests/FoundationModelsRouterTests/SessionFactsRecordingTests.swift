@@ -14,26 +14,11 @@ import Testing
         "agentID", "agentName", "tags", "title", "startedBy", "origin", "archivedAt",
     ]
 
-    /// The configuration of a vended root that carries every fact field.
-    private static func configuration(startedBy: ULID) -> SessionConfiguration {
-        SessionConfiguration(
-            agentID: "folder:/Users/dev/example/agents/reviewer",
-            agentName: "Reviewer",
-            tags: ["kanban", "review"],
-            title: "Review the login change",
-            startedBy: startedBy,
-            origin: FoundationModelsExtras.SessionDirectoryOrigin.tool)
-    }
-
-    /// The facts ``configuration(startedBy:)`` gives a new session.
-    private static func expectedFacts(startedBy: ULID) -> SessionFacts {
-        SessionFacts(
-            agentID: "folder:/Users/dev/example/agents/reviewer",
-            agentName: "Reviewer",
-            tags: ["kanban", "review"],
-            title: "Review the login change",
-            startedBy: startedBy,
-            origin: .tool)
+    /// Runs `body` with a resolved profile over a durable recording root.
+    private static func withProfile(
+        _ body: (LanguageModelProfile) async throws -> Void
+    ) async throws {
+        try await SessionFactsFixtures.withRecordingProfile(prefix: "SessionFactsRecordingTests", body)
     }
 
     /// Vends one root session with the fact configuration under a durable
@@ -41,22 +26,19 @@ import Testing
     private static func withVendedSession(
         _ body: (RoutedSessionActor, ULID) async throws -> Void
     ) async throws {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "SessionFactsRecordingTests")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: BasicLLMContainer(), cacheDir: directory.appendingPathComponent("cache"),
-            recordingsDir: directory.appendingPathComponent("recordings"))
-        let startedBy = ULID.generate()
-        let session = profile.standard.makeSession(configuration: configuration(startedBy: startedBy))
-        let actor = try #require(session as? RoutedSessionActor)
-        do {
-            try await body(actor, startedBy)
-        } catch {
+        try await withProfile { profile in
+            let startedBy = ULID.generate()
+            let session = profile.standard.makeSession(
+                configuration: SessionFactsFixtures.configuration(startedBy: startedBy))
+            let actor = try #require(session as? RoutedSessionActor)
+            do {
+                try await body(actor, startedBy)
+            } catch {
+                await session.close()
+                throw error
+            }
             await session.close()
-            throw error
         }
-        await session.close()
-        withExtendedLifetime(router) {}
     }
 
     /// The JSON object of a file.
@@ -69,7 +51,7 @@ import Testing
         try await Self.withVendedSession { session, startedBy in
             let written = try SessionFacts.read(from: session.recordingDirectory)
 
-            #expect(written == Self.expectedFacts(startedBy: startedBy))
+            #expect(written == SessionFactsFixtures.expectedFacts(startedBy: startedBy))
         }
     }
 
@@ -93,7 +75,7 @@ import Testing
             let facts = Self.readFactsSynchronously(of: session)
             let onDisk = try SessionFacts.read(from: session.recordingDirectory)
 
-            #expect(facts == Self.expectedFacts(startedBy: startedBy))
+            #expect(facts == SessionFactsFixtures.expectedFacts(startedBy: startedBy))
             #expect(onDisk == facts)
         }
     }
@@ -118,7 +100,7 @@ import Testing
             let onDisk = try SessionFacts.read(from: session.recordingDirectory)
             let sidecarAfter = try Data(contentsOf: sidecarURL)
 
-            #expect(updated.tags == ["kanban", "review", "urgent"])
+            #expect(updated.tags == SessionFactsFixtures.tags.union(["urgent"]))
             #expect(updated.title == "Renamed")
             #expect(session.facts == updated)
             #expect(onDisk == updated)
@@ -128,18 +110,14 @@ import Testing
 
     /// A session vended with no fact field writes empty facts.
     @Test func aSessionWithNoFactFieldWritesEmptyFacts() async throws {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "SessionFactsRecordingTests")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: BasicLLMContainer(), cacheDir: directory.appendingPathComponent("cache"),
-            recordingsDir: directory.appendingPathComponent("recordings"))
-        let session = profile.standard.makeSession(configuration: SessionConfiguration())
+        try await Self.withProfile { profile in
+            let session = profile.standard.makeSession(configuration: SessionConfiguration())
 
-        let written = try SessionFacts.read(from: session.recordingDirectory)
+            let written = try SessionFacts.read(from: session.recordingDirectory)
 
-        #expect(written == SessionFacts())
-        #expect(session.facts == SessionFacts())
-        await session.close()
-        withExtendedLifetime(router) {}
+            #expect(written == SessionFacts())
+            #expect(session.facts == SessionFacts())
+            await session.close()
+        }
     }
 }

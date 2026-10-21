@@ -21,10 +21,41 @@ comments:
     - evidence: Sources: Session/SessionConfiguration.swift, RoutedLLM.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorFacts.swift (new), Session/RoutedSession.swift, Recording/SessionSidecar.swift. Tests: SessionFactsRecordingTests.swift (5 tests, new), SessionSidecarTests.swift (one expectation widened to facts.json). RED: build failed (no `facts`, no `updateFacts`, no config fields). GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); full `swift test`: 1955 tests / 244 suites passed with 9 known issues; 28 / 16; 19 / 3.
     - next: review
   timestamp: 2026-10-21T12:47:35.994977+00:00
+- actor: claude-code
+  id: 01m5g7w8nfknajrhvr4gb2dej7
+  text: |-
+    ### review — findings
+    - evidence: review sha 11676c31~1..11676c31 — 1 finding (1 confirmed, 0 refuted): Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:1037 swift/initialization (line still present on HEAD)
+    - next: implement — resolve the Review Findings (2026-10-21 16:59) checklist
+  timestamp: 2026-10-21T22:04:01.583538+00:00
+- actor: claude-code
+  id: 01m5g7yb27ts2k8595hypkfgh7
+  text: |-
+    BLOCKER (true conflict, nothing changed). The finding `swift/initialization` at RoutedSessionActor.swift:1037 asks that a failed facts.json write reach the caller (factory `throws`, or a throwing init). The instruction was also to remove the same cause from the whole file and to add a test that a failed facts.json write fails the vend. Three documented contracts conflict with that:
+    1. **The premise is wrong.** The sidecar write is not in the factory. `sidecarOrigin.writeSidecarIfNew(...)` also runs inside the non-throwing `RoutedSessionActor.init`, and `SessionSidecarWriter.write` logs and drops on failure (SessionSidecar.swift doc: "A failure is logged and the sidecar is dropped"). The "pattern at line 361" is that log-and-drop catch. It does not propagate anything. Removing the same cause from the whole file means the sidecar write has to propagate too.
+    2. **An existing test pins best-effort failure.** `SessionSidecarTests.sessionWithUnwritableSidecarStillForksAndGenerates` ("a session whose sidecar can never be written still forks and generates normally": "Best-effort failure must never surface into `fork()`/`respond()`") makes the recordings root a regular file. With that root, the sidecar write and the facts.json write both fail. If a failed write fails the vend or the fork, this test breaks, and so does the contract it documents.
+    3. **The public vend API cannot throw.** `RoutedModel.makeSession(...)` and `makeSession(configuration:)` are public and return `any RoutedSession` with no `throws`. There are hundreds of `makeSession()` call sites in Tests, plus downstream packages. To fail the vend, the public API must become `throws`. The card says the new fields are added "so no caller changes", so this is outside its scope.
+    Choices for a person: (a) keep writes best-effort, move both the sidecar and facts writes out of `init` into `makeRoutedSessionActor`, and keep log-and-drop. The slow work leaves init, but no error propagates and there is no "fails the vend" test. (b) Make vend, fork and restore throw on a failed recording write, retire the best-effort contract and its test, and accept the public API break. (c) Refute the finding as fighting the documented best-effort recording contract.
+  timestamp: 2026-10-21T22:05:09.575003+00:00
+- actor: claude-code
+  id: 01m5g7ydkw6ajfcktd5z56sdnn
+  text: |-
+    ### implement — stuck
+    - evidence: no files changed. Conflict: finding swift/initialization (RoutedSessionActor.swift:1037) versus the documented best-effort recording contract. That contract is the SessionSidecarWriter doc, the SessionSidecarTests.sessionWithUnwritableSidecarStillForksAndGenerates test, and the non-throwing public RoutedModel.makeSession. The sidecar write that the fix was meant to copy is also in the non-throwing init and also logs and drops.
+    - next: a person picks option (a), (b) or (c) from the blocker comment, then re-runs implement
+  timestamp: 2026-10-21T22:05:12.188979+00:00
+- actor: claude-code
+  id: 01m5g7za5zz4kndswejexjtjqx
+  text: |-
+    ### finish iteration 1 — stuck
+    - review (11676c31): findings — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:1037 swift/initialization
+    - implement: stuck — the finding conflicts with a documented contract: SessionSidecarWriter logs and drops a failed write by design, SessionSidecarTests.sessionWithUnwritableSidecarStillForksAndGenerates pins best-effort writes, and the public makeSession does not throw
+    - needs a human decision: (a) move both writes into makeRoutedSessionActor and keep best-effort, (b) make vend/fork/restore throw (public API change), or (c) refute the finding
+  timestamp: 2026-10-21T22:05:41.439883+00:00
 depends_on:
 - 01M5F3D4VMZDN4VPA8D2MY7ET8
 position_column: review
-position_ordinal: '8180'
+position_ordinal: '8680'
 title: 'ROUTER-1: SessionConfiguration carries the facts, a vend writes facts.json, and the session holds its facts'
 ---
 ## Goal
@@ -60,3 +91,12 @@ The first `facts.json` of each new session comes from its `SessionConfiguration`
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #recording
+
+## Review Findings (2026-10-21 16:59)
+
+> Scope: `review sha 11676c31~1..11676c31` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:1037` `swift/initialization` — The initializer performs disk I/O (`sidecarOrigin.writeFactsIfNew`) which is slow work. The initializer is not `throws`, so it cannot report write failures to the caller; failures are instead silently logged. According to the initialization rule, slow work like disk I/O should happen in explicit methods the caller invokes (e.g., `load()`), not in `init`. Either (1) make the initializer `throws` to propagate write failures properly, or (2) move the facts write to the factory function `makeRoutedSessionActor` where explicit error handling is available, following the pattern of the sidecar write at line 361.

@@ -35,8 +35,25 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Recording/SessionFacts.swift, Sources/FoundationModelsRouter/Recording/JSONLines.swift, Tests/FoundationModelsRouterTests/SessionFactsTests.swift; `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" build-system note); `swift test --filter "SessionFacts|SessionSidecar"` 46 tests / 4 suites + 1 public-surface test passed
     - next: review
   timestamp: 2026-10-21T21:56:23.638881+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m5g7jze24d1jd8twcgrg6drg
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (993dea8c) — 0 findings, 0 confirmed, 0 refuted (7 attempted, 0 failed); 3 files reviewed, 2 .kanban/ files excluded by .reviewignore. Prior Review Findings (2026-10-21 16:49) item SessionFacts.swift:123 reuse/reuse is checked and addressed.
+    - next: none — task moved to done
+  timestamp: 2026-10-21T21:58:57.218146+00:00
+- actor: claude-code
+  id: 01m5g7kfvaxdg3y2b5t89j1ma1
+  text: |-
+    ### finish iteration 1 — clean
+    - review (f09c5935): findings — Sources/FoundationModelsRouter/Recording/SessionFacts.swift:123
+    - implement: changed — SessionFacts.swift, JSONLines.swift, SessionFactsTests.swift
+    - test: green — swift test, 2003/33/19 passed, 9 known issues
+    - commit: 993dea8c
+    - review: clean — 0 findings
+  timestamp: 2026-10-21T21:59:14.026069+00:00
+position_column: done
+position_ordinal: ffffffffa180
 title: 'ROUTER-1: SessionFacts value and the atomic facts.json file'
 ---
 ## Goal

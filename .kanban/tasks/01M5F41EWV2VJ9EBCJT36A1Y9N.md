@@ -18,10 +18,26 @@ comments:
     - evidence: Sources: Recording/SessionFacts.swift (forFork, restored(from:)), Recording/SessionTreeRestoration.swift, Session/RoutedSessionActorForking.swift. Tests: SessionFactsRestoreTests.swift (4 tests). RED: 4 failing (restore gave empty facts, no warning, fork facts empty; restoreSession(id:) of a fork threw notARootSession -> test moved to restoreSessionTree). GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); full `swift test`: 1959 tests / 245 suites passed with 9 known issues; 28 / 16; 19 / 3. SessionRestorationTests, SessionTreeRestorationTests and the fork tests pass unchanged.
     - next: review
   timestamp: 2026-10-21T12:51:44.965824+00:00
+- actor: claude-code
+  id: 01m5g88mpb76m86g04fwbndefm
+  text: |-
+    ### review — findings
+    - evidence: review sha 251def1d~1..251def1d — 1 finding (1 confirmed, 0 refuted; 7 attempted, 0 failed) — Tests/FoundationModelsRouterTests/SessionFactsRestoreTests.swift:18 (reuse/reuse). The engine did not raise the best-effort facts.json/session.json write question tracked on ^vcrnmcm.
+    - next: implementer resolves the unchecked item in "## Review Findings (2026-10-21 17:06)"; task stays in review; still blocked by ^vcrnmcm.
+  timestamp: 2026-10-21T22:10:47.115829+00:00
+- actor: claude-code
+  id: 01m5g8eqstf33hqzgndj6ra46y
+  text: |-
+    Resolved reuse/reuse finding (SessionFactsRestoreTests.swift:18): added Tests/FoundationModelsRouterTests/Helpers/SessionFactsFixtures.swift with the shared fact constants (agentID, agentName, tags, title), `configuration(startedBy:)`, `expectedFacts(startedBy:)`, and `withRecordingProfile(prefix:_:)` (temp dir + durable-recording standard profile + cleanup). Removed `recordedFacts` from the restore suite; both suites now call the shared helpers. Same cause removed across both files: the duplicated temp-dir/profile setup (restore `withProfile`, recording `withVendedSession` and the inline setup in `aSessionWithNoFactFieldWritesEmptyFacts`) and the duplicated fact literals (fork expected facts, restored agentID check, updated tags). Note: the sah `edit file` `replace_all: true` replaced only the first match each time; I edited the remaining sites one by one.
+
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/SessionFactsFixtures.swift (new), Tests/FoundationModelsRouterTests/SessionFactsRestoreTests.swift, Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift. `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); `swift test --skip-build --filter SessionFacts`: 19 tests / 3 suites passed, plus 1/1 public-surface.
+    - next: review
+  timestamp: 2026-10-21T22:14:06.906772+00:00
 depends_on:
 - 01M5F3DZXJ25NHD9NPCVCRNMCM
-position_column: review
-position_ordinal: '8280'
+position_column: doing
+position_ordinal: '80'
 title: 'ROUTER-1: A restore reads facts.json back and a fork writes its own facts'
 ---
 ## Goal
@@ -53,3 +69,12 @@ Facts survive a restore, a session recorded before this change restores with emp
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #recording
+
+## Review Findings (2026-10-21 17:06)
+
+> Scope: `review sha 251def1d~1..251def1d` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SessionFactsRestoreTests.swift:18` `reuse/reuse` — Duplicates the identical `configuration(startedBy:)` function from SessionFactsRecordingTests without reusing it. Both create the same SessionConfiguration with identical parameters. This should call or extend the existing function rather than reimplementing it. Remove `recordedFacts` and instead call `SessionFactsRecordingTests.configuration(startedBy:)` in the test methods, or if that's not accessible, move the shared function to a common test helpers file and reuse from both test classes.
