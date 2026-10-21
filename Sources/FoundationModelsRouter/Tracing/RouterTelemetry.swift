@@ -400,6 +400,9 @@ enum RouterTelemetry {
         /// The index of past sessions, `sessions.jsonl` (``SessionIndex``).
         case sessionIndex = "SessionIndex"
 
+        /// The cross-project registry, `projects.jsonl` (``ProjectRegistry``).
+        case projectRegistry = "ProjectRegistry"
+
         /// The read of the metadata of a model repository.
         case repoMetadataReader = "RepoMetadataReader"
 

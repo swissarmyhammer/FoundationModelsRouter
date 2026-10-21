@@ -243,10 +243,7 @@ public struct SessionIndex: Sendable {
     /// - Throws: An encode error, or a file-system error when the write
     ///   fails.
     private func replaceIndexFile(with records: [SessionIndexRecord]) throws {
-        let contents = try records.reduce(into: Data()) { contents, record in
-            contents.append(try JSONLines.encodedLine(of: record))
-        }
-        try contents.write(to: indexFile, options: .atomic)
+        try JSONLines.replaceFile(indexFile, withLinesOf: records)
     }
 
     /// Creates the root directory when it is absent and materializes

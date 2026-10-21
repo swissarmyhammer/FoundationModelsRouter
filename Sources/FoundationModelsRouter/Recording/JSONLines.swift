@@ -1,13 +1,15 @@
 import Foundation
 
 /// Shared plumbing for the JSON-lines files of the record of past sessions:
-/// `sessions.jsonl` (``SessionIndex``). One record per line, RFC 3339 dates,
-/// keys in sorted order so a record's line is stable across writes.
+/// `sessions.jsonl` (``SessionIndex``) and `projects.jsonl`
+/// (``ProjectRegistry``). One record per line, RFC 3339 dates, keys in sorted
+/// order so a record's line is stable across writes.
 ///
 /// The bytes are the bytes the ACPAgent `Transcripts/JSONLines` helper wrote
 /// before Router owned the record (D72), so a file on a user's disk stays
 /// valid. ``appendJSONLine(_:encoder:logger:handle:failureMessage:failureMetadata:)``
-/// does not serve here: it logs and drops a failure, and the index throws.
+/// does not serve here: it logs and drops a failure, and the index and the
+/// registry throw.
 enum JSONLines {
     /// The encoder every record line is written with: RFC 3339 dates and
     /// sorted keys, on one line.
@@ -34,6 +36,21 @@ enum JSONLines {
         var line = try makeEncoder().encode(record)
         line.append(jsonlNewlineByte)
         return line
+    }
+
+    /// Replaces `file` with one line for each of `records`, in order, written
+    /// atomically. The parent directory must already exist.
+    ///
+    /// - Parameters:
+    ///   - records: The records the file holds afterwards.
+    ///   - file: The file to replace.
+    /// - Throws: An encode error, or a file-system error when the write
+    ///   fails.
+    static func replaceFile(_ file: URL, withLinesOf records: [some Encodable]) throws {
+        let contents = try records.reduce(into: Data()) { contents, record in
+            contents.append(try encodedLine(of: record))
+        }
+        try contents.write(to: file, options: .atomic)
     }
 
     /// Appends `line` to `file`, creating the file when it is absent. The
