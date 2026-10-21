@@ -15,10 +15,26 @@ comments:
     - evidence: Sources/FoundationModelsRouter/LanguageModelProfile.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryRegistrationTests.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueryTests.swift; `swift test --filter RouterSessionDirectory` 21/21 pass; full `swift test` 2009 pass
     - next: /review
   timestamp: 2026-10-21T22:38:35.147017+00:00
+- actor: claude-code
+  id: 01m5ga44wd640pkgw1mmtvp37b
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (522b7c6c) — counts {findings: 0, confirmed: 0, refuted: 0, attempted: 7, failed: 0, skipped: 0}; 5 files reviewed, 10 .kanban files excluded by .reviewignore; no prior Review Findings sections
+    - next: task moved to done; fork/restore/close registration continues in ^8cat9xk
+  timestamp: 2026-10-21T22:43:17.005526+00:00
+- actor: claude-code
+  id: 01m5ga4sr4sp52gm29w5tvy1vq
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — LanguageModelProfile.swift, Router.swift, RoutedLLM.swift, RouterSessionDirectoryRegistrationTests.swift (new), RouterSessionDirectoryQueryTests.swift
+    - test: green — swift test, 2009/33/19 passed, 9 known issues
+    - commit: 522b7c6c
+    - review: clean — 0 findings
+  timestamp: 2026-10-21T22:43:38.372293+00:00
 depends_on:
 - 01M5F3FCP6BTAZ5Q8FB6PEYQXN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffa680
 title: 'ROUTER-3: A profile reaches its router''s directory, and each new root and subagent session registers'
 ---
 ## Goal

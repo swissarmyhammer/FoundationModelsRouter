@@ -70,6 +70,9 @@ extension RoutedSessionActor {
     /// submission and reads nothing of `backend`'s live transcript, so a fork
     /// from a tool of this session's own submission is served too.
     ///
+    /// The child registers in the directory of this session's router as a
+    /// fork of this session before it is returned.
+    ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
@@ -272,7 +275,21 @@ extension RoutedSessionActor {
         // settings too, so the records and the metrics of the child go where
         // those of this session go.
         await child.inheritTelemetry(logger: explicitLogger, metricsFactory: explicitMetricsFactory)
+        // Before the child is returned, so a query right after the fork finds
+        // it: a fork of this session, in the directory of this session.
+        sessionDirectory?.register(child, kind: .fork, parentID: id)
         return child
+    }
+
+    /// The session directory of the router that resolved ``profile``, reached
+    /// through the handle of this session's ``slot``, or `nil` for a
+    /// hand-built profile that no router resolved.
+    private nonisolated var sessionDirectory: RouterSessionDirectory? {
+        switch slot {
+        case .standard: profile.standard.sessionDirectory
+        case .flash: profile.flash.sessionDirectory
+        case .embedding: profile.embedding.sessionDirectory
+        }
     }
 
     /// Takes the explicit telemetry of the parent of this fork.
@@ -388,7 +405,15 @@ extension RoutedSessionActor {
     /// reaches the events of the close. A close from outside the session
     /// first waits for that close, so the two do not run at the same time,
     /// and then runs the close itself, which finds each step done.
+    ///
+    /// **The live list of the directory.** Each close first takes this
+    /// session off the live list of its router's directory
+    /// (``RouterSessionDirectory/unregister(_:)``), before any wait, so a
+    /// query after the call no longer finds the session, also while a host
+    /// still holds it, and also for a close from the own work of this
+    /// session, which returns at once.
     func close() async {
+        sessionDirectory?.unregister(id)
         guard !SessionOwnWork.current.contains(id) else {
             startCloseFromOwnWork()
             return

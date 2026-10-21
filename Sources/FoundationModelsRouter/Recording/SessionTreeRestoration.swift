@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 /// A failure to restore recorded sessions from disk, through
 /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` or
@@ -177,6 +178,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// ``OperationOutcome/lost`` is posted to the node's outbox per orphaned
     /// journaled run. See ``TranscriptTree/lostRunTerminalEvents(in:)``.
     ///
+    /// Each restored node registers in the session directory of the router
+    /// of its handle (``SessionNode/directoryLineage``): the root as a root,
+    /// or as a subagent when its sidecar records an agent spawn, and each
+    /// recorded fork as a fork of its source. The directory holds each node
+    /// weakly, so a node that no caller keeps leaves the live list.
+    ///
     /// - Parameters:
     ///   - rootId: The root session's span id.
     ///   - recordingRoot: The exact directory to load the tree from, or `nil`
@@ -328,6 +335,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 try await rebuild(node, on: routedLLM)
             }
             sessionsById[node.id] = session
+            // Before the restore returns, so a query right after it finds
+            // the node, in the directory of the router of its handle.
+            let lineage = node.directoryLineage
+            routedLLM.sessionDirectory?.register(session, kind: lineage.kind, parentID: lineage.parentID)
             for child in node.children {
                 _ = try await restore(child)
             }
@@ -655,6 +666,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             configurationReport: SessionConfigurationRestorationReport(missingTools: missingTools),
             contextMismatches: contextMismatches
         )
+    }
+}
+
+extension SessionNode {
+    /// The kind and the parent that a restored node registers with in the
+    /// session directory. A recorded fork is a `fork` of its source. A node
+    /// with no source is a `subagent` of the session its sidecar's
+    /// ``SessionSidecar/agentSpawn`` names, else a `root` with no parent.
+    var directoryLineage: (kind: SessionKind, parentID: ULID?) {
+        if let parentId {
+            return (.fork, parentId)
+        }
+        if let spawn = sidecar.agentSpawn {
+            return (.subagent, spawn.parentSessionId)
+        }
+        return (.root, nil)
     }
 }
 
