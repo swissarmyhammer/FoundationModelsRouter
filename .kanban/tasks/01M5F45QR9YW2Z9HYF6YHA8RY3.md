@@ -1,6 +1,13 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f4a08nvczc1dgxnjk6dd2f
+  text: |-
+    ### decision — from foundationmodelsmultitool-bc (2026-10-21)
+    - The directory writes the header, and Extras adds no new MailBody field. On delivery the content is: the sender (title, agent, folder, or "the user") plus inReplyTo, then the text inside the "untrusted message" fence of session.md §8 (line 579). The transcript copy for the UI still uses _meta.sah.message (ACPA-6).
+  timestamp: 2026-10-21T11:42:22.997064+00:00
 depends_on:
 - 01M5F3NPMDDMRR7DZQZBXX4CKM
 position_column: todo
@@ -37,4 +44,4 @@ The session that renders the prompt (`Mail.promptText` in `Session/SessionMessag
 - [ ] `swift test --filter AgentMessagePromptText` passes; the full `swift test` stays green.
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #session #mail #needs-decision
+- Use `/tdd` — write failing tests first, then implement to make them pass. #session #mail

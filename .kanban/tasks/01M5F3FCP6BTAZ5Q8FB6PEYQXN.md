@@ -1,6 +1,13 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f4a1yk7s80x7ppb6zxrxkj
+  text: |-
+    ### decision — from foundationmodelsmultitool-bc (2026-10-21)
+    - Name clash: EXTRAS-3 renames its origin enum to SessionDirectoryOrigin, so it doesn't clash with Hooks' SessionOrigin. Extras is checking every EXTRAS-3 type name (SessionState, SessionKind, ...) against Hooks and Router. Use the names EXTRAS-3 actually ships. The GraphQL SDL enum stays SessionOrigin.
+  timestamp: 2026-10-21T11:42:24.723996+00:00
 depends_on:
 - 01M5F3DZXJ25NHD9NPCVCRNMCM
 position_column: todo
