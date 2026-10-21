@@ -141,6 +141,26 @@ import Testing
         }
     }
 
+    /// The file holds the facts in the record encoding the other Recording
+    /// files share: one line, sorted keys, RFC 3339 dates and unescaped
+    /// slashes.
+    @Test func theFileIsWrittenInTheSharedRecordEncoding() throws {
+        let directory = try Self.makeSessionDirectory()
+        let facts = SessionFacts(
+            agentID: "folder:/agents/reviewer", tags: ["review"],
+            archivedAt: Date(timeIntervalSince1970: Self.archivedSecondSince1970))
+
+        try facts.write(to: directory)
+
+        let text = try String(
+            contentsOf: directory.appendingPathComponent(SessionFacts.fileName), encoding: .utf8)
+        #expect(
+            text == """
+                {"agentID":"folder:/agents/reviewer","archivedAt":"2025-08-24T01:46:40Z",\
+                "schemaVersion":1,"tags":["review"]}
+                """)
+    }
+
     /// The origin is the Extras `SessionDirectoryOrigin`, by its raw value.
     @Test func theOriginIsWrittenByItsRawValue() throws {
         let directory = try Self.makeSessionDirectory()

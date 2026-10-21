@@ -3,7 +3,8 @@ import Foundation
 /// Shared plumbing for the JSON-lines files of the record of past sessions:
 /// `sessions.jsonl` (``SessionIndex``) and `projects.jsonl`
 /// (``ProjectRegistry``). One record per line, RFC 3339 dates, keys in sorted
-/// order so a record's line is stable across writes.
+/// order so a record's line is stable across writes. A session's `facts.json`
+/// (``SessionFacts``) is one record in the same encoding.
 ///
 /// The bytes are the bytes the ACPAgent `Transcripts/JSONLines` helper wrote
 /// before Router owned the record (D72), so a file on a user's disk stays

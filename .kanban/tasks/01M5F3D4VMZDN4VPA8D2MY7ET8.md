@@ -19,7 +19,23 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Recording/SessionFacts.swift, Tests/FoundationModelsRouterTests/SessionFactsTests.swift (9 tests), Tests/FoundationModelsRouterPublicSurfaceTests/SessionFactsPublicSurfaceTests.swift (1 test). RED: build failed "cannot find 'SessionFacts' in scope". GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" build-system note); full `swift test`: 1950 tests / 243 suites passed with 9 known issues; 28 tests / 16 suites; 19 tests / 3 suites.
     - next: review
   timestamp: 2026-10-21T12:38:20.568387+00:00
-position_column: review
+- actor: claude-code
+  id: 01m5g78w2pejz8a11njxw7aweq
+  text: |-
+    ### review — findings
+    - evidence: review sha f09c5935~1..f09c5935 — 1 finding (confirmed 1, refuted 3); Sources/FoundationModelsRouter/Recording/SessionFacts.swift:123 (reuse/reuse)
+    - next: implement the open Review Findings item, then re-review
+  timestamp: 2026-10-21T21:53:26.102524+00:00
+- actor: claude-code
+  id: 01m5g7e9epf61f9t1nmsy6dnrx
+  text: |-
+    Fixed reuse/reuse finding (SessionFacts.swift:123 — Reimplements JSONDecoder creation already done by JSONLines.makeDecoder). Removed both private helpers from SessionFacts: read now uses JSONLines.makeDecoder(), write now uses JSONLines.makeEncoder() (the duplicated encoder setup was the same cause). Consequence: facts.json is now one compact line (sorted keys, RFC 3339 dates, unescaped slashes) instead of pretty-printed; decoding is format-agnostic so earlier pretty files still read. SessionSidecar's own pretty encoder was left alone (it has no date strategy, different contract, outside this file). New test SessionFactsTests.theFileIsWrittenInTheSharedRecordEncoding pins the bytes (RED: got pretty-printed output with escaped slashes; GREEN after the change). JSONLines doc now names SessionFacts as a user.
+
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Recording/SessionFacts.swift, Sources/FoundationModelsRouter/Recording/JSONLines.swift, Tests/FoundationModelsRouterTests/SessionFactsTests.swift; `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" build-system note); `swift test --filter "SessionFacts|SessionSidecar"` 46 tests / 4 suites + 1 public-surface test passed
+    - next: review
+  timestamp: 2026-10-21T21:56:23.638881+00:00
+position_column: doing
 position_ordinal: '80'
 title: 'ROUTER-1: SessionFacts value and the atomic facts.json file'
 ---
@@ -60,3 +76,12 @@ EXTRAS-3 (the `SessionDirectory` port and its value types in `FoundationModelsEx
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #recording #blocked-external
+
+## Review Findings (2026-10-21 16:49)
+
+> Scope: `review sha f09c5935~1..f09c5935` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionFacts.swift:123` `reuse/reuse` — Reimplements JSONDecoder creation already done by JSONLines.makeDecoder. Both configure a decoder identically with `.iso8601` date decoding. Should reuse the existing function instead of duplicating the capability. Call `JSONLines.makeDecoder()` instead of duplicating the decoder configuration, or extract both into a shared utility in the Recording module.

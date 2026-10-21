@@ -111,22 +111,6 @@ public struct SessionFacts: Codable, Sendable, Equatable {
             try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? Self.currentSchemaVersion
     }
 
-    /// The encoder of the file: sorted keys and RFC 3339 dates, so a rewrite
-    /// of equal facts gives equal bytes.
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }
-
-    /// The decoder of the file: RFC 3339 dates.
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }
-
     /// Reads the facts in a session's recording directory.
     ///
     /// - Parameter directory: The session's recording directory.
@@ -138,7 +122,8 @@ public struct SessionFacts: Codable, Sendable, Equatable {
     public static func read(from directory: URL) throws -> SessionFacts? {
         let fileURL = directory.appendingPathComponent(fileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        let facts = try makeDecoder().decode(SessionFacts.self, from: try Data(contentsOf: fileURL))
+        let facts = try JSONLines.makeDecoder().decode(
+            SessionFacts.self, from: try Data(contentsOf: fileURL))
         guard facts.schemaVersion <= currentSchemaVersion else {
             throw RecordingSchemaVersionError.recordingFromNewerRouter(
                 directory: directory, version: facts.schemaVersion, supported: currentSchemaVersion)
@@ -150,14 +135,16 @@ public struct SessionFacts: Codable, Sendable, Equatable {
     /// replacing any earlier file. The write is atomic: the bytes go to a
     /// temporary file that is then renamed over the old one, so a reader sees
     /// the old facts or the new facts, never a part. Unlike
-    /// ``SessionSidecar``, the file is meant to be overwritten.
+    /// ``SessionSidecar``, the file is meant to be overwritten. The bytes are
+    /// one record in the encoding of ``JSONLines``: sorted keys and RFC 3339
+    /// dates, so a rewrite of equal facts gives equal bytes.
     ///
     /// - Parameter directory: The session's recording directory. It must
     ///   exist.
     /// - Throws: An encode error, or a file-system error when the write fails.
     public func write(to directory: URL) throws {
         let fileURL = directory.appendingPathComponent(Self.fileName, isDirectory: false)
-        try Self.makeEncoder().encode(self).write(to: fileURL, options: .atomic)
+        try JSONLines.makeEncoder().encode(self).write(to: fileURL, options: .atomic)
     }
 
     /// The first facts of a fork taken from a session with these facts: the
