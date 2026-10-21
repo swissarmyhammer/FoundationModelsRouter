@@ -17,8 +17,8 @@ import Synchronization
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
 /// live sessions. The other requirements of the port have provisional bodies
 /// that later cards replace: ``start(_:)`` (ROUTER-8), the tag and title
-/// changes and ``events()`` (ROUTER-3), ``send(_:)`` and ``inbox(of:markRead:)``
-/// (ROUTER-4), and ``archive(_:by:)`` (ROUTER-11).
+/// changes and ``events()`` (ROUTER-3), ``send(_:)``, ``inbox(of:markRead:)``
+/// and ``message(_:to:)`` (ROUTER-4), and ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -247,6 +247,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Returns: No messages.
     public func inbox(of id: ULID, markRead: Bool) async throws -> [SessionMessage] {
         []
+    }
+
+    /// See `SessionDirectory.message(_:to:)`. Provisional until ROUTER-4: no
+    /// message was delivered yet, so every lookup gives `nil`. It never throws
+    /// `unknownSession`, unlike ``inbox(of:markRead:)``, and marks nothing read.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the message.
+    ///   - recipient: The session id that the message went to.
+    /// - Returns: `nil`.
+    public func message(_ id: MailID, to recipient: ULID) async throws -> SessionMessage? {
+        nil
     }
 
     /// See `SessionDirectory.archive(_:by:)`. Provisional until ROUTER-11.
