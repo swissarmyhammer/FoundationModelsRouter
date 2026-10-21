@@ -259,7 +259,11 @@ extension RoutedSessionActor {
             // A fork goes to the dispatcher of its parent, with the `.forked`
             // origin and the parent as its parent session. It keeps the key
             // of its parent only in the working directory of its parent.
-            hooks: hooks?.makeForkHooks(sessionID: childId, workingDirectory: childWorkingDirectory)
+            hooks: hooks?.makeForkHooks(sessionID: childId, workingDirectory: childWorkingDirectory),
+            // The child's own `facts.json`, written beside its sidecar: the
+            // agent and the tags of this session, origin `fork`, and no title
+            // or `startedBy` of its own.
+            facts: facts.forFork
         )
         // The stall report interval is a host setting, as the other settings
         // above are, so the child starts with the interval of this session.

@@ -1,10 +1,27 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f88y0bn1f3e95eebx7n4a4
+  text: |-
+    Notes:
+    - Restore: `restoreSessionTree`'s per-node rebuild passes `facts: try SessionFacts.restored(from: node.directory)` to `makeRoutedSessionActor`. `SessionFacts.restored(from:)` (internal, SessionFacts.swift) returns the file's facts, or empty facts plus one `.warning` on the `Recording` logger ("the restored session has no facts.json; it restores with empty facts", file path in metadata) and writes nothing. A facts.json that is present but damaged, or stamped newer, still throws from `read(from:)` and fails the restore, the same as a damaged sidecar; the card covers only the missing-file case.
+    - Fork: `performFork` passes `facts: facts.forFork`; `SessionFacts.forFork` keeps agentID, agentName, tags, sets origin `.fork`, and has no title, no startedBy, no archivedAt. The child writes it through the existing `.new` origin path beside its sidecar. This closes the interim caveat on ^vcrnmcm (empty fork facts, empty restored facts).
+    - Test note: `restoreSession(id:)` refuses a fork id (`notARootSession`), so the restored-fork test restores the source's tree with `restoreSessionTree(root:)` and reads the fork node from it.
+    - The warning test reads `context.logRecords` from `TelemetryCapture.run` directly (filtering on `.warning` and the message), since it counts records; `expectLogged` only checks presence.
+  timestamp: 2026-10-21T12:51:42.219363+00:00
+- actor: claude-code
+  id: 01m5f890p5vkfvqk99ck90rm1x
+  text: |-
+    ### implement — changed
+    - evidence: Sources: Recording/SessionFacts.swift (forFork, restored(from:)), Recording/SessionTreeRestoration.swift, Session/RoutedSessionActorForking.swift. Tests: SessionFactsRestoreTests.swift (4 tests). RED: 4 failing (restore gave empty facts, no warning, fork facts empty; restoreSession(id:) of a fork threw notARootSession -> test moved to restoreSessionTree). GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); full `swift test`: 1959 tests / 245 suites passed with 9 known issues; 28 / 16; 19 / 3. SessionRestorationTests, SessionTreeRestorationTests and the fork tests pass unchanged.
+    - next: review
+  timestamp: 2026-10-21T12:51:44.965824+00:00
 depends_on:
 - 01M5F3DZXJ25NHD9NPCVCRNMCM
-position_column: todo
-position_ordinal: '9180'
+position_column: review
+position_ordinal: '8280'
 title: 'ROUTER-1: A restore reads facts.json back and a fork writes its own facts'
 ---
 ## Goal

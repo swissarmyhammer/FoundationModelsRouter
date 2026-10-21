@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsExtras
+import Logging
 
 /// The facts of one recorded session that change after it starts: its
 /// agent, its tags, its title, who started it, how it started and when it
@@ -157,5 +158,32 @@ public struct SessionFacts: Codable, Sendable, Equatable {
     public func write(to directory: URL) throws {
         let fileURL = directory.appendingPathComponent(Self.fileName, isDirectory: false)
         try Self.makeEncoder().encode(self).write(to: fileURL, options: .atomic)
+    }
+
+    /// The first facts of a fork taken from a session with these facts: the
+    /// agent id, the agent name and the tags of the source, origin
+    /// ``FoundationModelsExtras/SessionDirectoryOrigin/fork``, and no title,
+    /// no `startedBy` and no archive date.
+    var forFork: SessionFacts {
+        SessionFacts(agentID: agentID, agentName: agentName, tags: tags, origin: .fork)
+    }
+
+    /// The facts a restored session holds: the ones in its `facts.json`, or
+    /// empty facts for a session recorded before the file existed. The
+    /// missing file is not an error: it logs one warning with the path of
+    /// the directory, and no file is written.
+    ///
+    /// - Parameter directory: The restored session's recording directory.
+    /// - Returns: The recorded facts, or empty facts.
+    /// - Throws: What ``read(from:)`` throws for a file that is there but
+    ///   cannot be read: a damaged file, or a newer ``schemaVersion``.
+    static func restored(from directory: URL) throws -> SessionFacts {
+        guard let recorded = try read(from: directory) else {
+            RouterTelemetry.makeLogger(.recording).warning(
+                "the restored session has no facts.json; it restores with empty facts",
+                metadata: [RouterTelemetry.LogMetadataKey.filePath: "\(directory.path)"])
+            return SessionFacts()
+        }
+        return recorded
     }
 }

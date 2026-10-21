@@ -563,7 +563,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 tracer: routedLLM.tracer,
                 // The hooks of the restoring router: a `.resumed` start with
                 // the recorded id, and the fork or sub-agent lineage.
-                hooks: restoredHooks(for: node, on: routedLLM)
+                hooks: restoredHooks(for: node, on: routedLLM),
+                // The node's own `facts.json`, read back as it was last
+                // written. A session recorded before the file existed
+                // restores with empty facts and a warning, and no file is
+                // written for it here.
+                facts: try SessionFacts.restored(from: node.directory)
             )
             // Crash-edge mail durability (`mailbox.md`, section 5, problem
             // 14): each mail of this node that the transcript holds as queued
