@@ -1,8 +1,38 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8380'
+comments:
+- actor: claude-code
+  id: 01m5f6ra3pn8rpepmgw8yqdqvz
+  text: |-
+    Implementation (uncommitted, in the Router working tree):
+    - Sources/FoundationModelsRouter/Recording/SessionIndex.swift — public SessionIndexRecord, SessionIndexWarning, SessionIndexError, SessionIndexReadResult, SessionIndex (append, read, removeRecords(sessionId:), rebuild(cwd:), .gitattributes materialization). Doc comments say Router owns the record (D72). Uses Router's `sessionSidecarFileName`; the module-level `transcriptFileName` in TranscriptTree.swift went from private to internal so the index reuses it.
+    - Sources/FoundationModelsRouter/Recording/JSONLines.swift — internal copy of the ACPAgent helper. `appendJSONLine` (JSONLAppend.swift) does not give the same contract: it logs and drops failures, the index throws. Newline byte reuses `jsonlNewlineByte`.
+    - RouterTelemetry.LogCategory gained `sessionIndex` ("FoundationModelsRouter.SessionIndex") for the torn-line warning (ACPAgent used ACPAgentTelemetry .transcripts).
+    - Tests: SessionIndexTests.swift (16 tests: the 13 copied, with ACPAgentTelemetry -> RouterTelemetry and the logger-label test pointed at the new category; plus 3 ACPAgent byte-compat tests: old-format file reads to same records, torn final line warns, append writes identical bytes), RouterImportsNoACPTests.swift (2 tests). Shared helper Helpers/LibrarySourceFiles.swift; UpstreamAsksDocumentTests now calls it instead of its own copy.
+    - Router: `swift build --build-tests` clean (only the pre-existing build-system note "missing creator for mutated node ... mlx-swift_Cmlx.bundle"); full `swift test`: 1959 tests / 244 suites passed with 9 known issues, plus 27 and 19 in the other targets.
+
+    ACPAgent check (scratch clone of FoundationModelsACPAgent at cb92ec8, `swift package edit` FoundationModelsRouter -> this working tree and FoundationModelsExtras -> bd34b20): the ACPAgent library target compiles, but its test target does not:
+    - Tests/FoundationModelsACPAgentTests/TranscriptRecordingFixtures.swift:138 — 'SessionIndex' is ambiguous for type lookup in this context
+    - Tests/FoundationModelsACPAgentTests/TranscriptStoreTests.swift:53 — 'SessionIndex' is ambiguous for type lookup in this context
+    (plus follow-on "failed to produce diagnostic" errors at TranscriptRecordingFixtures.swift:181 and TranscriptStoreTests.swift:142). These files import both FoundationModelsRouter and @testable FoundationModelsACPAgent.
+  timestamp: 2026-10-21T12:25:08.982699+00:00
+- actor: claude-code
+  id: 01m5f6rcggfkqewwpms02qnbsx
+  text: |-
+    ### implement — stuck
+    - evidence: Router green (swift test: 1959 tests passed, 9 known issues; build clean). ACPAgent test target fails to compile against this Router: 'SessionIndex' is ambiguous in TranscriptRecordingFixtures.swift:138 and TranscriptStoreTests.swift:53.
+    - blocker: the card says stop and ask when a name is ambiguous. Decision needed: (a) do ACPA-14 first (remove the ACPAgent copies), or (b) qualify the names in ACPAgent (e.g. FoundationModelsACPAgent.SessionIndex in its tests).
+    - state: not committed; the Router changes are in the working tree. ^k176prd and later cards not started.
+  timestamp: 2026-10-21T12:25:11.440840+00:00
+- actor: claude-code
+  id: 01m5f78vg3rzvp75v6a848vybg
+  text: |-
+    ### decision — user (2026-10-21)
+    - Wait for ACPA-14. The finished work is parked on branch router-3-session-index (29ae4767) and is not merged to main. Merge it once the ACPAgent session's ACPA-14 removes ACPAgent's own SessionIndex/ProjectRegistry. Until then, ACPAgent's test target sees SessionIndex as ambiguous (TranscriptRecordingFixtures.swift:138, TranscriptStoreTests.swift:53). ^k176prd waits too.
+  timestamp: 2026-10-21T12:34:11.075341+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'ROUTER-3: Copy SessionIndex (sessions.jsonl) from ACPAgent Transcripts/ into Router Recording/'
 ---
 ## Goal
