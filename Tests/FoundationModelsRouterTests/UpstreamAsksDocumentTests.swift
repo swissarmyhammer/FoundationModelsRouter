@@ -31,14 +31,8 @@ struct UpstreamAsksDocumentTests {
     /// The text an answer paragraph starts with.
     private static let answerMarker = "**Answer:**"
 
-    /// The path extension of each library source file the search reads.
-    private static let sourceFileExtension = "swift"
-
     /// The path of the asks document, relative to the repository root.
     private static let documentPath = "UPSTREAM_ASKS.md"
-
-    /// The path of the library source tree, relative to the repository root.
-    private static let librarySourcePath = "Sources/FoundationModelsRouter"
 
     /// Matches one backticked span and captures the text inside it. A
     /// computed member, because `Regex` is not `Sendable` and a stored
@@ -81,7 +75,7 @@ struct UpstreamAsksDocumentTests {
             #expect(
                 identifiers.contains { Self.declares(source, identifier: $0) },
                 """
-                The answer to "\(section.heading)" names no symbol that \(Self.librarySourcePath) declares. \
+                The answer to "\(section.heading)" names no symbol that \(LibrarySourceFiles.librarySourcePath) declares. \
                 Backticked identifiers: \(identifiers)
                 """
             )
@@ -150,16 +144,7 @@ struct UpstreamAsksDocumentTests {
     /// - Throws: An expectation failure when the tree cannot be enumerated
     ///   or holds no Swift file, or an error when a file cannot be read.
     private static func librarySourceText() throws -> String {
-        let sourceRoot = repositoryRoot.appendingPathComponent(librarySourcePath, isDirectory: true)
-        let enumerator = try #require(
-            FileManager.default.enumerator(at: sourceRoot, includingPropertiesForKeys: nil),
-            "the source tree at \(sourceRoot.path) cannot be enumerated"
-        )
-        let files = enumerator
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension == sourceFileExtension }
-        try #require(!files.isEmpty, "the source tree at \(sourceRoot.path) holds no Swift file")
-        return try files
+        try LibrarySourceFiles.urls(under: repositoryRoot)
             .map { try String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
     }

@@ -397,6 +397,9 @@ enum RouterTelemetry {
         /// The sidecar file of a session.
         case sessionSidecar = "SessionSidecar"
 
+        /// The index of past sessions, `sessions.jsonl` (``SessionIndex``).
+        case sessionIndex = "SessionIndex"
+
         /// The read of the metadata of a model repository.
         case repoMetadataReader = "RepoMetadataReader"
 

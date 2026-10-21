@@ -1,7 +1,9 @@
 import Foundation
 
 /// The per-session transcript filename under a session's recording directory.
-private let transcriptFileName = "transcript.jsonl"
+/// ``SessionIndex`` reads its modification date as the last activity of a
+/// session.
+let transcriptFileName = "transcript.jsonl"
 
 /// A failure looking up or reconstructing data from a ``TranscriptTree``.
 public enum TranscriptTreeError: Error, Equatable, LocalizedError {
