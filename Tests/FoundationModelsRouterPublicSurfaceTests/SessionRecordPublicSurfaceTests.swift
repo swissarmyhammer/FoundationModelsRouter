@@ -51,6 +51,13 @@ struct SessionRecordPublicSurfaceTests {
         #expect(SessionIndex.gitattributesFileName == ".gitattributes")
     }
 
+    @Test("a consumer reads the last activity date of a session directory")
+    func aConsumerReadsTheLastActivityDate() {
+        let directory = Self.makeScratchDirectory(named: "last-activity")
+        let date = SessionIndex.lastActivityDate(inSessionDirectory: directory)
+        #expect(date.timeIntervalSince1970.rounded(.down) == date.timeIntervalSince1970)
+    }
+
     @Test("a consumer names the index warning and the index error")
     func aConsumerNamesTheWarningAndTheError() {
         let warning: SessionIndexWarning = .tornFinalLine

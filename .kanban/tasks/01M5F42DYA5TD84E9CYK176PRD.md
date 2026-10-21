@@ -11,8 +11,8 @@ comments:
   timestamp: 2026-10-21T12:56:15.419482+00:00
 depends_on:
 - 01M5F3EMARATMXFR829ZMNM17K
-position_column: todo
-position_ordinal: '9280'
+position_column: review
+position_ordinal: '8580'
 title: 'ROUTER-3: Copy ProjectRegistry (projects.jsonl) from ACPAgent Transcripts/ into Router Recording/'
 ---
 ## Goal

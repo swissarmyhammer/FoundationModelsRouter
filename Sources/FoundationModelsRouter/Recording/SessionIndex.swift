@@ -310,7 +310,7 @@ public struct SessionIndex: Sendable {
     ///
     /// - Parameter directory: The session directory.
     /// - Returns: The instant of the session's most recent activity.
-    static func lastActivityDate(inSessionDirectory directory: URL) -> Date {
+    public static func lastActivityDate(inSessionDirectory directory: URL) -> Date {
         for fileName in [transcriptFileName, sessionSidecarFileName] {
             let file = directory.appendingPathComponent(fileName)
             let values = try? file.resourceValues(forKeys: [.contentModificationDateKey])
