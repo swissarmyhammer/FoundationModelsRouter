@@ -24,8 +24,25 @@ comments:
     - New card ^5pdsy5g: LiveModelLoader does not forward footprintBytes(of:) to its model loader.
     - next: review. Not committed, not pushed.
   timestamp: 2026-10-21T03:23:36.642245+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: wballard
+  id: 01m5e7tzakjwzk251xhjfpxd5k
+  text: |-
+    ### review — stuck
+    - evidence: The review engine did not run. The `review` MCP tool of the calling session is bound to FoundationModelsACPAgent. It cannot find commit 29142e7e ("revspec not found"). The `sah tool review sha review` CLI route has no agent and cannot run the review. The only other method is a second `sah serve` in FoundationModelsRouter. The user prohibits that method (memory "no-cross-repo-review": "do not review another repo").
+    - blocker: The request from the FoundationModelsACPAgent session (review commit 29142e7e in this repository) conflicts with the rule of the user. A person must decide.
+    - next: Run `/review 1056ce6 29142e7e~1..29142e7e` from a session that started in FoundationModelsRouter. Or, the user can accept the Router test suite as the proof and move this task to done.
+  timestamp: 2026-10-21T03:24:50.387587+00:00
+- actor: wballard
+  id: 01m5ey38803ky55v8f68zer8zn
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — LiveModelLoader.swift, README.md, 2 new test files
+    - test: green — swift test, 1922 passed (9 known issues from before), 27 public-surface and 19 eval passed
+    - commit: 29142e7e
+    - review: the engine cannot run on this repository from the ACPAgent session. The user accepted the green suite as the proof and told me to push (2026-10-21).
+  timestamp: 2026-10-21T09:53:50.336502+00:00
+position_column: done
+position_ordinal: ffffffff9b80
 title: A host gives the folder for live model downloads (LiveModelLoader)
 ---
 ## What
