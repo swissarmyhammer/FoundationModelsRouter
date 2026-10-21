@@ -1,6 +1,13 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f65xzjvmy3gnkavsb5qc45
+  text: |-
+    ### decision — user (2026-10-21)
+    - Working and idle come from workStarted and workEnded, not from submissionEnded. A session is working from the first submission of a chain until the whole chain of work ends, so it never reports idle in the middle of a tool loop.
+  timestamp: 2026-10-21T12:15:06.738742+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
@@ -46,4 +53,4 @@ Which events drive working and idle: the spec's literal mapping (`submissionStar
 - [ ] `swift test --filter "SessionStateTracking|RouterSessionDirectoryState"` passes; the full `swift test` stays green.
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api #needs-decision
+- Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api

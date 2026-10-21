@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f65wkcmgwg1sbq3v966dvs
+  text: |-
+    ### decision — user (2026-10-21)
+    - Recording roots: the host passes them in with directory.useRecordingRoots(_:), the same way it sets the launcher. Router reads no ACPAgent setting.
+    - sessions.jsonl: RouterSessionDirectory appends a root session's line when that session registers. ACPAgent's own writer goes away in ACPA-14.
+  timestamp: 2026-10-21T12:15:05.324104+00:00
 depends_on:
 - 01M5F3EMARATMXFR829ZMNM17K
 - 01M5F42DYA5TD84E9CYK176PRD
@@ -48,4 +56,4 @@ Remove the tag and this section when both are answered.
 - [ ] `swift test --filter RouterSessionDirectoryRecorded` passes; the full `swift test` stays green.
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #session #recording #needs-decision
+- Use `/tdd` — write failing tests first, then implement to make them pass. #session #recording

@@ -1,6 +1,13 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f65znp1zzma4sgnpngbns1
+  text: |-
+    ### decision — user (2026-10-21)
+    - A message to a working session goes straight into the session's own mail queue. The directory does not hold it. Accepted trade-off: once a message is queued it can't be withdrawn cleanly. If inbox(markRead:) reads it before delivery, the transcript keeps a "cancelled" record, or the message is delivered anyway. Pick whichever the existing mail queue already supports, and document it.
+  timestamp: 2026-10-21T12:15:08.470839+00:00
 depends_on:
 - 01M5F3N4646VMYQWK4S17NH345
 - 01M5F3K0T51RYV86Y2NXVGFFEC
@@ -49,4 +56,4 @@ Where a message to a working session waits. The spec says it "waits until the cu
 - [ ] `swift test --filter RouterSessionDirectoryDelivery` passes; the full `swift test` stays green.
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #session #mail #needs-decision
+- Use `/tdd` — write failing tests first, then implement to make them pass. #session #mail
