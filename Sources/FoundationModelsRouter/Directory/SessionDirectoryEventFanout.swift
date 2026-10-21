@@ -53,6 +53,19 @@ struct SessionDirectoryEventFanout {
         continuations.removeValue(forKey: streamID)
     }
 
+    /// Removes every open stream, for the directory to finish them.
+    ///
+    /// The caller finishes each continuation after it leaves the lock that
+    /// keeps the fan-out: a finish runs the `onTermination` of its stream,
+    /// and that handler takes the same lock to ``remove(_:)`` the stream.
+    ///
+    /// - Returns: The continuation of each stream that was open.
+    mutating func removeAll() -> [AsyncStream<SessionDirectoryEvent>.Continuation] {
+        let open = Array(continuations.values)
+        continuations.removeAll()
+        return open
+    }
+
     /// Gives `event` to each open stream.
     ///
     /// - Parameter event: The event.

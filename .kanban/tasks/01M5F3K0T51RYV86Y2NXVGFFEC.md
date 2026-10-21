@@ -1,11 +1,25 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5gbnzjhhdr7qhe8hwf7t48b
+  text: 'Research: Extras 589f27e declares no SessionLauncher; Router owns the protocol (spec session.md 5.4). SessionDirectory.start(_:) is the only port requirement touched. The directory holds sessions weakly, so the launcher (host) must keep the session it returns; the test fake keeps its vended sessions. updateFacts lives on RoutedSessionActor (internal), not on the RoutedSession protocol, so start repairs missing request facts through a cast; every in-module RoutedSession is a RoutedSessionActor. requestedByClient threads SessionConfiguration -> RoutedLLM.makeSession -> registerVendedSession -> register. shutdown must take the continuations out of the lock before finish(): onTermination re-enters the state Mutex. Router.useRunClock is the prevailing actor-isolated `use...` setter shape, so useLauncher is actor-isolated too.'
+  timestamp: 2026-10-21T23:10:29.969291+00:00
+- actor: claude-code
+  id: 01m5gc3nzzpvbhkrdwgjhzz9tr
+  text: |-
+    Implementation landed. start(_:) launches through the launcher, then admit(): a session already registered by its own router gets any missing request fact via RoutedSessionActor.updateFacts plus a factsChanged (updatedAt bumped); a session not in this directory (another router) gets the facts first and is then registered as a root, so its one started carries them and requestedByClient. A non-RoutedSessionActor session lacking facts hits assertionFailure + an error log under the new RouterTelemetry.LogCategory.sessionDirectory (no in-module type reaches it). shutdown() nils the launcher and finishes the streams outside the Mutex (SessionDirectoryEventFanout.removeAll), since onTermination re-takes the lock. The event-read helper of RouterSessionDirectoryEventTests moved to Tests/.../Helpers/SessionDirectoryEventReads.swift so the new suite shares it instead of copying it. Tests: swift test --filter "RouterSessionDirectoryLauncher|SessionLauncherPublicSurface|RouterSessionDirectoryEvent" 23 passed; full swift test: 2036 tests in 253 suites passed (9 known issues, all pre-existing withKnownIssue), plus 35 and 19 in the other targets.
+
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Directory/SessionLauncher.swift (new), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionDirectoryEventFanout.swift, Sources/FoundationModelsRouter/Session/SessionConfiguration.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Tracing/RouterTelemetry.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift (new), Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift (new)
+    - next: /review
+  timestamp: 2026-10-21T23:17:58.911914+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
-position_column: todo
-position_ordinal: '8980'
+position_column: doing
+position_ordinal: '80'
 title: 'ROUTER-8: SessionLauncher port, directory.useLauncher(_:), start(_:), and shutdown()'
 ---
 ## Goal
@@ -32,23 +46,23 @@ Add the `SessionLauncher` protocol that the host fills, so the directory can sta
 - Fake launcher for tests: `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift` (records each request, vends scripted-model sessions from a test router).
 
 ## Subtasks
-- [ ] Failing test first: with no launcher, `start(_:)` throws `noLauncher`.
-- [ ] Add the protocol, `useLauncher`, and `start`; a test that the fake launcher gets the request unchanged (nil agent stays nil).
-- [ ] The returned session is in the directory; exactly one `started` comes, and that event already holds the request's tags, title, `startedBy`, origin and `requestedByClient`; the first message starts a turn (the scripted model answers).
-- [ ] `shutdown()` releases the launcher (a weak reference to the fake becomes nil) and ends the open event streams.
-- [ ] Public surface test that conforms a type to `SessionLauncher` and calls `useLauncher` without `@testable`.
+- [x] Failing test first: with no launcher, `start(_:)` throws `noLauncher`.
+- [x] Add the protocol, `useLauncher`, and `start`; a test that the fake launcher gets the request unchanged (nil agent stays nil).
+- [x] The returned session is in the directory; exactly one `started` comes, and that event already holds the request's tags, title, `startedBy`, origin and `requestedByClient`; the first message starts a turn (the scripted model answers).
+- [x] `shutdown()` releases the launcher (a weak reference to the fake becomes nil) and ends the open event streams.
+- [x] Public surface test that conforms a type to `SessionLauncher` and calls `useLauncher` without `@testable`.
 
 ## Acceptance Criteria
-- [ ] `start` with no launcher throws `SessionDirectoryError.noLauncher`.
-- [ ] The launcher receives the request exactly as given.
-- [ ] The started session is live in the directory with the request's tags, title, `startedBy` and origin, and exactly one `started` event is sent.
-- [ ] The first message produces an answer in the new session.
-- [ ] After `shutdown()`, the directory holds no reference to the launcher.
+- [x] `start` with no launcher throws `SessionDirectoryError.noLauncher`.
+- [x] The launcher receives the request exactly as given.
+- [x] The started session is live in the directory with the request's tags, title, `startedBy` and origin, and exactly one `started` event is sent.
+- [x] The first message produces an answer in the new session.
+- [x] After `shutdown()`, the directory holds no reference to the launcher.
 
 ## Tests
-- [ ] `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift`
-- [ ] `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift`
-- [ ] `swift test --filter "RouterSessionDirectoryLauncher|SessionLauncherPublicSurface"` passes; the full `swift test` stays green.
+- [x] `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift`
+- [x] `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift`
+- [x] `swift test --filter "RouterSessionDirectoryLauncher|SessionLauncherPublicSurface"` passes; the full `swift test` stays green.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api #hosting

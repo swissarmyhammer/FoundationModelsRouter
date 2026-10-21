@@ -217,6 +217,16 @@ public struct SessionConfiguration: Sendable {
     /// ``hookOrigin``. See ``agentID``.
     public var origin: FoundationModelsExtras.SessionDirectoryOrigin?
 
+    /// The UI client that asked for the start of the session, for the tab
+    /// rule, or `nil` (the default) when no client asked: a start by a
+    /// session or a trigger.
+    ///
+    /// The session directory puts it in the one `started` event that the
+    /// registration of the session sends (ROUTER-8). It is not a fact of the
+    /// session: like ``hookOrigin``, nothing records it, so ``persistable``
+    /// and `facts.json` do not hold it.
+    public var requestedByClient: String?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
@@ -226,7 +236,8 @@ public struct SessionConfiguration: Sendable {
     /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`,
     /// `agentDelegationHint` defaults to `AgentDelegationHint()`, `tags`
     /// defaults to none, and the other fact fields (`agentID`, `agentName`,
-    /// `title`, `startedBy`, `origin`) default to `nil`.
+    /// `title`, `startedBy`, `origin`) and `requestedByClient` default to
+    /// `nil`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -250,7 +261,8 @@ public struct SessionConfiguration: Sendable {
         tags: Set<String> = [],
         title: String? = nil,
         startedBy: ULID? = nil,
-        origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil
+        origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil,
+        requestedByClient: String? = nil
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -275,6 +287,7 @@ public struct SessionConfiguration: Sendable {
         self.title = title
         self.startedBy = startedBy
         self.origin = origin
+        self.requestedByClient = requestedByClient
     }
 
     /// The first ``SessionFacts`` of a session vended with this

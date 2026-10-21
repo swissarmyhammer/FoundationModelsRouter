@@ -21,10 +21,26 @@ comments:
     - evidence: 3 files. Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift (modified), Sources/FoundationModelsRouter/Directory/SessionDirectoryEventFanout.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift (new, 10 tests). `swift build --build-tests` built clean. `swift test --filter RouterSessionDirectory` passed 37 tests in 4 suites. The full `swift test` passed 2025 tests in 252 suites, plus 33 and 19 tests in the other test bundles.
     - next: /review
   timestamp: 2026-10-21T23:02:30.851478+00:00
+- actor: claude-code
+  id: 01m5gbf6b2a0ps919249a7y6vq
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (acdecb80) — 0 findings, 0 confirmed, 0 refuted; 7 files attempted, 0 failed (3 source/test files reviewed, 4 .kanban files excluded by .reviewignore)
+    - next: task moved to done
+  timestamp: 2026-10-21T23:06:47.522806+00:00
+- actor: claude-code
+  id: 01m5gbfhz4rqjc85xkmtr64wbt
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — RouterSessionDirectory.swift, SessionDirectoryEventFanout.swift (new), RouterSessionDirectoryEventTests.swift (new)
+    - test: green — swift test, 2025/33/19 passed, 9 known issues
+    - commit: acdecb80
+    - review: clean — 0 findings
+  timestamp: 2026-10-21T23:06:59.428366+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffa780
 title: 'ROUTER-3: The directory events() stream (started, per-session order, bufferingNewest 256; no seq, the graph wraps it in ChangeLog)'
 ---
 ## Goal

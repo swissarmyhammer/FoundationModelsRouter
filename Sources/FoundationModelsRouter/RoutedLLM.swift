@@ -120,7 +120,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             hookSessionKey: configuration.hookSessionKey,
             hookOrigin: configuration.hookOrigin,
             agentDelegationHint: configuration.agentDelegationHint,
-            facts: configuration.initialFacts)
+            facts: configuration.initialFacts,
+            requestedByClient: configuration.requestedByClient)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -156,6 +157,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - facts: The first facts of the session, which it writes to its
     ///     `facts.json` and holds as ``RoutedSession/facts``. The default is
     ///     empty facts. See ``SessionConfiguration/agentID``.
+    ///   - requestedByClient: The UI client that asked for the start, which
+    ///     the one `started` event of the registration carries, or `nil`
+    ///     (the default). See ``SessionConfiguration/requestedByClient``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -177,7 +181,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         hookSessionKey: String? = nil,
         hookOrigin: SessionOrigin? = nil,
         agentDelegationHint: AgentDelegationHint? = nil,
-        facts: SessionFacts = SessionFacts()
+        facts: SessionFacts = SessionFacts(),
+        requestedByClient: String? = nil
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -302,7 +307,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         session.bind(delegationAdvisor: delegationAdvisor)
         // Before the session is returned, so a query right after this call
         // finds it.
-        registerVendedSession(session, subagentParentID: subagentParentID)
+        registerVendedSession(session, subagentParentID: subagentParentID, requestedByClient: requestedByClient)
         return session
     }
 
@@ -315,9 +320,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - session: The vended session.
     ///   - subagentParentID: The session whose tool call or recorded spawn
     ///     started `session`, or `nil` for a root session.
-    private func registerVendedSession(_ session: any RoutedSession, subagentParentID: ULID?) {
+    ///   - requestedByClient: The UI client that asked for the start, which
+    ///     the `started` event of the registration carries, or `nil`.
+    private func registerVendedSession(
+        _ session: any RoutedSession, subagentParentID: ULID?, requestedByClient: String?
+    ) {
         let kind: SessionKind = subagentParentID == nil ? .root : .subagent
-        sessionDirectory?.register(session, kind: kind, parentID: subagentParentID)
+        sessionDirectory?.register(
+            session, kind: kind, parentID: subagentParentID, requestedByClient: requestedByClient)
     }
 
     /// Mints one session's fresh outbox and run plane and instances `tools`

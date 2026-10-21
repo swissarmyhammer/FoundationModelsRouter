@@ -14,12 +14,18 @@ import Synchronization
 /// with no `await`, so the synchronous
 /// ``register(_:kind:parentID:requestedByClient:)`` can build one too.
 ///
+/// The directory starts a root session through the ``SessionLauncher`` that
+/// the host gives with ``useLauncher(_:)`` (ROUTER-8), because Router cannot
+/// compose the tools of a session and does not know the agent catalog.
+/// ``shutdown()`` releases the launcher again.
+///
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
-/// live sessions, and ``events()`` gives `started` for each session it
-/// registers. The other requirements of the port have provisional bodies
-/// that later cards replace: ``start(_:)`` (ROUTER-8), the tag and title
-/// changes (ROUTER-3), ``send(_:)``, ``inbox(of:markRead:)`` and
-/// ``message(_:to:)`` (ROUTER-4), and ``archive(_:by:)`` (ROUTER-11).
+/// live sessions, ``start(_:)`` starts a root session through the launcher,
+/// and ``events()`` gives `started` for each session it registers. The other
+/// requirements of the port have provisional bodies that later cards
+/// replace: the tag and title changes (ROUTER-3), ``send(_:)``,
+/// ``inbox(of:markRead:)`` and ``message(_:to:)`` (ROUTER-4), and
+/// ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -71,6 +77,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// ``unregister(_:)`` need no `await`.
     private let state = Mutex<Registry>(Registry())
 
+    /// The launcher that ``start(_:)`` starts each root session through, or
+    /// `nil` before ``useLauncher(_:)`` and after ``shutdown()``. A directory
+    /// with no launcher throws `noLauncher` from ``start(_:)``.
+    private var launcher: (any SessionLauncher)?
+
     /// Makes an empty directory.
     public init() {}
 
@@ -90,7 +101,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - parentID: The parent of a subagent, or the original session of a
     ///     fork; `nil` for a root session.
     ///   - requestedByClient: The UI client that asked for the start, for the
-    ///     tab rule; `nil` when no client asked (ROUTER-8 fills it).
+    ///     tab rule (``SessionConfiguration/requestedByClient``); `nil` when
+    ///     no client asked.
     nonisolated func register(
         _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
     ) {
@@ -217,17 +229,173 @@ public actor RouterSessionDirectory: SessionDirectory {
         return String(path.dropLast())
     }
 
-    // MARK: - Provisional bodies
+    // MARK: - Launcher
 
-    /// See `SessionDirectory.start(_:)`. Provisional: the directory has no
-    /// launcher yet (ROUTER-8).
+    /// Gives the directory the launcher of the host (ROUTER-8).
+    /// ``start(_:)`` starts each root session through it. A later call
+    /// replaces the launcher, and ``shutdown()`` releases it.
+    ///
+    /// - Parameter launcher: The launcher of the host.
+    public func useLauncher(_ launcher: any SessionLauncher) {
+        self.launcher = launcher
+    }
+
+    /// Releases the launcher and ends each open stream of ``events()``.
+    ///
+    /// The directory holds the launcher, and the launcher makes surfaces that
+    /// hold the directory, so the host calls this at shutdown to break that
+    /// loop. After the call, ``start(_:)`` throws `noLauncher` until the next
+    /// ``useLauncher(_:)``. The streams end after the lock is released,
+    /// because the end of a stream takes the lock to leave the directory.
+    public func shutdown() {
+        launcher = nil
+        let openStreams = state.withLock { $0.fanout.removeAll() }
+        for continuation in openStreams {
+            continuation.finish()
+        }
+    }
+
+    /// See `SessionDirectory.start(_:)`. Starts a new root session through
+    /// the launcher, then delivers the first message of `request`, which
+    /// starts the first turn of the session.
+    ///
+    /// The launcher gets `request` as it came: a nil agent and a nil folder
+    /// stay nil, and the launcher resolves them. The session it returns
+    /// registered itself when ``RoutedModel/makeSession(configuration:)``
+    /// vended it, and that registration sent the one `started` of the
+    /// session, so `start` sends no second `started`. A session that lacks a
+    /// fact of the request gets it here (``admit(_:startedFor:)``).
+    ///
+    /// The first message is ``MailBody/agentMessage(from:content:)`` from
+    /// the session `startedBy`, with the sender ``MailSender/session(_:)``,
+    /// when the request names one, else a user message with the sender
+    /// ``MailSender/user``. It waits in the mail queue of the session.
+    ///
+    /// - Parameter request: The agent, the working folder, the first message
+    ///   and the facts of the session.
+    /// - Returns: The summary of the new session.
+    /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
+    ///   launcher, the error of the launcher, the error of a write of the
+    ///   facts of the session, the refusal of the first message, or
+    ///   `SessionDirectoryError.unknownSession` when the session closed
+    ///   before `start` returns.
+    public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
+        guard let launcher else { throw SessionDirectoryError.noLauncher }
+        let session = try await launcher.launchRootSession(request)
+        try admit(session, startedFor: request)
+        _ = try session.mail(Self.firstMail(of: request))
+        guard let summary = try await summary(of: session.id) else {
+            throw SessionDirectoryError.unknownSession(session.id)
+        }
+        return summary
+    }
+
+    /// Makes the session that the launcher returned for `request` live in
+    /// the directory with each fact of `request`.
+    ///
+    /// A session from this router registered itself, and its `started` went
+    /// out. When it lacks a fact of `request` (its launcher broke the
+    /// launcher contract), this writes the fact and sends `factsChanged`. A
+    /// session from another router is not in the directory: this writes the
+    /// missing facts first and then registers it as a root, so its one
+    /// `started` holds them and the client of `request`.
+    ///
+    /// - Parameters:
+    ///   - session: The session that the launcher returned.
+    ///   - request: The start request of the session.
+    /// - Throws: The error of a write of `facts.json`.
+    private func admit(_ session: any RoutedSession, startedFor request: SessionStartRequest) throws {
+        guard isRegistered(session) else {
+            try Self.writeMissingFacts(of: request, to: session)
+            register(session, kind: .root, parentID: nil, requestedByClient: request.requestedByClient)
+            return
+        }
+        if try Self.writeMissingFacts(of: request, to: session) {
+            recordFactsChange(of: session.id)
+        }
+    }
+
+    /// Tells whether the directory holds `session` itself as a live entry.
+    ///
+    /// - Parameter session: A session.
+    /// - Returns: `true` when the live entry of its id is `session`.
+    private nonisolated func isRegistered(_ session: any RoutedSession) -> Bool {
+        state.withLock { $0.entries[session.id]?.session === session }
+    }
+
+    /// Sets the time of the last change of the session `id` to now, and
+    /// gives `factsChanged` with its new summary to each open stream, under
+    /// the lock of the registry. An id with no live session changes nothing.
+    ///
+    /// - Parameter id: The session id.
+    private nonisolated func recordFactsChange(of id: ULID) {
+        state.withLock { registry in
+            guard var entry = registry.entries[id], let session = entry.session else { return }
+            entry.updatedAt = Date()
+            registry.entries[id] = entry
+            registry.fanout.send(.factsChanged(Self.summary(of: session, in: entry)))
+        }
+    }
+
+    /// Writes each fact of `request` that `session` lacks to the facts of
+    /// `session` (``complete(_:with:)``).
+    ///
+    /// Only a ``RoutedSessionActor`` can change its facts. Each session that
+    /// a router vends is one, so another session that lacks a fact is a
+    /// surprise: the call stops a debug build, logs the surprise, and leaves
+    /// the facts as the session holds them.
+    ///
+    /// - Parameters:
+    ///   - request: The start request of the session.
+    ///   - session: The session that the launcher returned.
+    /// - Returns: `true` when the call changed the facts of `session`.
+    /// - Throws: The error of the write of `facts.json`.
+    @discardableResult
+    private static func writeMissingFacts(
+        of request: SessionStartRequest, to session: any RoutedSession
+    ) throws -> Bool {
+        var completed = session.facts
+        complete(&completed, with: request)
+        guard completed != session.facts else { return false }
+        guard let actor = session as? RoutedSessionActor else {
+            assertionFailure("a launcher returned a session that lacks the facts of its request and cannot change them")
+            RouterTelemetry.makeLogger(.sessionDirectory).error(
+                "a launcher returned a session that lacks the facts of its request and cannot change them; the facts stay as the session holds them",
+                metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
+            return false
+        }
+        try actor.updateFacts { complete(&$0, with: request) }
+        return true
+    }
+
+    /// Adds each fact of `request` that `facts` lacks: the tags of the
+    /// request join the tags, and the title, `startedBy` and the origin of
+    /// the request fill a fact that is `nil`. A fact that `facts` holds
+    /// stays.
+    ///
+    /// - Parameters:
+    ///   - facts: The facts of a session.
+    ///   - request: The start request of the session.
+    private static func complete(_ facts: inout SessionFacts, with request: SessionStartRequest) {
+        facts.tags.formUnion(request.tags)
+        facts.title = facts.title ?? request.title
+        facts.startedBy = facts.startedBy ?? request.startedBy
+        facts.origin = facts.origin ?? request.origin
+    }
+
+    /// The mail that carries the first message of `request`.
     ///
     /// - Parameter request: The start request.
-    /// - Returns: Nothing yet.
-    /// - Throws: `SessionDirectoryError.noLauncher`.
-    public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
-        throw SessionDirectoryError.noLauncher
+    /// - Returns: An agent message from `startedBy` when the request names
+    ///   it, else a user message.
+    private static func firstMail(of request: SessionStartRequest) -> Mail {
+        guard let startedBy = request.startedBy else {
+            return Mail(sender: .user, body: .userMessage(prompt: request.firstMessage, options: UserMessageOptions()))
+        }
+        return Mail(sender: .session(startedBy), body: .agentMessage(from: startedBy, content: request.firstMessage))
     }
+
+    // MARK: - Provisional bodies
 
     /// See `SessionDirectory.addTags(_:to:)`. Provisional until the tags card
     /// of ROUTER-3.

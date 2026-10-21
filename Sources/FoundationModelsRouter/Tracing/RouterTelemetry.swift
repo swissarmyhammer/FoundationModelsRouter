@@ -416,6 +416,9 @@ enum RouterTelemetry {
         /// The relay of the questions of a subagent to its parent session
         /// (``SubagentQuestionRelay``).
         case subagentQuestionRelay = "SubagentQuestionRelay"
+
+        /// The session directory of a router (``RouterSessionDirectory``).
+        case sessionDirectory = "SessionDirectory"
     }
 
     /// The key of every metadata value of a router log record.

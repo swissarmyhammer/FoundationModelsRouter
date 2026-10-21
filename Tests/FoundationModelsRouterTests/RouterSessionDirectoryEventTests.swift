@@ -50,23 +50,6 @@ import Testing
         return Fixture(router: router, profile: profile)
     }
 
-    /// Reads the next `count` events of a stream. A stream that ends first
-    /// gives fewer.
-    ///
-    /// - Parameters:
-    ///   - count: How many events to read.
-    ///   - iterator: The iterator of the stream; the read moves it on.
-    /// - Returns: The events, in stream order.
-    private static func next(
-        _ count: Int, from iterator: inout AsyncStream<SessionDirectoryEvent>.Iterator
-    ) async -> [SessionDirectoryEvent] {
-        var events: [SessionDirectoryEvent] = []
-        while events.count < count, let event = await iterator.next() {
-            events.append(event)
-        }
-        return events
-    }
-
     /// Closes each session in `sessions`.
     private static func close(_ sessions: [any RoutedSession]) async {
         for session in sessions {
@@ -83,7 +66,7 @@ import Testing
         var events = fixture.directory.events().makeAsyncIterator()
         let session = fixture.vend()
 
-        let received = await Self.next(1, from: &events)
+        let received = await events.next(1)
 
         let summary = try await fixture.registeredSummary(of: session)
         #expect(received == [.started(summary, requestedByClient: nil)])
@@ -97,8 +80,8 @@ import Testing
         var second = fixture.directory.events().makeAsyncIterator()
         let session = fixture.vend()
 
-        let receivedByFirst = await Self.next(1, from: &first)
-        let receivedBySecond = await Self.next(1, from: &second)
+        let receivedByFirst = await first.next(1)
+        let receivedBySecond = await second.next(1)
 
         let started = SessionDirectoryEvent.started(
             try await fixture.registeredSummary(of: session), requestedByClient: nil)
@@ -115,7 +98,7 @@ import Testing
         var events = fixture.directory.events().makeAsyncIterator()
         fixture.directory.emit(Self.marker)
 
-        let received = await Self.next(1, from: &events)
+        let received = await events.next(1)
 
         #expect(received == [Self.marker])
         await Self.close([session])
@@ -130,7 +113,7 @@ import Testing
         var events = fixture.directory.events().makeAsyncIterator()
         fixture.directory.register(session, kind: .root, parentID: nil, requestedByClient: Self.requestingClient)
 
-        let received = await Self.next(1, from: &events)
+        let received = await events.next(1)
 
         let summary = try await fixture.registeredSummary(of: session)
         #expect(received == [.started(summary, requestedByClient: Self.requestingClient)])
@@ -146,7 +129,7 @@ import Testing
         fixture.directory.register(session, kind: .root, parentID: nil)
         fixture.directory.emit(Self.marker)
 
-        let received = await Self.next(1, from: &events)
+        let received = await events.next(1)
 
         #expect(received == [Self.marker])
         await Self.close([session])
@@ -162,7 +145,7 @@ import Testing
         let stateChanged = SessionDirectoryEvent.stateChanged(id: session.id, state: .working, lastSummary: nil)
         fixture.directory.emit(stateChanged)
 
-        let received = await Self.next(2, from: &events)
+        let received = await events.next(2)
 
         let summary = try await fixture.registeredSummary(of: session)
         #expect(received == [.started(summary, requestedByClient: nil), stateChanged])
@@ -181,9 +164,9 @@ import Testing
             directory.emit(event)
         }
 
-        let buffered = await Self.next(Self.bufferedEventCount, from: &events)
+        let buffered = await events.next(Self.bufferedEventCount)
         directory.emit(Self.marker)
-        let afterTheBuffer = await Self.next(1, from: &events)
+        let afterTheBuffer = await events.next(1)
 
         #expect(buffered == Array(sent.suffix(Self.bufferedEventCount)))
         #expect(afterTheBuffer == [Self.marker])
