@@ -216,7 +216,8 @@ func makeRoutedSessionActor(
     recordingRoot: URL? = nil,
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?,
-    hooks: SessionHooks?
+    hooks: SessionHooks?,
+    facts: SessionFacts = SessionFacts()
 ) -> RoutedSessionActor {
     // The construction itself, so the one parameter list below is written once
     // whether or not this factory is the site that opens the session's span.
@@ -255,7 +256,8 @@ func makeRoutedSessionActor(
             recordingRoot: recordingRoot,
             tokenCounter: tokenCounter,
             tracer: tracer,
-            hooks: hooks
+            hooks: hooks,
+            facts: facts
         )
     }
     // A restored node's span is already open around the transcript read that
@@ -882,12 +884,20 @@ actor RoutedSessionActor: RoutedSession {
     /// own hooks from them (``SessionHooks/makeForkHooks(sessionID:workingDirectory:)``).
     nonisolated let hooks: SessionHooks?
 
-    /// Creates a session and writes its `session.json` when the session is new.
-    /// A failed sidecar write is logged and dropped.
+    /// The lock and the value of ``facts``. A lock keeps them, so a
+    /// synchronous caller reads them with no `await`, and
+    /// ``updateFacts(_:)`` rewrites `facts.json` and swaps the value as one
+    /// step.
+    nonisolated let factsState: Mutex<SessionFacts>
+
+    /// Creates a session, and writes its `session.json` and its first
+    /// `facts.json` when the session is new. A failed write is logged and
+    /// dropped.
     ///
     /// Each parameter is documented on the stored property it initializes.
     /// `recordingRoot` is not stored; the sidecar write reads it (see
-    /// ``SessionSidecar/configuration``).
+    /// ``SessionSidecar/configuration``). `facts` initializes
+    /// ``factsState``.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -922,9 +932,11 @@ actor RoutedSessionActor: RoutedSession {
         recordingRoot: URL? = nil,
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?,
-        hooks: SessionHooks? = nil
+        hooks: SessionHooks? = nil,
+        facts: SessionFacts = SessionFacts()
     ) {
         self.hooks = hooks
+        self.factsState = Mutex(facts)
         self.toolOutputProtection = toolOutputProtection
         self.isNoOpToolCall = isNoOpToolCall
         self.repetitionDetection = repetitionDetection
@@ -1019,6 +1031,10 @@ actor RoutedSessionActor: RoutedSession {
             ).persistable,
             to: recordingDirectory
         )
+        // After the sidecar, which brings the directory into existence. The
+        // mutable facts live in their own file, so `session.json` stays
+        // write-once.
+        sidecarOrigin.writeFactsIfNew(facts, to: recordingDirectory)
     }
 
     /// Closes the work registry of a session that ``close()`` never closed,

@@ -455,7 +455,9 @@ struct SessionSidecarTests {
         #expect(rootSidecar.recordingLevel == .full)
     }
 
-    @Test("a run's whole recording tree holds only session.json and transcript.jsonl files")
+    /// Each session directory also holds its mutable `facts.json` (ROUTER-1),
+    /// beside the write-once `session.json`.
+    @Test("a run's whole recording tree holds only session.json, facts.json and transcript.jsonl files")
     @MainActor
     func aRunWritesOnlySidecarsAndTranscripts() async throws {
         let cacheDir = Self.makeTempDir()
@@ -486,9 +488,12 @@ struct SessionSidecarTests {
         #expect(try Set(Self.fileNames(directlyIn: routerDir)) == [root.id.description])
         #expect(
             try Set(Self.fileNames(directlyIn: rootDir)) == [
-                "session.json", "transcript.jsonl", fork.id.description,
+                "session.json", SessionFacts.fileName, "transcript.jsonl", fork.id.description,
             ])
-        #expect(try Set(Self.fileNames(directlyIn: forkDir)) == ["session.json", "transcript.jsonl"])
+        #expect(
+            try Set(Self.fileNames(directlyIn: forkDir)) == [
+                "session.json", SessionFacts.fileName, "transcript.jsonl",
+            ])
     }
 
     /// The names of everything directly inside `directory`, one level deep.

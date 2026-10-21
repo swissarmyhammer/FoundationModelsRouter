@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsHooks
 import Logging
 
@@ -186,14 +187,46 @@ public struct SessionConfiguration: Sendable {
     /// hint.
     public var agentDelegationHint: AgentDelegationHint?
 
+    /// The resolved id of the agent of the session (D71): a catalog id
+    /// (`default` for the root agent) or `folder:` plus the absolute path of
+    /// a folder agent, or `nil`. Router stores it and never resolves it.
+    ///
+    /// This field and the five below are the first ``SessionFacts`` of the
+    /// session: a new session writes them to its `facts.json`, and
+    /// ``RoutedSession/facts`` holds them. ``persistable`` does not record
+    /// them, so the sidecar does not change.
+    public var agentID: String?
+
+    /// The display name of the agent of the session, or `nil`. See
+    /// ``agentID``.
+    public var agentName: String?
+
+    /// The tags the session starts with. The default is none. See
+    /// ``agentID``.
+    public var tags: Set<String>
+
+    /// The title the session starts with, or `nil`. See ``agentID``.
+    public var title: String?
+
+    /// The session that started this root session, or `nil`. See
+    /// ``agentID``.
+    public var startedBy: ULID?
+
+    /// How the root session started, or `nil`. It is the session directory
+    /// origin of FoundationModelsExtras, not the hook origin of
+    /// ``hookOrigin``. See ``agentID``.
+    public var origin: FoundationModelsExtras.SessionDirectoryOrigin?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
     /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`,
     /// `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``,
     /// `userPresence` defaults to ``UserPresence/interactive``,
-    /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`, and
-    /// `agentDelegationHint` defaults to `AgentDelegationHint()`.
+    /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`,
+    /// `agentDelegationHint` defaults to `AgentDelegationHint()`, `tags`
+    /// defaults to none, and the other fact fields (`agentID`, `agentName`,
+    /// `title`, `startedBy`, `origin`) default to `nil`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -211,7 +244,13 @@ public struct SessionConfiguration: Sendable {
         parentCall: ToolContext? = nil,
         hookSessionKey: String? = nil,
         hookOrigin: SessionOrigin? = nil,
-        agentDelegationHint: AgentDelegationHint? = AgentDelegationHint()
+        agentDelegationHint: AgentDelegationHint? = AgentDelegationHint(),
+        agentID: String? = nil,
+        agentName: String? = nil,
+        tags: Set<String> = [],
+        title: String? = nil,
+        startedBy: ULID? = nil,
+        origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -230,6 +269,20 @@ public struct SessionConfiguration: Sendable {
         self.hookSessionKey = hookSessionKey
         self.hookOrigin = hookOrigin
         self.agentDelegationHint = agentDelegationHint
+        self.agentID = agentID
+        self.agentName = agentName
+        self.tags = tags
+        self.title = title
+        self.startedBy = startedBy
+        self.origin = origin
+    }
+
+    /// The first ``SessionFacts`` of a session vended with this
+    /// configuration: its fact fields, not yet archived.
+    var initialFacts: SessionFacts {
+        SessionFacts(
+            agentID: agentID, agentName: agentName, tags: tags, title: title, startedBy: startedBy,
+            origin: origin)
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.

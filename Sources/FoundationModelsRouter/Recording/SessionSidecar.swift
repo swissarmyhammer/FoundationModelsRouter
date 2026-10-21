@@ -360,12 +360,24 @@ package struct SessionSidecarWriter: Sendable {
         do {
             try SessionSidecar.write(sidecar, to: directory)
         } catch {
-            RouterTelemetry.makeLogger(.sessionSidecar).error(
-                "dropping a session sidecar",
-                metadata: RouterTelemetry.errorMetadata(error).merging([
-                    RouterTelemetry.LogMetadataKey.filePath: "\(directory.path)"
-                ]) { _, new in new })
+            Self.logDroppedWrite("dropping a session sidecar", error: error, directory: directory)
         }
+    }
+
+    /// Logs a session file write that failed and was dropped: the constant
+    /// `message`, the type and the code of `error`, and the path of
+    /// `directory`. The sidecar and the facts file share it.
+    ///
+    /// - Parameters:
+    ///   - message: The constant log message.
+    ///   - error: The error of the write.
+    ///   - directory: The session's own recording directory.
+    static func logDroppedWrite(_ message: Logger.Message, error: any Error, directory: URL) {
+        RouterTelemetry.makeLogger(.sessionSidecar).error(
+            message,
+            metadata: RouterTelemetry.errorMetadata(error).merging([
+                RouterTelemetry.LogMetadataKey.filePath: "\(directory.path)"
+            ]) { _, new in new })
     }
 }
 
@@ -418,6 +430,38 @@ enum SessionSidecarOrigin: Sendable {
         wrappedBy wrap: (SessionSidecarWriter) -> SessionSidecarOrigin
     ) -> SessionSidecarOrigin {
         durableRecording.map { wrap($0.sidecarWriter) } ?? .memoryOnly
+    }
+
+    /// Whether a session with this origin keeps its ``SessionFacts`` on disk,
+    /// in `facts.json`: a new or restored session under a durable root whose
+    /// recording level is not ``RecordingLevel/off``. A memory-only session
+    /// holds its facts in memory alone.
+    var recordsFacts: Bool {
+        switch self {
+        case .new(let writer), .restored(let writer):
+            return writer.recordingLevel != .off
+        case .memoryOnly:
+            return false
+        }
+    }
+
+    /// Writes the first `facts.json` of a session when the origin is
+    /// ``new(_:)`` and ``recordsFacts`` holds. Call it after
+    /// ``writeSidecarIfNew(instructions:grammar:forkedAtEntryCount:forkedAtHistoryOrdinal:workingDirectory:agentSpawn:configuration:to:)``,
+    /// which creates the directory. A failure is logged and the file is
+    /// dropped, as a failed sidecar write is. Does nothing for a restored or
+    /// memory-only session: a restored session's facts are already on disk.
+    ///
+    /// - Parameters:
+    ///   - facts: The first facts of the session.
+    ///   - directory: The session's own recording directory.
+    func writeFactsIfNew(_ facts: SessionFacts, to directory: URL) {
+        guard case .new = self, recordsFacts else { return }
+        do {
+            try facts.write(to: directory)
+        } catch {
+            SessionSidecarWriter.logDroppedWrite("dropping a session facts file", error: error, directory: directory)
+        }
     }
 
     /// The origin of a fork taken from a session with this origin. A fork

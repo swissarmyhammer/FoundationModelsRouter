@@ -119,7 +119,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             parentCall: configuration.parentCall,
             hookSessionKey: configuration.hookSessionKey,
             hookOrigin: configuration.hookOrigin,
-            agentDelegationHint: configuration.agentDelegationHint)
+            agentDelegationHint: configuration.agentDelegationHint,
+            facts: configuration.initialFacts)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -152,6 +153,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - agentDelegationHint: The settings of the hint to give a code change
     ///     to an agent, or `nil` for no hint. See
     ///     ``SessionConfiguration/agentDelegationHint``.
+    ///   - facts: The first facts of the session, which it writes to its
+    ///     `facts.json` and holds as ``RoutedSession/facts``. The default is
+    ///     empty facts. See ``SessionConfiguration/agentID``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -172,7 +176,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         parentCall: ToolContext? = nil,
         hookSessionKey: String? = nil,
         hookOrigin: SessionOrigin? = nil,
-        agentDelegationHint: AgentDelegationHint? = nil
+        agentDelegationHint: AgentDelegationHint? = nil,
+        facts: SessionFacts = SessionFacts()
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -288,7 +293,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // reports to the backend the router was constructed with.
             tracer: tracer,
             // The hooks of the router, with the lineage of this session.
-            hooks: sessionHooks
+            hooks: sessionHooks,
+            // The first `facts.json`, written beside the new sidecar.
+            facts: facts
         )
         // Before the session is returned, so no answer runs yet.
         session.bind(delegationAdvisor: delegationAdvisor)

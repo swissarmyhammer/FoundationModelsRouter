@@ -74,6 +74,14 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// text only in its terminal event.
     nonisolated var grammar: Grammar? { get }
 
+    /// The mutable facts of this session: its agent, tags, title, who
+    /// started it, how it started, and when it was archived (ROUTER-1).
+    ///
+    /// A new session takes them from its ``SessionConfiguration`` and writes
+    /// them to `facts.json` beside its `session.json`. The value reads with
+    /// no `await`, from any context, and equals the file.
+    nonisolated var facts: SessionFacts { get }
+
     /// Context fill, 0...1: the size of the render that the session sends to
     /// the model, against the profile's resolved working context. The size is
     /// the fed and generated tokens of the newest generation call, not the sum
