@@ -21,10 +21,14 @@ import Synchronization
 /// (ROUTER-4), and ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
-    /// from before ROUTER-1: the root agent (D71).
+    /// from before ROUTER-1: the default agent, the D71 fallback when neither
+    /// the start nor the folder's `AGENT.md` names one. Confirmed by the owner
+    /// of session.md.
     static let defaultAgentID = "default"
 
-    /// The origin of a session that recorded none.
+    /// The origin of a session that recorded none. A session from before
+    /// `facts.json` was opened by an ACP `session/new`, so its origin is the
+    /// client. Confirmed by the owner of session.md.
     static let defaultOrigin: FoundationModelsExtras.SessionDirectoryOrigin = .client
 
     /// The reason of the one refused receipt ``send(_:)`` gives until the
