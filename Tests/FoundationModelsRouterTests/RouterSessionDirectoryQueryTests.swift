@@ -8,8 +8,9 @@ import Testing
 /// holds each registered session weakly, and `sessions(matching:)` and
 /// `summary(of:)` answer from the live sessions, newest first.
 ///
-/// Each test vends its sessions from a scripted model and registers them by
-/// hand, because the vend sites register nothing yet.
+/// Each test vends its sessions from a scripted model, then registers each one
+/// again by hand with the kind and parent the test needs: a second
+/// registration of an id replaces the one `makeSession` made.
 @Suite struct RouterSessionDirectoryQueryTests {
     /// A scripted profile and a directory to register its sessions in.
     struct Fixture {
@@ -25,7 +26,8 @@ import Testing
         /// The directory under test: the router's own.
         var directory: RouterSessionDirectory { router.sessionDirectory }
 
-        /// Vends one session with `configuration` and registers it.
+        /// Vends one session with `configuration` and registers it again with
+        /// `kind` and `parentID`.
         ///
         /// - Parameters:
         ///   - configuration: The configuration of the session.

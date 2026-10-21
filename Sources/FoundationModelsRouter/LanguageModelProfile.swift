@@ -80,6 +80,12 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// handle takes its own ``SessionHooks`` from it.
     let hooks: RouterHooks?
 
+    /// The session directory of the resolving router
+    /// (``Router/sessionDirectory``), or `nil` for a hand-built handle that no
+    /// router resolved. Each session vended from this handle registers there
+    /// before `makeSession` returns; with `nil` it registers nowhere.
+    let sessionDirectory: RouterSessionDirectory?
+
     /// The router's durable transcripts root, or `nil` when recording to
     /// memory or none.
     var recordingsRoot: URL? { durableRecording?.root }
@@ -154,6 +160,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     default is the real time.
     ///   - hooks: The hooks of the resolving router, or `nil` (the default)
     ///     for a handle whose sessions send no hook event.
+    ///   - sessionDirectory: The session directory of the resolving router,
+    ///     or `nil` (the default) for a handle whose sessions register nowhere.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -167,10 +175,12 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         samplingMode: GenerationOptions.SamplingMode? = nil,
         residencyHolds: [ModelHold] = [],
         runClock: any RunClock = ContinuousRunClock(),
-        hooks: RouterHooks? = nil
+        hooks: RouterHooks? = nil,
+        sessionDirectory: RouterSessionDirectory? = nil
     ) {
         self.runClock = runClock
         self.hooks = hooks
+        self.sessionDirectory = sessionDirectory
         self.slot = slot
         self.chosen = chosen
         self.footprintBytes = footprintBytes

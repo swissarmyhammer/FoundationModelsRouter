@@ -186,10 +186,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let effectiveWorkingDirectory = workingDirectory ?? recordingDirectory
         // A session that a parent call or a recorded spawn starts is a
         // sub-agent of that parent session.
+        let subagentParentID = parentCall?.sessionID ?? agentSpawn?.parentSessionId
         let sessionHooks = hooks.map { routerHooks in
             routerHooks.makeSessionHooks(
                 sessionID: sessionId, workingDirectory: effectiveWorkingDirectory,
-                parent: (parentCall?.sessionID ?? agentSpawn?.parentSessionId).map(routerHooks.subagentParent(of:)),
+                parent: subagentParentID.map(routerHooks.subagentParent(of:)),
                 requestedKey: hookSessionKey, requestedOrigin: hookOrigin, isRestored: false)
         }
 
@@ -299,7 +300,24 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         )
         // Before the session is returned, so no answer runs yet.
         session.bind(delegationAdvisor: delegationAdvisor)
+        // Before the session is returned, so a query right after this call
+        // finds it.
+        registerVendedSession(session, subagentParentID: subagentParentID)
         return session
+    }
+
+    /// Registers a session that `makeSession` vends in the directory of the
+    /// resolving router: a subagent of `subagentParentID`, or a root when it
+    /// is `nil`. A handle that no router resolved has no directory, and its
+    /// sessions register nowhere.
+    ///
+    /// - Parameters:
+    ///   - session: The vended session.
+    ///   - subagentParentID: The session whose tool call or recorded spawn
+    ///     started `session`, or `nil` for a root session.
+    private func registerVendedSession(_ session: any RoutedSession, subagentParentID: ULID?) {
+        let kind: SessionKind = subagentParentID == nil ? .root : .subagent
+        sessionDirectory?.register(session, kind: kind, parentID: subagentParentID)
     }
 
     /// Mints one session's fresh outbox and run plane and instances `tools`

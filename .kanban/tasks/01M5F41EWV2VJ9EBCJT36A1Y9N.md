@@ -34,10 +34,27 @@ comments:
     - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/SessionFactsFixtures.swift (new), Tests/FoundationModelsRouterTests/SessionFactsRestoreTests.swift, Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift. `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); `swift test --skip-build --filter SessionFacts`: 19 tests / 3 suites passed, plus 1/1 public-surface.
     - next: review
   timestamp: 2026-10-21T22:14:06.906772+00:00
+- actor: claude-code
+  id: 01m5g8rrkr44jefrrayhg847m5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (77aae5c4) — 0 findings (0 confirmed, 4 refuted; 7 attempted, 0 failed); 3 files reviewed, 6 .kanban files excluded by .reviewignore. Prior "## Review Findings (2026-10-21 17:06)" item (SessionFactsRestoreTests.swift:18 reuse/reuse) is checked and addressed by Tests/FoundationModelsRouterTests/Helpers/SessionFactsFixtures.swift.
+    - next: done
+  timestamp: 2026-10-21T22:19:35.416844+00:00
+- actor: claude-code
+  id: 01m5g8sakmg4qjmn4et6bn1p74
+  text: |-
+    ### finish iteration 1 — clean
+    - review (251def1d): findings — Tests/FoundationModelsRouterTests/SessionFactsRestoreTests.swift:18
+    - implement: changed — Helpers/SessionFactsFixtures.swift (new), SessionFactsRestoreTests.swift, SessionFactsRecordingTests.swift
+    - test: green — swift test, 2003/33/19 passed, 9 known issues
+    - commit: 77aae5c4
+    - review: clean — 0 findings
+  timestamp: 2026-10-21T22:19:53.844573+00:00
 depends_on:
 - 01M5F3DZXJ25NHD9NPCVCRNMCM
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffa280
 title: 'ROUTER-1: A restore reads facts.json back and a fork writes its own facts'
 ---
 ## Goal

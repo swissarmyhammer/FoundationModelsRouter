@@ -952,8 +952,8 @@ public actor Router {
     }
 
     /// Builds a routed model handle for `slot` over `container`, with this
-    /// router's id, recorder, tracer, sampling mode, transcripts root, and
-    /// hooks.
+    /// router's id, recorder, tracer, sampling mode, transcripts root, hooks,
+    /// and session directory.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -988,7 +988,8 @@ public actor Router {
             samplingMode: samplingMode,
             residencyHolds: admitted.holds,
             runClock: runClock,
-            hooks: hooks
+            hooks: hooks,
+            sessionDirectory: sessionDirectory
         )
     }
 

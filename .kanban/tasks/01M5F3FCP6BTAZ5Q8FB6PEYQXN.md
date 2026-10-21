@@ -27,10 +27,23 @@ comments:
     - evidence: Sources: Directory/RouterSessionDirectory.swift (new), Router.swift (`public nonisolated let sessionDirectory`). Package.swift (public-surface target links the Extras product). Tests: RouterSessionDirectoryQueryTests.swift (15 tests), PublicSurfaceTests/SessionDirectoryPublicSurfaceTests.swift (1 test). RED: build failed "value of type 'Router' has no member 'sessionDirectory'". GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); full `swift test`: 1974 tests / 246 suites passed with 9 known issues; 29 / 17; 19 / 3.
     - next: review
   timestamp: 2026-10-21T12:55:52.850747+00:00
+- actor: claude-code
+  id: 01m5g91xpehkbcw4fvjbn2ryzt
+  text: |-
+    ### review — clean
+    - evidence: review sha 19254b88~1..19254b88 — 0 findings (confirmed 0, refuted 1, attempted 7, failed 0); 5 files reviewed, 2 .kanban files excluded by .reviewignore; no prior Review Findings sections
+    - next: none — task moved to done
+  timestamp: 2026-10-21T22:24:35.534204+00:00
+- actor: claude-code
+  id: 01m5g92d6zcwfcy7q43y344waw
+  text: |-
+    ### finish iteration 1 — clean
+    - review (19254b88): clean — 0 findings; implemented and tested earlier, no implement/test/commit needed this iteration
+  timestamp: 2026-10-21T22:24:51.423212+00:00
 depends_on:
 - 01M5F3DZXJ25NHD9NPCVCRNMCM
-position_column: review
-position_ordinal: '8380'
+position_column: done
+position_ordinal: ffffffffa380
 title: 'ROUTER-3: RouterSessionDirectory actor, router.sessionDirectory, and the live query'
 ---
 ## Goal

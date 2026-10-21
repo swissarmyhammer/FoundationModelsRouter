@@ -31,8 +31,21 @@ comments:
     ### decision — user (2026-10-21)
     - Wait for ACPA-14. The finished work is parked on branch router-3-session-index (29ae4767) and is not merged to main. Merge it once the ACPAgent session's ACPA-14 removes ACPAgent's own SessionIndex/ProjectRegistry. Until then, ACPAgent's test target sees SessionIndex as ambiguous (TranscriptRecordingFixtures.swift:138, TranscriptStoreTests.swift:53). ^k176prd waits too.
   timestamp: 2026-10-21T12:34:11.075341+00:00
-position_column: review
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m5g99nt66ycevn43swss385c
+  text: |-
+    ### review — clean
+    - evidence: review sha b70e5058~1..b70e5058 — 0 findings (confirmed 0, refuted 0; 7 validators attempted, 0 failed, 0 skipped; 8 files reviewed). No prior Review Findings sections on the card.
+    - next: none; task moved to done.
+  timestamp: 2026-10-21T22:28:49.606855+00:00
+- actor: claude-code
+  id: 01m5g9a1fh8a1j7je56s4h4hf1
+  text: |-
+    ### finish iteration 1 — clean
+    - review (b70e5058): clean — 0 findings; implemented and tested earlier, no implement/test/commit needed this iteration
+  timestamp: 2026-10-21T22:29:01.553692+00:00
+position_column: done
+position_ordinal: ffffffffa480
 title: 'ROUTER-3: Copy SessionIndex (sessions.jsonl) from ACPAgent Transcripts/ into Router Recording/'
 ---
 ## Goal
