@@ -992,8 +992,10 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     private let reporting: @Sendable (DownloadProgress) -> Void
 
     /// The loader of each model: `MLXModelLoader` in a live loader. The pool
-    /// evicts each container through it too.
-    private let modelLoader: any PooledModelLoader
+    /// evicts each container through it too. It is not private, thus a unit
+    /// test can read the cache folder of the `MLXModelLoader` that the public
+    /// init makes.
+    let modelLoader: any PooledModelLoader
 
     /// Creates a live loader. The init needs no ``Router``.
     ///
@@ -1001,12 +1003,31 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// every router in the pool, and the mode belongs to the router
     /// (`model-pool.md` §2.5): pass it to `Router.init(samplingMode:)`.
     ///
-    /// - Parameter reporting: Receives the download progress of each load
-    ///   through ``load(_:)`` and ``load(key:progressHandler:)``. The default
-    ///   drops each value. A router load
-    ///   does not use it: it reports to the callback of its resolve.
-    public init(reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) {
-        self.init(reporting: reporting, modelLoader: MLXModelLoader())
+    /// The cache folder holds only the models. The sizing metadata of a
+    /// router is in a different folder: pass that folder to
+    /// `Router.init(cacheDir:)`.
+    ///
+    /// ```swift
+    /// let support = URL.applicationSupportDirectory
+    /// let router = Router(
+    ///     cacheDir: support.appending(path: "RouterMetadata"),
+    ///     loader: LiveModelLoader(cacheDirectory: support.appending(path: "Models")))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - reporting: Receives the download progress of each load through
+    ///     ``load(_:)`` and ``load(key:progressHandler:)``. The default drops
+    ///     each value. A router load does not use it: it reports to the
+    ///     callback of its resolve.
+    ///   - cacheDirectory: The Hugging Face cache folder of the models. Each
+    ///     download writes to this folder, and each load reads the weights
+    ///     from it, also when `HF_HUB_CACHE` or `HF_HOME` names a different
+    ///     folder. `nil` (the default) uses the default Hugging Face cache,
+    ///     which reads these variables.
+    public init(
+        reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil
+    ) {
+        self.init(reporting: reporting, modelLoader: MLXModelLoader(cacheDirectory: cacheDirectory))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test

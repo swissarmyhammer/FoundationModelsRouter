@@ -155,6 +155,12 @@ Then link its product from your own target:
 `FoundationModelsExtras` links. Your target needs no Hugging Face product of its
 own.
 
+To keep the models in a folder of your app, give the folder to
+`LiveModelLoader(cacheDirectory:)`. Each download goes into that folder, also
+when `HF_HOME` names a different folder. With no folder, the loader uses the
+default Hugging Face cache. The router keeps its sizing metadata in a different
+folder: give that folder to `Router(cacheDir:)`.
+
 ## Documentation
 
 Every public API has a worked example in
