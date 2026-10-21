@@ -1,8 +1,26 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m5f7gcwpyf8qr5xv9m0gvvzv
+  text: |-
+    Notes:
+    - Name difference: EXTRAS-3 ships the origin enum as `SessionDirectoryOrigin`, not `SessionOrigin` (its own doc says so because of the FoundationModelsHooks clash). `SessionFacts.origin` is `FoundationModelsExtras.SessionDirectoryOrigin?`, spelled qualified as the card asks. No clash remains with Hooks' `SessionOrigin`.
+    - Extras pin: the local Package.resolved already names bd34b20 (EXTRAS-3, has Sources/FoundationModelsExtras/Sessions/). Package.resolved is gitignored, so the pin is not in the commit.
+    - schemaVersion: `public let schemaVersion`, `public static let currentSchemaVersion = 1`; an absent key decodes as 1 and an absent `tags` as []; a newer version throws `RecordingSchemaVersionError.recordingFromNewerRouter`, the sidecar's rule.
+    - write uses `Data.write(options: .atomic)`; encoder is pretty-printed, sorted keys, ISO 8601 dates.
+    - The public surface test reaches the origin through `.client` (implicit member) because the public-surface target links Router alone and Router does not re-export `SessionDirectoryOrigin`; re-exporting it is a separate API decision, not taken here.
+  timestamp: 2026-10-21T12:38:18.262946+00:00
+- actor: claude-code
+  id: 01m5f7gf4rpm74mbj0gwcb61ay
+  text: |-
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Recording/SessionFacts.swift, Tests/FoundationModelsRouterTests/SessionFactsTests.swift (9 tests), Tests/FoundationModelsRouterPublicSurfaceTests/SessionFactsPublicSurfaceTests.swift (1 test). RED: build failed "cannot find 'SessionFacts' in scope". GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" build-system note); full `swift test`: 1950 tests / 243 suites passed with 9 known issues; 28 tests / 16 suites; 19 tests / 3 suites.
+    - next: review
+  timestamp: 2026-10-21T12:38:20.568387+00:00
+position_column: review
+position_ordinal: '80'
 title: 'ROUTER-1: SessionFacts value and the atomic facts.json file'
 ---
 ## Goal
