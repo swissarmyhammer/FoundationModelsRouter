@@ -8,10 +8,29 @@ comments:
     ### decision — from foundationmodelsmultitool-bc (2026-10-21)
     - Name clash: EXTRAS-3 renames its origin enum to SessionDirectoryOrigin, so it doesn't clash with Hooks' SessionOrigin. Extras is checking every EXTRAS-3 type name (SessionState, SessionKind, ...) against Hooks and Router. Use the names EXTRAS-3 actually ships. The GraphQL SDL enum stays SessionOrigin.
   timestamp: 2026-10-21T11:42:24.723996+00:00
+- actor: claude-code
+  id: 01m5f8gga7fthhkz5vk28wyxwx
+  text: |-
+    Notes:
+    - Does not use the parked SessionIndex: the query answers live sessions only; `includesRecorded` is not read yet.
+    - Names as EXTRAS-3 ships them (bd34b20): `SessionDirectoryOrigin`, `SessionKind`, `SessionState`, `SessionSummary`, `SessionQuery` (limit default 20, includesRecorded default false). No Router type clashes with them.
+    - `register(_:kind:parentID:)` and `unregister(_:)` are `nonisolated`, synchronous and internal (the vend-site card calls them from inside the module). The registry is `Mutex<[ULID: Entry]>` with `weak var session: (any RoutedSession)?`; dead entries are pruned on each query.
+    - Field mapping as the card states it: nil agentID -> "default", nil origin -> `.client`, createdAt = ULID timestamp, updatedAt starts at createdAt (stored per entry for later cards), state `.idle`, isLive true. The card marks the nil mappings as awaiting spec-owner confirmation; that confirmation is still open.
+    - Provisional bodies: start throws `.noLauncher`; addTags/removeTags/setTitle throw `.unknownSession(id)` (the card names the replacing card but not a provisional body; this matches archive); send gives one refused receipt "messages are not available yet"; inbox gives []; archive throws `.unknownSession`; events() is a finished stream. No test relies on them.
+    - Manifest change: the public-surface test target now also depends on the `FoundationModelsExtras` product, because a consumer has to name the Extras `SessionDirectory` port and `SessionQuery`, and Router does not re-export them (re-exporting is a public API choice not on the card). The manifest comment is updated.
+    - README lists no source folders, so it is unchanged; no ARCHITECTURE.md exists.
+  timestamp: 2026-10-21T12:55:50.343312+00:00
+- actor: claude-code
+  id: 01m5f8gjrj3rwc3e660b7tvz5z
+  text: |-
+    ### implement — changed
+    - evidence: Sources: Directory/RouterSessionDirectory.swift (new), Router.swift (`public nonisolated let sessionDirectory`). Package.swift (public-surface target links the Extras product). Tests: RouterSessionDirectoryQueryTests.swift (15 tests), PublicSurfaceTests/SessionDirectoryPublicSurfaceTests.swift (1 test). RED: build failed "value of type 'Router' has no member 'sessionDirectory'". GREEN: `swift build --build-tests` clean (only the pre-existing "missing creator for mutated node" note); full `swift test`: 1974 tests / 246 suites passed with 9 known issues; 29 / 17; 19 / 3.
+    - next: review
+  timestamp: 2026-10-21T12:55:52.850747+00:00
 depends_on:
 - 01M5F3DZXJ25NHD9NPCVCRNMCM
-position_column: todo
-position_ordinal: '8480'
+position_column: review
+position_ordinal: '8380'
 title: 'ROUTER-3: RouterSessionDirectory actor, router.sessionDirectory, and the live query'
 ---
 ## Goal

@@ -382,13 +382,18 @@ let package = Package(
         // stops the target from compiling. The Router test target cannot hold
         // that proof: its other files import the library `@testable`, which
         // reaches `internal` members, so a plain import there proves nothing
-        // about the module boundary. The target depends on the library alone
-        // and links nothing else, which is the shape a consumer has. It is a
-        // root test target, so `swift test` at the root runs it on every run,
-        // in CI and locally.
+        // about the module boundary. The target depends on the library and on
+        // the Extras core product, which is the shape a consumer has: a
+        // consumer of `Router.sessionDirectory` names the Extras
+        // `SessionDirectory` port and its value types (ROUTER-3), which the
+        // router does not re-export. It is a root test target, so `swift test`
+        // at the root runs it on every run, in CI and locally.
         .testTarget(
             name: "\(packageName)PublicSurfaceTests",
-            dependencies: [.target(name: packageName)],
+            dependencies: [
+                .target(name: packageName),
+                .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
+            ],
             path: "Tests/\(packageName)PublicSurfaceTests"
         ),
     ]

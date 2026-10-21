@@ -99,6 +99,10 @@ public actor Router {
     /// sub-agent finds the key of its parent session. See ``RouterHooks``.
     let hooks: RouterHooks?
 
+    /// The session directory of this router: the Extras `SessionDirectory`
+    /// port over the live sessions of this router (ROUTER-3).
+    public nonisolated let sessionDirectory: RouterSessionDirectory
+
     /// Creates a router.
     ///
     /// The router starts one task that reads the footprints of `pool` and
@@ -168,6 +172,7 @@ public actor Router {
         self.pool = pool
         self.promptCacheSizing = PromptCacheSizing(pool: pool, loader: loader, probe: probe)
         self.hooks = hooks.map(RouterHooks.init(dispatcher:))
+        self.sessionDirectory = RouterSessionDirectory()
     }
 
     /// Resolves an authored profile into a resident ``LanguageModelProfile``
