@@ -30,11 +30,21 @@ comments:
     - gap: subtask 2 and acceptance criterion 2 (recorded forks in the directory after `restoreSession(id:)`) conflict with the documented `restoreSession` release contract and the weak-hold directory. See the BLOCKER comment.
     - next: the owner picks option (a), (b) or (c); then finish or move to /review.
   timestamp: 2026-10-21T22:51:32.828558+00:00
+- actor: claude-code
+  id: 01m5gan3hf6xbm107baep62awp
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: stuck — 7/9; acceptance criterion "recorded forks listed after restoreSession(id:)" conflicts with the documented release of forks in restoreSession and the weak-reference directory (session.md 5.2)
+    - test: green per implementer — full suite 2015 passed, 9 known issues
+    - commit: 18bd0e0c (partial)
+    - needs a human decision: (a) accept the restoreSessionTree test, (b) restored root keeps its forks alive, (c) directory holds restored forks strongly
+    - also noted: removal is by session id, so a second close() on a stale closed object could remove a live restored session with the same id
+  timestamp: 2026-10-21T22:52:32.687239+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F41EWV2VJ9EBCJT36A1Y9N
-position_column: doing
-position_ordinal: '80'
+position_column: review
+position_ordinal: '8780'
 title: 'ROUTER-3: Forks and restored sessions register, and close() leaves the live list'
 ---
 ## Goal

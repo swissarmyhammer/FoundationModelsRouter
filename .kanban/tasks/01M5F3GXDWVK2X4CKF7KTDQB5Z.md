@@ -1,10 +1,30 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5gb79gk2qsm814b3836zffk
+  text: |-
+    Implementation notes:
+    - The live registry and the open streams now sit in ONE Mutex (`RouterSessionDirectory.Registry { entries, fanout }`, field `state`, which replaces the old `live` Mutex). `register` sends `started` under that same lock. The new `Directory/SessionDirectoryEventFanout.swift` holds no lock of its own; it keeps the continuations (makeStream with `.bufferingNewest(256)`, add/remove/send/count).
+    - `register(_:kind:parentID:requestedByClient:)` now has `requestedByClient: String? = nil`. Existing callers (RoutedLLM.registerVendedSession, RoutedSessionActorForking, SessionTreeRestoration, RouterSessionDirectoryQueryTests) compile unchanged because of the default.
+    - To make "no second `started` is ever sent for a session" hold, a second registration of an id whose entry still holds a live session replaces the entry and sends nothing. The query tests re-register vended sessions, and this rule keeps them from sending a duplicate `started`. An id that was unregistered (close()) or whose session is gone sends `started` again, so a restore of a closed session counts as a new start.
+    - Internal `emit(_:)` gives the later cards (factsChanged/stateChanged/messageDelivered/archived) a way to send through the same lock. Internal `openEventStreamCount` lets a test check that a dropped stream leaves the directory. Dropping the AsyncStream runs onTermination synchronously, and the test depends on that.
+    - The events() doc says "change log" in plain words and does not spell the type name. That keeps the `ChangeLog` source-scan test (which reads all of Sources/FoundationModelsRouter) true while the doc still states the rule.
+    - The tests use a marker event (`.archived(id:)` through `emit`) to show that a stream holds nothing more, so no read waits on an event that never comes.
+    - The build prints `warning: missing creator for mutated node: ... mlx-swift_Cmlx.bundle/Contents/MacOS`. This SwiftPM build-graph warning was there before the change (it appeared on the RED build) and comes from the mlx dependency, not from this code. The full suite reports "9 known issues", which come from existing withKnownIssue tests and not from this suite.
+  timestamp: 2026-10-21T23:02:28.627280+00:00
+- actor: claude-code
+  id: 01m5gb7bp3g8hk9c0y86xgkewz
+  text: |-
+    ### implement — changed
+    - evidence: 3 files. Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift (modified), Sources/FoundationModelsRouter/Directory/SessionDirectoryEventFanout.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift (new, 10 tests). `swift build --build-tests` built clean. `swift test --filter RouterSessionDirectory` passed 37 tests in 4 suites. The full `swift test` passed 2025 tests in 252 suites, plus 33 and 19 tests in the other test bundles.
+    - next: /review
+  timestamp: 2026-10-21T23:02:30.851478+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
-position_column: todo
-position_ordinal: '8680'
+position_column: doing
+position_ordinal: '80'
 title: 'ROUTER-3: The directory events() stream (started, per-session order, bufferingNewest 256; no seq, the graph wraps it in ChangeLog)'
 ---
 ## Goal
@@ -30,21 +50,21 @@ title: 'ROUTER-3: The directory events() stream (started, per-session order, buf
 - The later cards add `factsChanged`, `stateChanged`, `messageDelivered` and `archived` through the same fan-out.
 
 ## Subtasks
-- [ ] Failing test first: open `events()`, vend a session, and get `started` with its summary.
-- [ ] Add the fan-out with `.bufferingNewest(256)`; a test that sends 300 events to a stream nobody reads and then reads it gets the newest 256.
-- [ ] Two streams opened before a vend both get `started`; a stream opened after the vend does not get it.
-- [ ] Order test: for one session, `started` comes before any later event of that session (use a second event kind through an internal emit to check).
-- [ ] Doc comment on `events()` that states the ChangeLog rule above.
+- [x] Failing test first: open `events()`, vend a session, and get `started` with its summary.
+- [x] Add the fan-out with `.bufferingNewest(256)`; a test that sends 300 events to a stream nobody reads and then reads it gets the newest 256.
+- [x] Two streams opened before a vend both get `started`; a stream opened after the vend does not get it.
+- [x] Order test: for one session, `started` comes before any later event of that session (use a second event kind through an internal emit to check).
+- [x] Doc comment on `events()` that states the ChangeLog rule above.
 
 ## Acceptance Criteria
-- [ ] Each `events()` call gives an independent stream; each gets `started` for each session registered after the call.
-- [ ] The buffer keeps the newest 256 events for a reader that does not read.
-- [ ] `started` is the first event of each session on each stream.
-- [ ] No `seq` or cursor field is added to any event, and Router has no `ChangeLog` use (a source search in the test target can check `ChangeLog` does not appear under `Sources/FoundationModelsRouter`).
+- [x] Each `events()` call gives an independent stream; each gets `started` for each session registered after the call.
+- [x] The buffer keeps the newest 256 events for a reader that does not read.
+- [x] `started` is the first event of each session on each stream.
+- [x] No `seq` or cursor field is added to any event, and Router has no `ChangeLog` use (a source search in the test target can check `ChangeLog` does not appear under `Sources/FoundationModelsRouter`).
 
 ## Tests
-- [ ] `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift`
-- [ ] `swift test --filter RouterSessionDirectoryEvent` passes; the full `swift test` stays green.
+- [x] `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift`
+- [x] `swift test --filter RouterSessionDirectoryEvent` passes; the full `swift test` stays green.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api

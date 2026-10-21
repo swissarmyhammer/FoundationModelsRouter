@@ -11,14 +11,15 @@ import Synchronization
 /// holds each session weakly, so it never keeps a session alive: a session
 /// whose last strong reference is gone leaves every query. A summary is built
 /// from the session's `nonisolated` properties and its ``RoutedSession/facts``
-/// with no `await`, so the synchronous ``register(_:kind:parentID:)`` can build
-/// one too.
+/// with no `await`, so the synchronous
+/// ``register(_:kind:parentID:requestedByClient:)`` can build one too.
 ///
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
-/// live sessions. The other requirements of the port have provisional bodies
+/// live sessions, and ``events()`` gives `started` for each session it
+/// registers. The other requirements of the port have provisional bodies
 /// that later cards replace: ``start(_:)`` (ROUTER-8), the tag and title
-/// changes and ``events()`` (ROUTER-3), ``send(_:)``, ``inbox(of:markRead:)``
-/// and ``message(_:to:)`` (ROUTER-4), and ``archive(_:by:)`` (ROUTER-11).
+/// changes (ROUTER-3), ``send(_:)``, ``inbox(of:markRead:)`` and
+/// ``message(_:to:)`` (ROUTER-4), and ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -54,10 +55,21 @@ public actor RouterSessionDirectory: SessionDirectory {
         var updatedAt: Date
     }
 
-    /// The live registry, keyed by session id. A lock keeps it, so the
-    /// synchronous ``register(_:kind:parentID:)`` and ``unregister(_:)`` need
-    /// no `await`.
-    private let live = Mutex<[ULID: Entry]>([:])
+    /// What the directory keeps under its one lock: the live registry and
+    /// the open event streams. One lock keeps both, so an event that a change
+    /// of the registry sends reaches each stream in the order of the changes.
+    struct Registry {
+        /// The live registry, keyed by session id.
+        var entries: [ULID: Entry] = [:]
+
+        /// The open streams of ``RouterSessionDirectory/events()``.
+        var fanout = SessionDirectoryEventFanout()
+    }
+
+    /// The registry and the event streams. A lock keeps them, so the
+    /// synchronous ``register(_:kind:parentID:requestedByClient:)`` and
+    /// ``unregister(_:)`` need no `await`.
+    private let state = Mutex<Registry>(Registry())
 
     /// Makes an empty directory.
     public init() {}
@@ -65,16 +77,30 @@ public actor RouterSessionDirectory: SessionDirectory {
     // MARK: - Registry
 
     /// Adds a live session to the directory. The directory holds it weakly.
-    /// A second registration of the same id replaces the first.
+    ///
+    /// Under the lock that adds the entry, each open stream of ``events()``
+    /// gets `started` with the summary of the session, so `started` is the
+    /// first event of the session on each stream. A second registration of a
+    /// session that is still live replaces its entry and sends no second
+    /// `started`.
     ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - kind: The kind of the session.
     ///   - parentID: The parent of a subagent, or the original session of a
     ///     fork; `nil` for a root session.
-    nonisolated func register(_ session: any RoutedSession, kind: SessionKind, parentID: ULID?) {
+    ///   - requestedByClient: The UI client that asked for the start, for the
+    ///     tab rule; `nil` when no client asked (ROUTER-8 fills it).
+    nonisolated func register(
+        _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
+    ) {
         let entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
-        live.withLock { $0[session.id] = entry }
+        state.withLock { registry in
+            let isAlreadyLive = registry.entries[session.id]?.session != nil
+            registry.entries[session.id] = entry
+            guard !isAlreadyLive else { return }
+            registry.fanout.send(.started(Self.summary(of: session, in: entry), requestedByClient: requestedByClient))
+        }
     }
 
     /// Takes a session off the live list. An id the directory does not hold
@@ -82,7 +108,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameter id: The session id.
     nonisolated func unregister(_ id: ULID) {
-        live.withLock { _ = $0.removeValue(forKey: id) }
+        state.withLock { _ = $0.entries.removeValue(forKey: id) }
     }
 
     /// The summaries of every live session, in no order. An entry whose
@@ -90,9 +116,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Returns: One summary for each live session.
     private nonisolated func liveSummaries() -> [SessionSummary] {
-        live.withLock { entries in
-            entries = entries.filter { $0.value.session != nil }
-            return entries.values.compactMap(Self.summary(of:))
+        state.withLock { registry in
+            registry.entries = registry.entries.filter { $0.value.session != nil }
+            return registry.entries.values.compactMap(Self.summary(of:))
         }
     }
 
@@ -102,7 +128,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameter entry: The registry entry.
     /// - Returns: The summary.
     private static func summary(of entry: Entry) -> SessionSummary? {
-        guard let session = entry.session else { return nil }
+        entry.session.map { summary(of: $0, in: entry) }
+    }
+
+    /// The summary of a live session, from its `nonisolated` properties, its
+    /// facts and its registry entry, with no `await`.
+    ///
+    /// - Parameters:
+    ///   - session: The live session.
+    ///   - entry: The registry entry of `session`.
+    /// - Returns: The summary.
+    private static func summary(of session: any RoutedSession, in entry: Entry) -> SessionSummary {
         let facts = session.facts
         return SessionSummary(
             id: session.id,
@@ -146,8 +182,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameter id: The session id.
     /// - Returns: The summary, or `nil` when no live session has this id.
     public func summary(of id: ULID) async throws -> SessionSummary? {
-        live.withLock { entries in
-            entries[id].flatMap(Self.summary(of:))
+        state.withLock { registry in
+            registry.entries[id].flatMap(Self.summary(of:))
         }
     }
 
@@ -272,11 +308,46 @@ public actor RouterSessionDirectory: SessionDirectory {
         throw SessionDirectoryError.unknownSession(id)
     }
 
-    /// See `SessionDirectory.events()`. Provisional until the events card of
-    /// ROUTER-3: a stream that is already finished.
+    // MARK: - Events
+
+    /// See `SessionDirectory.events()`. Each call makes a new stream with the
+    /// `.bufferingNewest(256)` policy; it gets each event after the call, and
+    /// a slow reader loses old events, not new ones. Each session registered
+    /// after the call gives `started` first, and the events of one session
+    /// come in order. A stream that ends leaves the directory.
     ///
-    /// - Returns: A finished stream.
+    /// An event carries no sequence number and no cursor. The `sessions`
+    /// graph of FoundationModelsMultitool wraps each event it reads from this
+    /// stream in the change log of the Extras GraphQL toolkit (EXTRAS-10),
+    /// which gives the cursor (epoch and sequence) and the time of each
+    /// entry. Router keeps no change log and links no GraphQL (D74, D106).
+    ///
+    /// An event holds no message text longer than the message length limit
+    /// (ROUTER-5, rule 5 of session.md section 7). The message cards enforce
+    /// the limit before a message reaches an event.
+    ///
+    /// - Returns: A stream of the changes in the directory.
     public nonisolated func events() -> AsyncStream<SessionDirectoryEvent> {
-        AsyncStream { $0.finish() }
+        let (stream, continuation) = SessionDirectoryEventFanout.makeStream()
+        let streamID = state.withLock { $0.fanout.add(continuation) }
+        continuation.onTermination = { [weak self] _ in
+            self?.state.withLock { $0.fanout.remove(streamID) }
+        }
+        return stream
+    }
+
+    /// Gives `event` to each open stream of ``events()``, under the lock of
+    /// the registry. The later directory cards send `factsChanged`,
+    /// `stateChanged`, `messageDelivered` and `archived` through it.
+    ///
+    /// - Parameter event: The event.
+    nonisolated func emit(_ event: SessionDirectoryEvent) {
+        state.withLock { $0.fanout.send(event) }
+    }
+
+    /// The number of open streams of ``events()``. A stream that ends leaves
+    /// the count.
+    nonisolated var openEventStreamCount: Int {
+        state.withLock { $0.fanout.count }
     }
 }
