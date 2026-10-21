@@ -44,17 +44,6 @@ struct GenerationCallFirstTokenTests {
         MeteredCallPacing(prefill: prefill, decode: decode, firstOutput: firstOutput)
     }
 
-    /// The ``SessionEvent/generationCall(_:)`` payloads of `events`, in order.
-    ///
-    /// - Parameter events: The events of the answer.
-    /// - Returns: The usage of each reported call.
-    private static func generationCalls(in events: [SessionEvent]) -> [GenerationCallUsage] {
-        events.compactMap { event in
-            guard case .generationCall(let usage) = event else { return nil }
-            return usage
-        }
-    }
-
     /// Drives one answer over `calls` and returns the usage of each call.
     ///
     /// - Parameters:
@@ -62,11 +51,7 @@ struct GenerationCallFirstTokenTests {
     /// - Returns: The usage of each generation call, in call order.
     /// - Throws: Whatever the answer throws.
     private static func driveAnswer(on fixture: MeteredToolLoopSessionFixture) async throws -> [GenerationCallUsage] {
-        var events: [SessionEvent] = []
-        for try await event in await fixture.session.streamEvents(to: prompt, maxTokens: nil) {
-            events.append(event)
-        }
-        return generationCalls(in: events)
+        try await collect(fixture.session.streamEvents(to: prompt, maxTokens: nil)).generationCalls
     }
 
     @Test("a tool-call-only call that streams its arguments records its time to first token and its decode time")
@@ -129,7 +114,7 @@ struct GenerationCallFirstTokenTests {
             callDuration: callDuration)
 
         await session.beginSubmission(cause: .message, mailIds: [])
-        await session.traceGenerationCall(usage, duration: callDuration, toolCallCount: 1)
+        await session.traceGenerationCall(for: usage, duration: callDuration, toolCallCount: 1)
         await session.endSubmission(usage: nil, finishReason: .completed, onEvent: nil)
         await session.report(generationCall: usage)
 

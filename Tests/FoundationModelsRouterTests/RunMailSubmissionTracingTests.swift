@@ -30,44 +30,19 @@ struct RunMailSubmissionTracingTests {
     /// The name of each span that posts run mail.
     private static let senderSpanName = "test.sender"
 
-    /// One session over a ``StubSessionBackend`` that reports to a tracer.
-    private struct Fixture: SessionDirectoryFixture {
-        /// The session under test.
-        let session: any RoutedSession
+    /// The token counts one successful stub submission meters.
+    private static let submissionUsage = (input: 11, output: 7)
 
-        /// The tracer each span of the session goes to.
-        let tracer: InMemoryTracer
-
-        /// The resolved profile, kept alive while the session runs.
-        let profile: LanguageModelProfile
-
-        /// The temp directory the router caches into.
-        let directory: URL
-    }
-
-    /// Builds a router, a resolved profile and a session that report to one
-    /// `InMemoryTracer`.
+    /// Builds a session over one shared ``StubSessionBackend`` that reports to
+    /// `tracer`.
     ///
+    /// - Parameter tracer: The tracer each span of the session goes to.
     /// - Returns: The fixture.
-    /// - Throws: Whatever profile resolution throws. Before it throws, it
-    ///   removes the temp directory (rule T1).
-    private static func makeFixture() async throws -> Fixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "RunMailSubmissionTracingTests")
-        let tracer = InMemoryTracer()
-        let backend = StubSessionBackend(responseText: cannedAnswer, usageIncrement: (input: 11, output: 7))
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory,
-            loader: StubModelLoader(
-                container: SharedBackendContainer(backend: backend),
-                dimension: RouterTestFixtures.stubDimension
-            ),
-            tracer: tracer
-        )
-        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
-            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        }
-        return Fixture(
-            session: profile.standard.makeSession(), tracer: tracer, profile: profile, directory: directory)
+    /// - Throws: Whatever profile resolution throws.
+    private static func makeFixture(tracer: InMemoryTracer) async throws -> StubBackendSessionFixture {
+        try await StubBackendSessionFixture.make(
+            tempDirPrefix: "RunMailSubmissionTracingTests", tracer: tracer, responseText: cannedAnswer,
+            usageIncrement: submissionUsage)
     }
 
     /// Posts the message of the run `token` to `session` inside a new span
@@ -90,21 +65,6 @@ struct RunMailSubmissionTracingTests {
             })
     }
 
-    /// The finished submission spans whose cause is `cause`.
-    ///
-    /// - Parameters:
-    ///   - cause: The cause of the submissions.
-    ///   - tracer: The tracer the session reported to.
-    /// - Returns: Those spans, in the order they finished.
-    private static func submissionSpans(
-        _ cause: SubmissionStart.Cause, reportedTo tracer: InMemoryTracer
-    ) -> [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter {
-            $0.operationName == RouterTelemetry.SpanName.submission
-                && $0.attributes.get(RouterTelemetry.AttributeKey.submissionCause) == .string(cause.rawValue)
-        }
-    }
-
     /// The span ids that the links of `span` point to.
     ///
     /// - Parameter span: A finished span.
@@ -115,7 +75,8 @@ struct RunMailSubmissionTracingTests {
 
     @Test("a submission of run mail alone is a child of the sender span of that mail, and links to it")
     func runMailOnlySubmissionHasTheSenderAsParent() async throws {
-        let fixture = try await Self.makeFixture()
+        let tracer = InMemoryTracer()
+        let fixture = try await Self.makeFixture(tracer: tracer)
         defer { await fixture.end() }
         let latch = RunLatch()
         defer { await latch.open() }
@@ -123,10 +84,10 @@ struct RunMailSubmissionTracingTests {
         // The first answer attaches the outbox, so later mail wakes the pump.
         _ = try await fixture.session.respond(to: Self.prompt)
 
-        let sender = try await Self.postMessage(of: token, to: fixture.session, inSpanOf: fixture.tracer)
+        let sender = try await Self.postMessage(of: token, to: fixture.session, inSpanOf: tracer)
         #expect(await fixture.session.becomesIdle())
 
-        let span = try #require(Self.submissionSpans(.mail, reportedTo: fixture.tracer).first)
+        let span = try #require(tracer.finishedSubmissionSpans(causedBy: .mail).first)
         #expect(span.traceID == sender.traceID)
         #expect(span.parentSpanID == sender.spanID)
         #expect(Self.linkedSpanIDs(of: span) == [sender.spanID])
@@ -134,7 +95,8 @@ struct RunMailSubmissionTracingTests {
 
     @Test("a submission links to the sender span of each run mail that it delivers")
     func submissionLinksToEachRunMailSender() async throws {
-        let fixture = try await Self.makeFixture()
+        let tracer = InMemoryTracer()
+        let fixture = try await Self.makeFixture(tracer: tracer)
         defer { await fixture.end() }
         let latch = RunLatch()
         defer { await latch.open() }
@@ -142,12 +104,12 @@ struct RunMailSubmissionTracingTests {
         let second = await trackFakeRun(on: fixture.session.runPlane, latch: latch)
         // No answer attached the outbox yet, so the mail waits for the next
         // caller message, and that message carries it.
-        let firstSender = try await Self.postMessage(of: first, to: fixture.session, inSpanOf: fixture.tracer)
-        let secondSender = try await Self.postMessage(of: second, to: fixture.session, inSpanOf: fixture.tracer)
+        let firstSender = try await Self.postMessage(of: first, to: fixture.session, inSpanOf: tracer)
+        let secondSender = try await Self.postMessage(of: second, to: fixture.session, inSpanOf: tracer)
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
-        let span = try #require(Self.submissionSpans(.message, reportedTo: fixture.tracer).first)
+        let span = try #require(tracer.finishedSubmissionSpans(causedBy: .message).first)
         #expect(Self.linkedSpanIDs(of: span) == [firstSender.spanID, secondSender.spanID])
         // The caller message has no span, so the first sender is the parent.
         #expect(span.parentSpanID == firstSender.spanID)

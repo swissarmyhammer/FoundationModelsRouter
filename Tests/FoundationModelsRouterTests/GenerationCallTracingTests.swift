@@ -66,7 +66,7 @@ struct GenerationCallTracingTests {
     ///   - key: The attribute key.
     ///   - spans: The spans to read.
     /// - Returns: The value of each span, or `nil` where the span has none.
-    private static func ints(_ key: String, of spans: [FinishedInMemorySpan]) -> [Int64?] {
+    private static func ints(for key: String, of spans: [FinishedInMemorySpan]) -> [Int64?] {
         spans.map { span in
             guard case .int64(let value) = span.attributes.get(key) else { return nil }
             return value
@@ -90,9 +90,9 @@ struct GenerationCallTracingTests {
 
         let spans = try await Self.driveAnswer(tracer: tracer)
 
-        #expect(Self.ints(RouterTelemetry.AttributeKey.tokensIn, of: spans.calls) == [100, 200, 300])
-        #expect(Self.ints(RouterTelemetry.AttributeKey.tokensCached, of: spans.calls) == [0, 130, 250])
-        #expect(Self.ints(RouterTelemetry.AttributeKey.tokensOut, of: spans.calls) == [30, 50, 70])
+        #expect(Self.ints(for: RouterTelemetry.AttributeKey.tokensIn, of: spans.calls) == [100, 200, 300])
+        #expect(Self.ints(for: RouterTelemetry.AttributeKey.tokensCached, of: spans.calls) == [0, 130, 250])
+        #expect(Self.ints(for: RouterTelemetry.AttributeKey.tokensOut, of: spans.calls) == [30, 50, 70])
     }
 
     @Test("each call span carries its time to first token, its decode time, its stop reason and its tool calls")
@@ -101,11 +101,11 @@ struct GenerationCallTracingTests {
 
         let spans = try await Self.driveAnswer(tracer: tracer)
 
-        let firstTokenTimes = Self.ints(RouterTelemetry.AttributeKey.timeToFirstTokenMs, of: spans.calls)
-        let decodeTimes = Self.ints(RouterTelemetry.AttributeKey.decodeMs, of: spans.calls)
+        let firstTokenTimes = Self.ints(for: RouterTelemetry.AttributeKey.timeToFirstTokenMs, of: spans.calls)
+        let decodeTimes = Self.ints(for: RouterTelemetry.AttributeKey.decodeMs, of: spans.calls)
         #expect(firstTokenTimes.allSatisfy { time in time.map { $0 >= 0 } ?? false })
         #expect(decodeTimes.allSatisfy { time in time.map { $0 >= 0 } ?? false })
-        #expect(Self.ints(RouterTelemetry.AttributeKey.toolCallCount, of: spans.calls) == [1, 1, 0])
+        #expect(Self.ints(for: RouterTelemetry.AttributeKey.toolCallCount, of: spans.calls) == [1, 1, 0])
         #expect(
             spans.calls.map { $0.attributes.get(RouterTelemetry.AttributeKey.finishReason) }
                 == Array(repeating: .string("\(FinishReason.completed)"), count: Self.calls.count))

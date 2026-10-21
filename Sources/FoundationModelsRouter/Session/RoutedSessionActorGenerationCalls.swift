@@ -194,7 +194,7 @@ extension RoutedSessionActor {
     /// cached and out, its whole time, its prefill and decode times, and its
     /// decode rate
     /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:timing:duration:model:slot:)``),
-    /// and writes its span (``traceGenerationCall(_:duration:toolCallCount:)``).
+    /// and writes its span (``traceGenerationCall(for:duration:toolCallCount:)``).
     ///
     /// It first applies the pass phases that the backend reported
     /// (``drainGenerationPassPhases()``), so the ledger holds the start and
@@ -226,8 +226,8 @@ extension RoutedSessionActor {
             of: call, cached: cached, timing: ended.timing, duration: ended.duration, finishReason: finishReason,
             entryKind: entryKind)
         traceGenerationCall(
-            usage, duration: ended.duration,
-            toolCallCount: GenerationCallEntryKind.toolCallCount(leftBy: submissionEntries))
+            for: usage, duration: ended.duration,
+            toolCallCount: GenerationCallEntryKind.toolCallCount(of: submissionEntries))
         return usage
     }
 
@@ -273,7 +273,7 @@ extension RoutedSessionActor {
         let usage = generationCallUsage(
             of: call, cached: cached, timing: ended.timing, duration: ended.duration, finishReason: finishReason,
             entryKind: entryKind)
-        traceGenerationCall(usage, duration: ended.duration, toolCallCount: toolCallCount)
+        traceGenerationCall(for: usage, duration: ended.duration, toolCallCount: toolCallCount)
         return (usage, (input: call.input - reported.input, output: call.output - reported.output))
     }
 

@@ -48,78 +48,17 @@ struct SubmissionTracingTests {
     /// The prompt every driven answer carries.
     private static let prompt = "drive one answer"
 
-    /// Everything one driven answer needs, and everything a test reads back
-    /// off it.
+    /// Builds a session over one shared ``StubSessionBackend`` that answers
+    /// ``cannedAnswer`` and meters ``submissionUsage``.
     ///
-    /// A test ends the fixture with ``SessionDirectoryFixture/end(opening:)``.
-    private struct AnswerFixture: SessionDirectoryFixture {
-        /// The session the test drives its answer on.
-        let session: any RoutedSession
-
-        /// The backend that session runs on, so a test can make a later
-        /// submission fail.
-        let backend: StubSessionBackend
-
-        /// The resolved profile, so a test can name the model the answer ran on.
-        let profile: LanguageModelProfile
-
-        /// The router that resolved the profile, so a test can name its
-        /// recording root.
-        let router: Router
-
-        /// The temp directory the router cached into.
-        /// ``SessionDirectoryFixture/end(opening:)`` removes it.
-        let directory: URL
-    }
-
-    /// Builds a router, a resolved profile and a session over one shared
-    /// ``StubSessionBackend``.
-    ///
-    /// - Parameters:
-    ///   - tracer: The tracer every handle of the resolved profile carries, or
-    ///     `nil` to read `InstrumentationSystem.tracer` at call time.
-    ///   - usageIncrement: The token counts the backend meters on each
-    ///     successful submission, or `nil` to report no usage at all.
+    /// - Parameter tracer: The tracer every handle of the resolved profile
+    ///   carries, or `nil` to read `InstrumentationSystem.tracer` at call time.
     /// - Returns: The fixture the test drives and reads back.
-    /// - Throws: Whatever profile resolution throws. Before it throws, it
-    ///   removes the temp directory (rule T1).
-    private static func makeFixture(
-        tracer: (any Tracer)?,
-        usageIncrement: (input: Int, output: Int)? = submissionUsage
-    ) async throws -> AnswerFixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "SubmissionTracingTests")
-        let backend = StubSessionBackend(responseText: cannedAnswer, usageIncrement: usageIncrement)
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory,
-            loader: StubModelLoader(
-                container: SharedBackendContainer(backend: backend),
-                dimension: RouterTestFixtures.stubDimension
-            ),
-            tracer: tracer
-        )
-        let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
-            try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        }
-        return AnswerFixture(
-            session: profile.standard.makeSession(),
-            backend: backend,
-            profile: profile,
-            router: router,
-            directory: directory)
-    }
-
-    /// The finished submission spans the tracer holds, in the order they
-    /// finished.
-    ///
-    /// Filtered by name rather than counted over the whole tracer: the
-    /// fixture's own ``Router/resolve(profile:reporting:)`` reports to the
-    /// same tracer, and it opens a resolve span with one load span under it
-    /// for each slot it loads.
-    ///
-    /// - Parameter tracer: The tracer the submissions reported to.
-    /// - Returns: The finished submission spans.
-    private static func submissionSpans(reportedTo tracer: InMemoryTracer) -> [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == spanName }
+    /// - Throws: Whatever profile resolution throws.
+    private static func makeFixture(tracer: (any Tracer)?) async throws -> StubBackendSessionFixture {
+        try await StubBackendSessionFixture.make(
+            tempDirPrefix: "SubmissionTracingTests", tracer: tracer, responseText: cannedAnswer,
+            usageIncrement: submissionUsage)
     }
 
     /// The one submission span that one answer of one submission opened.
@@ -128,7 +67,7 @@ struct SubmissionTracingTests {
     /// - Returns: The single finished submission span.
     /// - Throws: When the tracer holds no submission span, or more than one.
     private static func singleSpan(reportedTo tracer: InMemoryTracer) throws -> FinishedInMemorySpan {
-        let spans = submissionSpans(reportedTo: tracer)
+        let spans = tracer.finishedSubmissionSpans
         try #require(spans.count == 1)
         return try #require(spans.first)
     }
@@ -183,7 +122,7 @@ struct SubmissionTracingTests {
         _ = try await fixture.session.respond(to: Self.prompt)
         _ = try await fixture.session.respond(to: Self.prompt)
 
-        let spans = Self.submissionSpans(reportedTo: tracer)
+        let spans = tracer.finishedSubmissionSpans
         #expect(
             spans.map { $0.attributes.get(RouterTelemetry.AttributeKey.submissionId) }
                 == [.string(SubmissionID(1).description), .string(SubmissionID(Self.secondSubmissionNumber).description)])

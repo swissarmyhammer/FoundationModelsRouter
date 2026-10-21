@@ -90,17 +90,24 @@ struct RouterMetrics: Sendable {
     ///   - timing: The prefill and the decode time of the call.
     ///   - dimensions: The model and the slot of the call.
     private func recordTiming(_ timing: GenerationCallTiming, dimensions: [(String, String)]) {
-        if let timeToFirstToken = timing.timeToFirstToken {
-            Metrics.Timer(
-                label: RouterTelemetry.MetricName.generationCallTimeToFirstToken, dimensions: dimensions,
-                factory: factory
-            ).record(duration: timeToFirstToken)
-        }
-        if let decodeTime = timing.decodeTime {
-            Metrics.Timer(
-                label: RouterTelemetry.MetricName.generationCallDecodeTime, dimensions: dimensions, factory: factory
-            ).record(duration: decodeTime)
-        }
+        recordTimer(
+            ifPresent: timing.timeToFirstToken, label: RouterTelemetry.MetricName.generationCallTimeToFirstToken,
+            dimensions: dimensions)
+        recordTimer(
+            ifPresent: timing.decodeTime, label: RouterTelemetry.MetricName.generationCallDecodeTime,
+            dimensions: dimensions)
+    }
+
+    /// Records `duration` on the timer `label`, and nothing when there is no
+    /// duration.
+    ///
+    /// - Parameters:
+    ///   - duration: The time to record, or `nil` when the session saw none.
+    ///   - label: The metric name of the timer.
+    ///   - dimensions: The model and the slot of the call.
+    private func recordTimer(ifPresent duration: Duration?, label: String, dimensions: [(String, String)]) {
+        guard let duration else { return }
+        Metrics.Timer(label: label, dimensions: dimensions, factory: factory).record(duration: duration)
     }
 
     /// Records the time from the start of a submission to its first

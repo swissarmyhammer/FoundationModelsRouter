@@ -9,7 +9,7 @@ extension GenerationCallEntryKind {
     /// - Parameter entries: The entries the attempt appended, in transcript
     ///   order.
     /// - Returns: The count of the tool calls of the last entry.
-    static func toolCallCount(leftBy entries: [Transcript.Entry]) -> Int {
+    static func toolCallCount(of entries: [Transcript.Entry]) -> Int {
         guard case .toolCalls(let calls) = entries.last else { return 0 }
         return calls.count
     }
@@ -39,13 +39,13 @@ extension RoutedSessionActor {
     ///   - usage: The usage report of the call.
     ///   - duration: How long the call ran, up to now.
     ///   - toolCallCount: How many tool calls the call asked for.
-    func traceGenerationCall(_ usage: GenerationCallUsage, duration: Duration, toolCallCount: Int) {
+    func traceGenerationCall(for usage: GenerationCallUsage, duration: Duration, toolCallCount: Int) {
         guard let submission = runningSubmission?.span else { return }
         let endedAt = DefaultTracerClock.now
         let span = RouterTelemetry.tracer(explicit: tracer).startSpan(
             RouterTelemetry.SpanName.generationCall, context: submission.context, ofKind: .internal,
-            at: Self.instant(duration, before: endedAt))
-        Self.describe(usage, duration: duration, toolCallCount: toolCallCount, on: span)
+            at: Self.instant(goingBack: duration, from: endedAt))
+        Self.describe(usage: usage, duration: duration, toolCallCount: toolCallCount, on: span)
         span.end(at: endedAt)
     }
 
@@ -58,7 +58,7 @@ extension RoutedSessionActor {
     ///   - instant: The later instant.
     /// - Returns: The earlier instant.
     private static func instant(
-        _ duration: Duration, before instant: DefaultTracerClock.Instant
+        goingBack duration: Duration, from instant: DefaultTracerClock.Instant
     ) -> DefaultTracerClock.Instant {
         let nanoseconds = UInt64(max(duration.seconds, 0) * nanosecondsPerSecond)
         return DefaultTracerClock.Instant(
@@ -76,7 +76,7 @@ extension RoutedSessionActor {
     ///   - toolCallCount: How many tool calls the call asked for.
     ///   - span: The span of the call.
     private static func describe(
-        _ usage: GenerationCallUsage, duration: Duration, toolCallCount: Int, on span: any Span
+        usage: GenerationCallUsage, duration: Duration, toolCallCount: Int, on span: any Span
     ) {
         span.attributes[RouterTelemetry.AttributeKey.tokensIn] = usage.tokensIn
         span.attributes[RouterTelemetry.AttributeKey.tokensOut] = usage.tokensOut

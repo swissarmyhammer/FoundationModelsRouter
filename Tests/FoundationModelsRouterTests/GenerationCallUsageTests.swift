@@ -70,17 +70,6 @@ struct GenerationCallUsageTests {
         return events
     }
 
-    /// The ``SessionEvent/generationCall(_:)`` payloads of `events`, in order.
-    ///
-    /// - Parameter events: The events of the answer.
-    /// - Returns: The usage of each reported call.
-    private static func generationCalls(in events: [SessionEvent]) -> [GenerationCallUsage] {
-        events.compactMap { event in
-            guard case .generationCall(let usage) = event else { return nil }
-            return usage
-        }
-    }
-
     /// The expected fill after a call of `contextTokens`, against ``contextTokens``.
     ///
     /// - Parameter contextTokens: The measured context after the call.
@@ -98,7 +87,7 @@ struct GenerationCallUsageTests {
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
-        let calls = Self.generationCalls(in: events)
+        let calls = events.generationCalls
         #expect(calls.map(\.tokensIn) == [100, 200, 300])
         #expect(calls.map(\.tokensOut) == [30, 50, 70])
         #expect(calls.map(\.entryKind) == [.toolCall, .toolCall, .text])
@@ -218,7 +207,7 @@ struct GenerationCallUsageTests {
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
-        let calls = Self.generationCalls(in: events)
+        let calls = events.generationCalls
         #expect(calls.map(\.tokensIn) == [100, 200, 300])
         #expect(calls.map(\.tokensCached) == [0, 130, 250])
         let journal = await fixture.recorder.events
@@ -257,7 +246,7 @@ struct GenerationCallUsageTests {
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
-        let calls = Self.generationCalls(in: events)
+        let calls = events.generationCalls
         #expect(calls.count == Self.pacedCalls.count)
         for call in calls {
             let timeToFirstToken = try #require(call.timeToFirstToken)
@@ -307,7 +296,7 @@ struct GenerationCallUsageTests {
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: Self.requestedCeiling)
 
-        let calls = Self.generationCalls(in: events)
+        let calls = events.generationCalls
         #expect(calls.map(\.finishReason) == [.maxTokens, .completed])
         #expect(calls.map(\.entryKind) == [.toolCall, .text])
         #expect(calls.map(\.tokensOut) == [Self.requestedCeiling, 5])
