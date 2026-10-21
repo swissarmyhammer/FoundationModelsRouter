@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5f8h8svkyyvktx834w07mz5
+  text: |-
+    ### implement — changed
+    - evidence: 5b9423f7 on branch router-3-session-index (pushed, not merged), on top of 29ae4767 (^zmnm17k). swift test passes 1969 tests in 245 suites (9 known issues), 30 in 16 and 19 in 3. ProjectRegistry and SessionIndex now share JSONLines.replaceFile(_:withLinesOf:).
+    - next: merge the branch to main once ACPAgent's ACPA-14 (^kxr2mm7 there) is green. ACPAgent's test target still sees the names as ambiguous at TranscriptStoreTests.swift:503, TranscriptRecordingFixtures.swift:138 and TranscriptStoreTests.swift:53.
+  timestamp: 2026-10-21T12:56:15.419482+00:00
 depends_on:
 - 01M5F3EMARATMXFR829ZMNM17K
 position_column: todo
