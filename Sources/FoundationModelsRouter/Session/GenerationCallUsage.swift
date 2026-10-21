@@ -41,10 +41,23 @@ public struct GenerationCallUsage: Sendable, Equatable {
     /// end. `nil` by the rule of ``timeToFirstToken``. The decode rate of the
     /// call is ``tokensOut`` divided by this time.
     ///
-    /// The transcript shows the arguments of a tool call only when the call
-    /// ends, so a call whose only output is one tool call has a decode time
-    /// near zero.
+    /// The MLX executor sends the text and the tool calls of a call that may
+    /// call a tool only when the call ends (task ^0m997jr), so the session
+    /// sees no first token of a call whose only output is one tool call.
+    /// Both times are then `nil`, and ``firstTokenSeen`` is `false`.
     public let decodeTime: Duration?
+
+    /// The whole time of the call: its prefill and its decode when the
+    /// session saw its first token, else the time from its start to its end.
+    /// `nil` only for a usage that no session measured.
+    public let callDuration: Duration?
+
+    /// Whether the session saw the first output token of the call, so the
+    /// call has a ``timeToFirstToken`` and a ``decodeTime``. A call that is
+    /// `false` has no split of its ``callDuration``; its split is not zero.
+    public var firstTokenSeen: Bool {
+        timeToFirstToken != nil
+    }
 
     /// Why the call stopped. ``FinishReason/maxTokens`` when the call spent
     /// its token ceiling, ``FinishReason/endedInsideReasoning`` when its
@@ -81,6 +94,8 @@ public struct GenerationCallUsage: Sendable, Equatable {
     ///     token.
     ///   - decodeTime: The time from the first output token of the call to
     ///     its end, or `nil` (the default) when the session saw no such token.
+    ///   - callDuration: The whole time of the call, or `nil` (the default)
+    ///     when no session measured it.
     public init(
         tokensIn: Int,
         tokensOut: Int,
@@ -89,12 +104,14 @@ public struct GenerationCallUsage: Sendable, Equatable {
         contextFill: Double,
         tokensCached: Int? = nil,
         timeToFirstToken: Duration? = nil,
-        decodeTime: Duration? = nil
+        decodeTime: Duration? = nil,
+        callDuration: Duration? = nil
     ) {
         self.tokensIn = tokensIn
         self.tokensCached = tokensCached
         self.timeToFirstToken = timeToFirstToken
         self.decodeTime = decodeTime
+        self.callDuration = callDuration
         self.tokensOut = tokensOut
         self.finishReason = finishReason
         self.entryKind = entryKind

@@ -45,7 +45,7 @@ extension RoutedSessionActor {
         let span = RouterTelemetry.tracer(explicit: tracer).startSpan(
             RouterTelemetry.SpanName.generationCall, context: submission.context, ofKind: .internal,
             at: Self.instant(duration, before: endedAt))
-        Self.describe(usage, toolCallCount: toolCallCount, on: span)
+        Self.describe(usage, duration: duration, toolCallCount: toolCallCount, on: span)
         span.end(at: endedAt)
     }
 
@@ -66,19 +66,25 @@ extension RoutedSessionActor {
     }
 
     /// Writes the attributes of one generation call on its span: its tokens
-    /// in, cached and out, its prefill and decode times when the session saw
-    /// its first output token, its finish reason and its tool calls.
+    /// in, cached and out, its whole time, whether the session saw its first
+    /// output token, its prefill and decode times when it did, its finish
+    /// reason and its tool calls.
     ///
     /// - Parameters:
     ///   - usage: The usage report of the call.
+    ///   - duration: How long the call ran.
     ///   - toolCallCount: How many tool calls the call asked for.
     ///   - span: The span of the call.
-    private static func describe(_ usage: GenerationCallUsage, toolCallCount: Int, on span: any Span) {
+    private static func describe(
+        _ usage: GenerationCallUsage, duration: Duration, toolCallCount: Int, on span: any Span
+    ) {
         span.attributes[RouterTelemetry.AttributeKey.tokensIn] = usage.tokensIn
         span.attributes[RouterTelemetry.AttributeKey.tokensOut] = usage.tokensOut
         if let tokensCached = usage.tokensCached {
             span.attributes[RouterTelemetry.AttributeKey.tokensCached] = tokensCached
         }
+        span.attributes[RouterTelemetry.AttributeKey.callMs] = duration.wholeMilliseconds
+        span.attributes[RouterTelemetry.AttributeKey.firstTokenSeen] = usage.firstTokenSeen
         if let timeToFirstToken = usage.timeToFirstToken {
             span.attributes[RouterTelemetry.AttributeKey.timeToFirstTokenMs] = timeToFirstToken.wholeMilliseconds
         }

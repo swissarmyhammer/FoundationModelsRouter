@@ -231,6 +231,27 @@ struct RouterMetricsTests {
         #expect(tokensPerSecond.values == expected)
     }
 
+    @Test("every generation call records its whole call time, also a call whose first token was not seen")
+    func everyGenerationCallRecordsItsCallTime() async throws {
+        let unpacedCalls = Self.pacedCalls.map { MeteredGenerationCall(tokensIn: $0.tokensIn, tokensOut: $0.tokensOut) }
+        let (factory, dimensions, calls) = try await TelemetryCapture.run(forbidding: [Self.meteredPrompt]) {
+            context in
+            let fixture = try await MeteredToolLoopSessionFixture.make(
+                calls: unpacedCalls, context: Self.meteredContextTokens, tempDirPrefix: Self.tempDirPrefix)
+            defer { await fixture.end() }
+            await fixture.session.useCaptureMetrics(for: context.metricsFactory)
+
+            let events = try await collect(fixture.session.streamEvents(to: Self.meteredPrompt, maxTokens: nil))
+            return (context.metricsFactory, Self.sessionDimensions(of: fixture.session), events.generationCalls)
+        }
+
+        let callTime = try factory.expectTimer("FoundationModelsRouter.generation.call.duration", dimensions)
+        #expect(calls.count == unpacedCalls.count)
+        #expect(calls.allSatisfy { $0.callDuration != nil })
+        #expect(callTime.values.count == unpacedCalls.count)
+        #expect(callTime.values.allSatisfy { $0 >= 0 })
+    }
+
     // MARK: - Compactions
 
     @Test("a caller compaction adds one to the compaction count of the caller trigger")

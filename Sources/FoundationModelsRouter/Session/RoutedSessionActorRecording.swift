@@ -507,7 +507,11 @@ extension RoutedSessionActor {
     ///     `nil`. Only the `.generationCall` kind carries one.
     ///   - tokensOut: The output token delta of the submission, or `nil`.
     ///   - callTiming: The prefill and the decode time of one generation
-    ///     call, or `nil`. Only the `.generationCall` kind carries one.
+    ///     call, or `nil`. Only the `.generationCall` kind carries one. Its
+    ///     presence also stamps whether the session saw the first token of
+    ///     the call (``TranscriptEvent/firstTokenSeen``).
+    ///   - callDuration: The whole time of one generation call, or `nil`.
+    ///     Only the `.generationCall` kind carries one.
     ///   - agentSpawn: The spawn context to stamp, or `nil`. Only the
     ///     `.session` kind carries one.
     /// - Returns: The partial event for the recorder to stamp and append.
@@ -521,6 +525,7 @@ extension RoutedSessionActor {
         tokensCached: Int? = nil,
         tokensOut: Int? = nil,
         callTiming: GenerationCallTiming? = nil,
+        callDuration: Duration? = nil,
         agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
@@ -538,6 +543,8 @@ extension RoutedSessionActor {
             ms: since.map { Int(Date().timeIntervalSince($0) * Self.millisecondsPerSecond) },
             timeToFirstTokenMs: callTiming?.timeToFirstToken?.wholeMilliseconds,
             decodeMs: callTiming?.decodeTime?.wholeMilliseconds,
+            callMs: callDuration?.wholeMilliseconds,
+            firstTokenSeen: callTiming.map { $0.timeToFirstToken != nil },
             entry: entry,
             agentSpawn: agentSpawn
         )

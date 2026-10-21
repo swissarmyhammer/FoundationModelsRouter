@@ -79,6 +79,7 @@ enum RouterTelemetry {
         /// from its start to the tool call or the text that ended it. A child
         /// of the ``submission`` span. It carries ``AttributeKey/tokensIn``,
         /// ``AttributeKey/tokensCached``, ``AttributeKey/tokensOut``,
+        /// ``AttributeKey/callMs``, ``AttributeKey/firstTokenSeen``,
         /// ``AttributeKey/timeToFirstTokenMs``, ``AttributeKey/decodeMs``,
         /// ``AttributeKey/finishReason`` and ``AttributeKey/toolCallCount``.
         static let generationCall = prefix + "generation_call"
@@ -235,6 +236,16 @@ enum RouterTelemetry {
 
         /// Why a generation call stopped: the name of its ``FinishReason``.
         static let finishReason = "generation.finish_reason"
+
+        /// Whether the session saw the first output token of a generation
+        /// call (task ^0m997jr). A span that is `false` has no
+        /// ``timeToFirstTokenMs`` and no ``decodeMs``: the split of its
+        /// ``callMs`` is unknown, not zero.
+        static let firstTokenSeen = "generation.first_token_seen"
+
+        /// The whole time of a generation call, in milliseconds. Each
+        /// generation call span carries it.
+        static let callMs = "generation.call_ms"
 
         /// How many tool calls a generation call asked for: the calls of the
         /// tool-calls entry it ended with, or 0 for a call that ended with
@@ -651,6 +662,12 @@ enum RouterTelemetry {
         /// nothing.
         static let generationCallDecodeTime = prefix + "generation.call.decode_time"
 
+        /// The timer of the whole time of each generation call: its prefill
+        /// and its decode when the session saw its first output token, else
+        /// the time from its start to its end. Each call records it, also a
+        /// call that records no ``generationCallTimeToFirstToken``.
+        static let generationCallDuration = prefix + "generation.call.duration"
+
         /// The timer of each model load of a resolve.
         static let loadDuration = prefix + "load.duration"
 
@@ -680,9 +697,9 @@ enum RouterTelemetry {
         /// Every name above.
         static let allNames = [
             generationTokensIn, generationTokensCached, generationTokensOut, generationTokensPerSecond,
-            submissionTimeToFirstToken, generationCallTimeToFirstToken, generationCallDecodeTime, loadDuration,
-            residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount, mailQueuePauseDuration,
-            mailCancelled,
+            submissionTimeToFirstToken, generationCallTimeToFirstToken, generationCallDecodeTime,
+            generationCallDuration, loadDuration, residentBytes, sessionQueueDepth, generationQueueWaiting,
+            compactionCount, mailQueuePauseDuration, mailCancelled,
         ]
     }
 

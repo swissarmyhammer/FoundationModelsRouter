@@ -36,6 +36,27 @@ struct MeteredCallPacing: Sendable, Hashable {
     /// How long the call waits after its first output token before it sends
     /// the rest of its output and its usage.
     let decode: Duration
+
+    /// What the first output of the call is.
+    var firstOutput: MeteredFirstOutput = .responseText
+}
+
+/// What the first output of a paced ``MeteredToolLoopLanguageModel`` call is.
+enum MeteredFirstOutput: Sendable, Hashable {
+    /// Response text (``MeteredCallPacing/firstTokenText``), then the tool
+    /// call or the answer of the call.
+    case responseText
+
+    /// The first part of the arguments of the tool call
+    /// (``MeteredToolLoopLanguageModel/Executor/argumentsHead``), and the rest
+    /// of them after the decode. A call that answers with text sends response
+    /// text first, as ``responseText`` does.
+    case toolCallArguments
+
+    /// Nothing until the end of the call: the call waits its prefill and its
+    /// decode, then sends its whole output at once, as the allowed-tool path
+    /// of the MLX executor sends a tool call.
+    case nothingUntilTheEnd
 }
 
 /// A deterministic `LanguageModel` that makes one generation call for each
@@ -143,6 +164,59 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
             try await Task.sleep(for: pacing.decode)
         }
 
+        /// The first part of the arguments of a tool call that streams its
+        /// arguments (``MeteredFirstOutput/toolCallArguments``).
+        static let argumentsHead = #"{"value":"#
+
+        /// The rest of the arguments of the tool call of the call at
+        /// `callIndex`, after ``argumentsHead``.
+        ///
+        /// - Parameter callIndex: The zero-based position of the call.
+        /// - Returns: The rest of the arguments.
+        static func argumentsTail(callIndex: Int) -> String {
+            #""\#(toolStep(callIndex: callIndex))"}"#
+        }
+
+        /// Sends `arguments` as a part of the arguments of the tool call of the
+        /// call at `callIndex`.
+        ///
+        /// - Parameters:
+        ///   - arguments: The part of the arguments.
+        ///   - callIndex: The zero-based position of the call.
+        ///   - channel: The generation channel this call emits into.
+        private static func sendArguments(
+            _ arguments: String, callIndex: Int, into channel: LanguageModelExecutorGenerationChannel
+        ) async {
+            await channel.send(
+                .toolCalls(
+                    entryID: "metered-tool-calls-\(callIndex)",
+                    action: .toolCall(
+                        id: "metered-call-\(callIndex)",
+                        name: toolName,
+                        action: .appendArguments(arguments, tokenCount: emittedTokenCount))))
+        }
+
+        /// Sends the whole output of the call at `callIndex`: the answer text
+        /// for the last call, and the tool call for each other call.
+        ///
+        /// - Parameters:
+        ///   - callIndex: The zero-based position of the call.
+        ///   - isAnswer: Whether the call is the last call, which answers.
+        ///   - responseEntryID: The id of the response entry of the call.
+        ///   - channel: The generation channel this call emits into.
+        private static func sendOutput(
+            callIndex: Int, isAnswer: Bool, responseEntryID: String,
+            into channel: LanguageModelExecutorGenerationChannel
+        ) async {
+            guard !isAnswer else {
+                await channel.send(
+                    .response(
+                        entryID: responseEntryID, action: .appendText(answerText, tokenCount: emittedTokenCount)))
+                return
+            }
+            await sendArguments(argumentsHead + argumentsTail(callIndex: callIndex), callIndex: callIndex, into: channel)
+        }
+
         /// Sends the scripted call at the position `request` asks for.
         ///
         /// - Parameters:
@@ -163,24 +237,21 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
             }
             let responseEntryID = "metered-response-\(callIndex)"
             let call = configuration.calls[callIndex]
-            if let pacing = call.pacing {
+            let isAnswer = callIndex == configuration.calls.count - 1
+            switch call.pacing {
+            case .some(let pacing) where pacing.firstOutput == .toolCallArguments && !isAnswer:
+                try await Task.sleep(for: pacing.prefill)
+                await Self.sendArguments(Self.argumentsHead, callIndex: callIndex, into: channel)
+                try await Task.sleep(for: pacing.decode)
+                await Self.sendArguments(Self.argumentsTail(callIndex: callIndex), callIndex: callIndex, into: channel)
+            case .some(let pacing) where pacing.firstOutput == .nothingUntilTheEnd:
+                try await Task.sleep(for: pacing.prefill + pacing.decode)
+                await Self.sendOutput(callIndex: callIndex, isAnswer: isAnswer, responseEntryID: responseEntryID, into: channel)
+            case .some(let pacing):
                 try await Self.sendFirstToken(after: pacing, entryID: responseEntryID, into: channel)
-            }
-            if callIndex == configuration.calls.count - 1 {
-                await channel.send(
-                    .response(
-                        entryID: responseEntryID,
-                        action: .appendText(Self.answerText, tokenCount: Self.emittedTokenCount)))
-            } else {
-                await channel.send(
-                    .toolCalls(
-                        entryID: "metered-tool-calls-\(callIndex)",
-                        action: .toolCall(
-                            id: "metered-call-\(callIndex)",
-                            name: Self.toolName,
-                            action: .appendArguments(
-                                #"{"value":"\#(Self.toolStep(callIndex: callIndex))"}"#,
-                                tokenCount: Self.emittedTokenCount))))
+                await Self.sendOutput(callIndex: callIndex, isAnswer: isAnswer, responseEntryID: responseEntryID, into: channel)
+            case .none:
+                await Self.sendOutput(callIndex: callIndex, isAnswer: isAnswer, responseEntryID: responseEntryID, into: channel)
             }
             await channel.send(
                 .response(

@@ -99,11 +99,15 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         /// of its session.
         ///
         /// The pass is the executor call of the SDK itself, not a copy: it
-        /// calls the wrapped executor with the `request` and over the same
-        /// `channel` that the SDK gave this call, on the task of this call.
-        /// The one change to `request` is the reasoning level of the first
-        /// pass of an SDK call, when the backend stated one
-        /// (``SessionLanguageModelState/passRequest(from:)``).
+        /// calls the wrapped executor with the `request`, on the task of this
+        /// call. The one change to `request` is the reasoning level of the
+        /// first pass of an SDK call, when the backend stated one
+        /// (``SessionLanguageModelState/passRequest(from:)``). With an
+        /// observer, the wrapped executor streams into a channel of its own,
+        /// whose events go on to `channel` unchanged and in order, and whose
+        /// first streamed output is the first token of the pass
+        /// (``PassOutputRelay``, task ^0m997jr). With no observer, it streams
+        /// into `channel` itself.
         ///
         /// The pass binds the scope itself, around the call of the wrapped
         /// executor (``SessionLanguageModelState/withPromptCacheScope(_:)``).
@@ -137,7 +141,12 @@ struct SessionLanguageModel: LanguageModel, Sendable {
             let passRequest = state.passRequest(from: request)
             try await state.withPassWatches {
                 try await state.withPromptCacheScope {
-                    try await innerRespond(passRequest, channel)
+                    guard let observer else {
+                        return try await innerRespond(passRequest, channel)
+                    }
+                    try await PassOutputRelay.relay(into: channel, reportingTo: observer) { executorChannel in
+                        try await innerRespond(passRequest, executorChannel)
+                    }
                 }
             }
         }

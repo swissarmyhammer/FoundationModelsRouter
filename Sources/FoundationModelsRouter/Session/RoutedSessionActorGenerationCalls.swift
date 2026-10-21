@@ -191,8 +191,9 @@ extension RoutedSessionActor {
 
     /// Takes the usage of the generation call that ended since the last
     /// report, adds it to the ledger, and records its metrics: its tokens in,
-    /// cached and out, its prefill and decode times, and its decode rate
-    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:timing:model:slot:)``),
+    /// cached and out, its whole time, its prefill and decode times, and its
+    /// decode rate
+    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensCached:tokensOut:timing:duration:model:slot:)``),
     /// and writes its span (``traceGenerationCall(_:duration:toolCallCount:)``).
     ///
     /// It first applies the pass phases that the backend reported
@@ -222,7 +223,8 @@ extension RoutedSessionActor {
             submissionEntries: submissionEntries, outputTokens: call.output,
             lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
         let usage = generationCallUsage(
-            of: call, cached: cached, timing: ended.timing, finishReason: finishReason, entryKind: entryKind)
+            of: call, cached: cached, timing: ended.timing, duration: ended.duration, finishReason: finishReason,
+            entryKind: entryKind)
         traceGenerationCall(
             usage, duration: ended.duration,
             toolCallCount: GenerationCallEntryKind.toolCallCount(leftBy: submissionEntries))
@@ -269,7 +271,8 @@ extension RoutedSessionActor {
         let cached = ledger.cachedOfEndedCall(cachedAfter: backend.cachedInputTokenCount(), input: call.input)
         let ended = noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
         let usage = generationCallUsage(
-            of: call, cached: cached, timing: ended.timing, finishReason: finishReason, entryKind: entryKind)
+            of: call, cached: cached, timing: ended.timing, duration: ended.duration, finishReason: finishReason,
+            entryKind: entryKind)
         traceGenerationCall(usage, duration: ended.duration, toolCallCount: toolCallCount)
         return (usage, (input: call.input - reported.input, output: call.output - reported.output))
     }
@@ -304,8 +307,8 @@ extension RoutedSessionActor {
             timing.timeToFirstToken.flatMap { prefill in timing.decodeTime.map { prefill + $0 } }
             ?? ledger.callStartedAt.duration(to: endedAt)
         sessionMetrics.recordGenerationCall(
-            tokensIn: call.input, tokensCached: cached, tokensOut: call.output, timing: timing, model: model,
-            slot: slot)
+            tokensIn: call.input, tokensCached: cached, tokensOut: call.output, timing: timing, duration: duration,
+            model: model, slot: slot)
         generationCallLedger?.callStartedAt = endedAt
         generationCallLedger?.passStartedAt = nil
         generationCallLedger?.firstOutputAt = nil
@@ -324,11 +327,12 @@ extension RoutedSessionActor {
     ///   - call: The fed and generated tokens of the call.
     ///   - cached: The cached part of the fed tokens, or `nil`.
     ///   - timing: The prefill and the decode time of the call.
+    ///   - duration: The whole time of the call.
     ///   - finishReason: Why the call stopped.
     ///   - entryKind: What the call left in the transcript.
     /// - Returns: The report, with the fill of the render after the call.
     private func generationCallUsage(
-        of call: (input: Int, output: Int), cached: Int?, timing: GenerationCallTiming,
+        of call: (input: Int, output: Int), cached: Int?, timing: GenerationCallTiming, duration: Duration,
         finishReason: FinishReason, entryKind: GenerationCallEntryKind
     ) -> GenerationCallUsage {
         GenerationCallUsage(
@@ -340,7 +344,8 @@ extension RoutedSessionActor {
                 .fill(contextTokens: contextTokens),
             tokensCached: cached,
             timeToFirstToken: timing.timeToFirstToken,
-            decodeTime: timing.decodeTime)
+            decodeTime: timing.decodeTime,
+            callDuration: duration)
     }
 
     /// Writes `usage` to the run journal and delivers it live.
@@ -351,7 +356,7 @@ extension RoutedSessionActor {
             partial: makePartialEvent(
                 kind: .generationCall, grammar: grammar, text: usage.description,
                 tokensIn: usage.tokensIn, tokensCached: usage.tokensCached, tokensOut: usage.tokensOut,
-                callTiming: usage.timing))
+                callTiming: usage.timing, callDuration: usage.callDuration))
         deliverLive(.generationCall(usage))
     }
 

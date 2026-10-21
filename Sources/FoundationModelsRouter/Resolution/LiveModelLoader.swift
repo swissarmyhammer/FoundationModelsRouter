@@ -307,12 +307,6 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         self.instructions = instructions
         self.tools = tools
         self.samplingMode = samplingMode
-        // The session holds its wrapper, and the wrapper holds this watch, so
-        // the watch holds the session weakly: a strong hold would keep the
-        // session alive after the backend ends.
-        _ = state.addPassWatch { [weak liveSession] in
-            await Self.reportFirstOutput(of: liveSession, to: state.passObserver)
-        }
     }
 
     /// Creates a backend over a new session with `instructions`, which runs
@@ -557,55 +551,6 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         await observeTranscript(of: session) { entries in
             continuation.yield(entries)
             return true
-        }
-    }
-
-    /// Reports the first output token of each pass of `session` to
-    /// `observer` (``GenerationPassObserver/passProducedOutput()``), so the
-    /// session can split the time of each generation call into its prefill
-    /// and its decode.
-    ///
-    /// The watch runs beside each pass (``SessionLanguageModelState/addPassWatch(_:)``).
-    /// The executor channel of the SDK is opaque, so the watch reads the
-    /// transcript of the session instead: the first read gives the output
-    /// text the pass started with, and the first later read that holds more
-    /// output text (``outputTextLength(of:)``) is the first output token. An
-    /// event of the executor that adds no text, such as the metadata that the
-    /// MLX executor sends before its prefill, does not count. The transcript
-    /// holds the arguments of a tool call only when the call ends, so a pass
-    /// whose only output is a tool call reports its first output at its end.
-    ///
-    /// - Parameters:
-    ///   - session: The session whose transcript to read, or `nil` when the
-    ///     session ended.
-    ///   - observer: The pass observer of the routed session, or `nil` when
-    ///     no routed session installed one; the watch then reads nothing.
-    private static func reportFirstOutput(
-        of session: LanguageModelSession?, to observer: GenerationPassObserver?
-    ) async {
-        guard let session, let observer else { return }
-        var startLength: Int?
-        await observeTranscript(of: session) { entries in
-            let length = outputTextLength(of: entries)
-            guard let start = startLength else {
-                startLength = length
-                return true
-            }
-            guard length > start else { return true }
-            observer.passProducedOutput()
-            return false
-        }
-    }
-
-    /// The length of the output text that `entries` hold, in UTF-8 bytes: the
-    /// reasoning, the response text and the tool-call arguments
-    /// (``WatchedText/attemptTexts(in:excluding:)``).
-    ///
-    /// - Parameter entries: A transcript.
-    /// - Returns: The summed length of its output text.
-    private static func outputTextLength(of entries: [FoundationModels.Transcript.Entry]) -> Int {
-        WatchedText.attemptTexts(in: entries, excluding: []).reduce(0) { total, watched in
-            total + watched.text.utf8.count
         }
     }
 

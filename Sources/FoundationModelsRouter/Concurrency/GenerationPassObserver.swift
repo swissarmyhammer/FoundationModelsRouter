@@ -164,14 +164,17 @@ final class GenerationPassObserver: Sendable {
         passEnds.signal()
     }
 
-    /// Records that the running pass gave its first output token now.
+    /// Records that the running pass gave its first output token at
+    /// `instant`, on ``clock``.
     ///
-    /// The caller is the first-output watch of the backend of the session
-    /// (`MLXFoundationModelsSessionBackend`), which reads the transcript of
-    /// its session inside each pass and calls this method at the first read
-    /// that holds more output text than the pass started with.
-    func passProducedOutput() {
-        record(.firstOutput(at: clock.now))
+    /// The caller is the relay of the executor channel of the pass
+    /// (``PassOutputRelay``), when a second output event of the pass shows
+    /// that the pass streams its output. `instant` is when the first output
+    /// event came.
+    ///
+    /// - Parameter instant: When the first output event of the pass came.
+    func passProducedOutput(at instant: ContinuousClock.Instant) {
+        record(.firstOutput(at: instant))
     }
 
     /// Waits until no pass is open, or until the calling task is cancelled.

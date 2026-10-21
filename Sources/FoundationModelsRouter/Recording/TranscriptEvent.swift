@@ -8,9 +8,9 @@ import Foundation
 /// total order. `ts` is the wall-clock instant. Each event encodes as one
 /// self-contained JSON object. Schema v2 is additive over v1: `entry`
 /// decodes as `nil` when absent, and ``Kind/toolCall`` still decodes.
-/// ``agentSpawn``, ``tokensCached``, ``timeToFirstTokenMs`` and ``decodeMs``
-/// are later optional keys within v2 and decode as `nil` when absent by the
-/// same rule.
+/// ``agentSpawn``, ``tokensCached``, ``timeToFirstTokenMs``, ``decodeMs``,
+/// ``callMs`` and ``firstTokenSeen`` are later optional keys within v2 and
+/// decode as `nil` when absent by the same rule.
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
@@ -141,6 +141,18 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// its first output token to its end (``GenerationCallUsage/decodeTime``).
     /// Set and `nil` by the rule of ``timeToFirstTokenMs``.
     public let decodeMs: Int?
+    /// The whole time of one generation call in milliseconds
+    /// (``GenerationCallUsage/callDuration``). Set on each
+    /// ``Kind/generationCall`` event that a session measured; `nil` otherwise
+    /// and on a recording made before this key existed.
+    public let callMs: Int?
+    /// Whether the session saw the first output token of one generation call
+    /// (``GenerationCallUsage/firstTokenSeen``, task ^0m997jr). Set on each
+    /// ``Kind/generationCall`` event; `nil` otherwise and on a recording made
+    /// before this key existed. `false` means the event has no
+    /// ``timeToFirstTokenMs`` and no ``decodeMs`` because the split is
+    /// unknown, not because it is zero.
+    public let firstTokenSeen: Bool?
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records. `nil` for v1 recordings, and for each router-only kind
     /// except ``Kind/repeatedPartRemoval``, ``Kind/watchStop`` and
@@ -206,6 +218,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         ms: Int? = nil,
         timeToFirstTokenMs: Int? = nil,
         decodeMs: Int? = nil,
+        callMs: Int? = nil,
+        firstTokenSeen: Bool? = nil,
         entry: TranscriptEntryPayload? = nil,
         agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) {
@@ -225,6 +239,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         self.ms = ms
         self.timeToFirstTokenMs = timeToFirstTokenMs
         self.decodeMs = decodeMs
+        self.callMs = callMs
+        self.firstTokenSeen = firstTokenSeen
         self.entry = entry
         self.agentSpawn = agentSpawn
     }
@@ -263,6 +279,12 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// The decode time of a generation call in milliseconds, or `nil`;
         /// see ``TranscriptEvent/decodeMs``.
         public let decodeMs: Int?
+        /// The whole time of a generation call in milliseconds, or `nil`;
+        /// see ``TranscriptEvent/callMs``.
+        public let callMs: Int?
+        /// Whether the session saw the first output token of a generation
+        /// call, or `nil`; see ``TranscriptEvent/firstTokenSeen``.
+        public let firstTokenSeen: Bool?
         /// The structural entry payload, or `nil`.
         public let entry: TranscriptEntryPayload?
         /// The spawn context, or `nil`. Set only on a ``Kind/session``
@@ -286,6 +308,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             ms: Int? = nil,
             timeToFirstTokenMs: Int? = nil,
             decodeMs: Int? = nil,
+            callMs: Int? = nil,
+            firstTokenSeen: Bool? = nil,
             entry: TranscriptEntryPayload? = nil,
             agentSpawn: SessionSidecar.AgentSpawn? = nil
         ) {
@@ -303,6 +327,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.ms = ms
             self.timeToFirstTokenMs = timeToFirstTokenMs
             self.decodeMs = decodeMs
+            self.callMs = callMs
+            self.firstTokenSeen = firstTokenSeen
             self.entry = entry
             self.agentSpawn = agentSpawn
         }
@@ -350,6 +376,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 ms: ms,
                 timeToFirstTokenMs: timeToFirstTokenMs,
                 decodeMs: decodeMs,
+                callMs: callMs,
+                firstTokenSeen: firstTokenSeen,
                 entry: entry ?? self.entry,
                 agentSpawn: agentSpawn
             )
@@ -376,6 +404,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 ms: ms,
                 timeToFirstTokenMs: timeToFirstTokenMs,
                 decodeMs: decodeMs,
+                callMs: callMs,
+                firstTokenSeen: firstTokenSeen,
                 entry: entry,
                 agentSpawn: agentSpawn
             )

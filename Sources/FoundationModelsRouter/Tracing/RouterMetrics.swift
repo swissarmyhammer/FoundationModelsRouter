@@ -40,13 +40,14 @@ struct RouterMetrics: Sendable {
         explicitFactory ?? MetricsSystem.factory
     }
 
-    /// Records one generation call: its tokens in, cached and out, its
-    /// prefill and decode times, and its decode rate.
+    /// Records one generation call: its tokens in, cached and out, its whole
+    /// time, its prefill and decode times, and its decode rate.
     ///
     /// The rate is the generated tokens over the decode time alone (task
     /// ^e5kyhwb): the prefill, the wait for the worker and the tool bodies
-    /// are not in it. A call whose first output token the session did not
-    /// see records no times and no rate, and a call with no decode time
+    /// are not in it. Each call records its whole time (task ^0m997jr). A
+    /// call whose first output token the session did not see records no
+    /// prefill, no decode time and no rate, and a call with no decode time
     /// records no rate, because the rate of no time has no value. A call
     /// whose backend reports no cache count records no cached tokens.
     ///
@@ -56,13 +57,17 @@ struct RouterMetrics: Sendable {
     ///     `nil` when the backend reports no cache count.
     ///   - tokensOut: The tokens the call generated.
     ///   - timing: The prefill and the decode time of the call.
+    ///   - duration: The whole time of the call.
     ///   - model: The model of the call.
     ///   - slot: The slot of the model.
     func recordGenerationCall(
-        tokensIn: Int, tokensCached: Int?, tokensOut: Int, timing: GenerationCallTiming, model: ModelRef,
-        slot: ModelSlot
+        tokensIn: Int, tokensCached: Int?, tokensOut: Int, timing: GenerationCallTiming, duration: Duration,
+        model: ModelRef, slot: ModelSlot
     ) {
         let dimensions = Self.dimensions(model: model, slot: slot)
+        Metrics.Timer(
+            label: RouterTelemetry.MetricName.generationCallDuration, dimensions: dimensions, factory: factory
+        ).record(duration: duration)
         recordTiming(timing, dimensions: dimensions)
         Counter(label: RouterTelemetry.MetricName.generationTokensIn, dimensions: dimensions, factory: factory)
             .increment(by: tokensIn)
@@ -102,7 +107,7 @@ struct RouterMetrics: Sendable {
     /// observable progress: one value for each submission
     /// (``RouterTelemetry/MetricName/submissionTimeToFirstToken``). The time
     /// of each generation call is a part of
-    /// ``recordGenerationCall(tokensIn:tokensCached:tokensOut:timing:model:slot:)``.
+    /// ``recordGenerationCall(tokensIn:tokensCached:tokensOut:timing:duration:model:slot:)``.
     ///
     /// - Parameters:
     ///   - duration: The time to the first progress.
