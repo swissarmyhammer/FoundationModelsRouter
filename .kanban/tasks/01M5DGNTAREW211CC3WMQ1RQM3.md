@@ -29,8 +29,8 @@ comments:
     - note: the build break at HEAD was a stale local Package.resolved (FoundationModelsExtras pinned at a63ddda); `swift package update FoundationModelsExtras` moved it to 6670bc0. Package.resolved is gitignored, so that fix has no commit.
     - next: /review
   timestamp: 2026-10-21T11:09:23.367228+00:00
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffff9c80
 title: Per-generation-call prefill and decode time (time to first token per call)
 ---
 From foundationmodelsacpagent-a5, bench run telemetry-16 (django__django-13447, Qwen3.8-27B-mxfp4, router 4b6bcc9). generation.time_to_first_token has 6 points against 171 generation calls, because it is recorded once per submission (recordedTimeToFirstProgress). Record it for each generation call, together with the decode time, so a reader can work out prefill rate = (in − cached) / prefill time and decode rate = out / decode time.

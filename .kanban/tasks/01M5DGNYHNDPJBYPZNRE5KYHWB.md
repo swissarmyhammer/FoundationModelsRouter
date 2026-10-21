@@ -20,8 +20,8 @@ comments:
     - evidence: `review sha e6aff13b~1..e6aff13b` with validators [code-hygiene] gave findings 0, attempted 7, failed 0. code-hygiene/dead-code-swift ran and judged the change. The blocker was a stale local Package.resolved that pinned FoundationModelsExtras at a63ddda, which has no MLXModelLoader(cacheDirectory:). `swift package update FoundationModelsExtras` moved it to 6670bc0. Package.resolved is gitignored (c5bd4d69), so this fix needs no commit. No code change on this card.
     - next: card can move on from review
   timestamp: 2026-10-21T11:12:13.008436+00:00
-position_column: review
-position_ordinal: '8280'
+position_column: done
+position_ordinal: ffffffff9e80
 title: generation.tokens_per_second divides by decode time only
 ---
 From foundationmodelsacpagent-a5, bench run telemetry-16. generation.tokens_per_second goes from 0.56 to 51.8. The low values look like out / (prefill + decode), or a time that includes tool time. Make it out / decode time, or rename it to say what it divides by. Also check: the first submission span (submission.id 1, 155.8 s) has tokens.in 5077 and tokens.out 0 — is 0 correct?

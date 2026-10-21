@@ -20,8 +20,8 @@ comments:
     - evidence: new Tests/FoundationModelsRouterTests/Helpers/StubBackendSessionFixture.swift (`StubBackendSessionFixture.make(tempDirPrefix:tracer:responseText:usageIncrement:)`, plus `InMemoryTracer.finishedSubmissionSpans` and `finishedSubmissionSpans(causedBy:)`). RunMailSubmissionTracingTests.swift and SubmissionTracingTests.swift both use it now. Their private fixture types, factories and submissionSpans helpers are deleted. swift test on main: 1941 tests / 242 suites passed with 9 known issues, plus 27/15 and 19/3 passed.
     - next: /review
   timestamp: 2026-10-21T11:09:28.664549+00:00
-position_column: review
-position_ordinal: '8380'
+position_column: done
+position_ordinal: ffffffff9f80
 title: Run-mail-only submission gets a parent span and links to the mail senders' spans
 ---
 From foundationmodelsacpagent-a5, telemetry-16 (django__django-13447, router 4b6bcc9). The root session wakes on the coder agent's mail as FoundationModelsRouter.submission id 4 (cause "mail", 38 s, mail_ids 01M5DF9WFERM1NWMQ1V2JZ74RP, 01M5DG9FKK7712SSAF6J39Q0NE). It is a root span in a new trace with no parent and no link.

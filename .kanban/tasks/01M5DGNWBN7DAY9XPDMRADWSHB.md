@@ -25,8 +25,8 @@ comments:
     - note: `GenerationCallEntryKind.init(leftBy:)` is a separate initializer that no finding named, so it was left as is.
     - next: /review
   timestamp: 2026-10-21T11:09:26.336293+00:00
-position_column: review
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffffff9d80
 title: Span for each generation call under the submission span
 ---
 From foundationmodelsacpagent-a5, bench run telemetry-16. The trace has 9 FoundationModelsRouter.submission spans and no child span for the 171 generation calls, so a call cannot be matched to its tool calls or its duration. Add a child span for each generation call, with the attributes tokens.in, tokens.cached, tokens.out, time to first token, and the stop reason / tool-call count.
