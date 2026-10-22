@@ -51,11 +51,28 @@ comments:
     - evidence: swift build --build-tests: 0 errors, 0 warnings from code. swift test --skip-build --filter "RouterSessionDirectory|SessionLauncherPublicSurface": SessionLauncherPublicSurface 2/2 passed; FoundationModelsRouterTests 72 tests in 7 suites, 1 to 3 failing per run, all in the three pre-existing race tests above (fail at HEAD too). Files: Sources/FoundationModelsRouter/Directory/SessionLauncher.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift, session.md, .kanban/tasks/01M5F3K0T51RYV86Y2NXVGFFEC.md, .kanban/tasks/01M5F3PESH74WZB1EDN6KQ5BQD.md, new .kanban/tasks/01M5J0C1HTQBGEBJPW8Y9P28DY.md; other repos (not committed): FoundationModelsMultitool/session.md.
     - next: fix ^y9p28dy (or decide it rides on this card), then /review
   timestamp: 2026-10-22T14:31:42.280535+00:00
+- actor: claude-code
+  id: 01m5j0t1mf10xpegje3wqnagbb
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (abe2fe90), counts 0 findings / 0 confirmed / 0 refuted (7 validator runs attempted, 0 failed); 6 files reviewed (Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionLauncher.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift, Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift, Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift); .kanban/ and session.md not reviewed (ignore rule / no validator). No finding on the rename lines; all 8 prior findings (2026-10-21 18:19) checked.
+    - next: none — moved to done
+  timestamp: 2026-10-22T14:38:57.679600+00:00
+- actor: claude-code
+  id: 01m5j0tq29gvj41dak30jt2r88
+  text: |-
+    ### finish iteration 3 — clean
+    - decision: user chose to change the spec; names are use(launcher:), launchRootSession(for:), restoreSession(id:)
+    - implement: changed — renames, callers, DocC links, Router session.md 5.4, Multitool session.md
+    - test: green — swift test 2081 passed, 9 known issues (three launcher tests that raced were fixed on ^y9p28dy)
+    - commit: abe2fe90
+    - review: clean — 0 findings, 8/8 prior checked; card in done
+  timestamp: 2026-10-22T14:39:19.625122+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffad80
 title: 'ROUTER-8: SessionLauncher port, directory.use(launcher:), start(_:), and shutdown()'
 ---
 ## Goal

@@ -1,8 +1,16 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 9a80
+comments:
+- actor: claude-code
+  id: 01m5j0t3r10e28p499cf5zy2hv
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (abe2fe90), counts 0 findings / 0 confirmed / 0 refuted (7 validator runs attempted, 0 failed); no finding on Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift (next(through:)) or the atRest(_:) / event-read lines of Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift; no prior findings on this card.
+    - next: none — moved to done
+  timestamp: 2026-10-22T14:38:59.841046+00:00
+position_column: done
+position_ordinal: ffffffffae80
 title: Fix RouterSessionDirectoryLauncherTests event-order tests that race the first turn's stateChanged (ROUTER-8 x ROUTER-9)
 ---
 ## Problem
