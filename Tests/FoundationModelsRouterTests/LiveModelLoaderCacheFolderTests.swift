@@ -58,7 +58,7 @@ struct LiveModelLoaderCacheFolderTests {
         defer { try? FileManager.default.removeItem(at: other) }
         let loader = Self.withCacheVariables(naming: other) { LiveModelLoader(cacheDirectory: given) }
 
-        let bytes = try await Self.mlxLoader(of: loader).footprintBytes(of: Self.key)
+        let bytes = try await loader.requireMLXModelLoader().footprintBytes(of: Self.key)
 
         #expect(bytes == Int64(Self.givenFolderWeightBytes))
     }
@@ -70,20 +70,11 @@ struct LiveModelLoaderCacheFolderTests {
         let loader = LiveModelLoader()
 
         await #expect(throws: MLXModelLoaderError.notInCache(key: Self.key, revision: Self.mainRef)) {
-            try await Self.mlxLoader(of: loader).footprintBytes(of: Self.key)
+            try await loader.requireMLXModelLoader().footprintBytes(of: Self.key)
         }
     }
 
     // MARK: - Fixtures
-
-    /// The Extras model loader of `loader`.
-    ///
-    /// - Parameter loader: A live loader that the public init made.
-    /// - Returns: Its `MLXModelLoader`.
-    /// - Throws: When the model loader of `loader` is not an `MLXModelLoader`.
-    private static func mlxLoader(of loader: LiveModelLoader) throws -> MLXModelLoader {
-        try #require(loader.modelLoader as? MLXModelLoader)
-    }
 
     /// Runs `body` while each of ``cacheVariables`` names `folder`, and then
     /// sets each variable back to its earlier value.

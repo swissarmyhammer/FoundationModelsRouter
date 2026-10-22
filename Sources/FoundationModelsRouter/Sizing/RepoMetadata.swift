@@ -1,4 +1,5 @@
 import Foundation
+import HuggingFace
 import Logging
 
 /// The raw bytes of the two Hub artifacts that sizing needs. No weights are downloaded.
@@ -521,6 +522,11 @@ struct RepoMetadataCache: Sendable {
 
 /// The live ``MetadataSource`` that reads the two sizing artifacts from the
 /// Hugging Face Hub HTTP API. A missing `config.json` (HTTP 404) yields a `nil` `configJSON`.
+///
+/// Each GET sends `Authorization: Bearer <token>` when the token provider
+/// gives a token, so a gated repository sizes with the token of the host. A
+/// host that gives the same provider to ``LiveModelLoader`` sends one token for
+/// the downloads and for the sizing.
 public struct HuggingFaceMetadataSource: MetadataSource {
     /// The Hub origin, e.g. `https://huggingface.co`.
     private let endpoint: URL
@@ -528,10 +534,25 @@ public struct HuggingFaceMetadataSource: MetadataSource {
     /// The session used for the GET requests.
     private let session: URLSession
 
+    /// The provider of the token that each GET sends.
+    private let tokenProvider: TokenProvider
+
     /// The revision used when a `ModelRef` does not pin one.
     private static let defaultRevision = "main"
 
-    /// Creates a live source. `endpoint` defaults to `https://huggingface.co`; `session` to `.shared`.
+    /// The HTTP header that carries the token.
+    private static let authorizationHeader = "Authorization"
+
+    /// Creates a live source.
+    ///
+    /// - Parameters:
+    ///   - endpoint: The Hub origin. The default is `https://huggingface.co`.
+    ///   - session: The session of the GET requests. The default is `.shared`.
+    ///   - tokenProvider: The provider of the token of each GET, a
+    ///     `TokenProvider` of swift-huggingface. The default `.environment`
+    ///     reads `HF_TOKEN` and `~/.cache/huggingface/token`. A host with its
+    ///     own home gives `.custom { ... }`, which reads its own token file, or
+    ///     `.none`, which sends no token.
     public init(
         // The literal is a fixed, well-formed URL string, so a failed parse
         // here can only mean the literal itself was typo'd — a programmer
@@ -542,31 +563,50 @@ public struct HuggingFaceMetadataSource: MetadataSource {
             }
             return url
         }(),
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        tokenProvider: TokenProvider = .environment
     ) {
         self.endpoint = endpoint
         self.session = session
+        self.tokenProvider = tokenProvider
     }
 
     /// Fetches `config.json` and the tree listing for a repo at a revision (`nil` means `main`).
+    /// Each GET sends the token of the provider when it gives one.
     ///
-    /// - Throws: Any transport error other than a `config.json` 404.
+    /// - Throws: The error of the token provider, or any transport error other
+    ///   than a `config.json` 404.
     public func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
         let rev = revision ?? Self.defaultRevision
         let configURL = endpoint.appendingPathComponent("\(repo)/resolve/\(rev)/config.json")
         let treeURL = endpoint
             .appendingPathComponent("api/models/\(repo)/tree/\(rev)")
+        let token = try await tokenProvider.getToken()
 
-        let configJSON = try await optionalData(from: configURL)
-        let (treeJSON, _) = try await session.data(from: treeURL)
+        let configJSON = try await optionalData(for: Self.request(for: configURL, bearerToken: token))
+        let (treeJSON, _) = try await session.data(for: Self.request(for: treeURL, bearerToken: token))
         return RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
     }
 
-    /// Fetches bytes from a URL. Returns `nil` on HTTP 404.
+    /// A GET of `url` that carries `token` in its `Authorization` header.
+    ///
+    /// - Parameters:
+    ///   - url: The URL to read.
+    ///   - token: The token of the provider, or `nil` to send no header.
+    /// - Returns: The request.
+    private static func request(for url: URL, bearerToken token: String?) -> URLRequest {
+        var request = URLRequest(url: url)
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: authorizationHeader)
+        }
+        return request
+    }
+
+    /// Fetches the bytes of a request. Returns `nil` on HTTP 404.
     ///
     /// - Throws: Any transport error other than a 404.
-    private func optionalData(from url: URL) async throws -> Data? {
-        let (data, response) = try await session.data(from: url)
+    private func optionalData(for request: URLRequest) async throws -> Data? {
+        let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode == 404 {
             return nil
         }

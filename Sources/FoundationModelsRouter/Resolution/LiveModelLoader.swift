@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import HuggingFace
 import MLXFoundationModels
 import MLXLLM
 // Load-bearing although this file names no `MLXVLM` symbol: keep it. The
@@ -1014,6 +1015,18 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     loader: LiveModelLoader(cacheDirectory: support.appending(path: "Models")))
     /// ```
     ///
+    /// A host with its own home gives one token provider to the loader and to
+    /// the metadata source of its router, so the downloads and the sizing send
+    /// the token of the host, and not the token in the Hugging Face folder of
+    /// the user:
+    ///
+    /// ```swift
+    /// let token: TokenProvider = .custom { try? String(contentsOf: tokenFile, encoding: .utf8) }
+    /// let router = Router(
+    ///     metadataSource: HuggingFaceMetadataSource(tokenProvider: token),
+    ///     loader: LiveModelLoader(tokenProvider: token))
+    /// ```
+    ///
     /// - Parameters:
     ///   - reporting: Receives the download progress of each load through
     ///     ``load(_:)`` and ``load(key:progressHandler:)``. The default drops
@@ -1024,10 +1037,18 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     from it, also when `HF_HUB_CACHE` or `HF_HOME` names a different
     ///     folder. `nil` (the default) uses the default Hugging Face cache,
     ///     which reads these variables.
+    ///   - tokenProvider: The provider of the token of each download, a
+    ///     `TokenProvider` of swift-huggingface, which the Extras
+    ///     `MLXModelLoader` gives to its Hub client. The default `.environment`
+    ///     reads `HF_TOKEN` and `~/.cache/huggingface/token`. `.none` sends no
+    ///     token.
     public init(
-        reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil
+        reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil,
+        tokenProvider: TokenProvider = .environment
     ) {
-        self.init(reporting: reporting, modelLoader: MLXModelLoader(cacheDirectory: cacheDirectory))
+        self.init(
+            reporting: reporting,
+            modelLoader: MLXModelLoader(cacheDirectory: cacheDirectory, tokenProvider: tokenProvider))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test

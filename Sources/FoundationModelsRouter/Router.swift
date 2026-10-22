@@ -103,6 +103,15 @@ public actor Router {
     /// port over the live sessions of this router (ROUTER-3).
     public nonisolated let sessionDirectory: RouterSessionDirectory
 
+    /// The folder of the sizing-metadata cache of this router: the `cacheDir`
+    /// of the init, or the folder of this module under the user caches folder
+    /// when the init got none.
+    ///
+    /// A host with its own home reads it to show, or to prove, that the cache
+    /// is in that home. The folder holds only the sizing metadata; the
+    /// weights of each model are in the cache folder of the ``ModelLoader``.
+    public nonisolated let cacheDirectory: URL
+
     /// Creates a router.
     ///
     /// The router starts one task that reads the footprints of `pool` and
@@ -112,6 +121,7 @@ public actor Router {
     /// - Parameters:
     ///   - id: The recording root id. Pass one in to continue a prior root.
     ///   - cacheDir: The disposable cache directory, or `nil` for the user caches directory.
+    ///     ``cacheDirectory`` shows the folder that the router uses.
     ///   - recordingsDir: The durable transcripts root, or `nil`.
     ///   - recorder: The recorder, or `nil` for a JSONL recorder under `recordingsDir` or ``NoneRecorder``.
     ///   - recordingLevel: How much to record.
@@ -150,7 +160,7 @@ public actor Router {
         hooks: HookDispatcher? = nil
     ) {
         self.id = id
-        let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
+        self.cacheDirectory = cacheDir ?? Self.defaultCacheDir()
         self.recordingsDir = recordingsDir
         let baseRecorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
         // Verbatim recording — `.full` with no `redact` hook — needs no gate, so
@@ -166,7 +176,7 @@ public actor Router {
         self.recordingLevel = recordingLevel
         self.tracer = tracer
         self.probe = probe
-        self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
+        self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: cacheDirectory)
         self.loader = loader
         self.samplingMode = samplingMode
         self.pool = pool

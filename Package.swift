@@ -44,6 +44,14 @@ let metricsPackage = "swift-metrics"
 // the fork's own `IntegrationTesting.xcodeproj`.
 let transformersPackage = "swift-transformers"
 
+// The Hugging Face Hub client package. The library target links its
+// `HuggingFace` product because `TokenProvider` is in the public API of the
+// router: a host gives one token provider to `LiveModelLoader`, which passes
+// it to the Extras `MLXModelLoader` for each download, and to
+// `HuggingFaceMetadataSource`, which sends its token on each sizing GET. The
+// URL and the version requirement are the same as in FoundationModelsExtras.
+let huggingFacePackage = "swift-huggingface"
+
 // The hook package of the family (see the `dependencies` list). The library
 // target links it to emit the hook events, and the unit test target links it
 // to register a recording visitor.
@@ -96,6 +104,11 @@ let metricsTestKitProduct: Target.Dependency = .product(name: "MetricsTestKit", 
 // it: it wraps that loader to pin the date of a chat template.
 let tokenizersProduct: Target.Dependency = .product(name: "Tokenizers", package: transformersPackage)
 
+// The Hub client product that declares `TokenProvider`. The library target
+// links it, and so does each test target that names `TokenProvider` or reads a
+// `HubClient`.
+let huggingFaceProduct: Target.Dependency = .product(name: "HuggingFace", package: huggingFacePackage)
+
 let package = Package(
     name: packageName,
     // Commit to macOS 27 / FoundationModels v2; no pre-27 fallback.
@@ -140,6 +153,10 @@ let package = Package(
             from: "1.3.0"
         ),
         .package(
+            url: "https://github.com/huggingface/\(huggingFacePackage)",
+            from: "0.9.0"
+        ),
+        .package(
             url: "https://github.com/apple/\(tracingPackage).git",
             from: "1.5.0"
         ),
@@ -179,7 +196,7 @@ let package = Package(
         .target(
             name: packageName,
             dependencies: mlxProducts + [
-                ulidProduct, tracingProduct, loggingProduct, metricsProduct, hooksProduct,
+                ulidProduct, tracingProduct, loggingProduct, metricsProduct, hooksProduct, huggingFaceProduct,
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
             ],
             path: "Sources/\(packageName)",
@@ -212,6 +229,9 @@ let package = Package(
                 // The hook tests register a recording visitor on a
                 // `HookDispatcher` and read the hook events back.
                 hooksProduct,
+                // The token tests give a `TokenProvider` to the live loader and
+                // read the token of its `HubClient` back.
+                huggingFaceProduct,
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests",
             // `Fixtures` holds recordings. A test reads them from disk, at a
@@ -386,13 +406,18 @@ let package = Package(
         // the Extras core product, which is the shape a consumer has: a
         // consumer of `Router.sessionDirectory` names the Extras
         // `SessionDirectory` port and its value types (ROUTER-3), which the
-        // router does not re-export. It is a root test target, so `swift test`
-        // at the root runs it on every run, in CI and locally.
+        // router does not re-export. A consumer that gives a token provider
+        // names the swift-huggingface `TokenProvider`, thus the target links
+        // that product too. It links the TestSupport target for
+        // `StubURLProtocol`, the one URL stub that this target and the unit
+        // test target share. It is a root test target, so `swift test` at the
+        // root runs it on every run, in CI and locally.
         .testTarget(
             name: "\(packageName)PublicSurfaceTests",
             dependencies: [
-                .target(name: packageName),
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
+                huggingFaceProduct,
             ],
             path: "Tests/\(packageName)PublicSurfaceTests"
         ),
