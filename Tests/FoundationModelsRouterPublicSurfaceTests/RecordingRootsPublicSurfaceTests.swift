@@ -16,15 +16,20 @@ struct RecordingRootsPublicSurfaceTests {
     /// The title of the recorded session.
     private static let title = "Triage"
 
+    /// The ISO 8601 text, in UTC with milliseconds, of the last activity of
+    /// the recorded session.
+    private static let updatedAtText = "2026-09-25T18:22:10.101Z"
+
+    /// A recording root a host gives the directory makes each recorded
+    /// session under it, an `index.md` written by hand, a recorded summary.
     @Test("a host's recording root gives its recorded sessions to the router's directory")
     func aHostRecordingRootGivesItsRecordedSessions() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("RecordingRootsPublicSurfaceTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let id = ULID.generate()
-        let sessionDirectory = root.appendingPathComponent(id.description, isDirectory: true)
-        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
-        try SessionFacts(title: Self.title).write(to: sessionDirectory)
+        try HandWrittenSessionIndex.write(
+            id: id, under: root, workingDirectory: root.path, updatedAt: Self.updatedAtText, title: Self.title)
         let directory = Router(pool: ModelPool()).sessionDirectory
 
         await directory.useRecordingRoots { [root] }

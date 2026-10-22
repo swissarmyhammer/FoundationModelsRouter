@@ -2,8 +2,6 @@ import Foundation
 import FoundationModelsExtras
 
 /// The per-session transcript filename under a session's recording directory.
-/// ``RecordedSessions`` reads its modification date as an activity of a
-/// session.
 let transcriptFileName = "transcript.jsonl"
 
 /// A failure looking up or reconstructing data from a ``TranscriptTree``.
@@ -11,22 +9,22 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
     /// No session with this id exists in the loaded tree.
     case sessionNotFound(ULID)
 
-    /// `directory` holds session data but has no ``SessionSidecar``. The
-    /// session cannot be placed in the tree.
-    case sidecarMissing(directory: URL)
+    /// `directory` holds session data but has no `index.md`
+    /// (``SessionIndexFile``). The session cannot be placed in the tree.
+    case indexMissing(directory: URL)
 
     /// Two session directories carry the same session id. The id names no
     /// single session.
     case duplicateSessionId(id: ULID, directories: [URL])
 
-    /// `directory`'s `session.json` exists but could not be read or decoded.
-    case sidecarUnreadable(directory: URL)
+    /// `directory`'s `index.md` exists but could not be read or decoded.
+    case indexUnreadable(directory: URL)
 
-    /// `directory` holds a `session.json` but its name is not a session ULID.
+    /// `directory` holds an `index.md` but its name is not a session ULID.
     case sessionDirectoryNotIdentified(directory: URL)
 
-    /// The session nests under a parent but its sidecar records no fork cut
-    /// point (``SessionSidecar/forkedAtHistoryOrdinal`` or ``SessionSidecar/forkedAtEntryCount``).
+    /// The session nests under a parent but its record holds no fork cut
+    /// point (``SessionRecord/forkedAtHistoryOrdinal`` or ``SessionRecord/forkedAtEntryCount``).
     case forkCutPointMissing(session: ULID, directory: URL)
 
     /// A localized message describing what error occurred.
@@ -34,9 +32,9 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
         switch self {
         case .sessionNotFound(let id):
             return "No session with id \(id.description) exists in this transcript tree."
-        case .sidecarMissing(let directory):
+        case .indexMissing(let directory):
             return """
-                Directory \(directory.path) holds session data but no session.json, so what is \
+                Directory \(directory.path) holds session data but no index.md, so what is \
                 recorded there cannot be identified or reconstructed.
                 """
         case .duplicateSessionId(let id, let directories):
@@ -45,17 +43,17 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
                 Session id \(id.description) names more than one session directory (\(paths)), so it \
                 identifies no single session.
                 """
-        case .sidecarUnreadable(let directory):
-            return "Session directory \(directory.path)'s session.json could not be read or decoded."
+        case .indexUnreadable(let directory):
+            return "Session directory \(directory.path)'s index.md could not be read or decoded."
         case .sessionDirectoryNotIdentified(let directory):
             return """
-                Directory \(directory.path) holds a session.json but is not named for a session id, \
+                Directory \(directory.path) holds an index.md but is not named for a session id, \
                 so the session recorded there cannot be identified.
                 """
         case .forkCutPointMissing(let id, let directory):
             return """
                 Session \(id.description) (\(directory.path)) nests under a parent session but its \
-                session.json records no fork cut point (neither forkedAtHistoryOrdinal nor \
+                index.md records no fork cut point (neither forkedAtHistoryOrdinal nor \
                 forkedAtEntryCount), so its effective transcript cannot be reconstructed.
                 """
         }
@@ -70,8 +68,8 @@ package struct SessionNode: Sendable, Equatable {
     package let id: ULID
     /// The span id of the session that forked this one, or `nil` for a root.
     let parentId: ULID?
-    /// This session's own write-once facts, as it recorded them at creation.
-    let sidecar: SessionSidecar
+    /// This session's record, as its `index.md` holds it.
+    let record: SessionRecord
     /// This session's recording directory.
     let directory: URL
     /// This session's own forks, ordered by ``id`` (creation order).
@@ -96,27 +94,27 @@ package struct TranscriptTree: Sendable {
     // MARK: - Loading
 
     /// Loads the fork hierarchy under a router's recording root. Every
-    /// directory with a ``SessionSidecar`` is a session. Its name is its id.
-    /// The session directory it nests under is its parent. A session with a
-    /// missing or unreadable sidecar fails the whole load. A deleted child
-    /// directory is not detectable.
+    /// directory with an `index.md` (``SessionIndexFile``) is a session. Its
+    /// name is its id. The session directory it nests under is its parent.
+    /// A session with a missing or unreadable `index.md` fails the whole
+    /// load. A deleted child directory is not detectable.
     ///
     /// - Parameter routerDirectory: The router's recording root.
     /// - Throws: ``TranscriptTreeError``, or
     ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
-    ///   when a sidecar carries a newer schema version.
+    ///   when a record carries a newer schema version.
     package static func load(under routerDirectory: URL) throws -> TranscriptTree {
         let sessionDirectories = TranscriptFileDiscovery
-            .fileURLs(named: sessionSidecarFileName, under: routerDirectory)
+            .fileURLs(named: SessionIndexFile.fileName, under: routerDirectory)
             .map { $0.deletingLastPathComponent() }
         let sessionDirectoryPaths = Set(sessionDirectories.map(\.standardizedPath))
 
-        // A transcript with no sidecar beside it is a session that was
+        // A transcript with no `index.md` beside it is a session that was
         // recorded but cannot be interpreted — loud, not skipped.
         for transcriptURL in TranscriptFileDiscovery.fileURLs(named: transcriptFileName, under: routerDirectory) {
             let directory = transcriptURL.deletingLastPathComponent()
             guard sessionDirectoryPaths.contains(directory.standardizedPath) else {
-                throw TranscriptTreeError.sidecarMissing(directory: directory)
+                throw TranscriptTreeError.indexMissing(directory: directory)
             }
         }
 
@@ -149,14 +147,14 @@ package struct TranscriptTree: Sendable {
         }
     }
 
-    /// Reads one session directory's identity, lineage, and facts.
+    /// Reads one session directory's identity, lineage, and record.
     ///
     /// - Parameters:
     ///   - directory: The session directory.
     ///   - sessionDirectoryPaths: Every discovered session directory's standardized path.
     ///   - routerDirectoryPath: The router root's standardized path.
-    /// - Throws: ``TranscriptTreeError`` when the directory, its sidecar, its
-    ///   parent, or its transcript is not valid.
+    /// - Throws: ``TranscriptTreeError`` when the directory, its `index.md`
+    ///   or its parent is not valid.
     private static func rawNode(
         in directory: URL,
         sessionDirectoryPaths: Set<String>,
@@ -165,30 +163,23 @@ package struct TranscriptTree: Sendable {
         guard let id = ULID(directory.lastPathComponent) else {
             throw TranscriptTreeError.sessionDirectoryNotIdentified(directory: directory)
         }
-        let decoded: SessionSidecar?
+        let decoded: SessionRecord?
         do {
-            decoded = try SessionSidecar.read(in: directory)
+            decoded = try SessionIndexFile.read(in: directory)
         } catch let error as RecordingSchemaVersionError {
             // Not corruption: the bytes decoded fine and name a schema version
             // newer than this reader knows. Rethrown typed rather than merged
-            // into `sidecarUnreadable`, so a caller can tell "written by a
+            // into `indexUnreadable`, so a caller can tell "written by a
             // newer router" apart from "damaged on disk".
             throw error
         } catch {
-            throw TranscriptTreeError.sidecarUnreadable(directory: directory)
+            throw TranscriptTreeError.indexUnreadable(directory: directory)
         }
-        // `directory` was discovered *by* its own `session.json`, so a `nil`
+        // `directory` was discovered *by* its own `index.md`, so a `nil`
         // here means the file was removed while this load was running.
-        guard let sidecar = decoded else {
-            throw TranscriptTreeError.sidecarMissing(directory: directory)
+        guard let record = decoded else {
+            throw TranscriptTreeError.indexMissing(directory: directory)
         }
-        // Enriches the in-memory sidecar with this session's own recorded
-        // compaction count (never persisted back to the write-once
-        // `session.json` — see ``SessionSidecar/compactionCount``'s own doc
-        // comment), so a browser reading ``SessionNode/sidecar`` can badge a
-        // compacted session with no second pass over its transcript.
-        let ownEvents = try decodeEvents(in: directory)
-        let compactionCount = compactionCheckpoints(in: ownEvents).count
         return RawNode(
             id: id,
             parentId: try parentId(
@@ -196,7 +187,7 @@ package struct TranscriptTree: Sendable {
                 sessionDirectoryPaths: sessionDirectoryPaths,
                 routerDirectoryPath: routerDirectoryPath
             ),
-            sidecar: sidecar.withCompactionCount(compactionCount),
+            record: record,
             directory: directory
         )
     }
@@ -204,7 +195,7 @@ package struct TranscriptTree: Sendable {
     /// The span id of the session `directory` nests directly under, or `nil`
     /// when it sits at the router root.
     ///
-    /// - Throws: ``TranscriptTreeError/sidecarMissing(directory:)`` when the
+    /// - Throws: ``TranscriptTreeError/indexMissing(directory:)`` when the
     ///   enclosing directory is not the router root and not a discovered session.
     private static func parentId(
         of directory: URL,
@@ -216,7 +207,7 @@ package struct TranscriptTree: Sendable {
         guard sessionDirectoryPaths.contains(enclosing.standardizedPath),
             let parentId = ULID(enclosing.lastPathComponent)
         else {
-            throw TranscriptTreeError.sidecarMissing(directory: enclosing)
+            throw TranscriptTreeError.indexMissing(directory: enclosing)
         }
         return parentId
     }
@@ -253,8 +244,8 @@ package struct TranscriptTree: Sendable {
     /// cut point, then this session's own entry-kind events. Only kinds with
     /// ``TranscriptEvent/Kind/isEntryKind`` appear, and the events of
     /// `routerKind` when the caller names one. The cut point is
-    /// ``SessionSidecar/forkedAtHistoryOrdinal`` or the legacy
-    /// ``SessionSidecar/forkedAtEntryCount``.
+    /// ``SessionRecord/forkedAtHistoryOrdinal``, or
+    /// ``SessionRecord/forkedAtEntryCount`` when the record holds no ordinal.
     ///
     /// A router-only kind that a caller names:
     /// - ``TranscriptEvent/Kind/generationCall``: the events
@@ -323,7 +314,7 @@ package struct TranscriptTree: Sendable {
         // existed falls back to the legacy `forkedAtEntryCount`: that count
         // was captured before any post-fork compaction could rewind it, so on such
         // a recording it names the same position in these coordinates.
-        guard let cut = node.sidecar.forkedAtHistoryOrdinal ?? node.sidecar.forkedAtEntryCount else {
+        guard let cut = node.record.forkedAtHistoryOrdinal ?? node.record.forkedAtEntryCount else {
             throw TranscriptTreeError.forkCutPointMissing(session: node.id, directory: node.directory)
         }
         let parentEffective = try effectiveEvents(for: parent, keeping: isKept)
@@ -365,11 +356,15 @@ package struct TranscriptTree: Sendable {
 
     // MARK: - Tree construction
 
-    /// One session's identity, lineage, facts, and directory before linking.
+    /// One session's identity, lineage, record, and directory before linking.
     private struct RawNode {
+        /// The session's span id, read from the name of its directory.
         let id: ULID
+        /// The span id of the session it nests under, or `nil` for a root.
         let parentId: ULID?
-        let sidecar: SessionSidecar
+        /// The session's record, as its `index.md` holds it.
+        let record: SessionRecord
+        /// The session's recording directory.
         let directory: URL
     }
 
@@ -396,7 +391,7 @@ package struct TranscriptTree: Sendable {
             let node = SessionNode(
                 id: raw.id,
                 parentId: raw.parentId,
-                sidecar: raw.sidecar,
+                record: raw.record,
                 directory: raw.directory,
                 children: children
             )

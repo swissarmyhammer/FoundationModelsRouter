@@ -74,7 +74,7 @@ struct SessionConfigurationTests {
         let budget = TokenBudget(limit: 4096, trigger: 0.9, target: 0.6)
         let prompt = CompactionPrompt(name: "custom", text: "condense")
         let priming = DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value")
-        let spawn = SessionSidecar.AgentSpawn(
+        let spawn = SessionRecord.AgentSpawn(
             parentSessionId: ULID.generate(), parentToolCallId: "call-1")
         let tool = AmbientEventPostingTool()
 
@@ -177,7 +177,7 @@ struct SessionConfigurationTests {
             compaction: CompactionSettings(
                 budget: TokenBudget(limit: 4096, hardCeiling: 0.95, toolOutputLimit: 256),
                 prompt: CompactionPrompt(name: "custom", text: "condense")),
-            agentSpawn: SessionSidecar.AgentSpawn(
+            agentSpawn: SessionRecord.AgentSpawn(
                 parentSessionId: ULID.generate(), parentToolCallId: "call-1"),
             discoveryPriming: DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value"),
             grammar: .ebnf("root ::= \"yes\" | \"no\""),
@@ -221,8 +221,8 @@ struct SessionConfigurationTests {
 
     // MARK: - The removed summarization key
 
-    /// The key that sidecars written before task ^mvm7zjy hold. A new
-    /// sidecar does not write it.
+    /// The key of the summarization stage that task ^mvm7zjy removed. A
+    /// record does not write it.
     private static let legacySummarizationKey = "summarization"
 
     /// Encodes `persistable` and returns the top-level JSON object.
@@ -241,32 +241,20 @@ struct SessionConfigurationTests {
         #expect(object[Self.legacySummarizationKey] == nil)
     }
 
-    @Test("a Codable slice from an old sidecar with the summarization key decodes")
-    func oldPersistableSliceWithSummarizationKeyDecodes() throws {
-        let persistable = SessionConfiguration(instructions: "system").persistable
-        var object = try Self.jsonObject(of: persistable)
-        object[Self.legacySummarizationKey] = [String: Any]()
-        let oldSidecarSlice = try JSONSerialization.data(withJSONObject: object)
-
-        let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: oldSidecarSlice)
-        #expect(decoded == persistable)
-    }
-
-    // MARK: - The grouped compaction settings keep the flat sidecar keys
+    // MARK: - The grouped compaction settings keep flat keys in the slice
 
     /// The top-level keys of the Codable slice of a configuration that sets
-    /// every field, as a sidecar wrote them before task ^83r6105. The
-    /// compaction settings are in the flat `budget` and `compactionPrompt`
-    /// keys, and no `compaction` key exists.
-    private static let flatSidecarKeys: Set<String> = [
+    /// every field. The compaction settings are in the flat `budget` and
+    /// `compactionPrompt` keys, and no `compaction` key exists.
+    private static let flatSliceKeys: Set<String> = [
         "instructions", "workingDirectory", "recordingRoot", "toolNames",
         "budget", "compactionPrompt", "agentSpawn", "discoveryPriming",
         "grammar", "repetitionDetection", "mailOnlyAnswerLimit", "inlineSettleGrace", "userPresence",
     ]
 
-    /// A Codable slice in the format of a sidecar written before task
-    /// ^83r6105, with the compaction settings in flat keys.
-    private static let flatSidecarSlice = """
+    /// A Codable slice of a record that sets only the instructions, the
+    /// tools and the compaction settings, which sit in the flat keys.
+    private static let flatSlice = """
         {
           "instructions": "system",
           "toolNames": ["ambient-emitter"],
@@ -288,10 +276,10 @@ struct SessionConfigurationTests {
         #expect(persistable.compactionPrompt == prompt)
     }
 
-    @Test("a new Codable slice has the same keys as a sidecar written before the grouped settings")
+    @Test("a Codable slice of a full configuration writes the flat compaction keys and no compaction key")
     func newPersistableSliceKeepsTheFlatKeys() throws {
         let object = try Self.jsonObject(of: Self.makeFullConfiguration().persistable)
-        #expect(Set(object.keys) == Self.flatSidecarKeys)
+        #expect(Set(object.keys) == Self.flatSliceKeys)
     }
 
     @Test("the compaction settings round-trip through the encoded Codable slice")
@@ -311,9 +299,9 @@ struct SessionConfigurationTests {
         #expect(restored.toolOutputProtection != nil)
     }
 
-    @Test("a Codable slice from a sidecar written before the grouped settings decodes")
-    func flatSidecarSliceDecodes() throws {
-        let data = try #require(Self.flatSidecarSlice.data(using: .utf8))
+    @Test("a record's Codable slice with the flat compaction keys decodes into the compaction settings")
+    func flatSliceDecodes() throws {
+        let data = try #require(Self.flatSlice.data(using: .utf8))
 
         let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: data)
 

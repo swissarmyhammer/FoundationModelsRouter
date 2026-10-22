@@ -26,7 +26,7 @@ import Testing
 /// ``RealModelHarnessTests``, which builds a whole profile over a stub container
 /// and reads back every fact this function stamps: the definition name, each
 /// slot's resolution, the router id every handle carries, the one container the
-/// two generation handles share, and the `session.json` the durable recording
+/// two generation handles share, and the `index.md` the durable recording
 /// actually writes to disk. That is why ``make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
 /// takes `any LoadedLLMContainer` rather than the concrete MLX type: the
 /// protocol is the only thing this function uses, and taking it is what lets a
@@ -43,7 +43,8 @@ public enum RealModelHarness {
     /// reader could go and find. The suites that moved onto this function wrote
     /// `"test"` before, and the eval runner wrote `"compaction-continuity-eval"`
     /// (task ^bh97dp7); nothing reads the field — no gated suite, no eval
-    /// assertion, and not the sidecar, which is written with `profile: nil`.
+    /// assertion, and not the session record, which is written with
+    /// `profile: nil`.
     public static let definitionName = "real-model-harness"
 
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the `.embedding` slot
@@ -100,36 +101,19 @@ public enum RealModelHarness {
     /// through — the same root-plus-writer pair `Router.makeDurableRecording`
     /// builds.
     ///
-    /// Every session vended from the profile writes its `session.json` through
-    /// this, so a tree loaded from disk carries the facts to read it by. That
-    /// file is the whole of what a restore reads, which is why
-    /// ``RealModelHarnessTests`` drives this writer against a temporary
-    /// directory and decodes what it wrote.
+    /// Every session vended from the profile keeps its ``SessionRecord`` in
+    /// the `index.md` of its session folder through this writer, so a tree
+    /// loaded from disk carries the facts to read it by. That record is the
+    /// whole of what a restore reads, which is why ``RealModelHarnessTests``
+    /// drives this writer against a temporary directory and decodes what was
+    /// written. The writer records everything, and records no profile.
     ///
-    /// - Parameters:
-    ///   - slot: The slot sessions vended from the handle run against.
-    ///   - model: The model they run against.
-    ///   - context: The working context, in tokens, `model` was loaded at.
-    ///   - recordingsDir: The router's durable transcripts root.
-    ///   - routerId: The id of the router that owns `recordingsDir`.
+    /// - Parameter recordingsDir: The router's durable transcripts root.
     /// - Returns: The durable recording.
-    package static func makeDurableRecording(
-        slot: ModelSlot,
-        model: ModelRef,
-        context: Int,
-        recordingsDir: URL,
-        routerId: ULID
-    ) -> DurableRecording {
+    package static func makeDurableRecording(recordingsDir: URL) -> DurableRecording {
         DurableRecording(
             root: recordingsDir,
-            sidecarWriter: SessionSidecarWriter(
-                slot: slot,
-                model: model,
-                context: context,
-                recordingLevel: .full,
-                profile: nil,
-                routerId: routerId
-            )
+            indexWriter: SessionIndexWriter(recordingLevel: .full, profile: nil)
         )
     }
 
@@ -182,10 +166,7 @@ public enum RealModelHarness {
         func resolution(_ slot: ModelSlot) -> SlotResolution {
             makeResolution(slot: slot, model: model, context: context)
         }
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            makeDurableRecording(
-                slot: slot, model: model, context: context, recordingsDir: recordingsDir, routerId: router.id)
-        }
+        let durableRecording = makeDurableRecording(recordingsDir: recordingsDir)
         func makeRoutedLLM(_ slot: ModelSlot) -> RoutedLLM {
             RoutedLLM(
                 slot: slot,
@@ -195,7 +176,7 @@ public enum RealModelHarness {
                 container: container,
                 routerId: router.id,
                 recorder: recorder,
-                durableRecording: durableRecording(slot),
+                durableRecording: durableRecording,
                 samplingMode: samplingMode
             )
         }
@@ -207,7 +188,7 @@ public enum RealModelHarness {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            durableRecording: durableRecording(.embedding)
+            durableRecording: durableRecording
         )
         return LanguageModelProfile(
             definitionName: definitionName,

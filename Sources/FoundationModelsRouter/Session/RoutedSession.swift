@@ -78,7 +78,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// started it, how it started, and when it was archived (ROUTER-1).
     ///
     /// A new session takes them from its ``SessionConfiguration`` and writes
-    /// them to `facts.json` beside its `session.json`. The value reads with
+    /// them to ``SessionRecord/facts`` in its `index.md`. The value reads with
     /// no `await`, from any context, and equals the file.
     nonisolated var facts: SessionFacts { get }
 

@@ -121,7 +121,7 @@ struct SessionRestorationTests {
     private static let freshInstructions = "be verbose, cite the file, and name the module"
 
     /// The prompt the recorded session answers, so its transcript and its
-    /// sidecar are both on disk before a restore reads them.
+    /// `index.md` are both on disk before a restore reads them.
     private static let recordedPrompt = "remember 42"
 
     /// The prompt the restored session answers. An answer after a restore is what

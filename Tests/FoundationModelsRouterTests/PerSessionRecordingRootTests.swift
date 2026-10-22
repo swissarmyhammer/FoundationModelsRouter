@@ -21,7 +21,7 @@ import Testing
 /// other; and
 /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
 /// round-trips both layouts, with the recording routerId still readable from
-/// the restored flat session's sidecar metadata.
+/// the restored flat session's `index.md` record.
 ///
 /// Everything here runs against stubs — a stub ``ModelLoader``, a canned LLM
 /// container backed by ``StubSessionBackend``, and a ``JSONLRecorder``
@@ -158,6 +158,8 @@ struct PerSessionRecordingRootTests {
 
     // MARK: - Flat layout: recordingRoot omits the routerId segment
 
+    /// A session vended with a recording root writes its folder, and its
+    /// `index.md`, directly under that root, with no router id segment.
     @Test("makeSession(recordingRoot:) writes a flat <root>/<sessionId>/ layout with no routerId segment")
     @MainActor
     func recordingRootProducesFlatLayoutWithNoRouterIdSegment() async throws {
@@ -181,14 +183,16 @@ struct PerSessionRecordingRootTests {
         #expect(session.recordingDirectory == expectedDirectory)
         #expect(
             FileManager.default.fileExists(
-                atPath: RouterTestFixtures.sidecarURL(inSessionDirectory: expectedDirectory).path))
+                atPath: RouterTestFixtures.indexURL(inSessionDirectory: expectedDirectory).path))
         // No routerId directory anywhere under the custom root.
         #expect(
             !FileManager.default.fileExists(
                 atPath: customRoot.appendingPathComponent(router.id.description).path))
     }
 
-    @Test("a fork of a flat-layout root session nests under it with no routerId segment, and lands its own sidecar")
+    /// A fork of a flat-layout root nests under the root's folder, with no
+    /// router id segment, and writes its own `index.md` there.
+    @Test("a fork of a flat-layout root session nests under it with no routerId segment, and lands its own index.md")
     @MainActor
     func forkOfFlatLayoutRootNestsWithNoRouterIdSegment() async throws {
         let cacheDir = Self.makeTempDir()
@@ -217,7 +221,7 @@ struct PerSessionRecordingRootTests {
         #expect(fork.recordingDirectory == expectedForkDirectory)
         #expect(
             FileManager.default.fileExists(
-                atPath: RouterTestFixtures.sidecarURL(inSessionDirectory: expectedForkDirectory).path))
+                atPath: RouterTestFixtures.indexURL(inSessionDirectory: expectedForkDirectory).path))
 
         // The whole tree is still reachable by loading the custom root
         // directly (the flat, no-routerId-segment layout).
@@ -285,6 +289,8 @@ struct PerSessionRecordingRootTests {
 
     // MARK: - Restoration round-trips both layouts
 
+    /// A flat-layout session restores, and its `index.md` record still
+    /// names the router id of the router that recorded it.
     @Test("a session written with no routerId segment restores correctly, and its routerId is still readable from metadata")
     @MainActor
     func flatLayoutSessionRestoresWithRouterIdReadableFromMetadata() async throws {
@@ -317,8 +323,8 @@ struct PerSessionRecordingRootTests {
         #expect(restored.root.parentId == nil)
 
         let sessionDirectory = customRoot.appendingPathComponent(root.id.description, isDirectory: true)
-        let sidecar = try #require(try SessionSidecar.read(in: sessionDirectory))
-        #expect(sidecar.routerId == router1.id)
+        let record = try #require(try SessionIndexFile.read(in: sessionDirectory))
+        #expect(record.routerId == router1.id)
     }
 
     @Test("an existing nested-layout recording still restores after the recordingRoot change")

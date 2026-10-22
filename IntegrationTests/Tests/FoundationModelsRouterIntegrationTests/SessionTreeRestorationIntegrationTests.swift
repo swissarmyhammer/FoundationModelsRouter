@@ -57,7 +57,7 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// 6. Restore the whole tree, passing only the root session's id.
 /// 7. Assert the restored tree matches: structure, each node's own recorded
 ///    answers (via the reconstructed effective entry counts, unchanged from
-///    what step 3 observed), and an unchanged root `session.json`.
+///    what step 3 observed), and an unchanged root `index.md`.
 /// 8. Drive a **new** live answer on a restored node — the deepest one, the
 ///    grandfork — asking for the earlier fact, asserting the response
 ///    recalls it: the proof that `LanguageModelSession(transcript:)` seeded
@@ -227,16 +227,14 @@ struct SessionTreeRestorationIntegrationTests {
         }
     }
 
-    /// A root session's own sidecar file, under a router's recording root.
+    /// A root session's own `index.md`, under a router's recording root.
     ///
     /// - Parameters:
     ///   - routerDirectory: The router's recording root.
     ///   - rootId: The root session's span id, which names its directory.
-    /// - Returns: The URL of that session's `session.json`.
-    private static func rootSidecarURL(routerDirectory: URL, rootId: ULID) -> URL {
-        routerDirectory
-            .appendingPathComponent(rootId.description, isDirectory: true)
-            .appendingPathComponent("session.json", isDirectory: false)
+    /// - Returns: The URL of that session's `index.md`.
+    private static func rootIndexURL(routerDirectory: URL, rootId: ULID) -> URL {
+        SessionIndexFile.url(in: routerDirectory.appendingPathComponent(rootId.description, isDirectory: true))
     }
 
     /// The ids and observations ``driveOriginalTree(cacheDir:recordingsDir:)``
@@ -247,9 +245,9 @@ struct SessionTreeRestorationIntegrationTests {
         let forkAId: ULID
         let forkBId: ULID
         let grandforkId: ULID
-        /// The root session's write-once `session.json` bytes as of just
-        /// before restoration.
-        let rootSidecarBytes: Data
+        /// The root session's `index.md` bytes as of just before
+        /// restoration.
+        let rootIndexBytes: Data
         /// Each node's effective entry-kind event count as of just before
         /// restoration, via ``TranscriptTree`` — independent of any private
         /// actor state, so the post-restore comparison is a genuine
@@ -303,7 +301,7 @@ struct SessionTreeRestorationIntegrationTests {
             acc[id] = try tree.effectiveEntryEvents(forSession: id).count
         }
 
-        let rootSidecarBytes = try Data(contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: root.id))
+        let rootIndexBytes = try Data(contentsOf: Self.rootIndexURL(routerDirectory: routerDirectory, rootId: root.id))
 
         return OriginalTree(
             routerId: routerId,
@@ -311,7 +309,7 @@ struct SessionTreeRestorationIntegrationTests {
             forkAId: forkA.id,
             forkBId: forkB.id,
             grandforkId: grandfork.id,
-            rootSidecarBytes: rootSidecarBytes,
+            rootIndexBytes: rootIndexBytes,
             effectiveEntryCounts: effectiveEntryCounts
         )
     }
@@ -368,12 +366,12 @@ struct SessionTreeRestorationIntegrationTests {
             #expect(count == original.effectiveEntryCounts[id])
         }
 
-        // The root's sidecar is byte-identical: it is write-once, and
-        // restoration only ever reads it.
-        let rootSidecarBytesAfterRestore = try Data(
-            contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: original.rootId)
+        // The root's `index.md` is byte-identical: restoration only ever
+        // reads it, and no answer has run on the restored root.
+        let rootIndexBytesAfterRestore = try Data(
+            contentsOf: Self.rootIndexURL(routerDirectory: routerDirectory, rootId: original.rootId)
         )
-        #expect(rootSidecarBytesAfterRestore == original.rootSidecarBytes)
+        #expect(rootIndexBytesAfterRestore == original.rootIndexBytes)
 
         // Step 8: the fidelity payoff. A brand-new live answer on the deepest
         // restored node (three levels down from the root that was told the

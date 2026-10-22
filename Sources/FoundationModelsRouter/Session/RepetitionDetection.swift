@@ -80,7 +80,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// pass runs with the reasoning of the model off, and then the answer ends
     /// (tasks ^0dcsd3t and ^bhdj5v9).
     ///
-    /// The key of this value in a stored `session.json` is
+    /// The key of this value in a stored session's `index.md` is
     /// `recoveriesPerTurn`, the name of the property before the rename, so
     /// an old recording loads (``CodingKeys``).
     public var recoveriesPerAnswer: Int

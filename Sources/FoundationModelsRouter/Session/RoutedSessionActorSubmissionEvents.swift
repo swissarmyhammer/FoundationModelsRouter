@@ -62,6 +62,11 @@ extension RoutedSessionActor {
         RouterTelemetry.EnterRecord.write(
             for: span, named: RouterTelemetry.SpanName.submission, tracer: spanTracer, to: sessionLogger(.enter))
         runningSubmission = RunningSubmission(start: start, span: span)
+        // The start of each submission is the activity of the session that
+        // its record lists: `updatedAt` moves, and the first submission sets
+        // `firstActivityAt`, so a listing can leave out a session that never
+        // had a prompt.
+        recordSubmissionStart()
     }
 
     /// Writes the attributes that name this session on `span`: the router

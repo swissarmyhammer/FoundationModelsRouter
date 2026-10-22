@@ -74,7 +74,7 @@ private let recordedTranscriptCompactionChatTemplateDate =
 ///
 /// Three facts, and no more.
 ///
-/// 1. **A recording boots a compaction.** A `transcript.jsonl` and its `session.json`
+/// 1. **A recording boots a compaction.** A `transcript.jsonl` and its `index.md`
 ///    on disk become a real `FoundationModels.Transcript` through
 ///    ``TranscriptTree/load(under:)`` and
 ///    ``TranscriptTree/effectiveTranscript(forSession:view:)``, and
@@ -199,7 +199,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
     ///
     /// The fixture directory arrives through ``CompactionRecordingFixture``:
     /// it plays the recording root, and the session sits directly under it as
-    /// `<sessionId>/{session.json,transcript.jsonl}` — the shape the router
+    /// `<sessionId>/{index.md,transcript.jsonl}` — the shape the router
     /// writes for a session vended with a per-session `recordingRoot:`, and
     /// the shape ``TranscriptTree/load(under:)`` requires. Nothing here names
     /// the session id: this function reads it off the loaded tree, so no ULID

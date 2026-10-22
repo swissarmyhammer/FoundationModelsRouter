@@ -122,22 +122,14 @@ struct InlineSettleGraceSessionTests {
         #expect(SessionConfiguration().inlineSettleGrace == ToolMount.defaultInlineSettleGrace)
     }
 
-    @Test("the sidecar form of a configuration keeps the settle period")
+    /// The configuration slice that a session's `index.md` holds keeps the
+    /// settle period through an encode and a decode.
+    @Test("the record form of a configuration keeps the settle period")
     func thePersistableFormKeepsTheGrace() throws {
         let persistable = SessionConfiguration(inlineSettleGrace: Self.shortGrace).persistable
         let decoded = try JSONDecoder().decode(
             SessionConfiguration.Persistable.self, from: JSONEncoder().encode(persistable))
         #expect(decoded.inlineSettleGrace == Self.shortGrace)
-    }
-
-    @Test("a sidecar written before the settle period existed decodes with no value, which a restore reads as the default")
-    func anOldSidecarDecodesWithNoGrace() throws {
-        let encoded = try JSONEncoder().encode(SessionConfiguration().persistable)
-        var json = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        json.removeValue(forKey: "inlineSettleGrace")
-        let decoded = try JSONDecoder().decode(
-            SessionConfiguration.Persistable.self, from: JSONSerialization.data(withJSONObject: json))
-        #expect(decoded.inlineSettleGrace == nil)
     }
 
     @Test("a negative settle period acts as zero on the session")

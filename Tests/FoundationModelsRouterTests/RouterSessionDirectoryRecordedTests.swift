@@ -6,8 +6,9 @@ import Testing
 
 /// The recorded sessions of ``RouterSessionDirectory`` (ROUTER-3): a query
 /// with `includesRecorded` gives the root sessions on disk that are not live,
-/// listed from the session folders of the recording roots, through
-/// `session.json` and `facts.json`. No index file is read or written.
+/// listed from the session folders of the recording roots, through the
+/// `index.md` of each folder. No listing file beside the folders is read or
+/// written.
 ///
 /// Router A records the sessions; router B is a new router over the same
 /// recordings folder, standing in for a new process, and finds them through
@@ -92,9 +93,9 @@ import Testing
 
     // MARK: - Listed by folder
 
-    /// The name of the index file that the record of past sessions no longer
-    /// writes.
-    private static let removedIndexFileName = "sessions.jsonl"
+    /// The name of the listing file that the record of past sessions no
+    /// longer writes beside the session folders.
+    private static let removedListingFileName = "sessions.jsonl"
 
     /// The name of a folder in a recording root that is not named by a ULID.
     private static let notASessionFolderName = "not-a-ulid"
@@ -102,9 +103,9 @@ import Testing
     /// The name of a plain file in a recording root.
     private static let plainFileName = "notes.txt"
 
-    /// A durable root writes no `sessions.jsonl` beside its recording
-    /// directory.
-    @Test func aDurableRootWritesNoIndexFile() async throws {
+    /// A durable root writes no listing file beside its session folders:
+    /// each session folder holds its own `index.md`.
+    @Test func aDurableRootWritesNoListingFile() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
@@ -112,17 +113,16 @@ import Testing
         let root = recorded.recordingDirectory.deletingLastPathComponent()
         let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
 
-        #expect(!names.contains(Self.removedIndexFileName))
+        #expect(!names.contains(Self.removedListingFileName))
+        #expect(FileManager.default.fileExists(atPath: SessionIndexFile.url(in: recorded.recordingDirectory).path))
     }
 
-    /// A recorded root is listed from its folder under the recording root,
-    /// with no index file beside it.
+    /// A recorded root is listed from the `index.md` of its folder under the
+    /// recording root.
     @Test func aRecordedRootIsListedFromItsFolder() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
-        let root = recorded.recordingDirectory.deletingLastPathComponent()
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(Self.removedIndexFileName))
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let found = try await fixture.directory.sessions(matching: SessionQuery(includesRecorded: true))
@@ -149,6 +149,21 @@ import Testing
         #expect(found.map(\.id) == [recorded.id])
     }
 
+    /// A folder named by a ULID that holds no `index.md` is not a session,
+    /// so it is not listed.
+    @Test func aULIDFolderWithNoIndexIsNotListed() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let kept = await fixture.recordClosedRoot()
+        let stripped = await fixture.recordClosedRoot()
+        try FileManager.default.removeItem(at: SessionIndexFile.url(in: stripped.recordingDirectory))
+        await fixture.useRoot(of: kept.recordingDirectory)
+
+        let found = try await fixture.directory.sessions(matching: SessionQuery(includesRecorded: true))
+
+        #expect(found.map(\.id) == [kept.id])
+    }
+
     /// A fork lives in the folder of its root, so the recording root lists
     /// only the root.
     @Test func aForkIsNotListedAsARecordedRoot() async throws {
@@ -163,6 +178,41 @@ import Testing
         let found = try await fixture.directory.sessions(matching: SessionQuery(includesRecorded: true))
 
         #expect(found.map(\.id) == [root.id])
+    }
+
+    // MARK: - The records of a recording root
+
+    /// `recordedSessions(in:)` gives one record for each recorded root
+    /// session folder, newest first: the id is the folder name, and the
+    /// record holds the working folder, the facts and no first activity for
+    /// a session that never had a prompt. A fork nested in the folder of its
+    /// root is no entry, and a folder with no `index.md` is passed over.
+    @Test func recordedSessionsGivesOneRecordPerRootSessionFolderNewestFirst() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let folder = fixture.directories.cacheDir
+        let starter = ULID.generate()
+        var configuration = SessionFactsFixtures.configuration(startedBy: starter)
+        configuration.workingDirectory = folder
+        let first = fixture.recordingProfile.standard.makeSession(configuration: configuration)
+        let fork = try await first.fork(workingDirectory: nil)
+        await fork.close()
+        await first.close()
+        let second = await fixture.recordClosedRoot(configuration)
+        let root = second.recordingDirectory.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(ULID.generate().description, isDirectory: true),
+            withIntermediateDirectories: true)
+
+        let records = try RouterSessionDirectory.recordedSessions(in: root)
+
+        #expect(records.map(\.sessionId) == [second.id, first.id])
+        #expect(records.map(\.sessionId.description) == [
+            second.recordingDirectory.lastPathComponent, first.recordingDirectory.lastPathComponent,
+        ])
+        #expect(records.allSatisfy { $0.workingDirectory == folder })
+        #expect(records.allSatisfy { $0.facts == SessionFactsFixtures.expectedFacts(startedBy: starter) })
+        #expect(records.allSatisfy { $0.firstActivityAt == nil })
     }
 
     // MARK: - Live and recorded
@@ -197,39 +247,99 @@ import Testing
         #expect(summary?.isLive == false)
     }
 
+    // MARK: - The additional folders
+
+    /// An event no session sends, which a test sends to mark the end of what
+    /// it reads.
+    private static let marker = SessionDirectoryEvent.archived(id: ULID.generate())
+
+    /// The name of the first folder a host adds to a working folder.
+    private static let firstAddedFolderName = "added-a"
+
+    /// The name of the second folder a host adds to a working folder.
+    private static let secondAddedFolderName = "added-b"
+
+    /// The folders a host adds to a working folder, under `base`.
+    ///
+    /// - Parameter base: The folder the added folders sit in.
+    /// - Returns: The added folders, in the order the host gives them.
+    private static func addedFolders(under base: URL) -> [URL] {
+        [firstAddedFolderName, secondAddedFolderName].map {
+            base.appendingPathComponent($0, isDirectory: true)
+        }
+    }
+
+    /// `setAdditionalDirectories(to:for:)` on a live session returns its
+    /// summary, holds the folders in the record of the session and in the
+    /// `index.md` on disk, and sends one `factsChanged` for the session.
+    @Test func setAdditionalDirectoriesOnALiveSessionChangesItsRecord() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let directory = fixture.recordingRouter.sessionDirectory
+        let session = fixture.recordingProfile.standard.makeSession(configuration: SessionConfiguration())
+        let actor = try #require(session as? RoutedSessionActor)
+        let folders = Self.addedFolders(under: fixture.directories.cacheDir)
+        var events = directory.events().makeAsyncIterator()
+
+        let summary = try await directory.setAdditionalDirectories(to: folders, for: session.id)
+        directory.emit(Self.marker)
+        let received = await events.next(through: Self.marker)
+
+        #expect(summary.id == session.id)
+        #expect(summary.isLive)
+        #expect(actor.record.additionalDirectories == folders)
+        let onDisk = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
+        #expect(onDisk.additionalDirectories == folders)
+        #expect(received == [.factsChanged(summary), Self.marker])
+        await session.close()
+    }
+
+    /// `setAdditionalDirectories(to:for:)` on a recorded session that is not
+    /// live rewrites the `index.md` of its folder and sends one
+    /// `factsChanged` with its recorded summary.
+    @Test func setAdditionalDirectoriesOnARecordedSessionRewritesItsIndex() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let recorded = await fixture.recordClosedRoot()
+        await fixture.useRoot(of: recorded.recordingDirectory)
+        let folders = Self.addedFolders(under: fixture.directories.cacheDir)
+        var events = fixture.directory.events().makeAsyncIterator()
+
+        let summary = try await fixture.directory.setAdditionalDirectories(to: folders, for: recorded.id)
+        fixture.directory.emit(Self.marker)
+        let received = await events.next(through: Self.marker)
+
+        #expect(summary.id == recorded.id)
+        #expect(!summary.isLive)
+        let onDisk = try #require(try SessionIndexFile.read(in: recorded.recordingDirectory))
+        #expect(onDisk.additionalDirectories == folders)
+        #expect(received == [.factsChanged(summary), Self.marker])
+    }
+
+    /// `setAdditionalDirectories(to:for:)` with an id that no live or
+    /// recorded session has throws `unknownSession` with that id.
+    @Test func setAdditionalDirectoriesWithAnUnknownIdThrowsUnknownSession() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let recorded = await fixture.recordClosedRoot()
+        await fixture.useRoot(of: recorded.recordingDirectory)
+        let unknown = ULID.generate()
+
+        await #expect(throws: SessionDirectoryError.unknownSession(unknown)) {
+            try await fixture.directory.setAdditionalDirectories(
+                to: Self.addedFolders(under: fixture.directories.cacheDir), for: unknown)
+        }
+    }
+
     // MARK: - The rules of a recorded summary
 
-    /// A modification instant after every file of a test: 2100-01-01.
+    /// A frontmatter `updatedAt` after every file of a test, in whole
+    /// milliseconds: 2100-01-01.
     private static let futureSecondSince1970: TimeInterval = 4_102_444_800
 
-    /// A modification instant before every file of a test: 2001-01-01.
-    private static let pastSecondSince1970: TimeInterval = 978_307_200
-
-    /// Rewrites the `facts.json` in `directory` with `change` applied.
-    private static func rewriteFacts(
-        in directory: URL, _ change: (inout SessionFacts) -> Void
-    ) throws {
-        var facts = try #require(try SessionFacts.read(from: directory))
-        change(&facts)
-        try facts.write(to: directory)
-    }
-
-    /// Removes the `facts.json` in `directory`, so the session folder holds
-    /// no facts.
-    private static func removeFacts(in directory: URL) throws {
-        try FileManager.default.removeItem(at: directory.appendingPathComponent(SessionFacts.fileName))
-    }
-
-    /// Sets the modification date of the file named `fileName` in
-    /// `directory`.
-    private static func setModificationDate(_ date: Date, ofFileNamed fileName: String, in directory: URL) throws {
-        try FileManager.default.setAttributes(
-            [.modificationDate: date], ofItemAtPath: directory.appendingPathComponent(fileName).path)
-    }
-
-    /// A recorded summary carries the working folder of `session.json` and
-    /// the facts of `facts.json`, and a root kind.
-    @Test func aRecordedSummaryCarriesTheSidecarFolderAndTheFacts() async throws {
+    /// A recorded summary carries the working folder and the facts of the
+    /// record, and a root kind.
+    @Test func aRecordedSummaryCarriesTheRecordFolderAndTheFacts() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let folder = fixture.directories.cacheDir
@@ -254,13 +364,14 @@ import Testing
         #expect(summary.createdAt == recorded.id.timestamp)
     }
 
-    /// A session folder with no `facts.json` gives empty facts: the default
-    /// agent id and origin, no tags, no title, and an idle state.
-    @Test func aSessionFolderWithNoFactsGivesEmptyFacts() async throws {
+    /// A record with no fact fields gives the default agent id and origin,
+    /// no tags, no title, and an idle state.
+    @Test func aRecordWithNoFactFieldsGivesTheDefaultAgentAndOrigin() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
-        let recorded = await fixture.recordClosedRoot()
-        try Self.removeFacts(in: recorded.recordingDirectory)
+        let starter = ULID.generate()
+        let recorded = await fixture.recordClosedRoot(SessionFactsFixtures.configuration(startedBy: starter))
+        try RouterTestFixtures.rewriteIndex(in: recorded.recordingDirectory) { $0.facts = SessionFacts() }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let summary = try await SessionDirectorySummaries.summary(
@@ -278,7 +389,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
-        try Self.rewriteFacts(in: recorded.recordingDirectory) { $0.archivedAt = Date() }
+        try RouterTestFixtures.rewriteIndex(in: recorded.recordingDirectory) { $0.facts.archivedAt = Date() }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let archived = try await fixture.directory.sessions(
@@ -287,15 +398,15 @@ import Testing
         #expect(archived.map(\.id) == [recorded.id])
     }
 
-    /// A recorded root whose `session.json` has a spawn is a subagent of
-    /// the spawning session.
+    /// A recorded root whose record has a spawn is a subagent of the
+    /// spawning session.
     @Test func aRecordedRootWithASpawnIsASubagent() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let parent = ULID.generate()
         let recorded = await fixture.recordClosedRoot(
             SessionConfiguration(
-                agentSpawn: SessionSidecar.AgentSpawn(parentSessionId: parent, parentToolCallId: "call-1")))
+                agentSpawn: SessionRecord.AgentSpawn(parentSessionId: parent, parentToolCallId: "call-1")))
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let summary = try await SessionDirectorySummaries.summary(
@@ -305,12 +416,14 @@ import Testing
         #expect(summary.parentID == parent)
     }
 
-    /// The title of `facts.json` is the title of the summary.
+    /// The title of the facts of the record is the title of the summary.
     @Test func theFactsTitleIsTheTitle() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
-        try Self.rewriteFacts(in: recorded.recordingDirectory) { $0.title = SessionFactsFixtures.title }
+        try RouterTestFixtures.rewriteIndex(in: recorded.recordingDirectory) {
+            $0.facts.title = SessionFactsFixtures.title
+        }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let summary = try await SessionDirectorySummaries.summary(
@@ -319,12 +432,12 @@ import Testing
         #expect(summary.title == SessionFactsFixtures.title)
     }
 
-    /// An empty title in `facts.json` counts as no title.
+    /// An empty title in the facts of the record counts as no title.
     @Test func anEmptyFactsTitleGivesNoTitle() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
-        try Self.rewriteFacts(in: recorded.recordingDirectory) { $0.title = "" }
+        try RouterTestFixtures.rewriteIndex(in: recorded.recordingDirectory) { $0.facts.title = "" }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let summary = try await SessionDirectorySummaries.summary(
@@ -333,37 +446,14 @@ import Testing
         #expect(summary.title == nil)
     }
 
-    /// A `facts.json` modified after the other files of the session folder
-    /// makes `updatedAt` its modification date.
-    @Test func aLaterFactsFileGivesTheUpdatedAt() async throws {
+    /// The `updatedAt` of a recorded summary is the `updatedAt` of the
+    /// frontmatter of its `index.md`.
+    @Test func theUpdatedAtOfARecordedSummaryIsTheFrontmatterUpdatedAt() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
         let later = Date(timeIntervalSince1970: Self.futureSecondSince1970)
-        try Self.setModificationDate(later, ofFileNamed: SessionFacts.fileName, in: recorded.recordingDirectory)
-        await fixture.useRoot(of: recorded.recordingDirectory)
-
-        let summary = try await SessionDirectorySummaries.summary(
-            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
-
-        #expect(summary.updatedAt == later)
-    }
-
-    /// A `transcript.jsonl` modified after the other files of the session
-    /// folder makes `updatedAt` its modification date.
-    @Test func aLaterTranscriptGivesTheUpdatedAt() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { fixture.remove() }
-        let recorded = await fixture.recordClosedRoot()
-        try Self.setModificationDate(
-            Date(timeIntervalSince1970: Self.pastSecondSince1970), ofFileNamed: SessionFacts.fileName,
-            in: recorded.recordingDirectory)
-        let transcript = recorded.recordingDirectory.appendingPathComponent(transcriptFileName)
-        if !FileManager.default.fileExists(atPath: transcript.path) {
-            try Data().write(to: transcript)
-        }
-        let later = Date(timeIntervalSince1970: Self.futureSecondSince1970)
-        try Self.setModificationDate(later, ofFileNamed: transcriptFileName, in: recorded.recordingDirectory)
+        try RouterTestFixtures.rewriteIndex(in: recorded.recordingDirectory) { $0.updatedAt = later }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
         let summary = try await SessionDirectorySummaries.summary(

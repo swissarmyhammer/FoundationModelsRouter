@@ -25,7 +25,7 @@ import Testing
 ///
 /// So the harness was split instead. Everything about the profile that does not
 /// need a model — ``RealModelHarness/makeResolution(slot:model:context:)`` and
-/// ``RealModelHarness/makeDurableRecording(slot:model:context:recordingsDir:routerId:)``
+/// ``RealModelHarness/makeDurableRecording(recordingsDir:)``
 /// — is a function of its own, and the container the rest needs is taken as
 /// `any LoadedLLMContainer` so a stand-in satisfies it. The stand-in is this
 /// target's own ``UndrivenLanguageModelContainer``: it holds no model at all,
@@ -68,6 +68,8 @@ struct RealModelHarnessTests {
 
     // MARK: - The resolution each hand-built copy produced
 
+    /// Each slot resolves to the literal resolution the hand-built copies
+    /// wrote.
     @Test("every slot resolves to exactly what the hand-built copies resolved to")
     func everySlotResolvesToWhatTheHandBuiltCopiesDid() {
         for slot in [ModelSlot.standard, .flash, .embedding] {
@@ -88,49 +90,60 @@ struct RealModelHarnessTests {
         }
     }
 
-    // MARK: - The sidecar a restore reads
+    // MARK: - The index.md a restore reads
 
-    @Test("the durable recording writes the session.json a restore reads its facts from")
-    func durableRecordingWritesTheSidecarARestoreReads() throws {
-        try Self.withTemporaryDirectories { _, recordingsDir in
-            let routerId = ULID.generate()
-            let recording = RealModelHarness.makeDurableRecording(
-                slot: .standard,
-                model: Self.model,
-                context: Self.context,
-                recordingsDir: recordingsDir,
-                routerId: routerId
-            )
+    /// The instructions of the session the index test vends.
+    private static let instructions = "You are a terse assistant."
+
+    /// The durable recording of the harness records under the recordings
+    /// folder it is given, at the full level, with no resolved profile.
+    @Test("the durable recording records everything under the recordings folder, with no profile")
+    func durableRecordingRecordsEverythingWithNoProfile() {
+        Self.withTemporaryDirectories { _, recordingsDir in
+            let recording = RealModelHarness.makeDurableRecording(recordingsDir: recordingsDir)
+
             #expect(recording.root == recordingsDir)
-
-            // Driven for real against a directory, rather than compared field by
-            // field: `session.json` is the whole of what
-            // `TranscriptTree.load(under:)` reads a restored session's facts
-            // from, so the file on disk is the contract, not the writer's own
-            // stored properties.
-            let sessionDirectory = recordingsDir.appendingPathComponent(
-                ULID.generate().description, isDirectory: true)
-            recording.sidecarWriter.write(
-                instructions: "You are a terse assistant.",
-                grammar: nil,
-                forkedAtEntryCount: nil,
-                forkedAtHistoryOrdinal: nil,
-                workingDirectory: sessionDirectory,
-                to: sessionDirectory
-            )
-
-            let sidecarURL = RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDirectory)
-            let sidecar = try JSONDecoder().decode(SessionSidecar.self, from: Data(contentsOf: sidecarURL))
-            #expect(sidecar.slot == .standard)
-            #expect(sidecar.model == Self.model)
-            #expect(sidecar.context == Self.context)
-            #expect(sidecar.routerId == routerId)
-            #expect(sidecar.instructions == "You are a terse assistant.")
+            #expect(recording.indexWriter.writes)
+            #expect(recording.indexWriter.recordingLevel == .full)
+            #expect(recording.indexWriter.profile == nil)
         }
+    }
+
+    /// A session vended from a harness profile writes the `index.md` that a
+    /// restore reads its facts from, stamped with the model, the context and
+    /// the router id of the harness.
+    @Test("a harness session writes the index.md a restore reads its facts from")
+    func harnessSessionWritesTheIndexARestoreReads() async throws {
+        let directories = TestDirectories(prefix: "RealModelHarnessTests")
+        defer { directories.remove() }
+        let profile = RealModelHarness.make(
+            model: Self.model,
+            context: Self.context,
+            container: UndrivenLanguageModelContainer(),
+            cacheDir: directories.cacheDir,
+            recordingsDir: directories.recordingsDir
+        )
+        let session = profile.standard.makeSession(configuration: SessionConfiguration(instructions: Self.instructions))
+        await session.close()
+
+        // Driven for real against a directory, rather than compared field by
+        // field: the `index.md` is the whole of what
+        // `TranscriptTree.load(under:)` reads a restored session's facts
+        // from, so the file on disk is the contract.
+        let record = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
+        #expect(record.sessionId == session.id)
+        #expect(record.slot == .standard)
+        #expect(record.model == Self.model)
+        #expect(record.context == Self.context)
+        #expect(record.routerId == profile.standard.routerId)
+        #expect(record.instructions == Self.instructions)
+        #expect(record.recordingLevel == .full)
     }
 
     // MARK: - The whole profile
 
+    /// Every handle of a built profile carries the model, the context and
+    /// the one router id of the harness.
     @Test("the built profile stamps every slot with the model, the context and the router's id")
     func builtProfileStampsEverySlot() {
         Self.withTemporaryDirectories { cacheDir, recordingsDir in
@@ -166,6 +179,7 @@ struct RealModelHarnessTests {
         }
     }
 
+    /// The sampling mode the harness gets reaches both generation handles.
     @Test("the built profile gives the sampling mode it was given to both generation handles")
     func builtProfileGivesTheSamplingModeToBothGenerationHandles() {
         Self.withTemporaryDirectories { cacheDir, recordingsDir in
@@ -189,6 +203,8 @@ struct RealModelHarnessTests {
         }
     }
 
+    /// A profile built with the router id of another continues its recording
+    /// root; a profile built with no id gets a new one.
     @Test("a profile stamped with an existing router id continues that router's recording root")
     func profileStampedWithAnExistingRouterIdContinuesThatRoot() {
         // The whole reason `make` needs a `routerId` at all: both gated suites
@@ -225,6 +241,8 @@ struct RealModelHarnessTests {
 
     // MARK: - The embedding slot no caller drives
 
+    /// An embed through the embedding slot of a harness profile records an
+    /// issue.
     @Test("the embedding slot every harness profile carries records an issue when anything embeds through it")
     func embeddingSlotRecordsAnIssueWhenDriven() async {
         let embedder = Self.withTemporaryDirectories { cacheDir, recordingsDir in

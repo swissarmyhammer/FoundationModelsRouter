@@ -54,10 +54,11 @@ struct RouterSessionDirectoryDeliveryTests {
         /// - Parameter facts: A change of the facts of the session before it
         ///   closes. The default changes nothing.
         /// - Returns: The id of the recorded session.
-        /// - Throws: The error of a write of the facts.
+        /// - Throws: The `#require` failure when the vended session is not a
+        ///   ``RoutedSessionActor``.
         func recordClosedSession(changingFacts facts: (inout SessionFacts) -> Void = { _ in }) async throws -> ULID {
             let recorded = try #require(makeSession() as? RoutedSessionActor)
-            try recorded.updateFacts(facts)
+            recorded.updateFacts(facts)
             let root = recorded.recordingDirectory.deletingLastPathComponent()
             await recorded.close()
             await directory.useRecordingRoots { [root] }

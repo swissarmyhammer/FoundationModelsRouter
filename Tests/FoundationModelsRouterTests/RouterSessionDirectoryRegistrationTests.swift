@@ -107,7 +107,7 @@ import Testing
     @Test func aSessionWithARecordedSpawnIsASubagentOfTheSpawningSession() async throws {
         let fixture = try await Self.makeFixture()
         let spawningSessionId = ULID.generate()
-        let spawn = SessionSidecar.AgentSpawn(
+        let spawn = SessionRecord.AgentSpawn(
             parentSessionId: spawningSessionId, parentToolCallId: "agents-tool-call-1")
         let child = fixture.vend(SessionConfiguration(agentSpawn: spawn))
 

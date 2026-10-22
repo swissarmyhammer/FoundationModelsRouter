@@ -270,7 +270,7 @@ struct RepetitionDetectionDefaultTests {
         #expect(detection.isEnabled)
     }
 
-    @Test("the sidecar configuration keeps the detection the session was made with")
+    @Test("the record configuration keeps the detection the session was made with")
     func persistableKeepsTheDetection() throws {
         let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerAnswer: 1)
         let persistable = SessionConfiguration(repetitionDetection: detection).persistable

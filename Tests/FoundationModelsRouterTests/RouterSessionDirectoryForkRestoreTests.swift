@@ -66,12 +66,12 @@ import Testing
         }
     }
 
-    /// A restored root whose sidecar records an agent spawn is a subagent of
-    /// the spawning session.
+    /// A restored root whose record in its `index.md` holds an agent spawn is
+    /// a subagent of the spawning session.
     @Test func aRestoredRootWithARecordedSpawnIsASubagent() async throws {
         try await Self.withRecordingProfile { profile, directory in
             let spawningSessionId = ULID.generate()
-            let spawn = SessionSidecar.AgentSpawn(
+            let spawn = SessionRecord.AgentSpawn(
                 parentSessionId: spawningSessionId, parentToolCallId: "agents-tool-call-1")
             let recorded = profile.standard.makeSession(configuration: SessionConfiguration(agentSpawn: spawn))
             await recorded.close()
@@ -104,7 +104,7 @@ import Testing
     }
 
     /// A restored session's summary carries the facts that the restore read
-    /// back from its `facts.json`.
+    /// back from its `index.md`.
     @Test func aRestoredSummaryCarriesTheRecordedFacts() async throws {
         try await Self.withRecordingProfile { profile, directory in
             let startedBy = ULID.generate()

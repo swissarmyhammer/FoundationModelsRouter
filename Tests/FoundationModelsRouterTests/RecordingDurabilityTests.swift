@@ -19,7 +19,7 @@ struct RecordingDurabilityTests {
     /// The newline byte that terminates every JSONL line.
     private static let newline: UInt8 = 0x0A
 
-    /// The working-context token count the fixture sidecar records.
+    /// The working-context token count the fixture record holds.
     private static let contextTokens = 4096
 
     /// The event kinds the fixture records: the opening `session` line, then
@@ -46,29 +46,28 @@ struct RecordingDurabilityTests {
         return dir
     }
 
-    /// Writes one complete session under `root`: a sidecar and a
+    /// Writes one complete session under `root`: an `index.md` and a
     /// `transcript.jsonl` holding ``fixtureKinds``' events in order, recorded
     /// through the real ``JSONLRecorder`` so the bytes on disk are exactly
     /// what production writes.
     private static func writeSessionFixture(under root: URL) async throws -> SessionFixture {
         let sessionId = ULID()
+        let routerId = ULID()
         let directory = root.appendingPathComponent(sessionId.description, isDirectory: true)
-        try SessionSidecar.write(
-            SessionSidecar(
+        try SessionRecordFixtures.write(
+            SessionRecord(
+                sessionId: sessionId,
+                workingDirectory: directory,
+                updatedAt: Date(),
                 slot: .standard,
                 model: "org/model",
                 context: contextTokens,
-                instructions: nil,
-                grammar: nil,
                 recordingLevel: .full,
-                forkedAtEntryCount: nil,
-                profile: nil,
-                workingDirectory: directory
+                routerId: routerId
             ),
             to: directory
         )
         let recorder = JSONLRecorder(directory: directory)
-        let routerId = ULID()
         for kind in fixtureKinds {
             await recorder.append(
                 TranscriptEvent.Partial(

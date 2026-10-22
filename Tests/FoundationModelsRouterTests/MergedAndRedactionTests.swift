@@ -123,10 +123,12 @@ struct MergedAndRedactionTests {
         #expect(overThePublicSurface.count == recordedKinds.count)
     }
 
+    /// A session whose `index.md` record names a schema version newer than
+    /// this reader fails the merge with the typed newer-router error.
     @Test(
-        "the merge refuses a session whose sidecar carries a future schema version, with the typed newer-router error"
+        "the merge refuses a session whose index.md carries a future schema version, with the typed newer-router error"
     )
-    func mergeRefusesAFutureVersionSidecarWithTheTypedError() async throws {
+    func mergeRefusesAFutureVersionIndexWithTheTypedError() async throws {
         let uncanonicalDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("MergedTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: uncanonicalDir, withIntermediateDirectories: true)
@@ -139,25 +141,17 @@ struct MergedAndRedactionTests {
         let routerDir = URL(fileURLWithPath: canonicalPath, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: routerDir) }
 
-        // One session directory holding a recorded transcript beside a sidecar
-        // stamped with a version this reader does not know — the shape a
-        // recording written by a newer router leaves on disk.
+        // One session directory holding a recorded transcript beside an
+        // index.md stamped with a version this reader does not know — the
+        // shape a recording written by a newer router leaves on disk.
         let recorder: JSONLRecorder = .jsonl(directory: routerDir, now: { Self.fixedInstant })
         let sessionDir = routerDir.appendingPathComponent(ULID.generate().description, isDirectory: true)
         await recorder.append(samplePartial(kind: .prompt, text: "body"), to: sessionDir)
 
         let futureVersion = RecordingSchemaVersion.current + 1
-        let futureJSON = Data(
-            """
-            {
-                "slot": "standard",
-                "model": "org/model-a",
-                "context": 8192,
-                "recordingLevel": "full",
-                "schemaVersion": \(futureVersion)
-            }
-            """.utf8)
-        try futureJSON.write(to: RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDir))
+        var futureRecord = SessionRecordFixtures.record(in: sessionDir)
+        futureRecord.schemaVersion = futureVersion
+        try SessionRecordFixtures.write(futureRecord, to: sessionDir)
 
         #expect(
             throws: RecordingSchemaVersionError.recordingFromNewerRouter(
@@ -227,12 +221,14 @@ struct MergedAndRedactionTests {
         #expect(await inner.events.first?.text == "top *** plan")
     }
 
+    /// The redact hook rewrites recorded text only: a `.session` event's
+    /// spawn context is provenance and reaches the sink as it was.
     @Test("the redact hook leaves a .session event's agentSpawn untouched: it is provenance, not content")
     func redactLeavesAgentSpawnUntouched() async throws {
         let inner: InMemoryRecorder = .inMemory
         let redact: @Sendable (String) -> String = { _ in "***" }
         let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: redact, wrapping: inner)
-        let spawn = SessionSidecar.AgentSpawn(
+        let spawn = SessionRecord.AgentSpawn(
             parentSessionId: .generate(), parentToolCallId: "agents-tool-call-1")
         let partial = TranscriptEvent.Partial(
             routerId: .generate(),

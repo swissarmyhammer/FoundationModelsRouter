@@ -157,7 +157,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        agentSpawn: SessionRecord.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil
     ) -> any RoutedSession {
         makeSession(

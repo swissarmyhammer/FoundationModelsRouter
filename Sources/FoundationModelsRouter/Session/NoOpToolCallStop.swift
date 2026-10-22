@@ -17,7 +17,7 @@ import FoundationModelsExtras
 /// The router does not know which call of a tool does no work. The host that
 /// owns the tool knows it, so the host gives this check on
 /// ``SessionConfiguration/isNoOpToolCall``. The check is a closure, so the
-/// sidecar does not record it. A fork inherits it. A restore gets it again
+/// session's `index.md` does not record it. A fork inherits it. A restore gets it again
 /// from the host, through the `isNoOpToolCall` argument of
 /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``.
 ///

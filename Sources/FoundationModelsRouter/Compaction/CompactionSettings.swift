@@ -5,7 +5,7 @@
 /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
 /// are the short form: each call makes one value of this type.
 ///
-/// The sidecar records ``budget`` and ``prompt`` in its flat `budget` and
+/// The session's `index.md` records ``budget`` and ``prompt`` in its flat `budget` and
 /// `compactionPrompt` keys, as it did before this type existed. It does not
 /// record ``toolOutputProtection``, because that is a closure.
 public struct CompactionSettings: Sendable {
@@ -19,7 +19,7 @@ public struct CompactionSettings: Sendable {
     /// The host rule whose protected tool outputs every compaction on the
     /// session keeps word for word, or `nil` to protect nothing.
     ///
-    /// A closure, so the sidecar does not record it. A host gives it again
+    /// A closure, so the session's `index.md` does not record it. A host gives it again
     /// when it restores the session, as it gives the tools. A fork inherits
     /// it. See ``ToolOutputProtection``.
     public var toolOutputProtection: ToolOutputProtection?

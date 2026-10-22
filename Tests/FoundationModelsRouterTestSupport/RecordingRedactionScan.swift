@@ -17,13 +17,15 @@ import Foundation
 /// - `RecordingRedactionScanTests` in the unit target holds the scan itself
 ///   to its contract.
 ///
-/// The scan reads TEXT, one line at a time, case-insensitively. Before it
-/// matches, it rewrites the JSON escape `\/` to `/`, because the router's
-/// sidecar encoder stores `/Users/...` as `\/Users\/...` and a literal search
-/// would find nothing in those bytes. For the same reason `://` cannot be a
-/// pattern: after the rewrite, the synthetic
-/// `file:///recordings/station-archive/` working directory carries it, so
-/// `http` and `@` stand in for the URL and address checks.
+/// The scan reads TEXT, one line at a time, case-insensitively. A session
+/// folder holds two kinds of recorded text: the `index.md` record, whose YAML
+/// frontmatter holds each folder as a plain path (`cwd: /recordings/...`),
+/// and the JSON lines of the event streams, where a JSON encoder can store
+/// `/Users/...` as `\/Users\/...`. Before it matches, the scan rewrites the
+/// JSON escape `\/` to `/`, so a literal search finds a path in both kinds.
+/// `://` cannot be a pattern: after the rewrite, a synthetic file URL such as
+/// `file:///recordings/station-archive/` carries it, so `http` and `@` stand
+/// in for the URL and address checks.
 public enum RecordingRedactionScan {
 
     /// One pattern hit in one scanned file.
@@ -61,10 +63,10 @@ public enum RecordingRedactionScan {
     /// case-insensitively after the `\/` rewrite. The groups mirror the
     /// review that cleared the first checked-in recording (`^pfdrppj`):
     /// operator paths, this repository's own tooling, the model cache,
-    /// credential shapes, remote addresses, and the sidecar key of the
+    /// credential shapes, remote addresses, and the `index.md` key of the
     /// `recordingRoot:` leak. The word `secret` is deliberately absent: the
     /// router's default compaction prompt is product text that carries it,
-    /// and every recorded sidecar embeds that prompt.
+    /// and every recorded `index.md` embeds that prompt.
     public static let operatorPatterns: [String] = [
         // Machine paths. A path from the recording box, in any of the
         // places macOS and Linux put one.
@@ -81,7 +83,7 @@ public enum RecordingRedactionScan {
         // mail addresses and user-at-host targets.
         "http", "@",
         // The `^pfdrppj` leak: a per-session `recordingRoot:` override is
-        // stamped into `session.json` as an absolute machine path. A clean
+        // stamped into `index.md` as an absolute machine path. A clean
         // recording never carries the key at all.
         "recordingRoot",
     ]

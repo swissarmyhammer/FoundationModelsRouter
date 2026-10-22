@@ -27,7 +27,7 @@ struct StoredRecoveriesKeyTests {
     /// The id of the one session of the fixture: the name of its directory.
     private static let fixtureSessionId = "01M3CWVB5NFSC7HFT40W63E4TX"
 
-    /// The recoveries that the fixture's `session.json` stores.
+    /// The recoveries that the fixture's `index.md` stores.
     private static let fixtureRecoveries = 2
 
     /// The prompts of the two answers that the fixture recorded.
@@ -49,22 +49,23 @@ struct StoredRecoveriesKeyTests {
         .appendingPathComponent("Fixtures/PreRequestRenameRecording", isDirectory: true)
         .appendingPathComponent(fixtureSessionId, isDirectory: true)
 
-    /// The object at `configuration.repetitionDetection` of a `session.json`.
+    /// The YAML line of the frontmatter that stores `recoveries` at the
+    /// stored key.
     ///
-    /// - Parameter sidecar: The whole JSON object of the file.
-    /// - Returns: The repetition detection object, or `nil`.
-    private static func storedDetection(in sidecar: [String: Any]) -> [String: Any]? {
-        let configuration = sidecar["configuration"] as? [String: Any]
-        return configuration?["repetitionDetection"] as? [String: Any]
+    /// - Parameter recoveries: The stored value.
+    /// - Returns: The text of the line, without its indent.
+    private static func storedLine(_ recoveries: Int) -> String {
+        "\(storedKey): \(recoveries)"
     }
 
-    /// Reads the JSON object of the `session.json` at `url`.
+    /// Reads the text of the `index.md` in `sessionDirectory`.
     ///
-    /// - Parameter url: The file.
-    /// - Returns: The JSON object.
-    /// - Throws: What the read or the parse throws, or a failed requirement.
-    private static func readSidecarObject(at url: URL) throws -> [String: Any] {
-        try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    /// - Parameter sessionDirectory: The directory of the session.
+    /// - Returns: The whole text of the file.
+    /// - Throws: What the read throws.
+    private static func indexText(in sessionDirectory: URL) throws -> String {
+        try String(
+            contentsOf: RouterTestFixtures.indexURL(inSessionDirectory: sessionDirectory), encoding: .utf8)
     }
 
     /// Copies the fixture into a new recordings root, in the nested layout
@@ -85,9 +86,8 @@ struct StoredRecoveriesKeyTests {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
         }
-        let sidecar = try #require(try SessionSidecar.read(in: fixtureSessionDirectory))
-        let routerId = try #require(sidecar.routerId)
-        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: routerId, recordingsDir: recordingsDir)
+        let record = try #require(try SessionIndexFile.read(in: fixtureSessionDirectory))
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: record.routerId, recordingsDir: recordingsDir)
         try FileManager.default.createDirectory(at: routerDirectory, withIntermediateDirectories: true)
         let sessionDirectory = routerDirectory.appendingPathComponent(fixtureSessionId, isDirectory: true)
         try FileManager.default.copyItem(at: fixtureSessionDirectory, to: sessionDirectory)
@@ -96,7 +96,7 @@ struct StoredRecoveriesKeyTests {
         }
 
         let router = RouterTestFixtures.makeRouter(
-            id: routerId, cacheDir: cacheDir, recordingsDir: recordingsDir,
+            id: record.routerId, cacheDir: cacheDir, recordingsDir: recordingsDir,
             recorder: JSONLRecorder(directory: recordingsDir),
             loader: StubModelLoader(
                 container: ConfiguredLLMContainer(responseText: cannedText),
@@ -110,26 +110,28 @@ struct StoredRecoveriesKeyTests {
         }
     }
 
-    /// Writes `recoveries` at the stored key of the `session.json` in
-    /// `sessionDirectory`, and changes nothing else of the object.
+    /// Writes `recoveries` at the stored key of the `index.md` in
+    /// `sessionDirectory`, and changes nothing else of the file: the test
+    /// edits the YAML line itself, so the restore reads the stored key and
+    /// not a value the typed record wrote back.
     ///
     /// - Parameters:
     ///   - recoveries: The value to store.
     ///   - sessionDirectory: The directory of the session.
-    /// - Throws: What the read, the parse or the write throws.
+    /// - Throws: What the read or the write throws, or a failed requirement
+    ///   when the file holds no line with the fixture's stored value.
     private static func writeStoredRecoveries(_ recoveries: Int, in sessionDirectory: URL) throws {
-        let url = RouterTestFixtures.sidecarURL(inSessionDirectory: sessionDirectory)
-        var sidecar = try readSidecarObject(at: url)
-        var configuration = try #require(sidecar["configuration"] as? [String: Any])
-        var detection = try #require(storedDetection(in: sidecar))
-        #expect(detection[storedKey] as? Int == fixtureRecoveries)
-        detection[storedKey] = recoveries
-        configuration["repetitionDetection"] = detection
-        sidecar["configuration"] = configuration
-        try FileManager.default.removeItem(at: url)
-        try JSONSerialization.data(withJSONObject: sidecar).write(to: url)
+        let text = try indexText(in: sessionDirectory)
+        let fixtureLine = storedLine(fixtureRecoveries)
+        try #require(text.contains(fixtureLine))
+        try text.replacingOccurrences(of: fixtureLine, with: storedLine(recoveries))
+            .write(
+                to: RouterTestFixtures.indexURL(inSessionDirectory: sessionDirectory),
+                atomically: true, encoding: .utf8)
     }
 
+    /// The fixture's stored `recoveriesPerTurn` restores as the session's
+    /// `recoveriesPerAnswer`, and the fixture's answers come back.
     @Test("a recording written before the rename loads, and its recoveriesPerTurn reads back as recoveriesPerAnswer")
     @MainActor
     func recordingWrittenBeforeTheRenameLoads() async throws {
@@ -140,6 +142,8 @@ struct StoredRecoveriesKeyTests {
         #expect(await restored.transcript.promptTexts == Self.fixturePrompts)
     }
 
+    /// A value written at the stored key is the value the restore reads,
+    /// not the default.
     @Test("the value at the stored key recoveriesPerTurn is the value the restore reads, not a default")
     @MainActor
     func storedValueIsTheValueTheRestoreReads() async throws {
@@ -151,7 +155,9 @@ struct StoredRecoveriesKeyTests {
         #expect(restored.repetitionDetection.recoveriesPerAnswer == stored)
     }
 
-    @Test("a session written now still writes the key recoveriesPerTurn in session.json")
+    /// A session vended now writes its recoveries under the stored key
+    /// `recoveriesPerTurn` in its `index.md`, never under the Swift name.
+    @Test("a session written now still writes the key recoveriesPerTurn in index.md")
     @MainActor
     func sessionWrittenNowWritesTheStoredKey() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
@@ -172,9 +178,12 @@ struct StoredRecoveriesKeyTests {
         defer { await session.close() }
         _ = try await session.respond(to: Self.newSessionPrompt)
 
-        let url = RouterTestFixtures.sidecarURL(of: session.id, routerId: router.id, recordingsDir: recordingsDir)
-        let detection = try #require(Self.storedDetection(in: try Self.readSidecarObject(at: url)))
-        #expect(detection[Self.storedKey] as? Int == recoveries)
-        #expect(detection[Self.swiftName] == nil)
+        let sessionDirectory = RouterTestFixtures.sessionDirectory(
+            of: session.id, routerId: router.id, recordingsDir: recordingsDir)
+        let record = try #require(try SessionIndexFile.read(in: sessionDirectory))
+        #expect(record.configuration?.repetitionDetection?.recoveriesPerAnswer == recoveries)
+        let text = try Self.indexText(in: sessionDirectory)
+        #expect(text.contains(Self.storedLine(recoveries)))
+        #expect(!text.contains(Self.swiftName))
     }
 }

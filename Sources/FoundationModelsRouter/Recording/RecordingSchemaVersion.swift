@@ -2,8 +2,8 @@ import Foundation
 
 /// The registry of on-disk recording schema versions.
 ///
-/// One version is stamped per session on its ``SessionSidecar``.
-/// ``SessionSidecar/read(in:)`` refuses a version newer than ``current``.
+/// One version is stamped per session on its ``SessionRecord``.
+/// ``SessionIndexFile/read(in:)`` refuses a version newer than ``current``.
 /// An equal or older version decodes by the additive rule: a field the
 /// version predates decodes as its documented absent-value.
 enum RecordingSchemaVersion {
@@ -26,18 +26,15 @@ enum RecordingSchemaVersion {
     /// `.prompt` entry has no mail record, and it renders as before.
     static let v3 = 3
 
-    /// The version writers stamp on every new sidecar.
+    /// The version writers stamp on every new session record.
     static let current = v3
-
-    /// The version a sidecar with no `schemaVersion` key decodes as.
-    /// Frozen at ``v2``: a future bump of ``current`` must not move this.
-    static let implicit = v2
 }
 
 /// A recording stamped with a schema version newer than this reader knows.
-/// Thrown by ``SessionSidecar/read(in:)`` and every reader built on it.
+/// Thrown by ``SessionIndexFile/read(in:)`` and every reader built on it.
 enum RecordingSchemaVersionError: Error, Equatable, LocalizedError {
-    /// The sidecar in `directory` carries `version`, newer than `supported`.
+    /// The record in the `index.md` of `directory` carries `version`, newer
+    /// than `supported`.
     case recordingFromNewerRouter(directory: URL, version: Int, supported: Int)
 
     /// A localized message describing what error occurred.

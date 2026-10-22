@@ -35,7 +35,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// profile shares the same value.
     ///
     /// A session vended from this handle divides its context fill by this
-    /// value, and the sidecar records it as `context`. A caller that needs a
+    /// value, and the session's `index.md` records it as `context`. A caller that needs a
     /// ``TokenBudget`` before it calls `makeSession` builds one with
     /// `TokenBudget(limit: contextTokens)`.
     public var contextTokens: Int { resolution.contextTokens }
@@ -60,7 +60,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// still traces, because nothing is captured until the call itself.
     let tracer: (any Tracer)?
 
-    /// Where this handle's sessions record durably, with the sidecar writer, or
+    /// Where this handle's sessions record durably, with the index writer, or
     /// `nil` when recording to memory or none.
     let durableRecording: DurableRecording?
 
@@ -147,7 +147,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - container: The loaded, resident container.
     ///   - routerId: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
-    ///   - durableRecording: The durable recording root and sidecar writer, or `nil`.
+    ///   - durableRecording: The durable recording root and index writer, or `nil`.
     ///   - tracer: The tracer an embed call opens its span through, or `nil`
     ///     (the default) to read `InstrumentationSystem.tracer` at call time.
     ///   - samplingMode: The decoding strategy every backend made through

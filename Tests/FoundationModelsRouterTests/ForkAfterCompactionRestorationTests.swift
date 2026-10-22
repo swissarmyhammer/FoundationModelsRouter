@@ -25,40 +25,6 @@ import Testing
 /// root restores what the first recorded.
 @Suite("Fork cuts in append-only history coordinates")
 struct ForkAfterCompactionRestorationTests {
-    // MARK: - Stub container
-
-    /// Vends a test-retained ``StubSessionBackend`` per session — fresh
-    /// (`makeSession(instructions:)`) and restore-seeded
-    /// (`makeSession(transcript:)`) alike — so a test can read the live
-    /// entries a session accumulated and derive an exact compaction-forcing budget.
-    private final class RetainingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
-        /// The scripted counter of this container: one token per `Character`.
-        let tokenCounter: any TokenCounter = CharacterTokenCounter()
-
-        /// The canned text every backend this container vends responds with.
-        let responseText: String
-
-        /// The most recently vended backend, for entry inspection.
-        private(set) var lastBackend: StubSessionBackend?
-
-        /// Creates a container whose backends respond with `responseText`.
-        init(responseText: String) {
-            self.responseText = responseText
-        }
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = StubSessionBackend(responseText: responseText, instructions: instructions)
-            lastBackend = backend
-            return backend
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            let backend = StubSessionBackend(responseText: responseText, entries: Array(transcript))
-            lastBackend = backend
-            return backend
-        }
-    }
-
     // MARK: - Fixtures
 
     /// A canned response, repeated across every answer and given as the answer
@@ -66,6 +32,10 @@ struct ForkAfterCompactionRestorationTests {
     /// so the summary makes the live context smaller.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
+
+    /// How many answers a root gives before it compacts: enough copies of
+    /// ``cannedText`` that the one summary makes the live context smaller.
+    private static let answersBeforeCompaction = 6
 
     /// Builds a router wired with the retaining stub container and a durable
     /// recordings root — pass the first router's `id` and `recorder` to
@@ -90,13 +60,6 @@ struct ForkAfterCompactionRestorationTests {
         )
     }
 
-    /// Decodes a fork's `session.json` as a raw JSON object, so a test can
-    /// assert on the literal keys a sidecar carries.
-    private static func sidecarJSON(at sidecarURL: URL) throws -> [String: Any] {
-        try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
-    }
-
     /// The entry ids of `sessionId`'s own recorded entry events, in order —
     /// what the session itself appended after its fork cut.
     private static func ownRecordedEntryIds(in tree: TranscriptTree, sessionId: ULID) throws -> [String] {
@@ -107,6 +70,9 @@ struct ForkAfterCompactionRestorationTests {
 
     // MARK: - Live compaction, then fork, then restore
 
+    /// A fork taken after its parent compacted restores the checkpoint's
+    /// live window plus its own entries, and its record holds the cut in
+    /// both coordinates.
     @Test("a fork taken after its parent compacted restores the compaction's live window plus its own entries, never the pre-compaction span")
     @MainActor
     func restoredForkAfterParentCompactionMatchesItsLiveTranscript() async throws {
@@ -128,7 +94,7 @@ struct ForkAfterCompactionRestorationTests {
         // is under the live context, so the one summarizer call runs.
         let root = profile1.standard.makeSession()
         defer { await root.close() }
-        try await driveAnswers(6, on: root)
+        try await driveAnswers(Self.answersBeforeCompaction, on: root)
         let rootBackend = try #require(container.lastBackend)
         let result = try await root.compactAndAwait(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
@@ -167,14 +133,14 @@ struct ForkAfterCompactionRestorationTests {
         // No resurrected pre-compaction span: nothing the compaction discarded comes back.
         #expect(Set(checkpoint.content.compactedEntryIds).isDisjoint(with: restoredForkIds))
 
-        // The fork's sidecar records the cut in history coordinates alongside
-        // the legacy positional baseline (which stays the post-compaction backend
-        // count, for readers that predate the new field).
-        let sidecar = try Self.sidecarJSON(
-            at: RouterTestFixtures.sidecarURL(
-                of: root.id, fork.id, routerId: router1.id, recordingsDir: recordingsDir))
-        #expect(sidecar["forkedAtHistoryOrdinal"] as? Int == entryEventCountAtFork)
-        #expect(sidecar["forkedAtEntryCount"] as? Int == checkpoint.content.liveWindowEntryIds.count)
+        // The fork's record holds the cut in history coordinates beside the
+        // positional baseline, which stays the post-compaction backend count.
+        let forkRecord = try #require(
+            try SessionIndexFile.read(
+                in: RouterTestFixtures.sessionDirectory(
+                    of: root.id, fork.id, routerId: router1.id, recordingsDir: recordingsDir)))
+        #expect(forkRecord.forkedAtHistoryOrdinal == entryEventCountAtFork)
+        #expect(forkRecord.forkedAtEntryCount == checkpoint.content.liveWindowEntryIds.count)
 
         // The whole tree restores as live sessions in a fresh process.
         let router2 = Self.makeRouter(
@@ -213,7 +179,7 @@ struct ForkAfterCompactionRestorationTests {
         // carries a checkpoint with entries after it.
         let root = profile1.standard.makeSession()
         defer { await root.close() }
-        try await driveAnswers(6, on: root)
+        try await driveAnswers(Self.answersBeforeCompaction, on: root)
         let rootBackend = try #require(container.lastBackend)
         let result = try await root.compactAndAwait(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
@@ -261,65 +227,5 @@ struct ForkAfterCompactionRestorationTests {
             await restoredAgain.session(fork.id)?.close()
         }
         #expect(restoredAgain.session(fork.id) != nil)
-    }
-
-    // MARK: - Old recordings keep restoring through the legacy cut field
-
-    @Test("a fork sidecar with no forkedAtHistoryOrdinal key (an old recording) still restores through forkedAtEntryCount")
-    @MainActor
-    func oldRecordingWithoutHistoryOrdinalRestoresThroughTheLegacyCutField() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "ForkAfterCompactionRestorationTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "ForkAfterCompactionRestorationTests")
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let container = RetainingLLMContainer(responseText: Self.cannedText)
-        let router1 = Self.makeRouter(
-            container: container, recorder: recorder, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile1 = try await router1.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-
-        // An uncompacted parent: for a recording with no compaction before the fork,
-        // the legacy positional count and the history-coordinate cut agree,
-        // which is exactly why old recordings keep restoring correctly.
-        let root = profile1.standard.makeSession()
-        defer { await root.close() }
-        _ = try await root.respond(to: "remember 42")
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        _ = try await fork.respond(to: "fork answer")
-
-        // Rewrite the fork's sidecar without the new key, simulating a
-        // recording written before the field existed.
-        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-        let sidecarURL = RouterTestFixtures.sidecarURL(
-            of: root.id, fork.id, routerId: router1.id, recordingsDir: recordingsDir)
-        var json = try Self.sidecarJSON(at: sidecarURL)
-        json.removeValue(forKey: "forkedAtHistoryOrdinal")
-        try FileManager.default.removeItem(at: sidecarURL)
-        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
-
-        // The legacy field alone still yields the whole effective
-        // conversation: the answer of root at fork time plus the own answer of the fork.
-        let tree = try TranscriptTree.load(under: routerDirectory)
-        let expectedIds =
-            try tree.effectiveTranscript(forSession: root.id).map(\.id)
-            + Self.ownRecordedEntryIds(in: tree, sessionId: fork.id)
-        #expect(try tree.effectiveTranscript(forSession: fork.id).map(\.id) == expectedIds)
-
-        let router2 = Self.makeRouter(
-            id: router1.id, container: RetainingLLMContainer(responseText: Self.cannedText),
-            recorder: recorder, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
-        #expect(restored.session(fork.id) != nil)
     }
 }

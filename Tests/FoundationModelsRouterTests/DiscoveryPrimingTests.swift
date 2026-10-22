@@ -389,7 +389,7 @@ struct DiscoveryPrimingTests {
         #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 
-    @Test("seeded entries round-trip through the recording sidecar with no special-casing")
+    @Test("seeded entries round-trip through the recorded transcript with no special-casing")
     @MainActor
     func seededEntriesRoundTripThroughRecording() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)

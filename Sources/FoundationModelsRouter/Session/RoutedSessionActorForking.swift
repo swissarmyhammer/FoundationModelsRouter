@@ -170,7 +170,7 @@ extension RoutedSessionActor {
         // the positional count above, a compaction never rewinds it, so a fork
         // taken after a compaction restores the compaction's live window
         // rather than the discarded pre-compaction span (see
-        // ``historyOrdinal`` and ``SessionSidecar/forkedAtHistoryOrdinal``).
+        // ``historyOrdinal`` and ``SessionRecord/forkedAtHistoryOrdinal``).
         let historyOrdinalAtFork = seed.historyOrdinal
         let forkedBackend = backend.makeFork(tools: childTools, seededFrom: seed.transcript)
 
@@ -182,11 +182,11 @@ extension RoutedSessionActor {
         let childRecordingDirectory = recordingDirectory
             .appendingPathComponent(childId.description, isDirectory: true)
         let childWorkingDirectory = workingDirectory ?? childRecordingDirectory
-        // The child lands its own sidecar as it is constructed, from the
-        // `entryCountAtFork` baseline passed below — so `fork()` never returns a
-        // durable child directory a transcript can land in with no sidecar
-        // beside it, and needs no sidecar call of its own to say so (see
-        // ``SessionSidecarOrigin``).
+        // The session factory writes the child's first `index.md`, with the
+        // `entryCountAtFork` baseline passed below as its cut — so `fork()`
+        // never returns a durable child directory a transcript can land in
+        // with no record beside it, and needs no write of its own to say so
+        // (see ``RoutedSessionActor/writeFirstIndex()``).
 
         let child = makeRoutedSessionActor(
             profile: profile,
@@ -208,11 +208,11 @@ extension RoutedSessionActor {
             persistedEntryCount: entryCountAtFork,
             // The child's history starts where the parent's recorded history
             // stood at fork time — this initial ordinal is also the cut point
-            // the child's sidecar records.
+            // the child's record holds.
             historyOrdinal: historyOrdinalAtFork,
-            // A fork is a brand-new session wherever its parent could record
-            // one — including a fork of a restored session.
-            sidecarOrigin: sidecarOrigin.forFork,
+            // A fork records wherever its parent records — including a fork
+            // of a restored session.
+            indexWriter: indexWriter,
             // Taken from a live session, so the child's own session span says
             // `forked` and names this session as its parent. That span nests
             // inside the fork span opened above, so the two never read as two
@@ -231,8 +231,8 @@ extension RoutedSessionActor {
             // opt-in at fork time.
             autoCompactionBudget: autoCompactionBudget,
             autoCompactionPrompt: autoCompactionPrompt,
-            // A fork carries no spawn context, the same rule as its sidecar
-            // (``SessionSidecar/agentSpawn``): its lineage is stated by the
+            // A fork carries no spawn context, the same rule as its record
+            // (``SessionRecord/agentSpawn``): its lineage is stated by the
             // parent link and the directory nesting, not by a spawn fact.
             agentSpawn: nil,
             // Priming travels with the session for the same reason the
@@ -263,10 +263,10 @@ extension RoutedSessionActor {
             // origin and the parent as its parent session. It keeps the key
             // of its parent only in the working directory of its parent.
             hooks: hooks?.makeForkHooks(sessionID: childId, workingDirectory: childWorkingDirectory),
-            // The child's own `facts.json`, written beside its sidecar: the
-            // agent and the tags of this session, origin `fork`, and no title
-            // or `startedBy` of its own.
-            facts: facts.forFork
+            // The child's own first facts, in its own `index.md`: the agent
+            // and the tags of this session, origin `fork`, and no title or
+            // `startedBy` of its own.
+            record: .new(facts.forFork)
         )
         // The stall report interval is a host setting, as the other settings
         // above are, so the child starts with the interval of this session.

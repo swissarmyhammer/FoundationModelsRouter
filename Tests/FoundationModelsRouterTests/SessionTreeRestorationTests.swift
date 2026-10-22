@@ -326,11 +326,13 @@ struct SessionTreeRestorationTests {
         #expect(restored.root.id == root.id)
     }
 
-    // MARK: - Sidecars untouched by restoration
+    // MARK: - Index files untouched by restoration
 
-    @Test("restoreSessionTree writes no sidecar of its own; a later fork of a restored session writes exactly one")
+    /// A restore does not rewrite the root's `index.md`, and a fork taken
+    /// later from a restored session writes its own `index.md`.
+    @Test("restoreSessionTree does not rewrite the root's index.md; a later fork of a restored session writes its own index.md")
     @MainActor
-    func restorationWritesNoSidecarButLaterForkWritesOne() async throws {
+    func restorationLeavesTheIndexButLaterForkWritesOne() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -348,11 +350,11 @@ struct SessionTreeRestorationTests {
         defer { await fork.close() }
         _ = fork
 
-        // A sidecar is write-once, so restoring a session must not touch the
-        // one already sitting in its directory — byte-for-byte.
-        let rootSidecarURL = RouterTestFixtures.sidecarURL(
+        // Restoring a session must not rewrite the index.md already sitting
+        // in its directory — byte-for-byte.
+        let rootIndexURL = RouterTestFixtures.indexURL(
             of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
-        let bytesBeforeRestore = try Data(contentsOf: rootSidecarURL)
+        let bytesBeforeRestore = try Data(contentsOf: rootIndexURL)
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -362,14 +364,14 @@ struct SessionTreeRestorationTests {
             await restored.session(fork.id)?.close()
         }
 
-        #expect(try Data(contentsOf: rootSidecarURL) == bytesBeforeRestore)
+        #expect(try Data(contentsOf: rootIndexURL) == bytesBeforeRestore)
         #expect(
             try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir) == [
                 root.id, fork.id,
             ])
 
         // A brand-new fork taken *from a restored session* writes its own
-        // sidecar normally, exactly like any other fork.
+        // index.md normally, exactly like any other fork.
         let newFork = try await restored.root.fork(workingDirectory: nil)
         defer { await newFork.close() }
 
@@ -414,9 +416,11 @@ struct SessionTreeRestorationTests {
         }
     }
 
-    @Test("restoring a tree whose sidecar carries a future schema version throws the typed newer-router error")
+    /// A root whose `index.md` record names a schema version newer than this
+    /// reader fails the restore with the typed newer-router error.
+    @Test("restoring a tree whose index.md carries a future schema version throws the typed newer-router error")
     @MainActor
-    func restoringAFutureVersionSidecarThrowsTheTypedError() async throws {
+    func restoringAFutureVersionIndexThrowsTheTypedError() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -430,16 +434,13 @@ struct SessionTreeRestorationTests {
         defer { await root.close() }
         _ = try await root.respond(to: "hello")
 
-        // Restamp the recorded root sidecar with a version this reader does
+        // Restamp the recorded root index.md with a version this reader does
         // not know — the fabricated future-version recording of the
         // acceptance criteria.
-        let sidecarURL = RouterTestFixtures.sidecarURL(of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
         let futureVersion = RecordingSchemaVersion.current + 1
-        var json = try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
-        json["schemaVersion"] = futureVersion
-        try FileManager.default.removeItem(at: sidecarURL)
-        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+        try RouterTestFixtures.rewriteIndex(
+            in: RouterTestFixtures.sessionDirectory(of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
+        ) { $0.schemaVersion = futureVersion }
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -486,7 +487,13 @@ struct SessionTreeRestorationTests {
         }
     }
 
-    @Test("a session sidecar recorded against a non-generation slot throws slotNotInProfile")
+    /// The working context, in tokens, of the fabricated embedding-slot
+    /// record of ``recordedEmbeddingSlotThrowsSlotNotInProfile()``.
+    private static let fabricatedEmbeddingContext = 4_096
+
+    /// A record against a slot no generation handle serves fails the
+    /// restore with `slotNotInProfile`.
+    @Test("a session index.md recorded against a non-generation slot throws slotNotInProfile")
     @MainActor
     func recordedEmbeddingSlotThrowsSlotNotInProfile() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
@@ -499,23 +506,22 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // Fabricate a root session's directory and sidecar directly,
+        // Fabricate a root session's directory and index.md directly,
         // bypassing the normal makeSession/fork vending paths, with a slot no
         // generation handle exists for.
         let fabricatedId = ULID.generate()
         let fabricatedDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(fabricatedId.description, isDirectory: true)
-        try SessionSidecar.write(
-            SessionSidecar(
+        try SessionRecordFixtures.write(
+            SessionRecord(
+                sessionId: fabricatedId,
+                workingDirectory: fabricatedDirectory,
+                updatedAt: Date(),
                 slot: .embedding,
                 model: "org/emb-a",
-                context: 4_096,
-                instructions: nil,
-                grammar: nil,
+                context: Self.fabricatedEmbeddingContext,
                 recordingLevel: .full,
-                forkedAtEntryCount: nil,
-                profile: nil,
-                workingDirectory: fabricatedDirectory
+                routerId: router1.id
             ),
             to: fabricatedDirectory
         )
@@ -576,7 +582,7 @@ struct SessionTreeRestorationTests {
     /// Documents and locks in a known, deliberate restoration limitation (see
     /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``'s
     /// doc comment, "Known limitation: the `.ebnf` grammar case"):
-    /// `SessionSidecar.grammar`
+    /// `SessionRecord.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case
     /// it came from, so a session originally guided by `.ebnf(_:)` restores
     /// under the `.jsonSchema` case instead — its source text is preserved,
@@ -612,11 +618,25 @@ struct SessionTreeRestorationTests {
 
     // MARK: - Checkpoint-aware restore: restores a compacted, under-budget session
 
+    /// The `tokensBefore` of the fabricated checkpoint of
+    /// ``restoringACompactedSessionYieldsCheckpointedWindow()``.
+    private static let fabricatedCheckpointTokensBefore = 1_000
+
+    /// The `tokensAfter` of the fabricated checkpoint of
+    /// ``restoringACompactedSessionYieldsCheckpointedWindow()``:
+    /// the fill that the restored session reports.
+    private static let fabricatedCheckpointTokensAfter = 321
+
+    /// A compacted, under-budget session restores with its id, its window
+    /// starts at the checkpoint, and its fill is the checkpoint's own
+    /// `tokensAfter`. The checkpoint is appended to the transcript by hand,
+    /// so no live session counts it in the record; the live count has its
+    /// own test in ``SessionIndexRecordingTests``.
     @Test(
-        "restoreSessionTree restores a compacted, under-budget session with unchanged id; its sidecar carries the compaction count and its restored fill reflects the checkpoint's own tokensAfter"
+        "restoreSessionTree restores a compacted, under-budget session with unchanged id; its restored fill reflects the checkpoint's own tokensAfter"
     )
     @MainActor
-    func restoringACompactedSessionYieldsCheckpointedWindowAndCompactionCount() async throws {
+    func restoringACompactedSessionYieldsCheckpointedWindow() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -646,7 +666,7 @@ struct SessionTreeRestorationTests {
         let answer1ResponseId = try #require(responses.first?.entry?.entryId)
         let answer2PromptId = try #require(prompts.last?.entry?.entryId)
         let answer2ResponseId = try #require(responses.last?.entry?.entryId)
-        let sessionContext = try #require(treeBeforeCheckpoint.session(root.id)?.sidecar.context)
+        let sessionContext = try #require(treeBeforeCheckpoint.session(root.id)?.record.context)
 
         let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: rawEvents.count,
@@ -656,8 +676,8 @@ struct SessionTreeRestorationTests {
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["checkpoint-1", answer2PromptId, answer2ResponseId],
                 compactedEntryIds: [answer1PromptId, answer1ResponseId],
-                tokensBefore: 1_000,
-                tokensAfter: 321,
+                tokensBefore: Self.fabricatedCheckpointTokensBefore,
+                tokensAfter: Self.fabricatedCheckpointTokensAfter,
                 stagesApplied: ["Summarization"],
                 promptName: "default"
             )
@@ -678,13 +698,12 @@ struct SessionTreeRestorationTests {
         let reloadedTree = try TranscriptTree.load(under: routerDir)
         let restoredWindow = try reloadedTree.effectiveTranscript(forSession: root.id)
         #expect(Array(restoredWindow).map(\.id) == ["checkpoint-1", answer2PromptId, answer2ResponseId])
-        #expect(reloadedTree.session(root.id)?.sidecar.compactionCount == 1)
 
         // Under budget: the checkpoint is the newest thing (no answer ran
         // after it before restore), so restored fill reports its own
         // `tokensAfter` — never the full pre-compaction size.
         let fill = await restored.root.contextFill
-        #expect(fill == Double(321) / Double(sessionContext))
+        #expect(fill == Double(Self.fabricatedCheckpointTokensAfter) / Double(sessionContext))
     }
 
     // MARK: - Checkpoint-aware restored fill precedence
@@ -881,7 +900,7 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.autoCompactionPrompt == prompt)
         #expect(restoredRoot.discoveryPriming == priming)
 
-        // A fork's own sidecar carries its own envelope — the configuration a
+        // A fork's own index.md carries its own envelope — the configuration a
         // fork inherits at fork time — so a restored fork re-applies it too.
         let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
         #expect(restoredFork.autoCompactionBudget == budget)
@@ -923,48 +942,6 @@ struct SessionTreeRestorationTests {
                     session: root.id, toolName: "ambient-emitter")
             ])
         #expect(!restored.configurationReport.isComplete)
-    }
-
-    @Test(
-        "a sidecar recorded before the configuration envelope existed restores with today's defaults and an empty report"
-    )
-    @MainActor
-    func preEnvelopeSidecarRestoresWithDefaultsAndEmptyReport() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile1.standard.makeSession(budget: TokenBudget(limit: 100_000))
-        defer { await root.close() }
-        _ = try await root.respond(to: "hello")
-
-        // Strip the envelope from the recorded sidecar — the exact bytes a
-        // pre-envelope recording carries (the additive-schema acceptance:
-        // an absent key must decode as nil and restore with today's
-        // defaults, never fail).
-        try Self.rewriteRecordedSidecar(of: root.id, routerId: router1.id, recordingsDir: recordingsDir) { json in
-            json.removeValue(forKey: "configuration")
-        }
-
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer { await restored.root.close() }
-
-        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
-        #expect(restoredRoot.autoCompactionBudget == nil)
-        #expect(restoredRoot.autoCompactionPrompt == .default)
-        #expect(restoredRoot.discoveryPriming == nil)
-        #expect(restoredRoot.repetitionDetection == RepetitionDetection())
-        #expect(restoredRoot.mailOnlyAnswerLimit == SessionConfiguration.defaultMailOnlyAnswerLimit)
-        #expect(restoredRoot.inlineSettleGrace == ToolMount.defaultInlineSettleGrace)
-        #expect(restored.configurationReport.missingTools.isEmpty)
     }
 
     /// Makes a root session with `configuration`, forks it, and restores the
@@ -1055,8 +1032,8 @@ struct SessionTreeRestorationTests {
             readBy: \.inlineSettleGrace)
     }
 
-    /// The production change that makes this test fail: a sidecar that does
-    /// not record the user presence, or a restore that does not give it to
+    /// The production change that makes this test fail: a record that does
+    /// not hold the user presence, or a restore that does not give it to
     /// the run plane. The restored session is then interactive.
     @Test("a headless session keeps its user presence in a fork and after a restore (task ^0hps8jg)")
     @MainActor
@@ -1073,7 +1050,7 @@ struct SessionTreeRestorationTests {
     /// reads a missing or an unknown recorded user presence as headless, or
     /// that fails on it.
     @Test(
-        "a sidecar with no user presence, or with a value this version does not know, restores an interactive session (task ^0hps8jg)",
+        "an index.md with no user presence, or with a value this version does not know, restores an interactive session (task ^0hps8jg)",
         arguments: [nil, "elsewhere"] as [String?])
     @MainActor
     func missingOrUnknownRecordedUserPresenceRestoresInteractive(recorded: String?) async throws {
@@ -1092,11 +1069,10 @@ struct SessionTreeRestorationTests {
 
         // A headless session, so a restore that ignores the edit gives a
         // headless session and the test fails.
-        try Self.rewriteRecordedSidecar(of: root.id, routerId: router1.id, recordingsDir: recordingsDir) { json in
-            var configuration = json["configuration"] as? [String: Any] ?? [:]
-            configuration[Self.userPresenceKey] = recorded
-            json["configuration"] = configuration
-        }
+        try Self.rewriteRecordedUserPresence(
+            recorded,
+            inSessionDirectory: RouterTestFixtures.sessionDirectory(
+                of: root.id, routerId: router1.id, recordingsDir: recordingsDir))
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -1127,7 +1103,7 @@ struct SessionTreeRestorationTests {
     /// it made: the root, the fork and each restored session.
     ///
     /// - Parameters:
-    ///   - recorded: The user presence that the sidecars record.
+    ///   - recorded: The user presence that the records hold.
     ///   - override: The user presence that the restore gets, or `nil`.
     /// - Returns: The user presence of the restored root and of the restored
     ///   fork.
@@ -1168,7 +1144,7 @@ struct SessionTreeRestorationTests {
 
     /// The production change that makes this test fail: a restore that does
     /// not give its user presence to the run plane of each node. The restored
-    /// sessions are then interactive, as the sidecars record.
+    /// sessions are then interactive, as the records hold.
     @Test("a restore with a headless user presence makes a recorded interactive root and fork headless")
     @MainActor
     func restoreWithHeadlessOverridesRecordedInteractive() async throws {
@@ -1179,7 +1155,7 @@ struct SessionTreeRestorationTests {
 
     /// The production change that makes this test fail: a restore that does
     /// not give its user presence to the run plane of each node. The restored
-    /// sessions are then headless, as the sidecars record.
+    /// sessions are then headless, as the records hold.
     @Test("a restore with an interactive user presence makes a recorded headless root and fork interactive")
     @MainActor
     func restoreWithInteractiveOverridesRecordedHeadless() async throws {
@@ -1226,11 +1202,11 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.runPlane.userPresence == .headless)
     }
 
-    /// A restored session never writes its sidecar again, so a later restore
-    /// with no user presence gives the root the value that its sidecar
-    /// recorded first. A fork that the restored root makes writes a new
-    /// sidecar with the user presence of the run plane, which is the
-    /// override.
+    /// A restore does not change the configuration that the root's
+    /// `index.md` holds, so a later restore with no user presence gives the
+    /// root the value that its record held first. A fork that the restored
+    /// root makes writes a new `index.md` with the user presence of the run
+    /// plane, which is the override.
     ///
     /// The production change that makes this test fail: a restore that does
     /// not give its user presence to the run plane, or a fork that does not
@@ -1268,46 +1244,54 @@ struct SessionTreeRestorationTests {
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
-        let forkSidecar = try #require(tree.session(laterFork.id)?.sidecar)
-        #expect(forkSidecar.configuration?.restoredUserPresence == .headless)
+        let forkRecord = try #require(tree.session(laterFork.id)?.record)
+        #expect(forkRecord.configuration?.restoredUserPresence == .headless)
         let rootAgain = try #require(restoredAgain.root as? RoutedSessionActor)
         #expect(rootAgain.runPlane.userPresence == .interactive)
         let forkAgain = try #require(restoredAgain.session(laterFork.id) as? RoutedSessionActor)
         #expect(forkAgain.runPlane.userPresence == .headless)
     }
 
-    /// The key of the user presence in the configuration envelope of a
-    /// sidecar.
-    private static let userPresenceKey = "userPresence"
+    /// The line of the configuration envelope in the `index.md` of a
+    /// headless session: the key of the user presence and the name of
+    /// ``UserPresence/headless``.
+    private static let headlessUserPresenceLine = "userPresence: headless"
 
-    /// Reads the recorded sidecar of `session`, lets `edit` change its JSON
-    /// object, and writes the result back in place of the old file.
+    /// Rewrites the user presence that the `index.md` of a headless session
+    /// holds, in the YAML text itself: a name this version does not know
+    /// cannot go through the typed record.
     ///
     /// - Parameters:
-    ///   - session: The id of the recorded session.
-    ///   - routerId: The id of the router that recorded the session.
-    ///   - recordingsDir: The recordings directory of that router.
-    ///   - edit: The change to the top-level JSON object of the sidecar.
-    /// - Throws: What the read, the parse or the write throws, or a failed
-    ///   `#require` when the sidecar is not a JSON object.
-    private static func rewriteRecordedSidecar(
-        of session: ULID, routerId: ULID, recordingsDir: URL, edit: (inout [String: Any]) -> Void
-    ) throws {
-        let sidecarURL = RouterTestFixtures.sidecarURL(of: session, routerId: routerId, recordingsDir: recordingsDir)
-        var json = try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
-        edit(&json)
-        try FileManager.default.removeItem(at: sidecarURL)
-        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+    ///   - recorded: The name to store, or `nil` to remove the key.
+    ///   - sessionDirectory: The directory of the session. Its `index.md`
+    ///     must hold ``headlessUserPresenceLine``.
+    /// - Throws: What the read or the write throws, or a failed `#require`
+    ///   when the file holds no ``headlessUserPresenceLine``.
+    private static func rewriteRecordedUserPresence(_ recorded: String?, inSessionDirectory sessionDirectory: URL) throws {
+        let indexURL = RouterTestFixtures.indexURL(inSessionDirectory: sessionDirectory)
+        let text = try String(contentsOf: indexURL, encoding: .utf8)
+        let lines = text.components(separatedBy: "\n")
+        let presenceIndex = try #require(
+            lines.firstIndex { $0.trimmingCharacters(in: .whitespaces) == headlessUserPresenceLine })
+        var rewritten = lines
+        if let recorded {
+            rewritten[presenceIndex] = lines[presenceIndex].replacingOccurrences(of: "headless", with: recorded)
+        } else {
+            rewritten.remove(at: presenceIndex)
+        }
+        try rewritten.joined(separator: "\n").write(to: indexURL, atomically: true, encoding: .utf8)
     }
 
     // MARK: - Decided restore losses (task ^xky3j8w)
 
+    /// A recorded spawn context stays readable from the restored tree's
+    /// record; the restore re-applies nothing, since a live session holds no
+    /// such state.
     @Test(
         "a recorded agent-spawn context survives a restore on disk: restore re-applies nothing because a live session holds no such state"
     )
     @MainActor
-    func recordedAgentSpawnStaysReadableFromTheRestoredTreesSidecar() async throws {
+    func recordedAgentSpawnStaysReadableFromTheRestoredTreesRecord() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -1318,7 +1302,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let spawn = SessionSidecar.AgentSpawn(
+        let spawn = SessionRecord.AgentSpawn(
             parentSessionId: ULID.generate(), parentToolCallId: "call-1")
         let root = profile1.standard.makeSession(agentSpawn: spawn)
         defer { await root.close() }
@@ -1334,14 +1318,21 @@ struct SessionTreeRestorationTests {
         // `RoutedSessionActor` nor `RoutedSession` retains it as live state,
         // so there is nothing for a restore to re-apply — the recorded fact
         // stays on disk and stays readable from the loaded tree (both the
-        // sidecar's own field and the configuration envelope carry it).
+        // record's own field and the configuration envelope carry it).
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
-        let sidecar = try #require(tree.session(root.id)?.sidecar)
-        #expect(sidecar.agentSpawn == spawn)
-        #expect(sidecar.configuration?.agentSpawn == spawn)
+        let record = try #require(tree.session(root.id)?.record)
+        #expect(record.agentSpawn == spawn)
+        #expect(record.configuration?.agentSpawn == spawn)
     }
 
+    /// How many tokens the rewritten recorded context of
+    /// ``restoreReportsARecordedContextTheLiveResolutionNoLongerMatches()``
+    /// adds to the resolved one, so the two no longer match.
+    private static let recordedContextSkew = 1_024
+
+    /// A recorded context that the live resolution does not match is
+    /// reported for its session, and never adopted.
     @Test(
         "a recorded context the live resolution no longer matches is reported per session in contextMismatches, never silently adopted"
     )
@@ -1371,14 +1362,11 @@ struct SessionTreeRestorationTests {
         // Rewrite the recorded context to a figure the live resolution does
         // not match — the on-disk stand-in for a recording made on a machine
         // whose window search settled on a different window.
-        let sidecarURL = RouterTestFixtures.sidecarURL(of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
-        var json = try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
-        let resolvedContext = try #require(json["context"] as? Int)
-        let recordedContext = resolvedContext + 1_024
-        json["context"] = recordedContext
-        try FileManager.default.removeItem(at: sidecarURL)
-        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+        let rootDirectory = RouterTestFixtures.sessionDirectory(
+            of: root.id, routerId: router1.id, recordingsDir: recordingsDir)
+        let resolvedContext = try #require(try SessionIndexFile.read(in: rootDirectory)).context
+        let recordedContext = resolvedContext + Self.recordedContextSkew
+        try RouterTestFixtures.rewriteIndex(in: rootDirectory) { $0.context = recordedContext }
 
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
         defer { await restored.root.close() }

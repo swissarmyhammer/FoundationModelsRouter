@@ -192,7 +192,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // onto it (task ^bh97dp7). The harness stamps its own
         // `definitionName`, which replaced this runner's old
         // "compaction-continuity-eval" literal: nothing reads the field — no
-        // eval assertion, and not the sidecar, which the harness writes with
+        // eval assertion, and not the `index.md`, which the harness writes with
         // `profile: nil`.
         let profile = RealModelHarness.make(
             model: CompactionContinuityRealModel.ref,

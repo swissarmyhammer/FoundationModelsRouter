@@ -391,8 +391,8 @@ enum RouterTelemetry {
         /// the session is pending (task ^rw72f4j).
         case noOpToolCallStop = "NoOpToolCallStop"
 
-        /// The sidecar file of a session.
-        case sessionSidecar = "SessionSidecar"
+        /// The `index.md` of a session folder.
+        case sessionIndex = "SessionIndex"
 
         /// The read of the metadata of a model repository.
         case repoMetadataReader = "RepoMetadataReader"

@@ -211,7 +211,7 @@ struct TranscriptEventSchemaTests {
     // MARK: - agentSpawn on the .session event (task ^1sddtxz)
 
     /// A fixed spawn context, so two events built from it compare equal.
-    private static let sampleSpawn = SessionSidecar.AgentSpawn(
+    private static let sampleSpawn = SessionRecord.AgentSpawn(
         parentSessionId: ULID.generate(), parentToolCallId: "agents-tool-call-1")
 
     /// Builds a `.session` partial that carries ``sampleSpawn``.

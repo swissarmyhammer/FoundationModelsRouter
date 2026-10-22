@@ -30,7 +30,7 @@ enum MergedTranscript {
     ///   are nested.
     /// - Throws:
     ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
-    ///   when a session's sidecar names a schema version newer than
+    ///   when a session's `index.md` names a schema version newer than
     ///   ``RecordingSchemaVersion/current``; otherwise
     ///   `JSONLFileError.readFailed(description:)` when a transcript file
     ///   cannot be read, which aborts the whole merge.
@@ -46,30 +46,34 @@ enum MergedTranscript {
         return events.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
     }
 
-    /// Refuses a transcript whose session sidecar carries a schema version
+    /// Refuses a transcript whose session record carries a schema version
     /// newer than this reader knows, before any of its lines are decoded.
     ///
-    /// The version is stamped once per session, on the `session.json` beside
-    /// the transcript (see ``SessionSidecar/schemaVersion``), so the merge
-    /// consults that sidecar for each file it is about to read — the same gate
-    /// ``TranscriptTree/load(under:)`` reaches through
-    /// ``SessionSidecar/read(in:)``, so the two readers cannot drift.
+    /// The version is stamped once per session, in the record of the
+    /// `index.md` beside the transcript (see ``SessionRecord/schemaVersion``),
+    /// so the merge consults that record for each file it is about to read —
+    /// the same gate ``TranscriptTree/load(under:)`` reaches through
+    /// ``SessionIndexFile/read(in:)``, so the two readers cannot drift.
     ///
-    /// The merge stays otherwise sidecar-free: a transcript with no
-    /// `session.json` beside it, or one whose sidecar cannot be decoded, merges
-    /// as before. ``TranscriptTree`` is the reader that reports sidecar absence
-    /// and corruption loudly.
+    /// The merge needs nothing else from the record: a transcript with no
+    /// `index.md` beside it, or one whose `index.md` cannot be decoded,
+    /// merges anyway. ``TranscriptTree`` is the reader that reports a missing
+    /// or damaged `index.md` loudly.
+    ///
+    /// - Parameter file: The `transcript.jsonl` about to be read.
+    /// - Throws:
+    ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
+    ///   when the record beside it names a newer schema version.
     private static func checkSchemaVersion(besideTranscript file: URL) throws {
         do {
-            _ = try SessionSidecar.read(in: file.deletingLastPathComponent())
+            _ = try SessionIndexFile.read(in: file.deletingLastPathComponent())
         } catch let error as RecordingSchemaVersionError {
             throw error
         } catch {
-            // An absent sidecar returns nil (no throw); reaching here means
-            // one exists but cannot be decoded, so it states no version to
-            // gate on. The merge keeps its historical sidecar-free contract
-            // for that file rather than adopting TranscriptTree's loud
-            // corruption reporting.
+            // An absent `index.md` returns nil (no throw); reaching here
+            // means one exists but cannot be decoded, so it states no version
+            // to gate on. The merge reads the transcript anyway rather than
+            // adopting TranscriptTree's loud corruption reporting.
         }
     }
 }
@@ -92,7 +96,7 @@ extension TranscriptEvent {
     /// - Returns: Every recorded event under `routerDirectory`, ordered by
     ///   `(ts, seq)`. A line that does not decode is skipped with a warning.
     /// - Throws: The internal `RecordingSchemaVersionError.recordingFromNewerRouter`
-    ///   when a session's sidecar names a schema version newer than this build
+    ///   when a session's `index.md` names a schema version newer than this build
     ///   supports, or `JSONLFileError.readFailed(description:)` when a
     ///   transcript file cannot be read, which aborts the whole merge.
     public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {

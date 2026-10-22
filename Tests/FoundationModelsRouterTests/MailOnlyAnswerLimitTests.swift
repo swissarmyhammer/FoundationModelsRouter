@@ -150,22 +150,14 @@ struct MailOnlyAnswerLimitTests {
         #expect(SessionConfiguration().mailOnlyAnswerLimit == SessionConfiguration.defaultMailOnlyAnswerLimit)
     }
 
-    @Test("the sidecar form of a configuration keeps the limit")
+    /// The configuration slice that a session's `index.md` holds keeps the
+    /// limit through an encode and a decode.
+    @Test("the record form of a configuration keeps the limit")
     func thePersistableFormKeepsTheLimit() throws {
         let persistable = SessionConfiguration(mailOnlyAnswerLimit: Fixtures.limit).persistable
         let decoded = try JSONDecoder().decode(
             SessionConfiguration.Persistable.self, from: JSONEncoder().encode(persistable))
         #expect(decoded.mailOnlyAnswerLimit == Fixtures.limit)
-    }
-
-    @Test("a sidecar written before the limit existed decodes with no limit, which a restore reads as the default")
-    func anOldSidecarDecodesWithNoLimit() throws {
-        let encoded = try JSONEncoder().encode(SessionConfiguration().persistable)
-        var json = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        json.removeValue(forKey: "mailOnlyAnswerLimit")
-        let decoded = try JSONDecoder().decode(
-            SessionConfiguration.Persistable.self, from: JSONSerialization.data(withJSONObject: json))
-        #expect(decoded.mailOnlyAnswerLimit == nil)
     }
 }
 

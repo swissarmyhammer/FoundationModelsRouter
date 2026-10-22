@@ -19,11 +19,11 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// disk to restore.
     case noDurableRecordingsRoot
 
-    /// The recorded ``SessionSidecar/slot`` of `session` has no generation
+    /// The recorded ``SessionRecord/slot`` of `session` has no generation
     /// handle on the restoring profile.
     case slotNotInProfile(session: ULID, slot: ModelSlot)
 
-    /// The recorded ``SessionSidecar/model`` of `session` does not match the
+    /// The recorded ``SessionRecord/model`` of `session` does not match the
     /// model resident in `slot` on the restoring profile.
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
 
@@ -165,22 +165,25 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Each node keeps its original id, parent id, and recording directory,
     /// so a submission on a restored node appends to its existing transcript.
-    /// Each node's model and slot resolve from its ``SessionSidecar`` against
-    /// this call's owning profile. A mismatch is a typed error.
-    /// `instructions`, ``Grammar``, and the recorded configuration envelope
-    /// are re-applied. A recorded grammar always restores as
-    /// ``Grammar/jsonSchema(_:)``. ``SessionSidecar/agentSpawn`` is not
-    /// re-applied. A recorded context that differs from the live one is
+    /// Each node's model and slot resolve from its ``SessionRecord``, as its
+    /// `index.md` holds it, against this call's owning profile. A mismatch is
+    /// a typed error. `instructions`, ``Grammar``, and the recorded
+    /// configuration envelope are re-applied. A recorded grammar always
+    /// restores as ``Grammar/jsonSchema(_:)``. ``SessionRecord/agentSpawn`` is
+    /// not re-applied. A recorded context that differs from the live one is
     /// reported in ``RestoredSessionTree/contextMismatches``.
     ///
-    /// No sidecar is written. For each
+    /// The restore writes no `index.md`: each restored node holds the record
+    /// read from its own, and a later change of a restored session (its
+    /// facts, its activity, its compactions) rewrites that `index.md`,
+    /// keeping its body. For each
     /// node, one terminal `.completed` event with outcome
     /// ``OperationOutcome/lost`` is posted to the node's outbox per orphaned
     /// journaled run. See ``TranscriptTree/lostRunTerminalEvents(in:)``.
     ///
     /// Each restored node registers in the session directory of the router
     /// of its handle (``SessionNode/directoryLineage``): the root as a root,
-    /// or as a subagent when its sidecar records an agent spawn, and each
+    /// or as a subagent when its record holds an agent spawn, and each
     /// recorded fork as a fork of its source. The directory holds each node
     /// weakly, so a node that no caller keeps leaves the live list.
     ///
@@ -220,7 +223,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     presence belongs to the current client, not to the recording, and
     ///     one client owns the whole restored tree. Thus a supplied value
     ///     replaces the recorded value on the root and on each recorded
-    ///     fork. The recorded sidecars on disk do not change. A fork that a
+    ///     fork. The recorded `index.md` files on disk do not change. A fork that a
     ///     restored node makes later records the supplied value.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
@@ -263,7 +266,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let suppliedToolNames = Set(tools.map(\.name))
         var missingTools: [SessionConfigurationRestorationReport.MissingTool] = []
         // The recorded-context check (task ^xky3j8w): a node whose recorded
-        // ``SessionSidecar/context`` differs from the live resolution's is
+        // ``SessionRecord/context`` differs from the live resolution's is
         // collected here — one row per node, in walk order — for the
         // returned ``RestoredSessionTree/contextMismatches``. See
         // ``RestoredSession/ContextMismatch`` for why this is a typed
@@ -288,17 +291,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             guard let routerHooks = routedLLM.hooks else { return nil }
             let parent =
                 node.parentId.flatMap { hooksById[$0]?.forkParent }
-                ?? node.sidecar.agentSpawn.map { routerHooks.subagentParent(of: $0.parentSessionId) }
+                ?? node.record.agentSpawn.map { routerHooks.subagentParent(of: $0.parentSessionId) }
             let hooks = routerHooks.makeSessionHooks(
-                sessionID: node.id, workingDirectory: node.sidecar.workingDirectory, parent: parent,
+                sessionID: node.id, workingDirectory: node.record.workingDirectory, parent: parent,
                 isRestored: true)
             hooksById[node.id] = hooks
             return hooks
         }
 
         func restore(_ node: SessionNode) async throws -> any RoutedSession {
-            let slot = node.sidecar.slot
-            let model = node.sidecar.model
+            let slot = node.record.slot
+            let model = node.record.model
             let routedLLM: RoutedLLM
             switch slot {
             case .standard:
@@ -355,11 +358,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Throws: ``TranscriptTreeError`` or ``TranscriptReconstructionError``
         ///   for what the transcript read throws.
         func rebuild(_ node: SessionNode, on routedLLM: RoutedLLM) async throws -> any RoutedSession {
-            // Read again from the node's own sidecar rather than handed down:
+            // Read again from the node's own record rather than handed down:
             // `restore(_:)` already checked both against `routedLLM`, so these
             // two are the recorded facts this node is rebuilt with.
-            let slot = node.sidecar.slot
-            let model = node.sidecar.model
+            let slot = node.record.slot
+            let model = node.record.model
 
             // The restored session runs against the live resolution's
             // context — the physical window `routedLLM`'s backend was
@@ -368,11 +371,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // silently adopted and not an error (task ^xky3j8w; see
             // ``RestoredSession/ContextMismatch``).
             let resolvedContextTokens = routedLLM.resolution.contextTokens
-            if node.sidecar.context != resolvedContextTokens {
+            if node.record.context != resolvedContextTokens {
                 contextMismatches.append(
                     RestoredSession.ContextMismatch(
                         session: node.id,
-                        recorded: node.sidecar.context,
+                        recorded: node.record.context,
                         resolved: resolvedContextTokens
                     ))
             }
@@ -387,10 +390,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 to: node, transcript: transcript, on: routedLLM)
 
             // The node's recorded configuration envelope (task ^ne5g9jn),
-            // or `nil` for a recording made before the envelope existed —
-            // which restores with the pre-envelope defaults below, exactly
-            // as it always has (see ``SessionSidecar/configuration``).
-            let configuration = node.sidecar.configuration
+            // or `nil` when its record holds none, which restores with the
+            // defaults below (see ``SessionRecord/configuration``).
+            let configuration = node.record.configuration
             // The recorded budget and prompt, grouped again with the rule
             // this call's host supplied. A pre-envelope recording gets the
             // default settings with that rule.
@@ -405,8 +407,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                         session: node.id, toolName: toolName))
             }
 
-            // In the envelope with the settle period setting. A sidecar
-            // written before it carries `nil` and gets the default.
+            // In the envelope with the settle period setting. A record whose
+            // envelope holds none gets the default.
             let inlineSettleGrace = configuration?.inlineSettleGrace ?? ToolMount.defaultInlineSettleGrace
 
             // Per-node event wiring plus per-session tool instancing —
@@ -427,7 +429,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // (task ^58gn0mt), on each node, because one client owns the
             // whole restored tree. With no supplied value, the run plane
             // gets the recorded user presence (task ^0hps8jg), so a restored
-            // headless session stays headless. A sidecar with no envelope,
+            // headless session stays headless. A record with no envelope,
             // with no presence, or with a presence that this version does
             // not know restores interactive, the default.
             let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
@@ -466,13 +468,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             let usageState = TranscriptTree.restoredUsageState(
                 in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: .generationCall))
             let effectiveEvents = try tree.effectiveEntryEvents(forSession: node.id)
-            // `SessionSidecar.grammar` is only the grammar's `source`
+            // `SessionRecord.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
             // `.ebnf(_:)`, which share that representation — so a session
             // originally guided by `.ebnf(_:)` restores under the
             // `.jsonSchema` case instead (see this function's doc comment,
             // "Known limitation: `.ebnf` grammar case").
-            let grammar = node.sidecar.grammar.map(Grammar.jsonSchema)
+            let grammar = node.record.grammar.map(Grammar.jsonSchema)
 
             // Crash-edge run-outcome durability: a journaled run with a non-terminal recorded event (`.progress`,
             // `.elicitation` or `.message`) and no `.completed` for the same
@@ -497,14 +499,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 id: node.id,
                 parentId: node.parentId,
                 recordingDirectory: node.directory,
-                // Restored from the node's own sidecar (task 6j4bven
+                // Restored from the node's own record (task 6j4bven
                 // creation-metadata ask, task 6j4bven) rather than defaulted
                 // to `node.directory`: a session vended with an overridden
                 // working directory must reassemble against that same
                 // directory, not silently fall back to its recording
                 // directory, or a restored session's tools would resolve
                 // files from the wrong place.
-                workingDirectory: node.sidecar.workingDirectory,
+                workingDirectory: node.record.workingDirectory,
                 backend: backend,
                 slot: slot,
                 model: model,
@@ -532,10 +534,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // have shrunk to the compaction's live window (see
                 // ``RoutedSessionActor/historyOrdinal``).
                 historyOrdinal: effectiveEvents.count,
-                // Restored, not new: this node's sidecar is the write-once one
-                // read from disk just above, never rewritten. The writer travels
-                // only for forks taken from the restored session.
-                sidecarOrigin: SessionSidecarOrigin.restored(under: routedLLM.durableRecording),
+                // The run-level writer of the restoring handle: a later
+                // change of this session rewrites its `index.md`, and a fork
+                // taken from it writes its own.
+                indexWriter: routedLLM.durableRecording?.indexWriter,
                 // Rebuilt from disk, so this node's span is the one
                 // `restore(_:)` opened around the read above rather than one
                 // this factory opens. See `withSessionSpan`.
@@ -544,20 +546,19 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 usageState: usageState,
                 // The recorded configuration envelope re-applied (task
                 // ^ne5g9jn): the budget, its prompt and the priming opt-in
-                // come back as the node was vended with them. A pre-envelope
-                // recording carries `nil` and gets the same defaults it
-                // always restored with.
+                // come back as the node was vended with them. A record with
+                // no envelope gets the defaults.
                 autoCompactionBudget: compaction.budget,
                 autoCompactionPrompt: compaction.prompt,
                 discoveryPriming: configuration?.discoveryPriming,
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.
                 toolOutputProtection: compaction.toolOutputProtection,
-                // In the envelope since task ^1hcwaqy. A sidecar written
-                // before it carries `nil` and gets the default.
+                // In the envelope since task ^1hcwaqy. An envelope that holds
+                // none gets the default.
                 repetitionDetection: configuration?.repetitionDetection ?? RepetitionDetection(),
-                // In the envelope since task ^9bxas0w. A sidecar written
-                // before it carries `nil` and gets the default.
+                // In the envelope since task ^9bxas0w. An envelope that holds
+                // none gets the default.
                 mailOnlyAnswerLimit: configuration?.mailOnlyAnswerLimit
                     ?? SessionConfiguration.defaultMailOnlyAnswerLimit,
                 inlineSettleGrace: inlineSettleGrace,
@@ -575,11 +576,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // The hooks of the restoring router: a `.resumed` start with
                 // the recorded id, and the fork or sub-agent lineage.
                 hooks: restoredHooks(for: node, on: routedLLM),
-                // The node's own `facts.json`, read back as it was last
-                // written. A session recorded before the file existed
-                // restores with empty facts and a warning, and no file is
-                // written for it here.
-                facts: try SessionFacts.restored(from: node.directory)
+                // Restored, not new: the record read from the node's own
+                // `index.md`. Construction writes nothing.
+                record: .restored(node.record)
             )
             // Crash-edge mail durability (`mailbox.md`, section 5, problem
             // 14): each mail of this node that the transcript holds as queued
@@ -627,7 +626,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             to node: SessionNode, transcript: Transcript, on routedLLM: RoutedLLM
         ) async -> (instructions: String?, seedTranscript: Transcript) {
             let overrideForNode = node.id == rootId ? instructions : nil
-            let recorded = node.sidecar.instructions
+            let recorded = node.record.instructions
             guard let supplied = overrideForNode, supplied != recorded else {
                 return (overrideForNode ?? recorded, transcript)
             }
@@ -644,8 +643,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                     routerId: routedLLM.routerId,
                     sessionId: node.id,
                     parentId: node.parentId,
-                    slot: node.sidecar.slot,
-                    model: node.sidecar.model,
+                    slot: node.record.slot,
+                    model: node.record.model,
                     kind: .divergence,
                     text: RestoredSession.instructionsDivergenceText(
                         recorded: recorded, supplied: supplied)
@@ -672,13 +671,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 extension SessionNode {
     /// The kind and the parent that a restored node registers with in the
     /// session directory. A recorded fork is a `fork` of its source. A node
-    /// with no source is a `subagent` of the session its sidecar's
-    /// ``SessionSidecar/agentSpawn`` names, else a `root` with no parent.
+    /// with no source is a `subagent` of the session its record's
+    /// ``SessionRecord/agentSpawn`` names, else a `root` with no parent.
     var directoryLineage: (kind: SessionKind, parentID: ULID?) {
         if let parentId {
             return (.fork, parentId)
         }
-        if let spawn = sidecar.agentSpawn {
+        if let spawn = record.agentSpawn {
             return (.subagent, spawn.parentSessionId)
         }
         return (.root, nil)

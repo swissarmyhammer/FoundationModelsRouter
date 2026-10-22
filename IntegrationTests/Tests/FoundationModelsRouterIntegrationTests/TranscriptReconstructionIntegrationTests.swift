@@ -97,12 +97,13 @@ struct TranscriptReconstructionIntegrationTests {
 
         // Assembled by hand rather than vended from `standard.makeSession()` —
         // the test needs the backend itself, to compare the reconstruction
-        // against the live `session.transcript` — and it lands its own sidecar
-        // all the same, because a session's sidecar is its own job rather than
-        // its builder's (see `SessionSidecarOrigin`). Every piece it takes
-        // comes off the handle the harness built, so the session records
-        // through the same recorder and the same root-plus-writer
-        // ``DurableRecording`` pair `Router.makeDurableRecording` builds.
+        // against the live `session.transcript` — and it lands its own
+        // `index.md` all the same, through `writeFirstIndex()` below, the one
+        // step `makeRoutedSessionActor` takes for every new session. Every
+        // piece it takes comes off the handle the harness built, so the
+        // session records through the same recorder and the same
+        // root-plus-writer ``DurableRecording`` pair
+        // `Router.makeDurableRecording` builds.
         let session = RoutedSessionActor(
             profile: profile,
             routerId: standard.routerId,
@@ -118,11 +119,11 @@ struct TranscriptReconstructionIntegrationTests {
             grammar: nil,
             persistedEntryCount: 0,
             historyOrdinal: 0,
-            // A new root under the vending handle's durable recording, exactly
-            // as `makeSession` names it: this session writes its own sidecar
-            // before it can record anything — which `TranscriptTree.load` below
-            // requires — and so does any fork taken from it.
-            sidecarOrigin: .new(under: standard.durableRecording),
+            // The vending handle's index writer, exactly as `makeSession`
+            // hands it on: this session keeps its own `index.md` — which
+            // `TranscriptTree.load` below requires — and so does any fork
+            // taken from it.
+            indexWriter: standard.durableRecording?.indexWriter,
             // The handle's own resolved window, exactly as `makeSession`
             // hands it on.
             contextTokens: standard.contextTokens,
@@ -134,6 +135,9 @@ struct TranscriptReconstructionIntegrationTests {
             // session reports to the same backend as the handle it came off.
             tracer: standard.tracer
         )
+        // Before the session records anything, so the transcript has its
+        // `index.md` beside it.
+        session.writeFirstIndex()
 
         return Harness(
             session: session,

@@ -42,7 +42,10 @@ import Synchronization
 /// delivered message in the ledger of its target (``SessionMessageLedger``,
 /// ROUTER-4), and sends `messageDelivered`; ``inbox(of:markRead:)`` and
 /// ``message(_:to:)`` read that ledger, and a read mark withdraws the mail
-/// that still waits. The other requirements of the port have provisional
+/// that still waits. ``setAdditionalDirectories(to:for:)`` changes the
+/// ``SessionRecord`` of a live or recorded session, and
+/// ``recordedSessions(in:)`` lists the records of a recording root with no
+/// router. The other requirements of the port have provisional
 /// bodies that later cards replace: the tag and title changes (ROUTER-3) and
 /// ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
@@ -52,8 +55,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// of session.md.
     static let defaultAgentID = "default"
 
-    /// The origin of a session that recorded none. A session from before
-    /// `facts.json` was opened by an ACP `session/new`, so its origin is the
+    /// The origin of a session that recorded none. A record with no origin
+    /// is of a session an ACP `session/new` opened, so its origin is the
     /// client. Confirmed by the owner of session.md.
     static let defaultOrigin: FoundationModelsExtras.SessionDirectoryOrigin = .client
 
@@ -318,6 +321,31 @@ public actor RouterSessionDirectory: SessionDirectory {
         try RecordedSessions(roots: try await recordingRoots()).summaries()
     }
 
+    /// Lists the session folders of a recording root and returns the
+    /// ``SessionRecord`` decoded from the `index.md` of each folder: the one
+    /// file a listing reads. A host calls it with no router, for example for
+    /// the ACP `session/list`, `session/delete` and `session/resume`, and for
+    /// snapshots.
+    ///
+    /// Each folder named by a ULID that holds an `index.md` is a session; a
+    /// folder with no `index.md` is not, and is left out. Router filters
+    /// nothing more: a listing for a client can leave out each record whose
+    /// ``SessionRecord/firstActivityAt`` is `nil`, a session that had no
+    /// prompt.
+    ///
+    /// - Parameter recordingRoot: A recording root: the folder that holds the
+    ///   session folders.
+    /// - Returns: One record for each session, newest first
+    ///   (``SessionRecord/sessionId`` descending), or none when the root does
+    ///   not exist.
+    /// - Throws: The error of the listing of a root that exists, or the read
+    ///   error of an `index.md` that exists: ``SessionIndexFileError`` when it
+    ///   holds no frontmatter or the frontmatter does not decode, or a
+    ///   recording schema error when the record is from a newer router.
+    public static func recordedSessions(in recordingRoot: URL) throws -> [SessionRecord] {
+        try RecordedSessions(roots: [recordingRoot]).records()
+    }
+
     /// The live summaries, and each recorded summary whose session is not
     /// live: a live session wins over its own record.
     ///
@@ -401,9 +429,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   and the facts of the session.
     /// - Returns: The summary of the new session.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
-    ///   launcher, the error of the launcher, the error of a write of the
-    ///   facts of the session, the refusal of the first message, or
-    ///   `SessionDirectoryError.unknownSession` when the session closed
+    ///   launcher, the error of the launcher, the refusal of the first
+    ///   message, or `SessionDirectoryError.unknownSession` when the session closed
     ///   before `start` returns.
     public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
         let session = try await launch(
@@ -423,12 +450,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - firstMail: The mail that carries the first message of `request`.
     /// - Returns: The new session.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
-    ///   launcher, the error of the launcher, the error of a write of the
-    ///   facts of the session, or the refusal of the first mail.
+    ///   launcher, the error of the launcher, or the refusal of the first
+    ///   mail.
     private func launch(_ request: SessionStartRequest, firstMail: Mail) async throws -> any RoutedSession {
         guard let launcher else { throw SessionDirectoryError.noLauncher }
         let session = try await launcher.launchRootSession(for: request)
-        try admit(session: session, startedFor: request)
+        admit(session: session, startedFor: request)
         _ = try session.mail(firstMail)
         return session
     }
@@ -446,14 +473,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameters:
     ///   - session: The session that the launcher returned.
     ///   - request: The start request of the session.
-    /// - Throws: The error of a write of `facts.json`.
-    private func admit(session: any RoutedSession, startedFor request: SessionStartRequest) throws {
+    private func admit(session: any RoutedSession, startedFor request: SessionStartRequest) {
         guard isRegistered(session: session) else {
-            try Self.writeMissingFacts(of: request, to: session)
+            Self.writeMissingFacts(of: request, to: session)
             register(session, kind: .root, parentID: nil, requestedByClient: request.requestedByClient)
             return
         }
-        if try Self.writeMissingFacts(of: request, to: session) {
+        if Self.writeMissingFacts(of: request, to: session) {
             recordFactsChange(of: session.id)
         }
     }
@@ -492,11 +518,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - request: The start request of the session.
     ///   - session: The session that the launcher returned.
     /// - Returns: `true` when the call changed the facts of `session`.
-    /// - Throws: The error of the write of `facts.json`.
     @discardableResult
     private static func writeMissingFacts(
         of request: SessionStartRequest, to session: any RoutedSession
-    ) throws -> Bool {
+    ) -> Bool {
         var completed = session.facts
         complete(facts: &completed, with: request)
         guard completed != session.facts else { return false }
@@ -507,7 +532,7 @@ public actor RouterSessionDirectory: SessionDirectory {
                 metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
             return false
         }
-        try actor.updateFacts { complete(facts: &$0, with: request) }
+        actor.updateFacts { complete(facts: &$0, with: request) }
         return true
     }
 
@@ -751,9 +776,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - message: The message.
     /// - Returns: The `started` receipt, with the new session as its target.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
-    ///   launcher, the error of the launcher, the error of a write of the
-    ///   facts of the session, the refusal of the first mail, or the error of
-    ///   a read of the ledger of the new session.
+    ///   launcher, the error of the launcher, the refusal of the first mail,
+    ///   or the error of a read of the ledger of the new session.
     private func startAgent(
         _ agentID: String, in folder: URL?, for message: OutgoingSessionMessage
     ) async throws -> SessionSendReceipt {
@@ -933,7 +957,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Returns: The recording directory, or `nil` for a memory-only
     ///   session.
     private static func ledgerDirectory(of session: any RoutedSession) -> URL? {
-        guard let actor = session as? RoutedSessionActor, actor.sidecarOrigin.recordsFacts else { return nil }
+        guard let actor = session as? RoutedSessionActor, actor.persistsIndex else { return nil }
         return session.recordingDirectory
     }
 
@@ -946,10 +970,99 @@ public actor RouterSessionDirectory: SessionDirectory {
         state.withLock { $0.entries[id]?.session }
     }
 
+    // MARK: - Record changes
+
+    /// Sets the folders a host added to the working folder of the session
+    /// `id` (``SessionRecord/additionalDirectories``), rewrites the `index.md`
+    /// of the session, and sends `factsChanged` with its summary.
+    ///
+    /// - Parameters:
+    ///   - directories: The added folders, in the order the host gives them.
+    ///   - id: The session id.
+    /// - Returns: The summary of the session after the change.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id, the error of the recording roots of the
+    ///   host, or the error of the read or the save of the `index.md` of a
+    ///   recorded session that is not live.
+    @discardableResult
+    public func setAdditionalDirectories(to directories: [URL], for id: ULID) async throws -> SessionSummary {
+        try await changeRecord(of: id) { $0.additionalDirectories = directories }
+    }
+
+    /// Changes the record of the session `id` and sends `factsChanged` with
+    /// its summary: the one path of each change of a record from the
+    /// directory.
+    ///
+    /// A live session changes its own record (``RoutedSessionActor/updateRecord(_:)``),
+    /// which saves its `index.md` best effort, and its live entry stamps the
+    /// time of the change. A recorded session that is not live is read from
+    /// the `index.md` of its folder, changed, and saved back; a failed save
+    /// throws, because no session goes on to hold the change.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - change: The change to apply to the record.
+    /// - Returns: The summary of the session after the change.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id, or when the live session is not a
+    ///   ``RoutedSessionActor``; the error of the recording roots of the
+    ///   host; or the error of the read or the save of the `index.md` of a
+    ///   recorded session.
+    private func changeRecord(
+        of id: ULID, _ change: @Sendable (inout SessionRecord) -> Void
+    ) async throws -> SessionSummary {
+        if let session = liveSession(id) {
+            return try changeLiveRecord(of: session, change)
+        }
+        guard let folder = try await recordedFolder(of: id),
+            var record = try SessionIndexFile.read(in: folder)
+        else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        change(&record)
+        try SessionIndexFile.save(record, in: folder)
+        let summary = RecordedSessions.summary(of: record)
+        emit(.factsChanged(summary))
+        return summary
+    }
+
+    /// Changes the record of a live session through the session itself, and
+    /// sends `factsChanged` with its live summary (``recordFactsChange(of:)``).
+    ///
+    /// Only a ``RoutedSessionActor`` can change its record. Each session that
+    /// a router vends is one, so another live session is a surprise: the
+    /// call stops a debug build, logs the surprise, and changes nothing.
+    ///
+    /// - Parameters:
+    ///   - session: The live session.
+    ///   - change: The change to apply to the record.
+    /// - Returns: The live summary of the session after the change.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session is
+    ///   not a ``RoutedSessionActor``, or when it left the directory before
+    ///   its summary was read.
+    private func changeLiveRecord(
+        of session: any RoutedSession, _ change: @Sendable (inout SessionRecord) -> Void
+    ) throws -> SessionSummary {
+        guard let actor = session as? RoutedSessionActor else {
+            assertionFailure("a live session that cannot change its record")
+            RouterTelemetry.makeLogger(.sessionDirectory).error(
+                "a live session cannot change its record; the record stays as the session holds it",
+                metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
+            throw SessionDirectoryError.unknownSession(session.id)
+        }
+        actor.updateRecord(change)
+        recordFactsChange(of: session.id)
+        guard let summary = liveSummary(of: session.id) else {
+            throw SessionDirectoryError.unknownSession(session.id)
+        }
+        return summary
+    }
+
     // MARK: - Provisional bodies
 
     /// See `SessionDirectory.addTags(_:to:)`. Provisional until the tags card
-    /// of ROUTER-3.
+    /// of ROUTER-3 (^axhfdx1), which makes it a change through
+    /// `changeRecord(of:_:)`.
     ///
     /// - Parameters:
     ///   - tags: The tags to add.
@@ -961,7 +1074,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// See `SessionDirectory.removeTags(_:from:)`. Provisional until the tags
-    /// card of ROUTER-3.
+    /// card of ROUTER-3 (^axhfdx1), which makes it a change through
+    /// `changeRecord(of:_:)`.
     ///
     /// - Parameters:
     ///   - tags: The tags to remove.
@@ -973,7 +1087,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// See `SessionDirectory.setTitle(_:of:)`. Provisional until the tags card
-    /// of ROUTER-3.
+    /// of ROUTER-3 (^axhfdx1), which makes it a change through
+    /// `changeRecord(of:_:)`.
     ///
     /// - Parameters:
     ///   - title: The new title.
@@ -984,7 +1099,8 @@ public actor RouterSessionDirectory: SessionDirectory {
         throw SessionDirectoryError.unknownSession(id)
     }
 
-    /// See `SessionDirectory.archive(_:by:)`. Provisional until ROUTER-11.
+    /// See `SessionDirectory.archive(_:by:)`. Provisional until ROUTER-11
+    /// (^4vjph7b), which makes it a change through `changeRecord(of:_:)`.
     ///
     /// - Parameters:
     ///   - id: The session id.

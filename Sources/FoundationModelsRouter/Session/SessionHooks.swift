@@ -9,7 +9,7 @@ import Synchronization
 enum HookParent: Sendable, Equatable {
     /// The session that started the new session as a sub-agent: the session
     /// of the parent call (``SessionConfiguration/parentCall``), or the
-    /// recorded spawn parent (``SessionSidecar/AgentSpawn/parentSessionId``).
+    /// recorded spawn parent (``SessionRecord/AgentSpawn/parentSessionId``).
     case subagent(sessionID: String, sessionKey: String)
 
     /// The session that the new session is a fork of, with the working

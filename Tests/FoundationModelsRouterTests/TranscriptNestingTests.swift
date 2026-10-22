@@ -544,11 +544,20 @@ struct TranscriptNestingTests {
         #expect(events.map(\.seq) == Array(0..<events.count))
     }
 
-    // MARK: - The run's resolved-profile facts, on each root session's sidecar
+    // MARK: - The run's resolved-profile facts, on each root session's record
 
-    @Test("a root session's sidecar records the run's recording level and resolved-profile facts")
+    /// The explicit working context, in tokens, of `Self.profile`.
+    private static let explicitContextTokens = 8192
+
+    /// The native max context, in tokens, that
+    /// `rawMetadataWithNativeMax32768` declares.
+    private static let nativeMaxContextTokens = 32_768
+
+    /// A root session's `index.md` record holds the recording level of the
+    /// run and the facts of the profile it resolved.
+    @Test("a root session's index.md records the run's recording level and resolved-profile facts")
     @MainActor
-    func rootSidecarRecordsRecordingLevelAndResolvedProfile() async throws {
+    func rootRecordHoldsRecordingLevelAndResolvedProfile() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -565,19 +574,19 @@ struct TranscriptNestingTests {
 
         let root = profile.standard.makeSession()
         defer { await root.close() }
-        let sidecar = try #require(
-            try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
+        let record = try #require(
+            try SessionIndexFile.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 
-        #expect(sidecar.recordingLevel == .full)
-        let resolved = try #require(sidecar.profile)
+        #expect(record.recordingLevel == .full)
+        let resolved = try #require(record.profile)
         #expect(resolved.definitionName == "coding")
         #expect(resolved.standard == profile.standard.chosen)
         #expect(resolved.flash == profile.flash.chosen)
         #expect(resolved.embedding == profile.embedding.chosen)
         // `Self.profile` uses the default explicit context (8192), so the
-        // window search never runs and the sidecar records that figure verbatim.
-        #expect(resolved.context == 8192)
-        #expect(sidecar.context == 8192)
+        // window search never runs and the record holds that figure verbatim.
+        #expect(resolved.context == Self.explicitContextTokens)
+        #expect(record.context == Self.explicitContextTokens)
     }
 
     /// The recording directory of a root session vended under `recordingsDir`.
@@ -587,9 +596,11 @@ struct TranscriptNestingTests {
             .appendingPathComponent(session.id.description, isDirectory: true)
     }
 
-    @Test("a root sidecar recording a derived context round-trips through disk")
+    /// A root session's record holds a derived working context, and it
+    /// reads back from `index.md` as it was resolved.
+    @Test("a root index.md recording a derived context round-trips through disk")
     @MainActor
-    func rootSidecarRecordsDerivedContext() async throws {
+    func rootRecordHoldsDerivedContext() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -620,16 +631,16 @@ struct TranscriptNestingTests {
 
         let root = profile.standard.makeSession()
         defer { await root.close() }
-        let sidecar = try #require(
-            try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
+        let record = try #require(
+            try SessionIndexFile.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 
         // The tiny fixture model's footprint is trivial next to the 48 GB
         // budget at any window, so the search settles on the candidate's own
         // native max context (32768) at its first try — never computing a
         // smaller window, and distinguishable from both the 8192
         // explicit-context figure and the shared fixture's 8192 window.
-        let resolved = try #require(sidecar.profile)
-        #expect(resolved.context == 32_768)
+        let resolved = try #require(record.profile)
+        #expect(resolved.context == Self.nativeMaxContextTokens)
         #expect(resolved.standard == profile.standard.chosen)
     }
 }

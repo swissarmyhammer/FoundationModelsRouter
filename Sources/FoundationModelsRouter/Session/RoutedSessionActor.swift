@@ -200,13 +200,13 @@ func makeRoutedSessionActor(
     runPlane: RunPlane = RunPlane(),
     persistedEntryCount: Int,
     historyOrdinal: Int,
-    sidecarOrigin: SessionSidecarOrigin,
+    indexWriter: SessionIndexWriter?,
     origin: RouterTelemetry.SessionOrigin,
     contextTokens: Int,
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
     autoCompactionPrompt: CompactionPrompt = .default,
-    agentSpawn: SessionSidecar.AgentSpawn? = nil,
+    agentSpawn: SessionRecord.AgentSpawn? = nil,
     discoveryPriming: DiscoveryPriming? = nil,
     toolOutputProtection: ToolOutputProtection? = nil,
     repetitionDetection: RepetitionDetection = RepetitionDetection(),
@@ -217,7 +217,7 @@ func makeRoutedSessionActor(
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?,
     hooks: SessionHooks?,
-    facts: SessionFacts = SessionFacts()
+    record: SessionRecordSource
 ) -> RoutedSessionActor {
     // The construction itself, so the one parameter list below is written once
     // whether or not this factory is the site that opens the session's span.
@@ -241,7 +241,7 @@ func makeRoutedSessionActor(
             runPlane: runPlane,
             persistedEntryCount: persistedEntryCount,
             historyOrdinal: historyOrdinal,
-            sidecarOrigin: sidecarOrigin,
+            indexWriter: indexWriter,
             contextTokens: contextTokens,
             usageState: usageState,
             autoCompactionBudget: autoCompactionBudget,
@@ -257,7 +257,7 @@ func makeRoutedSessionActor(
             tokenCounter: tokenCounter,
             tracer: tracer,
             hooks: hooks,
-            facts: facts
+            record: record
         )
     }
     // A restored node's span is already open around the transcript read that
@@ -275,6 +275,13 @@ func makeRoutedSessionActor(
             tracer: tracer,
             construct
         )
+    // A new session writes its first `index.md` here, after its construction
+    // and before it records anything, so any transcript a reader finds has
+    // its record beside it. A restored session's `index.md` is already on
+    // disk.
+    if case .new = record {
+        session.writeFirstIndex()
+    }
     // The session exists now, so its `SessionStart` goes out. Each shape
     // (vended, forked, restored) comes through here.
     hooks?.start()
@@ -677,26 +684,26 @@ actor RoutedSessionActor: RoutedSession {
     var repetitionWatch = RepetitionWatchState()
 
     /// The settings of the repetition watch this session was vended,
-    /// forked or restored with. A fork carries it forward, and the sidecar
-    /// records it. See ``RepetitionDetection``.
+    /// forked or restored with. A fork carries it forward, and the session's
+    /// `index.md` records it. See ``RepetitionDetection``.
     nonisolated let repetitionDetection: RepetitionDetection
 
     /// The most answers that mail alone starts and that start a new
     /// background run, which this session was vended, forked or restored
-    /// with. A fork carries it forward, and the sidecar records it. See
+    /// with. A fork carries it forward, and the session's `index.md` records it. See
     /// ``SessionConfiguration/mailOnlyAnswerLimit``.
     nonisolated let mailOnlyAnswerLimit: Int
 
     /// How long each background tool call of this session waits for its own
     /// run, in seconds, which this session was vended, forked or restored
     /// with. Never negative. The mount site of each tool of the session holds
-    /// it. A fork carries it forward, and the sidecar records it. See
+    /// it. A fork carries it forward, and the session's `index.md` records it. See
     /// ``SessionConfiguration/inlineSettleGrace``.
     nonisolated let inlineSettleGrace: TimeInterval
 
     /// The host check that marks a tool call as a no-op, which this session
-    /// was vended or forked with. A fork carries it forward. The sidecar never
-    /// records it, because it is a closure. See ``NoOpToolCallCheck`` and
+    /// was vended or forked with. A fork carries it forward. The session's
+    /// `index.md` never records it, because it is a closure. See ``NoOpToolCallCheck`` and
     /// ``checkToolCallForNoOp(toolName:arguments:)``.
     nonisolated let isNoOpToolCall: NoOpToolCallCheck
 
@@ -823,9 +830,10 @@ actor RoutedSessionActor: RoutedSession {
     /// the reconstructed count for a restored session. It never rewinds.
     var historyOrdinal: Int
 
-    /// Where this session's `session.json` comes from. Handed on to every fork
-    /// taken from this session (see ``SessionSidecarOrigin/forFork``).
-    nonisolated let sidecarOrigin: SessionSidecarOrigin
+    /// The run-level facts of this session's `index.md`, or `nil` for a
+    /// session that records nothing durably. Handed on to every fork taken
+    /// from this session. See ``persistsIndex``.
+    nonisolated let indexWriter: SessionIndexWriter?
 
     /// The resolved working context, in tokens, that ``contextFill`` divides
     /// its numerator by.
@@ -861,7 +869,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The host rule whose protected tool outputs every compaction on this session
     /// keeps word for word, or `nil` to protect nothing. A fork carries it
-    /// forward. The sidecar never records it, because it is a closure; a
+    /// forward. The session's `index.md` never records it, because it is a closure; a
     /// restore takes it from the host again. See ``ToolOutputProtection``.
     nonisolated let toolOutputProtection: ToolOutputProtection?
 
@@ -874,9 +882,9 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The parent session and tool call that spawned this session, or `nil`.
     /// Stamped on this session's `session` meta event
-    /// (``TranscriptEvent/agentSpawn``) and written to its sidecar
-    /// (``SessionSidecar/agentSpawn``). A fork's is always `nil`.
-    nonisolated let agentSpawn: SessionSidecar.AgentSpawn?
+    /// (``TranscriptEvent/agentSpawn``) and written to its record
+    /// (``SessionRecord/agentSpawn``). A fork's is always `nil`.
+    nonisolated let agentSpawn: SessionRecord.AgentSpawn?
 
     /// The hooks of this session, or `nil` when the router has no hook
     /// dispatcher. The session factory starts them (`SessionStart`), and
@@ -884,20 +892,21 @@ actor RoutedSessionActor: RoutedSession {
     /// own hooks from them (``SessionHooks/makeForkHooks(sessionID:workingDirectory:)``).
     nonisolated let hooks: SessionHooks?
 
-    /// The lock and the value of ``facts``. A lock keeps them, so a
+    /// The lock and the value of ``record``. A lock keeps them, so a
     /// synchronous caller reads them with no `await`, and
-    /// ``updateFacts(_:)`` rewrites `facts.json` and swaps the value as one
-    /// step.
-    nonisolated let factsState: Mutex<SessionFacts>
+    /// ``updateRecord(_:)`` saves `index.md` and swaps the value as one step.
+    nonisolated let recordState: Mutex<SessionRecord>
 
-    /// Creates a session, and writes its `session.json` and its first
-    /// `facts.json` when the session is new. A failed write is logged and
-    /// dropped.
+    /// Creates a session. Construction writes nothing to disk:
+    /// `makeRoutedSessionActor` writes the first `index.md` of a new session
+    /// (``writeFirstIndex()``).
     ///
     /// Each parameter is documented on the stored property it initializes.
-    /// `recordingRoot` is not stored; the sidecar write reads it (see
-    /// ``SessionSidecar/configuration``). `facts` initializes
-    /// ``factsState``.
+    /// `recordingRoot` is not stored; the configuration envelope of a new
+    /// record reads it (see ``SessionRecord/configuration``). `record` gives
+    /// the first value of ``recordState``: the first facts of a new session,
+    /// from which the session makes its record, or the record of a restored
+    /// session.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -917,12 +926,12 @@ actor RoutedSessionActor: RoutedSession {
         runPlane: RunPlane = RunPlane(),
         persistedEntryCount: Int,
         historyOrdinal: Int,
-        sidecarOrigin: SessionSidecarOrigin,
+        indexWriter: SessionIndexWriter?,
         contextTokens: Int,
         usageState: ContextUsageState = .none,
         autoCompactionBudget: TokenBudget? = nil,
         autoCompactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        agentSpawn: SessionRecord.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
@@ -933,10 +942,62 @@ actor RoutedSessionActor: RoutedSession {
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?,
         hooks: SessionHooks? = nil,
-        facts: SessionFacts = SessionFacts()
+        record: SessionRecordSource = .new(SessionFacts())
     ) {
         self.hooks = hooks
-        self.factsState = Mutex(facts)
+        switch record {
+        case .restored(let restored):
+            self.recordState = Mutex(restored)
+        case .new(let facts):
+            // A session with no parent is a root and carries no cut point; a
+            // fork records both coordinates of its cut, each read from the
+            // one stored value it equals at construction: the positional
+            // `forkedAtEntryCount` is its diff baseline
+            // (`persistedEntryCount`), and the append-only
+            // `forkedAtHistoryOrdinal` is its starting `historyOrdinal`. The
+            // run's resolved profile is stated once, on the root.
+            self.recordState = Mutex(
+                SessionRecord(
+                    sessionId: id,
+                    workingDirectory: workingDirectory,
+                    updatedAt: Date(),
+                    slot: slot,
+                    model: model,
+                    context: contextTokens,
+                    recordingLevel: indexWriter?.recordingLevel ?? .off,
+                    routerId: routerId,
+                    facts: facts,
+                    forkParentId: parentId,
+                    forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
+                    forkedAtHistoryOrdinal: parentId == nil ? nil : historyOrdinal,
+                    instructions: instructions,
+                    grammar: grammar?.source,
+                    profile: parentId == nil ? indexWriter?.profile : nil,
+                    agentSpawn: agentSpawn,
+                    // The configuration envelope (task ^ne5g9jn), assembled
+                    // from this session's own effective values so a root and
+                    // a fork alike record what they actually run with —
+                    // `originalTools` supplies the by-name tool list, never
+                    // the instanced wrappers. Built through
+                    // `SessionConfiguration` so create time and restore time
+                    // share one vocabulary (see ``SessionRecord/configuration``).
+                    // The run plane holds the one copy of the user presence,
+                    // so the record holds the presence the session runs with.
+                    configuration: SessionConfiguration(
+                        instructions: instructions,
+                        workingDirectory: workingDirectory,
+                        recordingRoot: recordingRoot,
+                        tools: originalTools,
+                        compaction: CompactionSettings(budget: autoCompactionBudget, prompt: autoCompactionPrompt),
+                        agentSpawn: agentSpawn,
+                        discoveryPriming: discoveryPriming,
+                        grammar: grammar,
+                        repetitionDetection: repetitionDetection,
+                        mailOnlyAnswerLimit: mailOnlyAnswerLimit,
+                        inlineSettleGrace: max(0, inlineSettleGrace),
+                        userPresence: runPlane.userPresence
+                    ).persistable))
+        }
         self.toolOutputProtection = toolOutputProtection
         self.isNoOpToolCall = isNoOpToolCall
         self.repetitionDetection = repetitionDetection
@@ -969,7 +1030,7 @@ actor RoutedSessionActor: RoutedSession {
         self.historyOrdinal = historyOrdinal
         self.settledTranscript = SettledTranscript(
             entries: seedEntries, recordedEntryCount: persistedEntryCount, historyOrdinal: historyOrdinal)
-        self.sidecarOrigin = sidecarOrigin
+        self.indexWriter = indexWriter
         self.contextTokens = contextTokens
         self.usageState = usageState
         self.autoCompactionBudget = autoCompactionBudget
@@ -990,51 +1051,6 @@ actor RoutedSessionActor: RoutedSession {
         outbox.bind(catalogNoticeArrival: { [weak self] mail in await self?.catalogNoticeDidArrive(mail) })
         // Before any lease begins, so the task reads each transition.
         observeWorkTransitions()
-
-        // The session's own directory is brought into existence here, by its
-        // write-once sidecar, before the session exists to record anything into
-        // it — so any transcript a reader finds always has the facts to
-        // interpret it sitting beside it. A session with no parent is a root
-        // and carries no cut point; a fork records both coordinates of its
-        // cut, each read from the one stored value it equals at construction:
-        // the legacy positional `forkedAtEntryCount` is its diff baseline
-        // (`persistedEntryCount`), and the append-only
-        // `forkedAtHistoryOrdinal` is its starting `historyOrdinal`.
-        sidecarOrigin.writeSidecarIfNew(
-            instructions: instructions,
-            grammar: grammar?.source,
-            forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
-            forkedAtHistoryOrdinal: parentId == nil ? nil : historyOrdinal,
-            workingDirectory: workingDirectory,
-            agentSpawn: agentSpawn,
-            // The configuration envelope (task ^ne5g9jn), assembled here from
-            // this session's own effective values so a root and a fork alike
-            // record what they actually run with — `originalTools` supplies
-            // the by-name tool list, never the instanced wrappers. Built
-            // through `SessionConfiguration` so create time and restore time
-            // share one vocabulary (see ``SessionSidecar/configuration``).
-            configuration: SessionConfiguration(
-                instructions: instructions,
-                workingDirectory: workingDirectory,
-                recordingRoot: recordingRoot,
-                tools: originalTools,
-                compaction: CompactionSettings(budget: autoCompactionBudget, prompt: autoCompactionPrompt),
-                agentSpawn: agentSpawn,
-                discoveryPriming: discoveryPriming,
-                grammar: grammar,
-                repetitionDetection: repetitionDetection,
-                mailOnlyAnswerLimit: mailOnlyAnswerLimit,
-                inlineSettleGrace: self.inlineSettleGrace,
-                // The run plane holds the one copy of the user presence, so
-                // the sidecar records the presence that the session runs with.
-                userPresence: self.runPlane.userPresence
-            ).persistable,
-            to: recordingDirectory
-        )
-        // After the sidecar, which brings the directory into existence. The
-        // mutable facts live in their own file, so `session.json` stays
-        // write-once.
-        sidecarOrigin.writeFactsIfNew(facts, to: recordingDirectory)
     }
 
     /// Closes the work registry of a session that ``close()`` never closed,

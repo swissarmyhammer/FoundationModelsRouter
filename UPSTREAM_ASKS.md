@@ -27,9 +27,9 @@ The answer side is ready: `RoutedSession.respond(elicitationId:response:)` (Rout
 
 From: FoundationModelsACPAgent, task ^nh9myws.
 
-A host can learn that a run spawned a subagent only from `session.json`. Please expose the spawn fact on `TranscriptEvent`, so a live consumer sees it without a file read.
+A host can learn that a run spawned a subagent only from the session's `index.md`. Please expose the spawn fact on `TranscriptEvent`, so a live consumer sees it without a file read.
 
-**Answer:** Router commit 1e4552b adds the public field `TranscriptEvent.agentSpawn` and its partial `TranscriptEvent.Partial.agentSpawn` in `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`. The recorder stamps the value on the `.session` event only. The value is the same `SessionSidecar.AgentSpawn` that `session.json` holds. The suites `TranscriptEventSchemaTests`, `SessionSidecarTests`, and `MergedAndRedactionTests` in `Tests/FoundationModelsRouterTests` show this. Known limit: the `.session` event lands at the first submission, not at `makeSession`, so a live sink sees the spawn fact when the first submission starts. A fork carries `nil`.
+**Answer:** Router commit 1e4552b adds the public field `TranscriptEvent.agentSpawn` and its partial `TranscriptEvent.Partial.agentSpawn` in `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`. The recorder stamps the value on the `.session` event only. The value is the same `SessionRecord.AgentSpawn` that the session's `index.md` holds. The suites `TranscriptEventSchemaTests`, `SessionIndexFileTests`, and `MergedAndRedactionTests` in `Tests/FoundationModelsRouterTests` show this. Known limit: the `.session` event lands at the first submission, not at `makeSession`, so a live sink sees the spawn fact when the first submission starts. A fork carries `nil`.
 
 ## Ask 3 — a public read of the resolved standard-slot context in tokens
 

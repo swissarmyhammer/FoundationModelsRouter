@@ -164,11 +164,11 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// Set only on the ``Kind/session`` event of a session made with an
     /// `agentSpawn`. `nil` for a root session, for a fork, on every other
     /// kind, and on a recording made before this key existed. The value
-    /// matches ``SessionSidecar/agentSpawn`` in the session's `session.json`.
+    /// matches ``SessionRecord/agentSpawn`` in the session's `index.md`.
     /// A live sink sees it when the first submission of the session begins,
     /// because the `session` event is recorded at the first submission, not at
     /// session creation.
-    public let agentSpawn: SessionSidecar.AgentSpawn?
+    public let agentSpawn: SessionRecord.AgentSpawn?
 
     /// `true` when this event is the close the router appends to a submission
     /// of an answer that ended with no `.response` entry from the SDK (see
@@ -221,7 +221,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         callMs: Int? = nil,
         firstTokenSeen: Bool? = nil,
         entry: TranscriptEntryPayload? = nil,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
+        agentSpawn: SessionRecord.AgentSpawn? = nil
     ) {
         self.routerId = routerId
         self.sessionId = sessionId
@@ -290,7 +290,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// The spawn context, or `nil`. Set only on a ``Kind/session``
         /// partial of a session made with an `agentSpawn`; see
         /// ``TranscriptEvent/agentSpawn``.
-        public let agentSpawn: SessionSidecar.AgentSpawn?
+        public let agentSpawn: SessionRecord.AgentSpawn?
 
         /// Describes an event without its recorder-owned ordering fields.
         init(
@@ -311,7 +311,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             callMs: Int? = nil,
             firstTokenSeen: Bool? = nil,
             entry: TranscriptEntryPayload? = nil,
-            agentSpawn: SessionSidecar.AgentSpawn? = nil
+            agentSpawn: SessionRecord.AgentSpawn? = nil
         ) {
             self.routerId = routerId
             self.sessionId = sessionId
@@ -383,7 +383,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             )
         }
 
-        // sah:allow duplication forwards a Partial's fields plus the recorder-stamped seq and ts into a TranscriptEvent's memberwise initializer; withCompactionCount in SessionSidecar.swift copies a SessionSidecar, a different type with a different field list, so the two bodies share shape only and a change to one never applies to the other
+        // sah:allow duplication forwards a Partial's fields plus the recorder-stamped seq and ts into a TranscriptEvent's memberwise initializer; the other memberwise copies in this package build a different type with a different field list, so the bodies share shape only and a change to one never applies to the other
         /// Stamps this partial with a recorder-assigned `seq` and `ts`, and
         /// returns the finished ``TranscriptEvent``.
         func stamped(seq: Int, ts: Date) -> TranscriptEvent {

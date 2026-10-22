@@ -16,7 +16,7 @@ public struct RestoredSession: Sendable {
     /// ``ContextMismatch/resolved``. This is a warning, not an error, because
     /// the same model can resolve a different context on a different machine.
     public struct ContextMismatch: Sendable, Equatable {
-        /// The restored session whose ``SessionSidecar/context`` differs.
+        /// The restored session whose ``SessionRecord/context`` differs.
         public let session: ULID
 
         /// The working context, in tokens, the session was recorded at.
@@ -46,7 +46,7 @@ extension RestoredSession {
     /// not hold.
     ///
     /// The phrase names the whole restored session, and every word of it is
-    /// true. The supplied string reaches the session actor, the sidecar of
+    /// true. The supplied string reaches the session actor, the `index.md` of
     /// any later fork, and the transcript the model itself reads. See
     /// ``TranscriptDiffer/replacingLeadingInstructions(of:with:)``.
     ///
@@ -68,7 +68,7 @@ extension RestoredSession {
     /// string either.
     ///
     /// - Parameters:
-    ///   - recorded: The instructions the sidecar recorded, or `nil`. A `nil`
+    ///   - recorded: The instructions the session's `index.md` recorded, or `nil`. A `nil`
     ///     reads as a length of zero.
     ///   - supplied: The instructions the restoring caller supplied.
     /// - Returns: The event's body text.
@@ -86,7 +86,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// This is the resume surface. The session keeps its own id, its parent
     /// id, and its recording directory, so the next submission appends to the
     /// transcript already on disk. Its model and slot resolve from its
-    /// ``SessionSidecar`` against this call's owning profile, and a mismatch
+    /// ``SessionRecord`` against this call's owning profile, and a mismatch
     /// is a typed error. See
     /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` for what
     /// the restore re-applies and what it does not.
@@ -127,13 +127,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     is a closure, so a host gives it again here, as it gives the
     ///     tools. See ``SessionConfiguration/isNoOpToolCall``.
     ///   - userPresence: The user presence of the restored session, or `nil`
-    ///     (the default) to keep the recorded value. A sidecar with no
+    ///     (the default) to keep the recorded value. A record with no
     ///     recorded value restores ``UserPresence/interactive``. The user
     ///     presence belongs to the current client, not to the recording. A
     ///     host that resumes an interactive session with no user gives
     ///     ``UserPresence/headless`` here, and the reverse. The supplied value
     ///     also replaces the recorded value on each recorded fork. The
-    ///     recorded sidecar on disk does not change. A fork that the restored
+    ///     session's `index.md` on disk does not change. A fork that the restored
     ///     session makes later records the supplied value. See
     ///     ``SessionConfiguration/userPresence``.
     /// - Returns: The restored session and the two restore reports.
@@ -163,7 +163,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     }
 
     /// The working directory one recorded session was vended with, read from
-    /// its ``SessionSidecar`` without restoring it.
+    /// its ``SessionRecord`` without restoring it.
     ///
     /// A host that resumes a session in a working directory of its own must
     /// be able to compare that directory with the recorded one and refuse
@@ -188,6 +188,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         guard let node = tree.session(id) else {
             throw TranscriptTreeError.sessionNotFound(id)
         }
-        return node.sidecar.workingDirectory
+        return node.record.workingDirectory
     }
 }

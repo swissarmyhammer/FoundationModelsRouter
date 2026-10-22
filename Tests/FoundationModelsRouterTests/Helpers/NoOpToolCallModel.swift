@@ -346,7 +346,7 @@ struct NoOpToolCallSessionFixture {
     /// ^4nk083c). The restored session is the session of the fixture.
     ///
     /// The recorded session has no check, so a check on the restored
-    /// session can come only from the restore call. The sidecar is written
+    /// session can come only from the restore call. The `index.md` is written
     /// when the session is vended, so the recorded session gives no answer
     /// before the restore.
     ///

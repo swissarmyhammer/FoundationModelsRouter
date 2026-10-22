@@ -459,7 +459,7 @@ extension RoutedSessionActor {
 
     /// Records the `session` meta event once, before the first recorded entry.
     /// The event carries this session's ``agentSpawn``, so a live sink sees
-    /// the spawn fact without a read of `session.json`.
+    /// the spawn fact without a read of the session's `index.md`.
     func recordSessionMetaIfNeeded() async {
         guard !didRecordSessionMeta else { return }
         didRecordSessionMeta = true
@@ -526,7 +526,7 @@ extension RoutedSessionActor {
         tokensOut: Int? = nil,
         callTiming: GenerationCallTiming? = nil,
         callDuration: Duration? = nil,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
+        agentSpawn: SessionRecord.AgentSpawn? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerId,

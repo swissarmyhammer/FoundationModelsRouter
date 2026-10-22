@@ -44,7 +44,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Vends a new generation session over this resident model.
     ///
     /// When the router records durably, this writes the session's
-    /// ``SessionSidecar`` synchronously before it returns.
+    /// first `index.md` (its ``SessionRecord``) synchronously before it returns.
     ///
     /// - Precondition: The owning ``LanguageModelProfile`` is still alive.
     ///   The handle holds it weakly; only the vended session retains it.
@@ -71,7 +71,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        agentSpawn: SessionRecord.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection()
@@ -155,8 +155,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     to an agent, or `nil` for no hint. See
     ///     ``SessionConfiguration/agentDelegationHint``.
     ///   - facts: The first facts of the session, which it writes to its
-    ///     `facts.json` and holds as ``RoutedSession/facts``. The default is
-    ///     empty facts. See ``SessionConfiguration/agentID``.
+    ///     first `index.md` and holds as ``RoutedSession/facts``. The default
+    ///     is empty facts. See ``SessionConfiguration/agentID``.
     ///   - requestedByClient: The UI client that asked for the start, which
     ///     the one `started` event of the registration carries, or `nil`
     ///     (the default). See ``SessionConfiguration/requestedByClient``.
@@ -169,7 +169,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        agentSpawn: SessionRecord.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
@@ -265,11 +265,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // A vended root has recorded nothing yet, so its append-only
             // history position starts at zero too.
             historyOrdinal: 0,
-            // The vended root lands its own write-once sidecar as it is
-            // constructed — the vending handle does not write it on the
-            // session's behalf, so a root actor built anywhere cannot come into
-            // existence without one (see ``SessionSidecarOrigin``).
-            sidecarOrigin: .new(under: durableRecording),
+            // The session factory writes the vended root's first `index.md`
+            // — the vending handle does not write it on the session's
+            // behalf (see ``RoutedSessionActor/writeFirstIndex()``).
+            indexWriter: durableRecording?.indexWriter,
             // Vended over a resident model, so the session span this factory
             // opens reports the cost of vending rather than of a restore or a
             // fork (see ``RouterTelemetry/SessionOrigin``).
@@ -288,7 +287,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             inlineSettleGrace: inlineSettleGrace,
             isNoOpToolCall: isNoOpToolCall,
-            // Threaded only into the sidecar's configuration envelope (task
+            // Threaded only into the record's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.
             recordingRoot: recordingRoot,
@@ -300,8 +299,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tracer: tracer,
             // The hooks of the router, with the lineage of this session.
             hooks: sessionHooks,
-            // The first `facts.json`, written beside the new sidecar.
-            facts: facts
+            // The first facts, in the session's first `index.md`.
+            record: .new(facts)
         )
         // Before the session is returned, so no answer runs yet.
         session.bind(delegationAdvisor: delegationAdvisor)

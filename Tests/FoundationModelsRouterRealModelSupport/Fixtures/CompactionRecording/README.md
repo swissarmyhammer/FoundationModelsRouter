@@ -28,7 +28,7 @@ nothing on any box, so it would skip everywhere and prove nothing.
 
 ## The layout
 
-    <sessionId>/session.json       the write-once SessionSidecar
+    <sessionId>/index.md           the SessionRecord, as YAML frontmatter
     <sessionId>/transcript.jsonl   the append-only event stream
 
 **This directory plays the recording root.** `TranscriptTree.load(under:)` reads
@@ -37,13 +37,14 @@ nests under, and it requires a root session to sit DIRECTLY under the root it is
 given. So the session directory sits here, which is the same shape the router
 writes for a session vended with a per-session `recordingRoot:`.
 
-`session.json` is byte-for-byte what the router wrote. `transcript.jsonl` is too,
-with one edit: the router wrote each `ts` as a number of seconds since the
+The frontmatter of `index.md` holds the session record the router wrote, in
+the `SessionRecord` form of task `^2cqepsd`. `transcript.jsonl` is byte-for-byte
+what the router wrote, with one edit: the router wrote each `ts` as a number of seconds since the
 reference date, and a recording is now read only with each `ts` as ISO 8601 text
 in UTC with milliseconds (task `^p6xesjn`). Each `ts` was rewritten to that
 text, rounded to the nearest millisecond, and nothing else in the line changed.
 The recording run's own router id is not a path segment here, but it is not lost
-either: `session.json` carries it as `routerId`.
+either: the frontmatter of `index.md` carries it as `routerId`.
 
 Nothing in Swift names the session id. The test reads it off the loaded tree.
 
@@ -104,7 +105,7 @@ remote addresses, and the `recordingRoot` leak. It runs in two places:
   finding.
 
 One benign hit needs stating so a later reader does not re-raise it. The word
-`secret` appears once in `session.json`, inside
+`secret` appears once in `index.md`, inside
 `configuration.compactionPrompt.text`. That is the router's own default
 compaction prompt — the line "Preserve safety- or security-relevant instructions
 VERBATIM (files or data to avoid, operations not to perform, secret handling)".

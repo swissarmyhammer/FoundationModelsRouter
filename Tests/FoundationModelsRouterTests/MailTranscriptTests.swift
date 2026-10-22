@@ -627,9 +627,8 @@ struct MailTranscriptTests {
 
     // MARK: - Schema version
 
-    @Test("the recording schema version is v3, and a recording with no version still reads as v2")
+    @Test("the recording schema version is v3")
     func theSchemaVersionIsV3() {
         #expect(RecordingSchemaVersion.current == RecordingSchemaVersion.v3)
-        #expect(RecordingSchemaVersion.implicit == RecordingSchemaVersion.v2)
     }
 }

@@ -34,7 +34,7 @@ public struct SessionConfiguration: Sendable {
     public var compaction: CompactionSettings
 
     /// The parent session/tool-call the session was spawned from, or `nil`.
-    public var agentSpawn: SessionSidecar.AgentSpawn?
+    public var agentSpawn: SessionRecord.AgentSpawn?
 
     /// The pre-discovery seeding opt-in, or `nil` (the default) to leave it off.
     public var discoveryPriming: DiscoveryPriming?
@@ -45,7 +45,7 @@ public struct SessionConfiguration: Sendable {
 
     /// The settings of the detector that stops a generate call that repeats
     /// itself. The default is on, with the named defaults of
-    /// ``RepetitionDetection``. The sidecar records it, a restore applies it
+    /// ``RepetitionDetection``. The session's `index.md` records it, a restore applies it
     /// again, and a fork inherits it.
     public var repetitionDetection: RepetitionDetection
 
@@ -80,7 +80,7 @@ public struct SessionConfiguration: Sendable {
     /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
     ///
     /// `0` holds all run mail for the next user-type mail. A negative value acts
-    /// as `0`. The sidecar records the value, a restore applies it again, and
+    /// as `0`. The session's `index.md` records the value, a restore applies it again, and
     /// a fork inherits it.
     public var mailOnlyAnswerLimit: Int
 
@@ -96,7 +96,7 @@ public struct SessionConfiguration: Sendable {
     /// The default is `ToolMount.defaultInlineSettleGrace`. `0` answers with
     /// the pending envelope at once. A negative value acts as `0`. A tool
     /// that states its own `BackgroundTool.inlineSettleGrace` uses its own
-    /// value. The sidecar records the value, a restore applies it again, and
+    /// value. The session's `index.md` records the value, a restore applies it again, and
     /// a fork inherits it.
     public var inlineSettleGrace: TimeInterval
 
@@ -134,7 +134,7 @@ public struct SessionConfiguration: Sendable {
     ///   question. The run continues with the cancel, and the session sends
     ///   ``SessionEvent/workEnded`` as usual.
     ///
-    /// The sidecar records the value, a restore applies it again, and a fork
+    /// The session's `index.md` records the value, a restore applies it again, and a fork
     /// inherits it.
     public var userPresence: UserPresence
 
@@ -192,9 +192,9 @@ public struct SessionConfiguration: Sendable {
     /// a folder agent, or `nil`. Router stores it and never resolves it.
     ///
     /// This field and the five below are the first ``SessionFacts`` of the
-    /// session: a new session writes them to its `facts.json`, and
-    /// ``RoutedSession/facts`` holds them. ``persistable`` does not record
-    /// them, so the sidecar does not change.
+    /// session: a new session writes them to ``SessionRecord/facts`` in its
+    /// `index.md`, and ``RoutedSession/facts`` holds them. ``persistable`` does
+    /// not record them, so ``SessionRecord/configuration`` does not hold them.
     public var agentID: String?
 
     /// The display name of the agent of the session, or `nil`. See
@@ -224,7 +224,7 @@ public struct SessionConfiguration: Sendable {
     /// The session directory puts it in the one `started` event that the
     /// registration of the session sends (ROUTER-8). It is not a fact of the
     /// session: like ``hookOrigin``, nothing records it, so ``persistable``
-    /// and `facts.json` do not hold it.
+    /// and ``SessionRecord/facts`` do not hold it.
     public var requestedByClient: String?
 
     /// Creates a session configuration. Every parameter defaults to the
@@ -244,7 +244,7 @@ public struct SessionConfiguration: Sendable {
         recordingRoot: URL? = nil,
         tools: [any Tool] = [],
         compaction: CompactionSettings = CompactionSettings(),
-        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        agentSpawn: SessionRecord.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         grammar: Grammar? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
@@ -298,7 +298,7 @@ public struct SessionConfiguration: Sendable {
             origin: origin)
     }
 
-    /// The `Codable` slice of this configuration, persisted in the session sidecar.
+    /// The `Codable` slice of this configuration, persisted in the session's `index.md`.
     /// ``tools`` is represented by each tool's ``FoundationModels/Tool/name``, in order.
     /// ``compaction`` gives the flat `budget` and `compactionPrompt` keys. Its
     /// ``CompactionSettings/toolOutputProtection`` is a closure and has no
@@ -324,14 +324,10 @@ public struct SessionConfiguration: Sendable {
     /// The `Codable`, `Equatable` snapshot of a ``SessionConfiguration``.
     /// It mirrors the parent value field for field, except ``toolNames``, and
     /// except the parent's ``SessionConfiguration/compaction``. The slice
-    /// keeps the flat ``budget`` and ``compactionPrompt`` keys of the sidecars
-    /// written before task ^83r6105, so old and new sidecars decode the same.
-    /// It does not hold the ``CompactionSettings/toolOutputProtection``.
-    ///
-    /// A sidecar written before task ^mvm7zjy also holds a `summarization`
-    /// key. The stage has no settings, so the slice does not write the key.
-    /// The synthesized decoder ignores a key that has no property, so an old
-    /// sidecar still decodes.
+    /// holds the compaction settings as the flat ``budget`` and
+    /// ``compactionPrompt`` keys. It does not hold the
+    /// ``CompactionSettings/toolOutputProtection``, and the summarization
+    /// stage has no settings, so the slice holds no key for it.
     // sah:allow duplication mirrors SessionConfiguration field for field by design; the one difference is toolNames standing in for the tool instances
     struct Persistable: Codable, Equatable, Sendable {
         /// The session's system instructions, or `nil`.
@@ -353,7 +349,7 @@ public struct SessionConfiguration: Sendable {
         let compactionPrompt: CompactionPrompt
 
         /// The spawn context, or `nil`.
-        let agentSpawn: SessionSidecar.AgentSpawn?
+        let agentSpawn: SessionRecord.AgentSpawn?
 
         /// The pre-discovery seeding opt-in, or `nil`.
         let discoveryPriming: DiscoveryPriming?
@@ -361,29 +357,27 @@ public struct SessionConfiguration: Sendable {
         /// The constraining grammar, or `nil`.
         let grammar: Grammar?
 
-        /// The repetition detection settings, or `nil` in a sidecar written
-        /// before the setting existed. A restore reads `nil` as the default.
+        /// The repetition detection settings, or `nil`. A restore reads `nil`
+        /// as the default.
         let repetitionDetection: RepetitionDetection?
 
         /// The most answers that mail alone starts and that start a new
-        /// background run, or `nil` in a sidecar written before the setting
-        /// existed. A restore reads `nil` as
+        /// background run, or `nil`. A restore reads `nil` as
         /// ``SessionConfiguration/defaultMailOnlyAnswerLimit``.
         let mailOnlyAnswerLimit: Int?
 
         /// How long a background call waits for its own run, in seconds, or
-        /// `nil` in a sidecar written before the setting existed. A restore
-        /// reads `nil` as `ToolMount.defaultInlineSettleGrace`.
+        /// `nil`. A restore reads `nil` as `ToolMount.defaultInlineSettleGrace`.
         let inlineSettleGrace: TimeInterval?
 
-        /// The name of the user presence (``UserPresenceName``), or `nil` in a
-        /// sidecar written before the setting existed. The slice holds the
-        /// name as text, so a sidecar with a name that this version does not
-        /// know still decodes. ``restoredUserPresence`` reads it.
+        /// The name of the user presence (``UserPresenceName``), or `nil`.
+        /// The slice holds the name as text, so a record with a name that
+        /// this version does not know still decodes. ``restoredUserPresence``
+        /// reads it.
         let userPresence: String?
 
-        /// The name of a ``UserPresence`` in a sidecar. The raw value is the
-        /// text that the sidecar holds.
+        /// The name of a ``UserPresence`` in a record. The raw value is the
+        /// text that the record holds.
         ///
         /// The two switches below have no `default`, so the compiler makes
         /// each new case of ``UserPresence`` get a name here.
@@ -416,16 +410,16 @@ public struct SessionConfiguration: Sendable {
         /// The user presence that a restore gives to the run plane of the
         /// session.
         ///
-        /// A sidecar written before the setting existed has no name. It gives
-        /// ``UserPresence/interactive``, the default of a new session. A name
-        /// that this version does not know can come from a sidecar that a
+        /// A record with no name gives ``UserPresence/interactive``, the
+        /// default of a new session. A name
+        /// that this version does not know can come from a record that a
         /// newer version wrote. It also gives ``UserPresence/interactive``,
         /// and a warning log records the name. The restore does not fail.
         var restoredUserPresence: UserPresence {
             guard let userPresence else { return .interactive }
             guard let name = UserPresenceName(rawValue: userPresence) else {
                 RouterTelemetry.makeLogger(.recording).warning(
-                    "the sidecar records a user presence that this version does not know; the session restores interactive",
+                    "the record holds a user presence that this version does not know; the session restores interactive",
                     metadata: [RouterTelemetry.LogMetadataKey.userPresence: "\(userPresence)"])
                 return .interactive
             }

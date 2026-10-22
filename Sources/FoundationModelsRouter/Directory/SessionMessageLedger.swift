@@ -41,7 +41,7 @@ struct SessionMessageLedger: Sendable {
     /// - Returns: The instant rounded to the nearest millisecond, as the line
     ///   writes it.
     static func recordedInstant(of date: Date) -> Date {
-        DateTime(date).date
+        MillisecondDate.rounded(date)
     }
 
     /// The messages to the session, in the order of their delivery, each with

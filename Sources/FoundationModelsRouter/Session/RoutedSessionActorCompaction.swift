@@ -650,6 +650,8 @@ extension RoutedSessionActor {
         for partial in partials {
             await append(partial: partial)
         }
+        // The checkpoint is in the transcript now, so the record counts it.
+        recordCompactionCheckpoint()
         // The new backend runs no call yet: the compacted window is the new
         // settled transcript, so a read after the compaction sees it.
         settleTranscript()

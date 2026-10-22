@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsHooks
 import FoundationModelsRouterTestSupport
+import Testing
 import Tracing
 
 @testable import FoundationModelsRouter
@@ -325,20 +326,20 @@ enum RouterTestFixtures {
         sessionDirectory(alongPath: sessionPath, routerId: routerId, recordingsDir: recordingsDir)
     }
 
-    /// The sidecar file (`session.json`) of a recorded session under the
-    /// recording root of a router.
+    /// The `index.md` of a recorded session under the recording root of a
+    /// router.
     ///
     /// The one shared implementation of this path rule for every suite that
-    /// reads or rewrites a recorded sidecar.
+    /// reads or rewrites a recorded `index.md`.
     ///
     /// - Parameters:
     ///   - sessionPath: The ids from the root session to the session, in
     ///     order. A root session is a path of one id.
     ///   - routerId: The id of the router that owns the recording root.
     ///   - recordingsDir: The durable transcripts root.
-    /// - Returns: The sidecar file URL.
-    static func sidecarURL(of sessionPath: ULID..., routerId: ULID, recordingsDir: URL) -> URL {
-        sidecarURL(
+    /// - Returns: The `index.md` file URL.
+    static func indexURL(of sessionPath: ULID..., routerId: ULID, recordingsDir: URL) -> URL {
+        indexURL(
             inSessionDirectory: sessionDirectory(
                 alongPath: sessionPath, routerId: routerId, recordingsDir: recordingsDir))
     }
@@ -358,11 +359,27 @@ enum RouterTestFixtures {
         }
     }
 
-    /// The sidecar file (`session.json`) in a session directory.
+    /// The `index.md` in a session directory.
     ///
     /// - Parameter sessionDirectory: The directory of the session.
-    /// - Returns: The sidecar file URL.
-    static func sidecarURL(inSessionDirectory sessionDirectory: URL) -> URL {
-        sessionDirectory.appendingPathComponent(sessionSidecarFileName, isDirectory: false)
+    /// - Returns: The `index.md` file URL.
+    static func indexURL(inSessionDirectory sessionDirectory: URL) -> URL {
+        SessionIndexFile.url(in: sessionDirectory)
+    }
+
+    /// Reads the record in the `index.md` of a session directory, applies
+    /// `change` to it, and saves it back. The body of the file stays as it
+    /// is.
+    ///
+    /// - Parameters:
+    ///   - directory: The directory of the session. It must hold an
+    ///     `index.md`.
+    ///   - change: The change to apply to the record.
+    /// - Throws: The `#require` failure when the directory holds no
+    ///   `index.md`, or what the read or the save throws.
+    static func rewriteIndex(in directory: URL, _ change: (inout SessionRecord) -> Void) throws {
+        var record = try #require(try SessionIndexFile.read(in: directory))
+        change(&record)
+        try SessionIndexFile.save(record, in: directory)
     }
 }

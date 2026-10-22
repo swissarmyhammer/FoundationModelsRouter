@@ -401,7 +401,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// append off that hop — and each handle still carries the root-plus-writer
     /// ``DurableRecording`` pair `Router.makeDurableRecording` builds, so this
     /// harness records a tree a reader could load rather than transcripts with
-    /// no sidecars beside them.
+    /// no `index.md` beside them.
     ///
     /// One fact changed with the move. The copy built its `Router` with NO
     /// `recordingsDir`, so `router.recordingsDir` read `nil` while every handle
@@ -450,8 +450,8 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         // This root is assembled by hand rather than vended from
         // `standard.makeSession()` — the tests need the backend itself — and it
-        // still lands its own sidecar, because that is the session's own job
-        // rather than its builder's (see `SessionSidecarOrigin`).
+        // still lands its own `index.md` through `writeFirstIndex()` below, the
+        // one step `makeRoutedSessionActor` takes for every new session.
         let session = RoutedSessionActor(
             profile: profile,
             routerId: standard.routerId,
@@ -467,10 +467,10 @@ struct LanguageModelSessionBackendIntegrationTests {
             grammar: nil,
             persistedEntryCount: 0,
             historyOrdinal: 0,
-            // A new root under the vending handle's durable recording, exactly
-            // as `makeSession` names it: this session writes its own sidecar,
-            // and so does any fork taken from it.
-            sidecarOrigin: .new(under: standard.durableRecording),
+            // The vending handle's index writer, exactly as `makeSession`
+            // hands it on: this session keeps its own `index.md`, and so does
+            // any fork taken from it.
+            indexWriter: standard.durableRecording?.indexWriter,
             // The handle's own resolved window, exactly as `makeSession`
             // hands it on.
             contextTokens: standard.contextTokens,
@@ -482,6 +482,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             // session reports to the same backend as the handle it came off.
             tracer: standard.tracer
         )
+        session.writeFirstIndex()
 
         return ChokepointHarness(
             session: session,

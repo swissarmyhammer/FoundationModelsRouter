@@ -933,7 +933,7 @@ public actor Router {
     /// - Returns: The resolved profile.
     private func buildProfile(definition def: ProfileDefinition, admitted: AdmittedResolve) -> LanguageModelProfile {
         let resolution = admitted.resolution
-        let resolvedProfile = SessionSidecar.ResolvedProfile(
+        let resolvedProfile = SessionRecord.ResolvedProfile(
             definitionName: def.name,
             standard: resolution.standard,
             flash: resolution.flash,
@@ -960,13 +960,14 @@ public actor Router {
     ///   - container: The container of the slot.
     ///   - admitted: What the admission job of this resolve gave back: the
     ///     joint fit, and the holds this handle keeps its models resident with.
-    ///   - resolvedProfile: The run's resolved-profile facts for root session sidecars.
+    ///   - resolvedProfile: The run's resolved-profile facts for the `index.md`
+    ///     of each root session.
     /// - Returns: The routed model handle.
     private func makeRoutedModel<Container: Sendable>(
         slot: ModelSlot,
         container: Container,
         admitted: AdmittedResolve,
-        resolvedProfile: SessionSidecar.ResolvedProfile
+        resolvedProfile: SessionRecord.ResolvedProfile
     ) -> RoutedModel<Container> {
         let chosen = Self.chosenRef(of: slot, in: admitted.resolution)
         let resolution = Self.slotResolution(for: admitted.resolution, slot: slot)
@@ -978,12 +979,7 @@ public actor Router {
             container: container,
             routerId: id,
             recorder: recorder,
-            durableRecording: makeDurableRecording(
-                slot: slot,
-                chosen: chosen,
-                resolution: resolution,
-                resolvedProfile: resolvedProfile
-            ),
+            durableRecording: makeDurableRecording(resolvedProfile: resolvedProfile),
             tracer: tracer,
             samplingMode: samplingMode,
             residencyHolds: admitted.holds,
@@ -993,26 +989,17 @@ public actor Router {
         )
     }
 
-    /// Pairs this run's durable transcripts root with the sidecar writer for
-    /// one handle, or `nil` when there is no durable root.
-    private func makeDurableRecording(
-        slot: ModelSlot,
-        chosen: ModelRef,
-        resolution: SlotResolution,
-        resolvedProfile: SessionSidecar.ResolvedProfile
-    ) -> DurableRecording? {
+    /// Pairs this run's durable transcripts root with the index writer of its
+    /// handles, or `nil` when there is no durable root.
+    ///
+    /// - Parameter resolvedProfile: The run's resolved-profile facts for the
+    ///   `index.md` of each root session.
+    /// - Returns: The durable recording, or `nil`.
+    private func makeDurableRecording(resolvedProfile: SessionRecord.ResolvedProfile) -> DurableRecording? {
         guard let recordingsDir else { return nil }
         return DurableRecording(
             root: recordingsDir,
-            sidecarWriter: SessionSidecarWriter(
-                slot: slot,
-                model: chosen,
-                context: resolution.contextTokens,
-                recordingLevel: recordingLevel,
-                profile: resolvedProfile,
-                routerId: id
-            )
-        )
+            indexWriter: SessionIndexWriter(recordingLevel: recordingLevel, profile: resolvedProfile))
     }
 
     // MARK: - Resolution lookups

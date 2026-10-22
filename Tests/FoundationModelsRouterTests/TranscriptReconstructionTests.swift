@@ -297,31 +297,18 @@ struct TranscriptReconstructionTests {
     }
 
     /// Creates a session's directory the way a real session's creation does —
-    /// by writing its write-once sidecar — so a hand-fabricated
+    /// by writing its `index.md` — so a hand-fabricated
     /// `transcript.jsonl` written into it afterward sits in a directory
     /// ``TranscriptTree`` recognizes as a session's.
     ///
-    /// The facts are placeholders: these tests fabricate *event lines* to
-    /// exercise reconstruction, and never read the sidecar back.
+    /// The record is a placeholder: these tests fabricate *event lines* to
+    /// exercise reconstruction, and never read the record back.
     ///
     /// - Parameter sessionDir: The session directory to create.
     /// - Returns: `sessionDir`, for chaining.
     @discardableResult
     private static func makeSessionDir(_ sessionDir: URL) throws -> URL {
-        try SessionSidecar.write(
-            SessionSidecar(
-                slot: .standard,
-                model: "org/model-a",
-                context: 8_192,
-                instructions: nil,
-                grammar: nil,
-                recordingLevel: .full,
-                forkedAtEntryCount: nil,
-                profile: nil,
-                workingDirectory: sessionDir
-            ),
-            to: sessionDir
-        )
+        try SessionRecordFixtures.writePlaceholder(in: sessionDir)
         return sessionDir
     }
 

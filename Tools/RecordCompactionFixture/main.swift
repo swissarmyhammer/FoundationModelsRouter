@@ -68,8 +68,8 @@ func onlySubdirectory(of directory: URL, holding role: String) -> URL {
     return only
 }
 
-/// Every recorded file under `directory`, at any depth: the sidecar
-/// (`.json`) and the event stream (`.jsonl`).
+/// Every recorded file under `directory`, at any depth: the session record
+/// (`index.md`) and the event stream (`.jsonl`).
 ///
 /// - Parameter directory: The directory holding the finished recording.
 /// - Returns: The recorded files, sorted by path.
@@ -79,7 +79,7 @@ func recordedFiles(under directory: URL) -> [URL] {
     }
     return enumerator
         .compactMap { $0 as? URL }
-        .filter { ["json", "jsonl"].contains($0.pathExtension) }
+        .filter { ["md", "jsonl"].contains($0.pathExtension) }
         .sorted { $0.path < $1.path }
 }
 
@@ -168,7 +168,7 @@ await progressTask.value
 // Redaction setting 1: `workingDirectory` is the synthetic fixture value.
 // Redaction setting 2: `recordingRoot:` stays unset — the router-level layout
 // above is used, because a per-session recording root is stamped into
-// `session.json` as an absolute machine path (the `^pfdrppj` leak). See
+// `index.md` as an absolute machine path (the `^pfdrppj` leak). See
 // `RecordingScript.fixtureWorkingDirectory`.
 let session = profile.standard.makeSession(
     instructions: RecordingScript.instructions,
@@ -194,7 +194,7 @@ print("[record] \(String(format: "%.0f", Date().timeIntervalSince(recordingStart
 // The fixture directory plays the recording root, with the session directly
 // under it. Move `<raw>/<routerId>/<sessionId>` up to the output directory
 // and drop `raw`, so the output mirrors the fixture byte for byte. The
-// router id is not lost: `session.json` carries it as `routerId`.
+// router id is not lost: `index.md` carries it as `routerId`.
 let routerDirectory = onlySubdirectory(of: rawRecordingsDirectory, holding: "router directory")
 let rawSessionDirectory = onlySubdirectory(of: routerDirectory, holding: "session directory")
 let sessionDirectory = outputDirectory.appendingPathComponent(

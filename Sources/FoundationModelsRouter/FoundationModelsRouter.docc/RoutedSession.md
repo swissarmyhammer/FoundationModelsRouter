@@ -283,7 +283,7 @@ Each question of a run of that session ends at once with a cancel that gives
 the reason `RunPlane.noUserPresentReason`. The session sends no
 ``SessionEvent/elicitationRequested(_:)`` and no
 ``SessionEvent/elicitationEnded(_:)`` for it, and the run continues with the
-cancel. The default is ``UserPresence/interactive``. The sidecar records the
+cancel. The default is ``UserPresence/interactive``. The session's `index.md` records the
 value, a restore applies it again, and a fork inherits it.
 
 An accepted URL-mode question whose flow completes gets one

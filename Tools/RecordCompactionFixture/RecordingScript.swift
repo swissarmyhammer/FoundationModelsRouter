@@ -48,13 +48,13 @@ enum RecordingScript {
     ///
     /// A session defaults its working directory to its own recording
     /// directory, which at record time is an absolute path on the recording
-    /// machine, and the sidecar stores that path. Setting this synthetic
+    /// machine, and the session's `index.md` stores that path. Setting this synthetic
     /// value at record time is what keeps the machine path out of the bytes.
     ///
     /// Redaction setting 2 of 2 is an ABSENCE, so no constant can carry it:
     /// the `recordingRoot:` override stays unset where `main.swift` opens
     /// the session, because a per-session recording root is stamped into
-    /// `session.json` as an absolute machine path (the `^pfdrppj` leak).
+    /// `index.md` as an absolute machine path (the `^pfdrppj` leak).
     static let fixtureWorkingDirectory = URL(
         fileURLWithPath: "/recordings/station-archive", isDirectory: true)
 
