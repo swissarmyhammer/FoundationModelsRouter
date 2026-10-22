@@ -31,10 +31,26 @@ comments:
     - evidence: `swift build --build-tests` clean (no warnings from Sources/Tests); `swift test`: 2109 tests in 259 suites passed (9 known issues, pre-existing withKnownIssue), 33 + 19 passed. Sources: JSONLAppend, JSONLines, MergedTranscript, ProjectRegistry, Sinks, TranscriptTree, TranscriptFileDiscovery, RecordedSessions, RouterSessionDirectory, SessionMessageLedger, RouterTelemetry modified; SessionIndex.swift, TranscriptLineDecoding.swift deleted. Tests: 21 modified, SessionIndexTests, JSONLAppendTests, SessionMessageLedgerErrorPublicSurfaceTests deleted; PreRequestRenameRecording fixture transcript rewritten.
     - next: /review
   timestamp: 2026-10-22T17:17:53.297869+00:00
+- actor: claude-code
+  id: 01m5jajt24awg1c70qm2p9rhv6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (70a5d3b9): 0 findings, 0 confirmed, 0 refuted; 35 validator pairs attempted, 0 failed; 34 files reviewed, 7 not reviewed (6 .kanban by .reviewignore, 1 fixture transcript.jsonl with no matching validator). Declined items were only the five files this commit deleted. No prior Review Findings sections.
+    - next: done
+  timestamp: 2026-10-22T17:29:46.308915+00:00
+- actor: wballard
+  id: 01m5jakdaz810s7adx56rnq5qd
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — transcript and messages on JSONLFile; SessionIndex, sessions.jsonl and the rewrite helpers deleted; ProjectRegistry appends
+    - test: green per implementer — swift test 2109 passed, 9 known issues
+    - commit: 70a5d3b9
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T17:30:06.047326+00:00
 depends_on:
 - 01M5HS4C6FBNTAX30161HP0BS5
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffb580
 title: 'ROUTER: transcript.jsonl goes through Extras JSONLFile; delete sessions.jsonl (SessionIndex) and the JSONL rewrite code'
 ---
 ## What

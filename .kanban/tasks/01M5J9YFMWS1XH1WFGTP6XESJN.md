@@ -14,7 +14,7 @@ Transcript `ts` and message `sentAt` keep sub-second precision on disk again, an
 ## What
 - Bump Router's pin to the Extras sha with fractional-second dates.
 - Remove the whole-second `sentAt` stamping in `RouterSessionDirectory` (added by ^s9dftdp).
-- Tests that wrote whole-second fixture lines keep working, or switch to fractional seconds.
+- Extras decision (2026-10-22): `ISO8601JSON`, which serves JSONLFile and every other user, writes fractional seconds and reads ONLY that format, with no whole-second fallback. So every Router test and fixture that writes a whole-second date line must switch to fractional seconds. ^s9dftdp rewrote eleven test files and one fixture transcript to whole seconds; find them all, and also any SessionFacts or other JSON that goes through ISO8601JSON.
 
 ## Subtasks
 - [ ] Failing test first: two transcript events 10 ms apart read back in order with distinct `ts`; a delivered message's `sentAt` survives a restore to the millisecond.
