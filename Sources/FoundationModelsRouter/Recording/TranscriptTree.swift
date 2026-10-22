@@ -1,7 +1,8 @@
 import Foundation
+import FoundationModelsExtras
 
 /// The per-session transcript filename under a session's recording directory.
-/// ``SessionIndex`` reads its modification date as the last activity of a
+/// ``RecordedSessions`` reads its modification date as an activity of a
 /// session.
 let transcriptFileName = "transcript.jsonl"
 
@@ -27,10 +28,6 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
     /// The session nests under a parent but its sidecar records no fork cut
     /// point (``SessionSidecar/forkedAtHistoryOrdinal`` or ``SessionSidecar/forkedAtEntryCount``).
     case forkCutPointMissing(session: ULID, directory: URL)
-
-    /// A line of `session`'s transcript at `file`, not the last line, failed
-    /// to decode. A torn final line is dropped with a warning instead.
-    case transcriptLineCorrupt(session: ULID, file: URL)
 
     /// A localized message describing what error occurred.
     public var errorDescription: String? {
@@ -60,11 +57,6 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
                 Session \(id.description) (\(directory.path)) nests under a parent session but its \
                 session.json records no fork cut point (neither forkedAtHistoryOrdinal nor \
                 forkedAtEntryCount), so its effective transcript cannot be reconstructed.
-                """
-        case .transcriptLineCorrupt(let id, let file):
-            return """
-                Session \(id.description)'s transcript \(file.path) holds a corrupt line before its \
-                last one, so the recorded log cannot be trusted.
                 """
         }
     }
@@ -195,7 +187,7 @@ package struct TranscriptTree: Sendable {
         // `session.json` — see ``SessionSidecar/compactionCount``'s own doc
         // comment), so a browser reading ``SessionNode/sidecar`` can badge a
         // compacted session with no second pass over its transcript.
-        let ownEvents = try decodeEvents(in: directory, forSession: id)
+        let ownEvents = try decodeEvents(in: directory)
         let compactionCount = compactionCheckpoints(in: ownEvents).count
         return RawNode(
             id: id,
@@ -246,13 +238,14 @@ package struct TranscriptTree: Sendable {
     /// Decodes one session's own recorded events, in `seq` order. Returns an
     /// empty array when the session has no `transcript.jsonl`.
     ///
-    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
-    ///   ``TranscriptTreeError/transcriptLineCorrupt(session:file:)``.
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)``, or
+    ///   `JSONLFileError.readFailed(description:)` when the transcript exists
+    ///   and does not read.
     func events(forSession id: ULID) throws -> [TranscriptEvent] {
         guard let node = nodesById[id] else {
             throw TranscriptTreeError.sessionNotFound(id)
         }
-        return try Self.decodeEvents(in: node.directory, forSession: node.id)
+        return try Self.decodeEvents(in: node.directory)
     }
 
     /// This session's whole effective conversation, oldest first: the
@@ -315,7 +308,7 @@ package struct TranscriptTree: Sendable {
     private func effectiveEvents(
         for node: SessionNode, keeping isKept: (TranscriptEvent.Kind) -> Bool
     ) throws -> [TranscriptEvent] {
-        let ownEvents = try Self.decodeEvents(in: node.directory, forSession: node.id).filter { isKept($0.kind) }
+        let ownEvents = try Self.decodeEvents(in: node.directory).filter { isKept($0.kind) }
         guard let parentId = node.parentId else {
             return ownEvents
         }
@@ -357,18 +350,17 @@ package struct TranscriptTree: Sendable {
     // MARK: - Event decoding
 
     /// Decodes every line of `directory`'s `transcript.jsonl` in `seq` order,
-    /// or an empty array if that file does not exist. A torn final line is
-    /// dropped with a warning.
+    /// or an empty array if that file does not exist. The read goes through
+    /// the Extras `JSONLFile`: a torn final line is dropped with a warning,
+    /// and a whole line that does not decode is skipped with a warning.
     ///
-    /// - Throws: ``TranscriptTreeError/transcriptLineCorrupt(session:file:)``
-    ///   when a line before the last fails to decode.
-    private static func decodeEvents(in directory: URL, forSession session: ULID) throws -> [TranscriptEvent] {
+    /// - Parameter directory: The session directory.
+    /// - Returns: The decoded events, in `seq` order.
+    /// - Throws: `JSONLFileError.readFailed(description:)` when the file
+    ///   exists and does not read.
+    private static func decodeEvents(in directory: URL) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent(transcriptFileName, isDirectory: false)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
-        let events = try TranscriptLineDecoding.decodeEvents(at: fileURL) { file in
-            TranscriptTreeError.transcriptLineCorrupt(session: session, file: file)
-        }
-        return events.sorted { $0.seq < $1.seq }
+        return try JSONLFile(url: fileURL).records(as: TranscriptEvent.self).sorted { $0.seq < $1.seq }
     }
 
     // MARK: - Tree construction

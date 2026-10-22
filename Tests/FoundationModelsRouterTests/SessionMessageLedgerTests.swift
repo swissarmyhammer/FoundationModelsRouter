@@ -15,9 +15,10 @@ import Testing
     /// The UI client that sends the UI messages of a test.
     private static let clientID = "client-a"
 
-    /// A delivery time with sub-second precision, so a test sees the time
-    /// read back exactly.
-    private static let sentAt = Date(timeIntervalSinceReferenceDate: 783_000_000.123_456)
+    /// A delivery time on a whole second — the precision of the ISO 8601
+    /// dates of a `JSONLFile` line — so a test sees the time read back
+    /// exactly.
+    private static let sentAt = Date(timeIntervalSinceReferenceDate: 783_000_000)
 
     /// The chain depth of the messages of a test, other than the depth 1 of
     /// a UI message, so a test sees the depth read back.
@@ -176,31 +177,26 @@ import Testing
         let kept = Self.message("kept")
         var ledger = try SessionMessageLedger.load(from: directory)
         ledger.record(kept)
-        let handle = try FileHandle(forWritingTo: Self.ledgerFile(in: directory))
-        try handle.seekToEnd()
-        try handle.write(contentsOf: Data(#"{"delivered":{"mess"#.utf8))
-        try handle.close()
+        let file = Self.ledgerFile(in: directory)
+        try (try Data(contentsOf: file) + Data(#"{"delivered":{"mess"#.utf8)).write(to: file)
 
         let loaded = try SessionMessageLedger.load(from: directory)
 
         #expect(loaded.unread == [kept])
     }
 
-    /// A line that does not decode before the final line is damage no crash
-    /// leaves, and the load throws.
-    @Test func aCorruptEarlierLineThrows() throws {
+    /// A whole line that does not decode before the final line is skipped,
+    /// and the load keeps each message around it.
+    @Test func aCorruptEarlierLineIsSkipped() throws {
         let directory = RouterTestFixtures.makeTempDir(prefix: "SessionMessageLedgerTests")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let file = Self.ledgerFile(in: directory)
-        try Data("not json\n".utf8).write(to: file)
-        let line = try JSONEncoder().encode(SessionMessageLedger.Line.delivered(message: Self.message("valid")))
-        let handle = try FileHandle(forWritingTo: file)
-        try handle.seekToEnd()
-        try handle.write(contentsOf: line + Data([jsonlNewlineByte]))
-        try handle.close()
+        try Data("not json\n".utf8).write(to: Self.ledgerFile(in: directory))
+        let valid = Self.message("valid")
+        var ledger = try SessionMessageLedger.load(from: directory)
+        ledger.record(valid)
 
-        #expect(throws: SessionMessageLedgerError.corruptLine(file)) {
-            try SessionMessageLedger.load(from: directory)
-        }
+        let loaded = try SessionMessageLedger.load(from: directory)
+
+        #expect(loaded.unread == [valid])
     }
 }

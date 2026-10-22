@@ -132,7 +132,7 @@ struct PerSessionRecordingRootTests {
     }
 
     /// Builds a router wired with the stubs and a durable recordings root, so
-    /// vended sessions nest their transcripts and index under it.
+    /// vended sessions nest their transcripts under it.
     ///
     /// - Parameter id: The router id to construct with — pass the first
     ///   router's `id` to simulate a fresh process continuing the same
@@ -277,13 +277,10 @@ struct PerSessionRecordingRootTests {
             )
         }
 
-        // Each root holds its one session and the record of past sessions
-        // that the directory appends the root's line to (ROUTER-3).
-        let indexFiles: Set<String> = [SessionIndex.indexFileName, SessionIndex.gitattributesFileName]
-        #expect(try childDirectoryNames(of: rootA) == indexFiles.union([sessionA.id.description]))
-        #expect(try childDirectoryNames(of: rootB) == indexFiles.union([sessionB.id.description]))
-        #expect(try SessionIndex(root: rootA).read().records.map(\.sessionId) == [sessionA.id.description])
-        #expect(try SessionIndex(root: rootB).read().records.map(\.sessionId) == [sessionB.id.description])
+        // Each root holds only its one session folder: no index file is
+        // written beside it (ROUTER-3).
+        #expect(try childDirectoryNames(of: rootA) == [sessionA.id.description])
+        #expect(try childDirectoryNames(of: rootB) == [sessionB.id.description])
     }
 
     // MARK: - Restoration round-trips both layouts

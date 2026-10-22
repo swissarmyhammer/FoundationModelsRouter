@@ -1,6 +1,6 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterTestSupport
+import FoundationModelsExtras
 import Testing
 
 @testable import FoundationModelsRouter
@@ -569,8 +569,7 @@ struct SessionTreeRestorationTests {
             .appendingPathComponent(router1.id.description, isDirectory: true)
             .appendingPathComponent(root.id.description, isDirectory: true)
         let fileURL = recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let decoder = JSONDecoder()
-        let events = try TextFileLines.read(from: fileURL).map { try decoder.decode(TranscriptEvent.self, from: Data($0.utf8)) }
+        let events = try JSONLFile(url: fileURL).records(as: TranscriptEvent.self)
         #expect(events.contains { $0.grammar == grammarSource })
     }
 
@@ -666,9 +665,7 @@ struct SessionTreeRestorationTests {
         let transcriptURL = routerDir
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let existing = try String(contentsOf: transcriptURL, encoding: .utf8)
-        let checkpointLine = String(data: try JSONEncoder().encode(checkpointEvent), encoding: .utf8)!
-        try (existing + checkpointLine + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+        try JSONLFile(url: transcriptURL).append(checkpointEvent)
 
         // "Tear down" and restore under a fresh process.
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
@@ -1462,9 +1459,7 @@ struct SessionTreeRestorationTests {
         let transcriptURL = routerDir
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let existing = try String(contentsOf: transcriptURL, encoding: .utf8)
-        let corruptLine = String(data: try JSONEncoder().encode(corruptEvent), encoding: .utf8)!
-        try (existing + corruptLine + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+        try JSONLFile(url: transcriptURL).append(corruptEvent)
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import Testing
 
 @testable import FoundationModelsRouter
@@ -28,13 +29,11 @@ struct RecordingRootLockTests {
         )
     }
 
-    /// The decoded events in `root`'s own `transcript.jsonl`, in file order.
+    /// The decoded events in `root`'s own `transcript.jsonl`, in file order,
+    /// read through the Extras `JSONLFile` as the recorder wrote them.
     private static func recordedEvents(under root: URL) throws -> [TranscriptEvent] {
-        let data = try Data(contentsOf: root.appendingPathComponent("transcript.jsonl", isDirectory: false))
-        let decoder = JSONDecoder()
-        return try data.split(separator: jsonlNewlineByte).map {
-            try decoder.decode(TranscriptEvent.self, from: Data($0))
-        }
+        try JSONLFile(url: root.appendingPathComponent("transcript.jsonl", isDirectory: false))
+            .records(as: TranscriptEvent.self)
     }
 
     @Test("a second owning recorder on the same root throws a typed error naming the live owner")

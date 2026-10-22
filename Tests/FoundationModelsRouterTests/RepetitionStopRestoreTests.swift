@@ -208,7 +208,7 @@ struct RepetitionStopRestoreTests {
         let routerDirectory = routerDirectory(of: stopped, directories: directories)
         let recorded = try TranscriptTree.load(under: routerDirectory).events(forSession: stopped.session.id)
         let lines = try recorded.compactMap(transform).map { event in
-            try #require(String(data: try JSONEncoder().encode(event), encoding: .utf8))
+            try #require(String(data: try JSONLines.makeEncoder().encode(event), encoding: .utf8))
         }
         let transcriptURL = routerDirectory
             .appendingPathComponent(stopped.session.id.description, isDirectory: true)

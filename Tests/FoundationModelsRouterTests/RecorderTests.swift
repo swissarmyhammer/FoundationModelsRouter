@@ -19,7 +19,9 @@ import Testing
 @Suite("Recorder")
 struct RecorderTests {
     /// A fixed instant so stamped timestamps are deterministic in assertions.
-    private static let fixedInstant = Date(timeIntervalSinceReferenceDate: 1_000.5)
+    /// It falls on a whole second, because a transcript line keeps its `ts`
+    /// to the whole second.
+    private static let fixedInstant = Date(timeIntervalSinceReferenceDate: 1_000)
 
     /// Builds a sample partial event with the given kind; provenance ids are
     /// fresh ULIDs and the optional metering fields are populated.
@@ -75,7 +77,7 @@ struct RecorderTests {
         let lines = try TextFileLines.read(from: fileURL)
         #expect(lines.count == 3)
 
-        let decoder = JSONDecoder()
+        let decoder = JSONLines.makeDecoder()
         let decoded = try lines.map {
             try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
         }

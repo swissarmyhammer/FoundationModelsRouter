@@ -42,6 +42,10 @@ struct OperationEventsPublicSurfaceTests {
     /// The completion token every event in this suite is correlated under.
     private static let correlationID = "01AN4Z07BY79KA1307SR9X4MV3"
 
+    /// The wall-clock stamp of the fixture line, as the whole-second ISO 8601
+    /// text a recorder writes.
+    private static let recordedTimestamp = "2001-01-01T00:00:00Z"
+
     // MARK: - The read
 
     @Test("only the segments carrying a decodable operation event come back, and in segment order")
@@ -157,7 +161,7 @@ struct OperationEventsPublicSurfaceTests {
             "routerId": ULID.generate().description,
             "sessionId": ULID.generate().description,
             "seq": 0,
-            "ts": 0,
+            "ts": recordedTimestamp,
             "kind": segments == nil ? "divergence" : "prompt",
         ]
         if let segments {

@@ -378,9 +378,6 @@ enum RouterTelemetry {
         /// The retry after a context overflow.
         case overflowRetry = "OverflowRetry"
 
-        /// The decode of the lines of a transcript file.
-        case transcriptLineDecoding = "TranscriptLineDecoding"
-
         /// The delivery of mail to a session.
         case mailDelivery = "MailDelivery"
 
@@ -396,12 +393,6 @@ enum RouterTelemetry {
 
         /// The sidecar file of a session.
         case sessionSidecar = "SessionSidecar"
-
-        /// The index of past sessions, `sessions.jsonl` (``SessionIndex``).
-        case sessionIndex = "SessionIndex"
-
-        /// The cross-project registry, `projects.jsonl` (``ProjectRegistry``).
-        case projectRegistry = "ProjectRegistry"
 
         /// The read of the metadata of a model repository.
         case repoMetadataReader = "RepoMetadataReader"
@@ -463,9 +454,6 @@ enum RouterTelemetry {
 
         /// The path of a file.
         static let filePath = prefix + "file.path"
-
-        /// A byte offset in a file.
-        static let byteOffset = prefix + "file.byte_offset"
 
         /// The sequence number of a transcript event.
         static let eventSeq = prefix + "event.seq"
@@ -549,7 +537,7 @@ enum RouterTelemetry {
         /// Every key above.
         static let allKeys = [
             category, sessionId, entryId, segmentId, responseFormatName, entryCase, userPresence, encodeContext,
-            schemaName, errorType, errorCode, filePath, byteOffset, eventSeq, supersededSeq,
+            schemaName, errorType, errorCode, filePath, eventSeq, supersededSeq,
             repetitionStop, reasoningStop, generationStall, mailDeliveryPause, contextTokens, promptTokens,
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,

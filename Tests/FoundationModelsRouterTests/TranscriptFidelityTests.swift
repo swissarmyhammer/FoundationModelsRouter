@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -896,9 +897,6 @@ struct TranscriptFidelityTests {
     /// Decodes every event from a session directory's `transcript.jsonl`.
     private static func events(in directory: URL) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let decoder = JSONDecoder()
-        return try TextFileLines.read(from: fileURL).map {
-            try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
-        }.withoutMailRecords
+        return try JSONLFile(url: fileURL).records(as: TranscriptEvent.self).withoutMailRecords
     }
 }

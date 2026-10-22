@@ -2,32 +2,6 @@ import Foundation
 import FoundationModelsExtras
 import Logging
 
-/// Why the read of the message ledger of a session refused to read: damage
-/// before the final line of a `messages.jsonl` is not a crash artifact, so
-/// the read does not guess past it.
-///
-/// ``RouterSessionDirectory/send(_:)``,
-/// ``RouterSessionDirectory/inbox(of:markRead:)`` and
-/// ``RouterSessionDirectory/message(_:to:)`` read the ledger of a session, so
-/// each of them throws this error for a damaged ledger.
-/// `SessionDirectoryError` of the Extras port has no case for a damaged
-/// record of the router, so this error is the router's own, as
-/// ``SessionIndexError`` is for a damaged session index.
-public enum SessionMessageLedgerError: Error, Equatable, Sendable, CustomStringConvertible {
-    /// A line before the final one of the `messages.jsonl` at this file URL
-    /// did not decode.
-    case corruptLine(URL)
-
-    /// A human-readable reason that names the file.
-    public var description: String {
-        switch self {
-        case .corruptLine(let file):
-            return "\(file.path): a line before the final one is corrupt; "
-                + "the message ledger of the session cannot be read"
-        }
-    }
-}
-
 /// The record of the messages that ``RouterSessionDirectory`` delivered to
 /// one session (ROUTER-4): each ``SessionMessage`` with the sender, the
 /// `inReplyTo`, the chain depth and the read flag.
@@ -38,10 +12,11 @@ public enum SessionMessageLedgerError: Error, Equatable, Sendable, CustomStringC
 /// (``SessionMessageSender/user(clientID:)``).
 ///
 /// A durable session keeps its ledger in `messages.jsonl` in its recording
-/// directory, so its inbox outlives a restore. The file is append-only: one
-/// line for each delivered message, and one later line for each read mark. A
-/// write is best effort, as each JSONL sink of the module is
-/// (``appendJSONLine(_:encoder:logger:handle:failureMessage:failureMetadata:)``):
+/// directory, so its inbox outlives a restore. The file is append-only and
+/// goes through the Extras `JSONLFile` (``JSONLAppend``): one line for each
+/// delivered message, and one later line for each read mark. A write is best
+/// effort, as each JSONL sink of the module is
+/// (``JSONLAppend/appendDroppingFailure(_:to:through:logger:failureMessage:failureMetadata:)``):
 /// a failure is logged and the line dropped. A memory-only session writes
 /// nothing to disk, so its ledger has no directory and lives in memory.
 struct SessionMessageLedger: Sendable {
@@ -55,6 +30,16 @@ struct SessionMessageLedger: Sendable {
 
         /// The session read the message with this id.
         case read(id: MailID)
+    }
+
+    /// `date` at the precision a line of the ledger keeps: the ISO 8601 date
+    /// of a `JSONLFile` line holds whole seconds. A message stamped with this
+    /// instant reads back from the file equal to the message in memory.
+    ///
+    /// - Parameter date: An instant.
+    /// - Returns: The instant at the start of its whole second.
+    static func recordedInstant(of date: Date) -> Date {
+        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
     }
 
     /// The messages to the session, in the order of their delivery, each with
@@ -78,24 +63,21 @@ struct SessionMessageLedger: Sendable {
 
     /// Reads the ledger of a session.
     ///
-    /// A final line that does not decode is a torn append, dropped with a
-    /// warning (``TranscriptLineDecoding``).
+    /// The read goes through the Extras `JSONLFile`: a torn final line is
+    /// dropped with a warning, and a whole line that does not decode is
+    /// skipped with a warning. Neither throws.
     ///
     /// - Parameter directory: The recording directory of a durable session,
     ///   or `nil` for a memory-only session.
     /// - Returns: The messages of `messages.jsonl` in `directory` with their
     ///   read marks applied, an empty ledger when the file is absent, or an
     ///   empty memory-only ledger when `directory` is `nil`.
-    /// - Throws: ``SessionMessageLedgerError/corruptLine(_:)`` for a line
-    ///   before the final one that does not decode, or the error of a read of
-    ///   the file.
+    /// - Throws: `JSONLFileError.readFailed(description:)` when the file
+    ///   exists and does not read.
     static func load(from directory: URL?) throws -> SessionMessageLedger {
         var ledger = SessionMessageLedger(messages: [], directory: directory)
-        guard let file = ledger.file, FileManager.default.fileExists(atPath: file.path) else { return ledger }
-        let lines = try TranscriptLineDecoding.decodeLines(
-            of: Line.self, at: file, tornLineMessage: "dropping the torn final line of a message ledger",
-            corruptLineError: SessionMessageLedgerError.corruptLine)
-        for line in lines {
+        guard let file = ledger.file else { return ledger }
+        for line in try JSONLFile(url: file).records(as: Line.self) {
             ledger.apply(line)
         }
         return ledger
@@ -139,14 +121,13 @@ struct SessionMessageLedger: Sendable {
     /// - Parameter line: The line.
     private mutating func write(_ line: Line) {
         apply(line)
-        guard let directory else { return }
-        appendJSONLine(
+        guard let file else { return }
+        JSONLAppend.appendDroppingFailure(
             line,
-            encoder: Self.encoder,
+            to: file,
             logger: RouterTelemetry.makeLogger(.sessionDirectory),
-            handle: { try openHandleForAppending(fileName: Self.fileName, in: directory) },
             failureMessage: "dropping a line of a message ledger",
-            failureMetadata: [RouterTelemetry.LogMetadataKey.filePath: "\(directory.path)"])
+            failureMetadata: [RouterTelemetry.LogMetadataKey.filePath: "\(file.path)"])
     }
 
     /// Applies `line` to the messages: a delivery adds its message, and a
@@ -166,14 +147,5 @@ struct SessionMessageLedger: Sendable {
     /// The file of a durable ledger, or `nil` for a memory-only ledger.
     private var file: URL? {
         directory?.appendingPathComponent(Self.fileName, isDirectory: false)
-    }
-
-    /// The encoder of each line: one compact JSON line with sorted keys, and
-    /// the default date encoding, which keeps the whole precision of
-    /// ``SessionMessage/sentAt``.
-    private static var encoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
     }
 }

@@ -1,27 +1,5 @@
 import Foundation
-
-/// A failure reading the recorded transcripts a merge covers.
-enum MergedTranscriptError: Error, Equatable, LocalizedError {
-    /// A line of the transcript at `file` that is NOT the file's last line
-    /// failed to decode.
-    ///
-    /// A torn *final* line is the expected crash artifact of
-    /// ``JSONLRecorder``'s durability policy and is dropped with a warning
-    /// instead; corruption anywhere before it means the log was damaged after
-    /// it was written, which no policy expects, so it is reported loudly with
-    /// the file it names.
-    case transcriptLineCorrupt(file: URL)
-
-    var errorDescription: String? {
-        switch self {
-        case .transcriptLineCorrupt(let file):
-            return """
-                Transcript \(file.path) holds a corrupt line before its last one, so the recorded \
-                log cannot be trusted.
-                """
-        }
-    }
-}
+import FoundationModelsExtras
 
 /// Merges the per-session `transcript.jsonl` files a run left under a router's
 /// recording root into the single "what did this whole Router do" event stream.
@@ -42,30 +20,28 @@ enum MergedTranscript {
     /// Merges every nested `transcript.jsonl` under `routerDirectory` into one
     /// stream.
     ///
-    /// Line decoding is shared with ``TranscriptTree`` so the two readers
-    /// cannot drift: a torn FINAL line in any one file is dropped with a
-    /// warning naming the file and byte offset, rather than failing the merge.
+    /// Each file reads through the Extras `JSONLFile`, as ``TranscriptTree``
+    /// reads it, so the two readers cannot drift: a torn final line is dropped
+    /// with a warning, and a whole line that does not decode is skipped with a
+    /// warning, rather than failing the merge.
     ///
     /// - Parameter routerDirectory: The router's recording root —
     ///   `recordings/<routerId>/` — under which the session transcript files
     ///   are nested.
-    /// - Throws: ``MergedTranscriptError/transcriptLineCorrupt(file:)`` when a
-    ///   file holds a corrupt line before its last one, or
+    /// - Throws:
     ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
     ///   when a session's sidecar names a schema version newer than
-    ///   ``RecordingSchemaVersion/current``; otherwise if a transcript file
+    ///   ``RecordingSchemaVersion/current``; otherwise
+    ///   `JSONLFileError.readFailed(description:)` when a transcript file
     ///   cannot be read, which aborts the whole merge.
     static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
-        var events: [TranscriptEvent] = []
         // Discovery is shared with ``TranscriptTree`` through
         // ``TranscriptFileDiscovery``; the files come back in no particular
         // order, and the decoded events — not the files — are sorted below.
-        let files = TranscriptFileDiscovery.fileURLs(named: "transcript.jsonl", under: routerDirectory)
-        for file in files {
+        let files = TranscriptFileDiscovery.fileURLs(named: transcriptFileName, under: routerDirectory)
+        let events = try files.flatMap { file in
             try checkSchemaVersion(besideTranscript: file)
-            events += try TranscriptLineDecoding.decodeEvents(at: file) { file in
-                MergedTranscriptError.transcriptLineCorrupt(file: file)
-            }
+            return try JSONLFile(url: file).records(as: TranscriptEvent.self)
         }
         return events.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
     }
@@ -114,14 +90,11 @@ extension TranscriptEvent {
     ///   `recordings/<routerId>/` — under which the session transcript files
     ///   are nested.
     /// - Returns: Every recorded event under `routerDirectory`, ordered by
-    ///   `(ts, seq)`.
-    /// - Throws: The internal `MergedTranscriptError.transcriptLineCorrupt`
-    ///   when a file holds a corrupt line before its last one, the internal
-    ///   `RecordingSchemaVersionError.recordingFromNewerRouter` when a session's
-    ///   sidecar names a schema version newer than this build supports, or
-    ///   whatever reading a transcript file throws, which aborts the whole
-    ///   merge. Both error types stay internal, because a Swift error is
-    ///   untyped and every one of them reaches the caller as `any Error`.
+    ///   `(ts, seq)`. A line that does not decode is skipped with a warning.
+    /// - Throws: The internal `RecordingSchemaVersionError.recordingFromNewerRouter`
+    ///   when a session's sidecar names a schema version newer than this build
+    ///   supports, or `JSONLFileError.readFailed(description:)` when a
+    ///   transcript file cannot be read, which aborts the whole merge.
     public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
         try MergedTranscript.merged(under: routerDirectory)
     }

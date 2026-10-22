@@ -25,10 +25,6 @@ struct RecordingRootsPublicSurfaceTests {
         let sessionDirectory = root.appendingPathComponent(id.description, isDirectory: true)
         try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
         try SessionFacts(title: Self.title).write(to: sessionDirectory)
-        try SessionIndex(root: root).append(
-            SessionIndexRecord(
-                sessionId: id.description, cwd: root.path, title: "", updatedAt: Date(),
-                additionalDirectories: []))
         let directory = Router(pool: ModelPool()).sessionDirectory
 
         await directory.useRecordingRoots { [root] }

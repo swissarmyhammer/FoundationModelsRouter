@@ -5,15 +5,10 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The cross-project registry `projects.jsonl` in the user layer: one appended
-/// record per new working directory, `lastSeen` updates on a revisit, and a
-/// stale entry is skipped on read. Every test builds its own throwaway user
-/// directory and project directories under a temp directory.
-///
-/// Copied from the ACPAgent `ProjectRegistryTests` (ROUTER-3): Router owns the
-/// record of past sessions now (D72). The compatibility tests at the end pin
-/// the bytes the ACPAgent code wrote, so the files on a user's disk stay
-/// valid.
+/// The cross-project registry `projects.jsonl` in the user layer: each
+/// session start appends one line, the newest line of a path wins on read,
+/// and a stale entry is skipped on read. Every test builds its own throwaway
+/// user directory and project directories under a temp directory.
 @Suite struct ProjectRegistryTests {
     /// A throwaway user layer root plus real project directories, so the
     /// stale-skip check can delete one.
@@ -80,20 +75,23 @@ import Testing
         #expect(records.map(\.lastSeen) == [Self.firstVisit])
     }
 
-    /// A revisit updates `lastSeen`, keeps `firstSeen`, and appends no
-    /// second line for the same working directory.
-    @Test func revisitUpdatesLastSeenWithoutASecondLine() throws {
+    /// A revisit appends a newer line for the working directory, which keeps
+    /// `firstSeen` and updates `lastSeen`; the earlier line stays byte for
+    /// byte, and the newest line wins on read.
+    @Test func revisitAppendsANewerLineThatWins() throws {
         let fixture = Fixture()
         let project = try fixture.makeProjectDirectory(named: "alpha")
         try fixture.registry.recordSessionStart(workingDirectory: project, at: Self.firstVisit)
+        let firstText = try fixture.registryText()
 
         try fixture.registry.recordSessionStart(workingDirectory: project, at: Self.secondVisit)
 
         let records = try fixture.registry.projects()
         #expect(records.map(\.firstSeen) == [Self.firstVisit])
         #expect(records.map(\.lastSeen) == [Self.secondVisit])
-        let lines = try fixture.registryText().split(separator: "\n")
-        #expect(lines.count == 1)
+        let text = try fixture.registryText()
+        #expect(text.hasPrefix(firstText))
+        #expect(text.split(separator: "\n").count == 2)
     }
 
     /// Two different working directories give two records, in visit order.
@@ -137,36 +135,28 @@ import Testing
     /// holds a project path, so no log record may hold it.
     private static let undecodableLineText = "{\"path\":\"undecodable-line-of-the-log-case\"}"
 
-    /// A line that does not decode writes one `warning` record. The path of
-    /// the registry file is in the metadata of the record, and no record
-    /// holds the text of the line.
-    @Test func anUndecodableLineWritesOneWarningWithTheRegistryPathInMetadata() async throws {
-        let fixture = Fixture()
-        let registryFile = fixture.userDirectory.appendingPathComponent(
-            ProjectRegistry.registryFileName)
-        try Self.undecodableLineText.write(to: registryFile, atomically: true, encoding: .utf8)
+    /// The message of the `warning` record the JSONL reader writes when it
+    /// skips a line that does not decode.
+    private static let skippedLineWarning = "skipped a line of a JSONL file that does not decode"
 
-        let records = try await TelemetryCapture.run(forbidding: [Self.undecodableLineText]) {
+    /// A line that does not decode is skipped: the read gives no records and
+    /// writes exactly one `warning` record with the skip message, and no
+    /// record holds the text of the line.
+    @Test func anUndecodableLineIsSkippedWithOneWarning() async throws {
+        let fixture = Fixture()
+        try fixture.writeRegistryText(Self.undecodableLineText + "\n")
+
+        let (projects, warnings) = try await TelemetryCapture.run(forbidding: [Self.undecodableLineText]) {
             context in
-            _ = try fixture.registry.projects()
-            return context.logRecords
+            let projects = try fixture.registry.projects()
+            let warnings = context.logRecords.filter {
+                $0.level == .warning && "\($0.message)" == Self.skippedLineWarning
+            }
+            return (projects, warnings.count)
         }
 
-        let pathKey = RouterTelemetry.LogMetadataKey.filePath
-        let pathRecords = records.filter { $0.metadata[pathKey] != nil }
-        #expect(pathRecords.count == 1)
-        let record = try #require(pathRecords.first)
-        #expect(record.level == .warning)
-        #expect(record.metadata[pathKey] == .string(registryFile.path))
-    }
-
-    /// The label of the logger of the project registry.
-    private static let projectRegistryLoggerLabel = "FoundationModelsRouter.ProjectRegistry"
-
-    /// The logger of the project registry has the module label and the
-    /// category of the project registry.
-    @Test func projectRegistryLoggerHasTheModuleLabel() {
-        #expect(RouterTelemetry.makeLogger(.projectRegistry).label == Self.projectRegistryLoggerLabel)
+        #expect(projects.isEmpty)
+        #expect(warnings == 1)
     }
 
     // MARK: - ACPAgent compatibility
@@ -207,19 +197,6 @@ import Testing
                 ProjectRegistryRecord(path: first.path, firstSeen: Self.firstVisit, lastSeen: Self.secondVisit),
                 ProjectRegistryRecord(path: second.path, firstSeen: Self.firstVisit, lastSeen: Self.firstVisit),
             ])
-    }
-
-    /// A revisit of a project in a file the ACPAgent code wrote updates
-    /// `lastSeen` in place: the file holds the one line, in the ACPAgent
-    /// bytes, with no second line.
-    @Test func aRevisitOfAnACPAgentRegistryFileUpdatesLastSeenInPlace() throws {
-        let fixture = Fixture()
-        let project = try fixture.makeProjectDirectory(named: "alpha")
-        try fixture.writeRegistryText(Self.acpAgentLine(for: project, lastSeen: Self.firstVisitText))
-
-        try fixture.registry.recordSessionStart(workingDirectory: project, at: Self.secondVisit)
-
-        #expect(try fixture.registryText() == Self.acpAgentLine(for: project, lastSeen: Self.secondVisitText))
     }
 
     /// A session start in a new working directory writes the same bytes the

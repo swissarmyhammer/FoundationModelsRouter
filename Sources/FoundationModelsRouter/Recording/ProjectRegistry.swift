@@ -1,5 +1,5 @@
 import Foundation
-import Logging
+import FoundationModelsExtras
 
 /// One line of `projects.jsonl`: a project the user worked
 /// in. Paths only, never content.
@@ -26,15 +26,24 @@ public struct ProjectRegistryRecord: Codable, Equatable, Sendable {
     }
 }
 
+extension ProjectRegistryRecord: JSONLKeyedRecord {
+    /// The key of the record: its path. The newest line of a path wins.
+    public var key: String { path }
+
+    /// A registry record never removes its path.
+    public var isTombstone: Bool { false }
+}
+
 /// The cross-project registry in the user layer:
 /// `~/.config/<name>/projects.jsonl`. The cross-project session browser
 /// reads it to answer "what did I do in repo X last week?". It is a cache,
 /// not a record: the user can delete it, and a stale entry is skipped on
 /// read.
 ///
-/// Router owns the record of past sessions (D72). The file name and the line
-/// format are the ones the ACP agent wrote before Router owned the record, so
-/// the files on a user's disk stay valid.
+/// The file is append only and goes through the Extras `JSONLFile`
+/// (``JSONLAppend``): a session start appends one line for its path, and the
+/// newest line of a path wins on read. A line that does not decode is
+/// skipped with a warning.
 public struct ProjectRegistry: Sendable {
     /// The registry file's name inside the user layer.
     public static let registryFileName = "projects.jsonl"
@@ -56,35 +65,30 @@ public struct ProjectRegistry: Sendable {
         directory.appendingPathComponent(Self.registryFileName)
     }
 
-    /// Records a session start: a new working directory
-    /// appends one record, and a revisit updates that record's `lastSeen`
-    /// in place — never a second line for the same path.
+    /// Records a session start: appends one line for the working directory,
+    /// with `lastSeen` at `date` and the `firstSeen` of its earlier line, or
+    /// `date` for a new working directory.
     ///
     /// - Parameters:
     ///   - workingDirectory: The session's absolute working directory.
     ///   - date: The session's start instant.
-    /// - Throws: A file-system error when the registry cannot be written.
+    /// - Throws: A file-system error when the user layer cannot be created,
+    ///   or the `JSONLFileError` of a read or an append that fails.
     public func recordSessionStart(workingDirectory: URL, at date: Date = Date()) throws {
         let path = workingDirectory.standardizedFileURL.path
-        var records = try storedRecords()
-        guard let index = records.firstIndex(where: { $0.path == path }) else {
-            try FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true)
-            let record = ProjectRegistryRecord(path: path, firstSeen: date, lastSeen: date)
-            try JSONLines.appendLine(JSONLines.encodedLine(of: record), to: registryFile)
-            return
-        }
-        records[index].lastSeen = date
-        try write(records)
+        let firstSeen = try storedRecords().first { $0.path == path }?.firstSeen ?? date
+        try JSONLAppend.toDisk(
+            ProjectRegistryRecord(path: path, firstSeen: firstSeen, lastSeen: date), registryFile)
     }
 
     /// The live records: each stored record whose path is still a
     /// directory. A stale entry — a project that was moved or deleted —
     /// is skipped, not an error.
     ///
-    /// - Returns: The live records, in file order.
-    /// - Throws: A file-system error when an existing registry file cannot
-    ///   be read.
+    /// - Returns: The live records, in the order of the first line of each
+    ///   path.
+    /// - Throws: `JSONLFileError.readFailed(description:)` when an existing
+    ///   registry file cannot be read.
     public func projects() throws -> [ProjectRegistryRecord] {
         try storedRecords().filter { record in
             var isDirectory: ObjCBool = false
@@ -94,51 +98,18 @@ public struct ProjectRegistry: Sendable {
         }
     }
 
-    /// Every record that decodes, in file order. The registry is a cache
-    /// the user layer can regenerate, so a line that does not decode is
-    /// logged and skipped instead of refusing the whole file.
+    /// The newest record of each path, in the order of the first line of
+    /// each path. A missing file gives none.
     ///
-    /// - Returns: The decoded records. A missing file gives none.
-    /// - Throws: A file-system error when an existing registry file cannot
-    ///   be read.
+    /// - Returns: The newest record of each path.
+    /// - Throws: `JSONLFileError.readFailed(description:)` when an existing
+    ///   registry file cannot be read.
     private func storedRecords() throws -> [ProjectRegistryRecord] {
-        guard FileManager.default.fileExists(atPath: registryFile.path) else {
-            return []
+        let lines = try JSONLFile(url: registryFile).records(as: ProjectRegistryRecord.self)
+        let firstLine = Dictionary(
+            lines.enumerated().map { ($0.element.path, $0.offset) }, uniquingKeysWith: min)
+        return JSONLFile.fold(lines).values.sorted {
+            firstLine[$0.path, default: 0] < firstLine[$1.path, default: 0]
         }
-        let text = try String(contentsOf: registryFile, encoding: .utf8)
-        let decoder = JSONLines.makeDecoder()
-        return text.split(separator: "\n").compactMap { line in
-            decodedRecord(fromLine: line, decoder: decoder)
-        }
-    }
-
-    /// The record `line` holds, or `nil` after a `warning` log record when
-    /// the line does not decode. The log record holds the path of the
-    /// registry file and never the text of the line, because a line holds a
-    /// project path.
-    ///
-    /// - Parameters:
-    ///   - line: One line of the registry file, without its newline.
-    ///   - decoder: The decoder of the record lines.
-    /// - Returns: The decoded record, or `nil` for a line the read skips.
-    private func decodedRecord(fromLine line: Substring, decoder: JSONDecoder) -> ProjectRegistryRecord? {
-        do {
-            return try decoder.decode(ProjectRegistryRecord.self, from: Data(line.utf8))
-        } catch {
-            RouterTelemetry.makeLogger(.projectRegistry).warning(
-                "The project registry skipped a line that does not decode.",
-                metadata: [RouterTelemetry.LogMetadataKey.filePath: .string(registryFile.path)])
-            return nil
-        }
-    }
-
-    /// Replaces the registry file with `records`, one line each.
-    ///
-    /// - Parameter records: The records the file holds afterwards.
-    /// - Throws: An encode error, or a file-system error when the write
-    ///   fails.
-    private func write(_ records: [ProjectRegistryRecord]) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try JSONLines.replaceFile(registryFile, withLinesOf: records)
     }
 }

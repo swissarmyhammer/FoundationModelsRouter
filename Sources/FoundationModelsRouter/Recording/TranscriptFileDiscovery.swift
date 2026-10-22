@@ -2,8 +2,8 @@ import Foundation
 
 /// The one recording-file discovery path every reader in this module
 /// (``TranscriptTree`` and ``MergedTranscript``) shares, so the two
-/// enumerations cannot drift. Discovery is shared here the same way line
-/// decoding is shared in ``TranscriptLineDecoding``.
+/// enumerations cannot drift. Discovery is shared here the same way both
+/// readers share one line reader, the Extras `JSONLFile`.
 enum TranscriptFileDiscovery {
     /// Finds every file named `fileName` nested at any depth under
     /// `directory`.

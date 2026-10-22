@@ -487,9 +487,7 @@ struct SessionSidecarTests {
         let forkDir = rootDir.appendingPathComponent(fork.id.description, isDirectory: true)
 
         #expect(
-            try Set(Self.fileNames(directlyIn: routerDir)) == [
-                root.id.description, SessionIndex.indexFileName, SessionIndex.gitattributesFileName,
-            ])
+            try Set(Self.fileNames(directlyIn: routerDir)) == [root.id.description])
         #expect(
             try Set(Self.fileNames(directlyIn: rootDir)) == [
                 "session.json", SessionFacts.fileName, "transcript.jsonl", fork.id.description,

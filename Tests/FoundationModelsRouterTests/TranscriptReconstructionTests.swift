@@ -283,6 +283,10 @@ struct TranscriptReconstructionTests {
     private static let stubDimension = 8
     private static let cannedText = "canned response"
 
+    /// The `ts` of a hand-written transcript line, as the whole-second ISO
+    /// 8601 text a recorder writes.
+    private static let recordedTimestamp = "2001-01-01T00:00:00Z"
+
     /// Makes a new temporary directory with the name of this suite, through
     /// the shared ``RouterTestFixtures/makeTempDir(prefix:)``. The caller
     /// removes it in a `defer`.
@@ -349,12 +353,22 @@ struct TranscriptReconstructionTests {
         )
     }
 
-    /// Writes `events` as a session's `transcript.jsonl`, one JSON object per
-    /// line — the on-disk shape ``TranscriptTree`` reads.
+    /// Writes `events` as a session's `transcript.jsonl`, one line per event
+    /// in the format the recorder writes — the on-disk shape
+    /// ``TranscriptTree`` reads. It replaces any file already there.
     private static func writeTranscript(_ events: [TranscriptEvent], to sessionDir: URL) throws {
-        let encoder = JSONEncoder()
-        let lines = try events.map { try encoder.encode($0) }.map { String(data: $0, encoding: .utf8)! }
-        try lines.joined(separator: "\n").write(
+        let encoder = JSONLines.makeEncoder()
+        let lines = try events.map { event in
+            try #require(String(data: try encoder.encode(event), encoding: .utf8))
+        }
+        try writeTranscriptLines(lines, to: sessionDir)
+    }
+
+    /// Writes `lines` as a session's `transcript.jsonl`, each a whole line
+    /// that ends with its `\n`, so a read drops none of them as a torn tail.
+    /// It replaces any file already there.
+    private static func writeTranscriptLines(_ lines: [String], to sessionDir: URL) throws {
+        try lines.map { $0 + "\n" }.joined().write(
             to: sessionDir.appendingPathComponent("transcript.jsonl", isDirectory: false),
             atomically: true,
             encoding: .utf8
@@ -531,13 +545,9 @@ struct TranscriptReconstructionTests {
         let sessionDir = try Self.makeSessionDir(
             dir.appendingPathComponent(sessionId.description, isDirectory: true))
         let json = """
-            {"routerId":"\(ULID.generate().description)","sessionId":"\(sessionId.description)","seq":0,"ts":0,"kind":"prompt","entry":{"entryId":"e1","contentRemoved":true}}
+            {"routerId":"\(ULID.generate().description)","sessionId":"\(sessionId.description)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"prompt","entry":{"entryId":"e1","contentRemoved":true}}
             """
-        try json.write(
-            to: sessionDir.appendingPathComponent("transcript.jsonl", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeTranscriptLines([json], to: sessionDir)
 
         let tree = try TranscriptTree.load(under: dir)
         let events = try tree.events(forSession: sessionId)
@@ -560,13 +570,9 @@ struct TranscriptReconstructionTests {
         let sessionDir = try Self.makeSessionDir(
             dir.appendingPathComponent(sessionId.description, isDirectory: true))
         let json = """
-            {"routerId":"\(ULID.generate().description)","sessionId":"\(sessionId.description)","seq":0,"ts":0,"kind":"prompt","text":"hello"}
+            {"routerId":"\(ULID.generate().description)","sessionId":"\(sessionId.description)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"prompt","text":"hello"}
             """
-        try json.write(
-            to: sessionDir.appendingPathComponent("transcript.jsonl", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeTranscriptLines([json], to: sessionDir)
 
         let tree = try TranscriptTree.load(under: dir)
         #expect(
@@ -602,17 +608,13 @@ struct TranscriptReconstructionTests {
         // v2 synthetic bodyless close.
         let lines = [
             """
-            {"routerId":"\(routerId)","sessionId":"\(sessionId.description)","seq":0,"ts":0,"kind":"prompt"}
+            {"routerId":"\(routerId)","sessionId":"\(sessionId.description)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"prompt"}
             """,
             """
-            {"routerId":"\(routerId)","sessionId":"\(sessionId.description)","seq":1,"ts":1,"kind":"response","ms":42}
+            {"routerId":"\(routerId)","sessionId":"\(sessionId.description)","seq":1,"ts":"\(Self.recordedTimestamp)","kind":"response","ms":42}
             """,
         ]
-        try lines.joined(separator: "\n").write(
-            to: sessionDir.appendingPathComponent("transcript.jsonl", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeTranscriptLines(lines, to: sessionDir)
 
         let tree = try TranscriptTree.load(under: dir)
         #expect(
@@ -681,15 +683,7 @@ struct TranscriptReconstructionTests {
                 entry: TranscriptEntryPayload(entryId: promptEntryId)
             )
         }
-        let encoder = JSONEncoder()
-        let rewritten = try corruptedEvents.map { try encoder.encode($0) }
-            .map { String(data: $0, encoding: .utf8)! }
-            .joined(separator: "\n")
-        try rewritten.write(
-            to: node.directory.appendingPathComponent("transcript.jsonl", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeTranscript(corruptedEvents, to: node.directory)
 
         let reloadedTree = try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         #expect(throws: TranscriptReconstructionError.entryReconstructionFailed(

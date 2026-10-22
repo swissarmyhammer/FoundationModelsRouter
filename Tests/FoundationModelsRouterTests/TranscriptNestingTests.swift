@@ -1,6 +1,6 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterTestSupport
+import FoundationModelsExtras
 import Testing
 
 @testable import FoundationModelsRouter
@@ -186,10 +186,7 @@ struct TranscriptNestingTests {
     /// Decodes every event from a session directory's `transcript.jsonl`.
     private func events(in directory: URL, includingMailRecords: Bool = false) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let decoder = JSONDecoder()
-        let all = try TextFileLines.read(from: fileURL).map {
-            try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
-        }
+        let all = try JSONLFile(url: fileURL).records(as: TranscriptEvent.self)
         // The `.mail` events hold the mail records. These tests examine the
         // entries, so they remove the mail records unless they ask for them.
         return includingMailRecords ? all : all.withoutMailRecords

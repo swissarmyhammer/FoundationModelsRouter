@@ -1,16 +1,18 @@
 import Foundation
 import FoundationModelsRouterTestSupport
+import Synchronization
+import TelemetryTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises the recording durability policy: ``JSONLRecorder`` synchronizes
-/// its append handle at each submission close (a `.response`-kind event), and both
-/// readers — ``TranscriptTree`` and ``MergedTranscript`` — tolerate the crash
-/// artifact that policy expects — a torn final line in a `transcript.jsonl` —
-/// while failing loudly, with a typed error naming the file, on corruption
-/// anywhere before it.
-@Suite("Recording durability: submission-close sync and torn-tail tolerance")
+/// Exercises the recording durability policy: ``JSONLRecorder`` appends each
+/// event as one line through the Extras `JSONLFile`, which flushes that line
+/// before it returns; an append only grows the file and starts its own line
+/// after a torn tail; and both readers — ``TranscriptTree`` and
+/// ``MergedTranscript`` — drop a torn final line and skip a line that does
+/// not decode, each with a warning, and never throw for either.
+@Suite("Recording durability: one flushed line for each event, and torn-line tolerance")
 struct RecordingDurabilityTests {
     // MARK: - Fixtures
 
@@ -143,90 +145,152 @@ struct RecordingDurabilityTests {
 
     // MARK: - Mid-file corruption
 
-    @Test("a corrupt line that is not the last one fails loudly, naming the session and file")
-    func midFileCorruptionThrowsTypedError() async throws {
+    /// The message of the warning that the Extras `JSONLFile` reader logs for
+    /// a whole line that does not decode.
+    private static let skippedLineWarning = "skipped a line of a JSONL file that does not decode"
+
+    /// The fixture kinds without the first submission-close `.response`,
+    /// the line ``corruptFirstSubmissionClose(of:)`` damages.
+    private static var fixtureKindsWithoutFirstSubmissionClose: [TranscriptEvent.Kind] {
+        var kinds = fixtureKinds
+        kinds.remove(at: kinds.firstIndex(of: .response) ?? kinds.endIndex)
+        return kinds
+    }
+
+    /// Runs `read` and counts the warnings of skipped lines it logged.
+    ///
+    /// - Parameter read: The read of the damaged transcript.
+    /// - Returns: The kinds of the events `read` gave, and the count of
+    ///   skipped-line warnings.
+    private static func kindsAndSkipWarnings(
+        of read: @escaping @Sendable () throws -> [TranscriptEvent]
+    ) async throws -> (kinds: [TranscriptEvent.Kind], warnings: Int) {
+        try await TelemetryCapture.run(forbidding: []) { context in
+            let kinds = try read().map(\.kind)
+            let warnings = context.logRecords.filter {
+                $0.level == .warning && "\($0.message)" == Self.skippedLineWarning
+            }
+            return (kinds, warnings.count)
+        }
+    }
+
+    @Test("a corrupt line that is not the last one is skipped with a warning, and the tree loads the rest")
+    func midFileCorruptionIsSkippedOnLoad() async throws {
         let root = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = try await Self.writeSessionFixture(under: root)
         try Self.corruptFirstSubmissionClose(of: fixture.transcriptURL)
 
-        do {
-            _ = try TranscriptTree.load(under: root)
-            Issue.record("loading a tree over mid-file corruption succeeded")
-        } catch TranscriptTreeError.transcriptLineCorrupt(let session, let file) {
-            #expect(session == fixture.sessionId)
-            #expect(file.lastPathComponent == "transcript.jsonl")
-            #expect(file.deletingLastPathComponent().lastPathComponent == fixture.sessionId.description)
+        let tree = try TranscriptTree.load(under: root)
+
+        let (kinds, warnings) = try await Self.kindsAndSkipWarnings {
+            try tree.events(forSession: fixture.sessionId)
         }
+
+        #expect(kinds == Self.fixtureKindsWithoutFirstSubmissionClose)
+        #expect(warnings == 1)
     }
 
-    @Test("mid-file corruption fails the merged stream loudly, naming the file")
-    func midFileCorruptionThrowsTypedErrorFromMergedStream() async throws {
+    @Test("a corrupt line that is not the last one is skipped with a warning in the merged stream")
+    func midFileCorruptionIsSkippedFromMergedStream() async throws {
         let root = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = try await Self.writeSessionFixture(under: root)
         try Self.corruptFirstSubmissionClose(of: fixture.transcriptURL)
 
-        do {
-            _ = try MergedTranscript.merged(under: root)
-            Issue.record("merging over mid-file corruption succeeded")
-        } catch MergedTranscriptError.transcriptLineCorrupt(let file) {
-            #expect(file.lastPathComponent == "transcript.jsonl")
-            #expect(file.deletingLastPathComponent().lastPathComponent == fixture.sessionId.description)
+        let (kinds, warnings) = try await Self.kindsAndSkipWarnings {
+            try MergedTranscript.merged(under: root)
+        }
+
+        #expect(kinds == Self.fixtureKindsWithoutFirstSubmissionClose)
+        #expect(warnings == 1)
+    }
+
+    // MARK: - Append only
+
+    /// How far after the fixture a later recorder stamps its events, so the
+    /// merged stream, which orders by time first, puts them last.
+    private static let laterRecorderOffset: TimeInterval = 3600
+
+    @Test("an append after a torn final line keeps every earlier byte and starts a line of its own")
+    func anAppendAfterATornFinalLineStartsALineOfItsOwn() async throws {
+        let root = Self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await Self.writeSessionFixture(under: root)
+        try Self.tearFinalLine(of: fixture.transcriptURL, keeping: Self.tornTailKeptByteCounts[1])
+        let tornBytes = try Data(contentsOf: fixture.transcriptURL)
+        let directory = fixture.transcriptURL.deletingLastPathComponent()
+        let later = Date().addingTimeInterval(Self.laterRecorderOffset)
+
+        await JSONLRecorder(directory: directory, now: { later }).append(
+            TranscriptEvent.Partial(routerId: ULID(), sessionId: fixture.sessionId, kind: .prompt), to: nil)
+
+        let grown = try Data(contentsOf: fixture.transcriptURL)
+        #expect(grown.prefix(tornBytes.count) == tornBytes)
+        let merged = try MergedTranscript.merged(under: root)
+        #expect(merged.map(\.kind) == Array(Self.fixtureKinds.dropLast()) + [.prompt])
+    }
+
+    @Test("an append only grows the transcript: every earlier byte stays as it was")
+    func anAppendOnlyGrowsTheTranscript() async throws {
+        let root = Self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await Self.writeSessionFixture(under: root)
+        let before = try Data(contentsOf: fixture.transcriptURL)
+        let directory = fixture.transcriptURL.deletingLastPathComponent()
+
+        await JSONLRecorder(directory: directory).append(
+            TranscriptEvent.Partial(routerId: ULID(), sessionId: fixture.sessionId, kind: .prompt), to: nil)
+
+        let after = try Data(contentsOf: fixture.transcriptURL)
+        #expect(after.count > before.count)
+        #expect(after.prefix(before.count) == before)
+    }
+
+    // MARK: - One flushed line for each event
+
+    /// A line append that records each event and file it is given instead
+    /// of touching disk, so a test sees exactly what the recorder appends.
+    private final class SpyLineAppend: Sendable {
+        /// The kind and the file of each append, in order, under a lock: the
+        /// recorder actor and the test both touch this spy.
+        private let appends = Mutex<[(kind: TranscriptEvent.Kind, file: URL)]>([])
+
+        /// The kinds of the appended events, in order.
+        var kinds: [TranscriptEvent.Kind] {
+            appends.withLock { $0.map(\.kind) }
+        }
+
+        /// The files of the appends, in order.
+        var files: [URL] {
+            appends.withLock { $0.map(\.file) }
+        }
+
+        /// Records one append of `record` to `file`.
+        ///
+        /// - Parameters:
+        ///   - record: The appended record, a ``TranscriptEvent``.
+        ///   - file: The file of the append.
+        func append(_ record: any Encodable, to file: URL) {
+            let kind = (record as? TranscriptEvent)?.kind
+            appends.withLock { $0.append((kind ?? .session, file)) }
+            #expect(kind != nil, "the recorder appended a record that is not a transcript event")
         }
     }
 
-    // MARK: - Submission-close sync
-
-    /// One recorded call on ``SpyAppendHandle``.
-    private enum HandleCall: Equatable {
-        case write
-        case synchronize
-    }
-
-    /// A ``TranscriptAppendHandle`` that records its calls instead of touching
-    /// disk, so a test can assert exactly when the recorder synchronizes.
-    private final class SpyAppendHandle: TranscriptAppendHandle, @unchecked Sendable {
-        /// Guards ``recordedCalls`` — the recorder actor and the test both
-        /// touch this spy.
-        private let lock = NSLock()
-        /// Every call made on this handle, in order.
-        private var recordedCalls: [HandleCall] = []
-
-        /// Every call made on this handle so far, in order.
-        var calls: [HandleCall] {
-            lock.withLock { recordedCalls }
-        }
-
-        func write(contentsOf data: Data) throws {
-            lock.withLock { recordedCalls.append(.write) }
-        }
-
-        func synchronize() throws {
-            lock.withLock { recordedCalls.append(.synchronize) }
-        }
-    }
-
-    @Test("the append handle is synchronized exactly when a submission-close `.response` event lands")
-    func synchronizesAtSubmissionClose() async {
+    @Test("every event is one line append of its own, not only the close of a submission")
+    func everyEventIsOneFlushedLineAppend() async {
         let directory = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let spy = SpyAppendHandle()
-        let recorder = JSONLRecorder(directory: directory, openHandle: { _ in spy })
+        let spy = SpyLineAppend()
+        let recorder = JSONLRecorder(directory: directory, appendLine: { record, file in spy.append(record, to: file) })
 
-        let routerId = ULID()
-        let sessionId = ULID()
         for kind in Self.fixtureKinds {
-            await recorder.append(
-                TranscriptEvent.Partial(routerId: routerId, sessionId: sessionId, kind: kind),
-                to: nil
-            )
+            await recorder.append(TranscriptEvent.Partial(routerId: ULID(), sessionId: ULID(), kind: kind), to: nil)
         }
 
-        #expect(
-            spy.calls == [
-                .write, .write, .write, .synchronize, .write, .write, .synchronize,
-            ]
-        )
+        #expect(spy.kinds == Self.fixtureKinds)
+        let transcript = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        #expect(spy.files == Array(repeating: transcript, count: Self.fixtureKinds.count))
     }
 }

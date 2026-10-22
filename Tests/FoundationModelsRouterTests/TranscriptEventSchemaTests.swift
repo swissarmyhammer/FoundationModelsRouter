@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import Testing
 
 @testable import FoundationModelsRouter
@@ -12,6 +13,10 @@ import Testing
 @Suite("TranscriptEvent schema v2")
 struct TranscriptEventSchemaTests {
     private static let fixedInstant = Date(timeIntervalSinceReferenceDate: 2_000.25)
+
+    /// The `ts` of a hand-written transcript line, as the whole-second ISO
+    /// 8601 text a recorder writes.
+    private static let recordedTimestamp = "2001-01-01T00:00:00Z"
 
     // MARK: - New Kind cases
 
@@ -37,9 +42,9 @@ struct TranscriptEventSchemaTests {
         let routerId = ULID.generate().description
         let sessionId = ULID.generate().description
         let json = """
-        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":0,"kind":"toolCall"}
+        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"toolCall"}
         """
-        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
+        let decoded = try JSONLines.makeDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
         #expect(decoded.kind == .toolCall)
         #expect(decoded.entry == nil)
     }
@@ -51,9 +56,9 @@ struct TranscriptEventSchemaTests {
         let routerId = ULID.generate().description
         let sessionId = ULID.generate().description
         let json = """
-        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":0,"kind":"prompt","text":"hello"}
+        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"prompt","text":"hello"}
         """
-        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
+        let decoded = try JSONLines.makeDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
         #expect(decoded.entry == nil)
         #expect(decoded.text == "hello")
     }
@@ -258,9 +263,9 @@ struct TranscriptEventSchemaTests {
         let routerId = ULID.generate().description
         let sessionId = ULID.generate().description
         let json = """
-        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":0,"kind":"session"}
+        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"session"}
         """
-        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
+        let decoded = try JSONLines.makeDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
         #expect(decoded.kind == .session)
         #expect(decoded.agentSpawn == nil)
     }
@@ -537,7 +542,8 @@ struct TranscriptEventSchemaTests {
         let routerId = ULID.generate().description
         let sessionId = ULID.generate().description
         let v1Line = """
-        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":0,"kind":"toolCall"}
+        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"toolCall"}
+
         """
         try v1Line.write(
             to: v1Dir.appendingPathComponent("transcript.jsonl", isDirectory: false),
@@ -559,9 +565,7 @@ struct TranscriptEventSchemaTests {
                 toolCalls: [ToolCallPayload(id: "c1", toolName: "search", argumentsJSON: "{}")]
             )
         )
-        var v2Line = try JSONEncoder().encode(v2Event)
-        v2Line.append(0x0A)
-        try v2Line.write(to: v2Dir.appendingPathComponent("transcript.jsonl", isDirectory: false))
+        try JSONLFile(url: v2Dir.appendingPathComponent("transcript.jsonl", isDirectory: false)).append(v2Event)
 
         let merged = try MergedTranscript.merged(under: routerDir)
         #expect(merged.count == 2)

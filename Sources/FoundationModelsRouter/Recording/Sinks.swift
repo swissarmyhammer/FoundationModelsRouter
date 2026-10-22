@@ -13,42 +13,31 @@ import Logging
 ///
 /// ## Durability
 ///
-/// Each appended event is one `write` call: a whole line, written once. The
-/// sync point is the submission close — after appending a `.response`-kind event
-/// (the final event of a submission, onto which both diff paths stamp its usage), the
-/// target directory's handle is synchronized (fsync), so a completed submission is
-/// durable the moment its closing event lands. Between submission closes the window
-/// is the OS's: a power cut or a kill can lose the events of the open submission and can
-/// tear at most the final line of a `transcript.jsonl`. That torn tail is the
-/// policy's expected crash artifact, and ``TranscriptTree`` tolerates it on
-/// load by dropping the torn line with a warning. Synchronization is
-/// best-effort like the writes: a failed sync is logged, never thrown.
+/// Each event goes through the Extras `JSONLFile` (``JSONLAppend``): one whole
+/// line in one write at the end of the file, flushed with `fsync(2)` before
+/// the append returns. Every event is durable the moment it lands, not only at
+/// the close of a submission. A crash during an append can tear at most the
+/// final line of a `transcript.jsonl`; the next append ends that torn line
+/// with a newline before its own, and a read skips the torn bytes with a
+/// warning (``TranscriptTree``, ``MergedTranscript``).
 package actor JSONLRecorder: TranscriptRecorder {
     /// The default directory `transcript.jsonl` is written into when an append
     /// carries no explicit session directory.
     private let directory: URL
     /// The clock used to stamp each event's `ts`.
     private let now: @Sendable () -> Date
-    /// Encodes each event to a single compact JSON line (no embedded newlines).
-    private let encoder = JSONEncoder()
     /// The next sequence number to stamp — global across all directories.
     private var seq = 0
-    /// One append handle per directory, opened lazily and reused.
-    private var handles: [String: any TranscriptAppendHandle] = [:]
-    /// Opens the append handle for a directory on first use. The production
-    /// opener creates the directory and its `transcript.jsonl` on disk; tests
-    /// inject a spy here to observe writes and syncs without disk I/O.
-    private let openHandle: @Sendable (URL) throws -> any TranscriptAppendHandle
+    /// Appends one event as one line of a `transcript.jsonl`. The production
+    /// append is ``JSONLAppend/toDisk``; tests inject a spy here to observe
+    /// each append without disk I/O.
+    private let appendLine: JSONLLineAppend
     /// The claim this recorder holds on its recording root ``directory``, so
     /// two live writers can never append into the same root. Held from
     /// construction by ``init(owningDirectory:now:)``, and taken lazily just
     /// before the first append otherwise — `nil` until then, and `nil` on
     /// every append another live writer's claim refused.
     private var rootOwnership: RecordingRootOwnership?
-
-    private static let productionOpenHandle: @Sendable (URL) throws -> any TranscriptAppendHandle = {
-        try openHandleForAppending(fileName: "transcript.jsonl", in: $0)
-    }
 
     /// Creates a JSONL recorder whose default directory is `directory`.
     ///
@@ -59,11 +48,7 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// that writer releases it. To learn about a held root at open time
     /// instead, use the throwing ``init(owningDirectory:now:)``.
     package init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
-        self.init(
-            directory: directory,
-            now: now,
-            openHandle: Self.productionOpenHandle
-        )
+        self.init(directory: directory, now: now, appendLine: JSONLAppend.toDisk)
     }
 
     /// Creates a JSONL recorder that takes ownership of `directory` as a
@@ -88,31 +73,33 @@ package actor JSONLRecorder: TranscriptRecorder {
     ///   is not exhaustive.
     init(owningDirectory directory: URL, now: @escaping @Sendable () -> Date = { Date() }) throws {
         let ownership = try RecordingRootOwnership.acquire(root: directory)
-        self.init(
-            directory: directory,
-            now: now,
-            openHandle: Self.productionOpenHandle,
-            rootOwnership: ownership
-        )
+        self.init(directory: directory, now: now, appendLine: JSONLAppend.toDisk, rootOwnership: ownership)
     }
 
-    /// Creates a JSONL recorder with an injected handle opener, so a test can
-    /// observe exactly when this recorder writes and synchronizes.
+    /// Creates a JSONL recorder with an injected line append, so a test can
+    /// observe exactly what this recorder appends.
+    ///
+    /// - Parameters:
+    ///   - directory: The default directory of `transcript.jsonl`.
+    ///   - now: The clock that stamps each event's `ts`.
+    ///   - appendLine: Appends one event as one line of a file.
+    ///   - rootOwnership: The claim on `directory` when the caller already
+    ///     holds it, else `nil`, so the first append takes it.
     init(
         directory: URL,
         now: @escaping @Sendable () -> Date = { Date() },
-        openHandle: @escaping @Sendable (URL) throws -> any TranscriptAppendHandle,
+        appendLine: @escaping JSONLLineAppend,
         rootOwnership: RecordingRootOwnership? = nil
     ) {
         self.directory = directory
         self.now = now
-        self.openHandle = openHandle
+        self.appendLine = appendLine
         self.rootOwnership = rootOwnership
     }
 
     /// Stamps and appends an event into `directory`, or into the recorder's
-    /// default directory when `nil`. A `.response`-kind event is a submission close,
-    /// so it additionally synchronizes the target's handle (see Durability).
+    /// default directory when `nil`, as one line flushed to the disk (see
+    /// Durability).
     ///
     /// The first append also claims the recording root (see ``rootOwnership``);
     /// while another live writer holds it, the event is logged and dropped
@@ -122,17 +109,15 @@ package actor JSONLRecorder: TranscriptRecorder {
         guard ensureRootOwnership() else { return }
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
-        let target = directory ?? self.directory
-        appendJSONLine(
+        let target = (directory ?? self.directory).appendingPathComponent(transcriptFileName, isDirectory: false)
+        JSONLAppend.appendDroppingFailure(
             event,
-            encoder: encoder,
+            to: target,
+            through: appendLine,
             logger: RouterTelemetry.makeLogger(.recording),
-            handle: { try self.handleForAppending(in: target) },
             failureMessage: "dropping a transcript event",
             failureMetadata: [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
         )
-        guard event.kind == .response else { return }
-        synchronizeHandle(in: target, afterSeq: event.seq)
     }
 
     /// Claims the recording root before a write when no claim is held yet,
@@ -154,44 +139,6 @@ package actor JSONLRecorder: TranscriptRecorder {
                 metadata: RouterTelemetry.errorMetadata(error))
             return false
         }
-    }
-
-    /// Best-effort fsync of `directory`'s cached append handle, called after a
-    /// submission-close append (see Durability). A directory with no cached handle
-    /// recorded nothing — the append itself already failed and was logged — so
-    /// there is nothing to synchronize.
-    ///
-    /// - Parameter eventSeq: Named by the log when the sync fails.
-    private func synchronizeHandle(in directory: URL, afterSeq eventSeq: Int) {
-        guard let handle = handles[handleKey(for: directory)] else { return }
-        do {
-            try handle.synchronize()
-        } catch {
-            RouterTelemetry.makeLogger(.recording).error(
-                "the transcript sync after a submission close failed",
-                metadata: RouterTelemetry.errorMetadata(error).merging([
-                    RouterTelemetry.LogMetadataKey.eventSeq: "\(eventSeq)"
-                ]) { _, new in new })
-        }
-    }
-
-    /// The reusable append handle for a directory, opened through
-    /// ``openHandle`` on first use.
-    ///
-    /// - Returns: A handle positioned at the end of that directory's
-    ///   `transcript.jsonl`.
-    private func handleForAppending(in directory: URL) throws -> any TranscriptAppendHandle {
-        let key = handleKey(for: directory)
-        if let handle = handles[key] { return handle }
-        let handle = try openHandle(directory)
-        handles[key] = handle
-        return handle
-    }
-
-    /// The ``handles`` key for a directory: its standardized path, so two URLs
-    /// naming the same directory share one handle.
-    private func handleKey(for directory: URL) -> String {
-        directory.standardizedFileURL.path
     }
 }
 

@@ -24,10 +24,9 @@ import Synchronization
 /// ``SessionStateTracking``). The task holds neither the session nor the
 /// directory, and it ends when the session closes or is released.
 ///
-/// The directory also owns the record of past sessions (D72). Each new
-/// durable root session appends its line to `sessions.jsonl` when it
-/// registers, and the root sessions on disk under the recording roots of the
-/// host (``useRecordingRoots(_:)``) answer as recorded summaries
+/// The directory also owns the record of past sessions (D72): the root
+/// session folders on disk under the recording roots of the host
+/// (``useRecordingRoots(_:)``) answer as recorded summaries
 /// (``RecordedSessions``).
 ///
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
@@ -151,10 +150,6 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// kind and its parent, and keeps its time of change, its state and its
     /// feed task. It sends no second `started`.
     ///
-    /// The first registration of a root session appends its line to the
-    /// record of past sessions (``RecordedSessions/appendIndexRecord(of:)``),
-    /// after the lock is released.
-    ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - kind: The kind of the session.
@@ -167,22 +162,19 @@ public actor RouterSessionDirectory: SessionDirectory {
         _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
     ) {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
-        let isFirstRegistration = state.withLock { registry in
+        state.withLock { registry in
             if let live = registry.entries[session.id], live.session != nil {
                 entry.updatedAt = live.updatedAt
                 entry.tracking = live.tracking
                 entry.stateFeed = live.stateFeed
                 registry.entries[session.id] = entry
-                return false
+                return
             }
             registry.entries[session.id]?.stateFeed?.cancel()
             entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
             registry.entries[session.id] = entry
             registry.fanout.send(.started(Self.summary(of: session, in: entry), requestedByClient: requestedByClient))
-            return true
         }
-        guard isFirstRegistration, kind == .root else { return }
-        RecordedSessions.appendIndexRecord(of: session)
     }
 
     /// Takes a session off the live list and ends the task that follows its
@@ -352,11 +344,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     // MARK: - Recording roots
 
     /// Gives the directory the recording roots of the host: the folders that
-    /// hold a `sessions.jsonl` (``SessionIndex``) beside the recording
-    /// directories of its root sessions. Router reads no setting of the host
-    /// to find them. A query with `includesRecorded`, and ``summary(of:)``
-    /// for an id with no live session, read the roots again each time, so a
-    /// root the host adds later is found. A later call replaces the roots.
+    /// hold the recording folders of its root sessions. Router reads no
+    /// setting of the host to find them. A query with `includesRecorded`, and
+    /// ``summary(of:)`` for an id with no live session, read the roots again
+    /// each time, so a root the host adds later is found. A later call
+    /// replaces the roots.
     ///
     /// - Parameter roots: Gives the recording roots of the host.
     public func useRecordingRoots(_ roots: @escaping @Sendable () async throws -> [URL]) {
@@ -604,10 +596,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   `SessionDirectoryError.noLauncher` when an agent address must start
     ///   a session or a recorded target must be restored with no launcher,
     ///   the start errors of the launcher for an agent address,
-    ///   ``SessionMessageLedgerError/corruptLine(_:)`` when the
-    ///   `messages.jsonl` of a target is damaged before its final line, the
-    ///   file-system error of a read of a ledger, or the error of the
-    ///   recording roots of the host.
+    ///   `JSONLFileError.readFailed(description:)` when the `messages.jsonl`
+    ///   of a target exists and does not read, or the error of the recording
+    ///   roots of the host.
     public func send(_ message: OutgoingSessionMessage) async throws -> [SessionSendReceipt] {
         let recorded = try await recordedSummaries()
         let resolution = try message.to.resolution(from: message.from, among: liveSummaries()) { id in
@@ -785,13 +776,15 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The id of the mail that carries it. The default is a new id.
     ///   - target: The session id of the target.
     /// - Returns: The delivered message, not read, with the chain depth
-    ///   ``firstChainDepth``.
+    ///   ``firstChainDepth``, sent now at the precision of the ledger
+    ///   (``SessionMessageLedger/recordedInstant(of:)``), so the message a
+    ///   restore reads back equals the one delivered.
     private static func delivered(
         _ message: OutgoingSessionMessage, id: MailID = MailID(), to target: ULID
     ) -> SessionMessage {
         SessionMessage(
             id: id, from: message.from, to: target, text: message.text, inReplyTo: message.inReplyTo,
-            sentAt: Date(), chainDepth: firstChainDepth)
+            sentAt: SessionMessageLedger.recordedInstant(of: Date()), chainDepth: firstChainDepth)
     }
 
     /// Records `delivered` in `ledger`, the ledger of its target, holds the
@@ -832,9 +825,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   oldest first.
     /// - Throws: `SessionDirectoryError.unknownSession` when no live or
     ///   recorded session has the id,
-    ///   ``SessionMessageLedgerError/corruptLine(_:)`` when the
-    ///   `messages.jsonl` of the session is damaged before its final line, the
-    ///   file-system error of a read of the ledger, or the error of the
+    ///   `JSONLFileError.readFailed(description:)` when the `messages.jsonl`
+    ///   of the session exists and does not read, or the error of the
     ///   recording roots of the host.
     public func inbox(of id: ULID, markRead: Bool) async throws -> [SessionMessage] {
         guard var ledger = try await knownLedger(of: id) else {
@@ -877,10 +869,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - recipient: The session id that the message went to.
     /// - Returns: The message, read or not read, or `nil` when no message to
     ///   `recipient` has the id or no session has the id `recipient`.
-    /// - Throws: ``SessionMessageLedgerError/corruptLine(_:)`` when the
-    ///   `messages.jsonl` of `recipient` is damaged before its final line, the
-    ///   file-system error of a read of the ledger, or the error of the
-    ///   recording roots of the host.
+    /// - Throws: `JSONLFileError.readFailed(description:)` when the
+    ///   `messages.jsonl` of `recipient` exists and does not read, or the
+    ///   error of the recording roots of the host.
     public func message(_ id: MailID, to recipient: ULID) async throws -> SessionMessage? {
         try await knownLedger(of: recipient)?.message(id)
     }
@@ -909,9 +900,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - directory: The recording directory of a durable session, or `nil`
     ///     for a memory-only session.
     /// - Returns: The ledger.
-    /// - Throws: ``SessionMessageLedgerError/corruptLine(_:)`` for a
-    ///   `messages.jsonl` damaged before its final line, or the file-system
-    ///   error of a read of it.
+    /// - Throws: `JSONLFileError.readFailed(description:)` when the
+    ///   `messages.jsonl` of the session exists and does not read.
     private func ledger(of id: ULID, in directory: URL?) throws -> SessionMessageLedger {
         if let held = ledgers[id] {
             return held

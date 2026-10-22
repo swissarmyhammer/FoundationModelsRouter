@@ -86,10 +86,11 @@ struct MergedTranscriptPublicSurfaceTests {
         /// The event's body text, which the assertions read back.
         let text: String
 
-        /// The wall-clock stamp, as the seconds-since-reference-date number a
-        /// recorder writes. It rises with ``seq``, so `(ts, seq)` and `seq`
-        /// agree on the order the merge must produce.
-        var ts: Double { Double(seq) }
+        /// The wall-clock stamp, as the whole-second ISO 8601 text a recorder
+        /// writes: ``seq`` seconds after the reference date. It rises with
+        /// ``seq``, so `(ts, seq)` and `seq` agree on the order the merge must
+        /// produce.
+        var ts: String { Date(timeIntervalSinceReferenceDate: TimeInterval(seq)).ISO8601Format() }
     }
 
     /// The lines the session at `offset` records, newest first.
@@ -133,7 +134,7 @@ struct MergedTranscriptPublicSurfaceTests {
         let body = lines.map { line in
             """
             {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":\(line.seq),\
-            "ts":\(line.ts),"kind":"prompt","text":"\(line.text)"}
+            "ts":"\(line.ts)","kind":"prompt","text":"\(line.text)"}
             """
         }
         try body.joined(separator: "\n").appending("\n").write(
