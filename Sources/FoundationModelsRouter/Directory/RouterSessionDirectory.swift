@@ -19,9 +19,16 @@ import Synchronization
 /// compose the tools of a session and does not know the agent catalog.
 /// ``shutdown()`` releases the launcher again.
 ///
+/// For each registered session, one task reads the events of the session
+/// and keeps its work state and its last summary (ROUTER-9,
+/// ``SessionStateTracking``). The task holds neither the session nor the
+/// directory, and it ends when the session closes or is released.
+///
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
-/// live sessions, ``start(_:)`` starts a root session through the launcher,
-/// and ``events()`` gives `started` for each session it registers. The other
+/// live sessions, with the state and the last summary of each,
+/// ``start(_:)`` starts a root session through the launcher, and
+/// ``events()`` gives `started` for each session it registers and
+/// `stateChanged` for each change of its state or its last summary. The other
 /// requirements of the port have provisional bodies that later cards
 /// replace: the tag and title changes (ROUTER-3), ``send(_:)``,
 /// ``inbox(of:markRead:)`` and ``message(_:to:)`` (ROUTER-4), and
@@ -59,6 +66,14 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// session that the directory made. It starts at the time of the
         /// session's ULID.
         var updatedAt: Date
+
+        /// The work state and the last summary of the session (ROUTER-9).
+        var tracking = SessionStateTracking()
+
+        /// The task that reads the events of the session and follows its
+        /// state (``followState(of:reading:)``), or `nil` before the
+        /// registration starts it.
+        var stateFeed: Task<Void, Never>?
     }
 
     /// What the directory keeps under its one lock: the live registry and
@@ -91,9 +106,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// Under the lock that adds the entry, each open stream of ``events()``
     /// gets `started` with the summary of the session, so `started` is the
-    /// first event of the session on each stream. A second registration of a
-    /// session that is still live replaces its entry and sends no second
-    /// `started`.
+    /// first event of the session on each stream. The same lock starts the
+    /// one task that follows the state of the session
+    /// (``followState(of:reading:)``), so each `stateChanged` of the session
+    /// comes after its `started`.
+    ///
+    /// A second registration of a session that is still live replaces its
+    /// kind and its parent, and keeps its time of change, its state and its
+    /// feed task. It sends no second `started`.
     ///
     /// - Parameters:
     ///   - session: The live session.
@@ -106,29 +126,40 @@ public actor RouterSessionDirectory: SessionDirectory {
     nonisolated func register(
         _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
     ) {
-        let entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
+        var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
         state.withLock { registry in
-            let isAlreadyLive = registry.entries[session.id]?.session != nil
+            if let live = registry.entries[session.id], live.session != nil {
+                entry.updatedAt = live.updatedAt
+                entry.tracking = live.tracking
+                entry.stateFeed = live.stateFeed
+                registry.entries[session.id] = entry
+                return
+            }
+            registry.entries[session.id]?.stateFeed?.cancel()
+            entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
             registry.entries[session.id] = entry
-            guard !isAlreadyLive else { return }
             registry.fanout.send(.started(Self.summary(of: session, in: entry), requestedByClient: requestedByClient))
         }
     }
 
-    /// Takes a session off the live list. An id the directory does not hold
-    /// changes nothing.
+    /// Takes a session off the live list and ends the task that follows its
+    /// state. An id the directory does not hold changes nothing.
     ///
     /// - Parameter id: The session id.
     nonisolated func unregister(_ id: ULID) {
-        state.withLock { _ = $0.entries.removeValue(forKey: id) }
+        state.withLock { $0.entries.removeValue(forKey: id)?.stateFeed?.cancel() }
     }
 
     /// The summaries of every live session, in no order. An entry whose
-    /// session is gone is dropped from the registry here.
+    /// session is gone is dropped from the registry here, and the task that
+    /// follows its state ends.
     ///
     /// - Returns: One summary for each live session.
     private nonisolated func liveSummaries() -> [SessionSummary] {
         state.withLock { registry in
+            for gone in registry.entries.values where gone.session == nil {
+                gone.stateFeed?.cancel()
+            }
             registry.entries = registry.entries.filter { $0.value.session != nil }
             return registry.entries.values.compactMap(Self.summary(of:))
         }
@@ -160,14 +191,13 @@ public actor RouterSessionDirectory: SessionDirectory {
             title: facts.title,
             tags: facts.tags,
             kind: entry.kind,
-            // Until the directory follows the work state (ROUTER-9), a live
-            // session is idle.
-            state: .idle,
+            state: entry.tracking.state,
             parentID: entry.parentID,
             startedBy: facts.startedBy,
             origin: facts.origin ?? defaultOrigin,
             createdAt: session.id.timestamp,
             updatedAt: entry.updatedAt,
+            lastSummary: entry.tracking.lastSummary,
             isLive: true)
     }
 
@@ -505,8 +535,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Gives `event` to each open stream of ``events()``, under the lock of
-    /// the registry. The later directory cards send `factsChanged`,
-    /// `stateChanged`, `messageDelivered` and `archived` through it.
+    /// the registry. The later directory cards send `messageDelivered` and
+    /// `archived` through it.
     ///
     /// - Parameter event: The event.
     nonisolated func emit(_ event: SessionDirectoryEvent) {
@@ -517,5 +547,117 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// the count.
     nonisolated var openEventStreamCount: Int {
         state.withLock { $0.fanout.count }
+    }
+
+    // MARK: - State
+
+    /// The task that follows the state of the registered session `id`
+    /// (``followState(of:reading:)``).
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The task, or `nil` when the directory holds no entry for
+    ///   `id`.
+    nonisolated func stateFeed(of id: ULID) -> Task<Void, Never>? {
+        state.withLock { $0.entries[id]?.stateFeed }
+    }
+
+    /// The feed of the events of `session`, made at once for a
+    /// ``RoutedSessionActor``.
+    ///
+    /// `streamSessionEvents()` is isolated to the session, and the
+    /// registration is synchronous. The feed of a ``RoutedSessionActor``
+    /// comes from its `nonisolated` output hub, the same feed
+    /// `streamSessionEvents()` makes, so the directory misses no event
+    /// between the registration and the first read. Another session gets
+    /// its feed in the task that reads it.
+    ///
+    /// - Parameter session: The registered session.
+    /// - Returns: The feed, or `nil` for a session that is not a
+    ///   ``RoutedSessionActor``.
+    private static func makeEventFeed(of session: any RoutedSession) -> AsyncStream<SessionOutput>? {
+        (session as? RoutedSessionActor)?.outputHub.makeFeed()
+    }
+
+    /// Starts the one task that reads the events of `session` and applies
+    /// each of them to the state of its entry (``recordState(after:of:)``).
+    ///
+    /// The task holds neither the session nor the directory: it ends when
+    /// the feed ends, which ``RoutedSession/close()`` and the release of a
+    /// ``RoutedSessionActor`` both do, or when the directory cancels it
+    /// (``unregister(_:)``, or a new registration of the id).
+    ///
+    /// - Parameters:
+    ///   - session: The registered session.
+    ///   - feed: The feed of its events from ``makeEventFeed(of:)``, or
+    ///     `nil` to make it in the task.
+    /// - Returns: The task.
+    private nonisolated func followState(
+        of session: any RoutedSession, reading feed: AsyncStream<SessionOutput>?
+    ) -> Task<Void, Never> {
+        let id = session.id
+        return Task { [weak self, weak session] in
+            guard let outputs = await Self.events(from: feed, of: session) else { return }
+            for await output in outputs {
+                await self?.recordState(after: output.event, of: id)
+            }
+        }
+    }
+
+    /// The feed to read: `feed` when the registration made one, else a new
+    /// feed of `session`.
+    ///
+    /// - Parameters:
+    ///   - feed: The feed that the registration made, or `nil`.
+    ///   - session: The session, or `nil` when it is gone.
+    /// - Returns: The feed, or `nil` when there is none and the session is
+    ///   gone.
+    private static func events(
+        from feed: AsyncStream<SessionOutput>?, of session: (any RoutedSession)?
+    ) async -> AsyncStream<SessionOutput>? {
+        guard let feed else { return await session?.streamSessionEvents() }
+        return feed
+    }
+
+    /// Applies `event` to the state of the session `id`, and sends
+    /// `stateChanged` with the state and the last summary when either
+    /// changed, under the lock of the registry. The time of the change
+    /// becomes the time of the last change of the session.
+    ///
+    /// At a work end, the open questions of the session itself replace the
+    /// open questions the tracking holds, because a form answer of the
+    /// client sends no event that names its question
+    /// (``SessionStateTracking``). An id with no live entry, and a task the
+    /// directory cancelled, change nothing.
+    ///
+    /// - Parameters:
+    ///   - event: An event of the session.
+    ///   - id: The session id.
+    private nonisolated func recordState(after event: SessionEvent, of id: ULID) async {
+        let openQuestions = event == .workEnded ? await openQuestions(of: id) : nil
+        state.withLock { registry in
+            guard !Task.isCancelled, var entry = registry.entries[id], entry.session != nil else { return }
+            let before = (entry.tracking.state, entry.tracking.lastSummary)
+            if let openQuestions {
+                entry.tracking.replaceOpenQuestions(with: openQuestions)
+            }
+            entry.tracking.apply(event: event)
+            let after = (entry.tracking.state, entry.tracking.lastSummary)
+            if after != before {
+                entry.updatedAt = Date()
+                registry.fanout.send(.stateChanged(id: id, state: after.0, lastSummary: after.1))
+            }
+            registry.entries[id] = entry
+        }
+    }
+
+    /// The questions that the live session `id` holds open
+    /// (``RoutedSession/openElicitationIds()``).
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The ids of the open questions, or `nil` when the session is
+    ///   gone.
+    private nonisolated func openQuestions(of id: ULID) async -> Set<ULID>? {
+        guard let session = state.withLock({ $0.entries[id]?.session }) else { return nil }
+        return Set(await session.openElicitationIds().compactMap { ULID($0) })
     }
 }

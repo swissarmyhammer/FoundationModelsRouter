@@ -31,11 +31,20 @@ comments:
     - evidence: swift build --build-tests clean (the only warning is SwiftPM's 'missing creator for mutated node' for the mlx-swift_Cmlx bundle, which comes from the build system, not from code); swift test --skip-build --filter "RouterSessionDirectory|SessionLauncherPublicSurface" 48 tests in 5 suites + 2 tests in 1 suite passed, 0 failed. Files: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryEventTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift
     - next: a person decides the three contract signatures in the Blocker; then /review
   timestamp: 2026-10-21T23:31:11.395480+00:00
+- actor: claude-code
+  id: 01m5gcyb25d57mbggz3td3vfmh
+  text: |-
+    ### finish iteration 2 — stuck
+    - implement: changed — 5 non-contract swift/fluent-usage findings fixed (RouterSessionDirectory.swift, RoutedLLM.swift, SessionDirectoryEventReads.swift and callers)
+    - test: green — swift test, 2036/35/19 passed, 9 known issues
+    - commit: 599f90fb
+    - open: 3 swift/fluent-usage findings conflict with the documented SessionLauncher contract (session.md 5.4, Multitool session.md ROUTER-8): useLauncher(_:) RouterSessionDirectory.swift:239, launchRootSession(_ request:) SessionLauncher.swift:48, restoreSession(_ id:) SessionLauncher.swift:57 — needs a human to change the spec or correct the rule
+  timestamp: 2026-10-21T23:32:32.453026+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
-position_column: doing
-position_ordinal: '80'
+position_column: review
+position_ordinal: '8880'
 title: 'ROUTER-8: SessionLauncher port, directory.useLauncher(_:), start(_:), and shutdown()'
 ---
 ## Goal

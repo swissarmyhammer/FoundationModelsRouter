@@ -1039,9 +1039,14 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Closes the work registry of a session that ``close()`` never closed,
     /// so the task that reads its transitions ends
-    /// (``observeWorkTransitions()``).
+    /// (``observeWorkTransitions()``), and finishes each feed of
+    /// ``streamSessionEvents()``, so a reader of a released session ends
+    /// too: an `AsyncStream` does not finish when its continuation is
+    /// released, and the task of ``RouterSessionDirectory`` that follows the
+    /// state of the session reads such a feed (ROUTER-9).
     deinit {
         runPlane.workRegistry.close()
+        outputHub.finishFeeds()
     }
 
     /// See ``RoutedSession/openElicitationIds()``. The open questions of

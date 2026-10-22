@@ -338,7 +338,8 @@ extension RoutedSessionActor {
     }
 
     /// See ``RoutedSession/streamSessionEvents()``. Makes one feed of
-    /// ``outputHub`` with an unbounded buffer.
+    /// ``outputHub`` with an unbounded buffer. ``close()`` finishes it, and
+    /// so does the release of a session that never closed (`deinit`).
     func streamSessionEvents() -> AsyncStream<SessionOutput> {
         outputHub.makeFeed()
     }
