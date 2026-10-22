@@ -25,8 +25,12 @@ comments:
   id: 01m5j7m8sskbh8f9s0vtkrwrd9
   text: 'Landed in Extras at e08f50d (origin/main). Torn tail per user decision: the writer adds a missing newline before it appends; the reader skips a line that won''t decode, with a warning; corruptLine is removed. Closes when Router''s pin is bumped.'
   timestamp: 2026-10-22T16:38:08.441373+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: wballard
+  id: 01m5j86dkh8xa23wg8p277c8wv
+  text: 'Tracking card closed: the Extras work was done and reviewed on the Extras board by the Extras session. Router''s pin is bumped to Extras f64228a; Router swift test is green there (2131 passed, 9 known issues).'
+  timestamp: 2026-10-22T16:48:03.185899+00:00
+position_column: done
+position_ordinal: ffffffffb380
 title: 'EXTRAS: JSONLFile — the one append-only JSONL writer and reader (append mode, one full line per write, fsync per line)'
 ---
 ## What
