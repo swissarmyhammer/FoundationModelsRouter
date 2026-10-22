@@ -1,4 +1,9 @@
 ---
+comments:
+- actor: wballard
+  id: 01m5janp1ac52yx26z9wgpabrj
+  text: 'Extras landed fractional seconds: feature 4024c7d, on origin/main at 8f00461. Dates are written rounded to the millisecond (2026-10-22T10:58:03.123Z), and only that exact form is read; a whole-second date throws DecodingError.dataCorrupted.'
+  timestamp: 2026-10-22T17:31:20.491001+00:00
 depends_on:
 - 01M5HS4WD0VANN9Y288S9DFTDP
 position_column: todo

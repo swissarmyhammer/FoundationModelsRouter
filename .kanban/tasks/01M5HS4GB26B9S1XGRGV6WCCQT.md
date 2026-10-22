@@ -15,8 +15,12 @@ comments:
     - Limits: the folder is not fsynced after the rename; a document decoded as the default YAMLValue can't be saved (not Encodable).
     Closes when Router's pin is bumped (after ^s9dftdp, so its build isn't disturbed).
   timestamp: 2026-10-22T16:56:06.394396+00:00
-position_column: todo
-position_ordinal: '9680'
+- actor: wballard
+  id: 01m5janjrtmj99x9f5nfhe40gv
+  text: 'Tracking card closed: done and reviewed on the Extras board by the Extras session. Router''s pin bumped to Extras 827bdae; Router swift test passes there.'
+  timestamp: 2026-10-22T17:31:17.146382+00:00
+position_column: done
+position_ordinal: ffffffffb680
 title: 'EXTRAS: FrontmatterDocument save — write to a temp file and swap into place by default'
 ---
 ## What
