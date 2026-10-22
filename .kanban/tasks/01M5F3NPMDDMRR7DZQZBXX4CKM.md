@@ -15,6 +15,24 @@ comments:
     - evidence: `swift build --build-tests` clean (only the pre-existing SwiftPM "missing creator for mutated node" mlx bundle warning); `swift test --filter "AgentMessagePromptText|MailQueueBatch|PromptHook"` 32 tests in 3 suites passed; full `swift test` 2116 tests in 260 suites passed (9 known issues = the 9 existing `withKnownIssue` sites), plus 38 and 19 in the other targets. Files: Sources/FoundationModelsRouter/Session/SessionMessage.swift, Tests/FoundationModelsRouterTests/AgentMessagePromptTextTests.swift (new).
     - next: /review
   timestamp: 2026-10-22T15:57:47.318430+00:00
+- actor: claude-code
+  id: 01m5j5hrr0hyc02s3k00d11ndf
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (fc51d482): 1 finding (1 confirmed, 0 refuted) — Tests/FoundationModelsRouterTests/AgentMessagePromptTextTests.swift:106 `reuse/reuse`
+    - next: /implement the open `## Review Findings (2026-10-22 10:58)` item, then re-review
+  timestamp: 2026-10-22T16:01:49.312161+00:00
+- actor: claude-code
+  id: 01m5j5pw1spmyysyfznfg7ngx1
+  text: 'Resolved reuse/reuse finding on AgentMessagePromptTextTests.swift `promptTexts`. Discovery: a shared `Transcript.promptTexts` extension already existed inside Helpers/SessionEventCollection.swift (used by ~21 test files, including ReasoningTokenLimitTests, which has no private promptTexts copy of its own; its private helper is `reasoningTexts` over `.reasoning` entries, a different read). Moved that extension into its own helper Tests/FoundationModelsRouterTests/Helpers/TranscriptPromptTexts.swift, built on `TranscriptEntryMapper.flattenedText(_:)` (same text-segments-joined-with-no-separator result), removed it from SessionEventCollection.swift, and deleted the private copies in AgentMessagePromptTextTests, PromptHookTests and RouterSessionDirectoryLauncherTests; their call sites now read `transcript.promptTexts`. SessionMailQueueTests'' `promptTexts(in: InMemoryRecorder)` reads recorder events, not a Transcript, so it is not a copy and was left alone. Side note for later: `reasoningText(s)(of:)` is privately repeated in ReasoningTokenLimitTests, RepetitionStopTests and RepetitionStopRestoreTests; that is outside this finding.'
+  timestamp: 2026-10-22T16:04:36.537270+00:00
+- actor: claude-code
+  id: 01m5j5pyfp73a7112vwxkcyses
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Tests/FoundationModelsRouterTests/Helpers/TranscriptPromptTexts.swift (new), Helpers/SessionEventCollection.swift, AgentMessagePromptTextTests.swift, PromptHookTests.swift, RouterSessionDirectoryLauncherTests.swift (+ card finding flipped to [x]). `swift build --build-tests` OK, no source warnings; `swift test --filter "AgentMessagePromptText|PromptHook|RouterSessionDirectoryLauncher|ReasoningTokenLimit"` 47 tests in 8 suites passed.
+    - next: /review
+  timestamp: 2026-10-22T16:04:39.030434+00:00
 depends_on:
 - 01M5F3N4646VMYQWK4S17NH345
 position_column: doing
@@ -51,3 +69,12 @@ When a mail with `MailBody.agentMessage(from:content:)` becomes prompt text, the
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #mail
+
+## Review Findings (2026-10-22 10:58)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/AgentMessagePromptTextTests.swift:106` `reuse/reuse` — The `promptTexts` function reinvents a utility that already exists identically in PromptHookTests.swift and with 0.99+ similarity in RouterSessionDirectoryLauncherTests.swift and ReasoningTokenLimitTests.swift. These should share a single implementation in a common test utility. Extract `promptTexts` to a shared test utilities file (e.g., `TestTranscriptHelpers.swift` or similar) and import it from all test files that need it, including this one.

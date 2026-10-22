@@ -231,17 +231,6 @@ struct PromptHookTests {
         .userMessage(prompt: signalPrompt, options: UserMessageOptions())
     }
 
-    /// The text of each `.prompt` entry of `transcript`, in order.
-    ///
-    /// - Parameter transcript: The transcript of a session.
-    /// - Returns: The prompt texts.
-    private static func promptTexts(in transcript: Transcript) -> [String] {
-        transcript.compactMap { entry in
-            guard case .prompt(let prompt) = entry else { return nil }
-            return TranscriptEntryMapper.flattenedText(prompt)
-        }
-    }
-
     // MARK: - One prompt
 
     @Test("one prompt gives SessionStart, PrePrompt and PostPrompt(answered) in order")
@@ -348,7 +337,7 @@ struct PromptHookTests {
 
             #expect(MailQueueFixtures.answer(of: terminal) != nil, "the message ended with \(terminal)")
             #expect(hooked.backend.prompts == [Self.replacedPrompt])
-            #expect(Self.promptTexts(in: await hooked.session.transcript) == [Self.replacedPrompt])
+            #expect(await hooked.session.transcript.promptTexts == [Self.replacedPrompt])
         }
     }
 
@@ -443,7 +432,7 @@ struct PromptHookTests {
     /// - Throws: What the wait for the terminal event throws.
     private static func endedMail(_ id: MailID, on hooked: HookedSession) async throws -> EndedMail {
         let terminal = try await hooked.session.awaitTerminal(of: id)
-        let transcriptPrompts = promptTexts(in: await hooked.session.transcript)
+        let transcriptPrompts = await hooked.session.transcript.promptTexts
         await hooked.closeAndDrain()
         let events = hooked.visitor.recorder.events
         return EndedMail(

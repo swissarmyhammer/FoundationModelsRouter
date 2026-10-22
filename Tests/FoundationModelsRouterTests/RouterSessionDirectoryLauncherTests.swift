@@ -95,19 +95,6 @@ import Testing
         }
     }
 
-    /// The text of each prompt of `transcript`, in order.
-    ///
-    /// - Parameter transcript: The transcript of a session.
-    /// - Returns: The flattened text of each prompt.
-    private static func promptTexts(of transcript: Transcript) -> [String] {
-        transcript.compactMap { entry in
-            switch entry {
-            case .prompt(let prompt): TranscriptEntryMapper.flattenedText(prompt)
-            default: nil
-            }
-        }
-    }
-
     /// The text of each response of `transcript`, in order.
     ///
     /// - Parameter transcript: The transcript of a session.
@@ -208,7 +195,7 @@ import Testing
         let session = try fixture.launchedSession()
         #expect(await session.awaitIdle())
         let transcript = await session.transcript
-        #expect(Self.promptTexts(of: transcript) == [Self.firstMessage])
+        #expect(transcript.promptTexts == [Self.firstMessage])
         #expect(Self.responseTexts(of: transcript) == [BasicLLMContainer.defaultResponseText])
         await fixture.launcher.closeSessions()
     }
@@ -226,7 +213,7 @@ import Testing
         let session = try fixture.launchedSession()
         #expect(await session.awaitIdle())
         let transcript = await session.transcript
-        #expect(Self.promptTexts(of: transcript) == [try #require(agentMessage.promptText)])
+        #expect(transcript.promptTexts == [try #require(agentMessage.promptText)])
         #expect(Self.responseTexts(of: transcript) == [BasicLLMContainer.defaultResponseText])
         await fixture.launcher.closeSessions()
     }

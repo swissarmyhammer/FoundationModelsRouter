@@ -81,7 +81,7 @@ struct AgentMessagePromptTextTests {
         _ = try await router.sessionDirectory.send(
             OutgoingSessionMessage(from: .session(sender.id), to: .session(target.id), text: Self.content))
         #expect(await target.awaitIdle())
-        let livePrompts = Self.promptTexts(in: await target.transcript)
+        let livePrompts = await target.transcript.promptTexts
         await sender.close()
         await target.close()
         let resumingRouter = RouterTestFixtures.makeRouter(
@@ -93,20 +93,9 @@ struct AgentMessagePromptTextTests {
 
         let restored = try await resumingProfile.standard.restoreSession(id: target.id)
 
-        let restoredPrompts = Self.promptTexts(in: await restored.session.transcript)
+        let restoredPrompts = await restored.session.transcript.promptTexts
         #expect(livePrompts == [Self.renderedBlock(from: sender.id, content: Self.content)])
         #expect(restoredPrompts == livePrompts)
         await restored.session.close()
-    }
-
-    /// The text of each `.prompt` entry of `transcript`, in order.
-    ///
-    /// - Parameter transcript: The transcript of a session.
-    /// - Returns: The flattened text of each prompt.
-    private static func promptTexts(in transcript: Transcript) -> [String] {
-        transcript.compactMap { entry in
-            guard case .prompt(let prompt) = entry else { return nil }
-            return TranscriptEntryMapper.flattenedText(prompt)
-        }
     }
 }

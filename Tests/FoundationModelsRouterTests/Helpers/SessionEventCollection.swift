@@ -170,19 +170,6 @@ extension Sequence<SessionEvent> {
     }
 }
 
-extension Transcript {
-    /// The text of every `.prompt` entry of this transcript, in order.
-    var promptTexts: [String] {
-        compactMap { entry in
-            guard case .prompt(let prompt) = entry else { return nil }
-            return prompt.segments.compactMap { segment -> String? in
-                guard case .text(let text) = segment else { return nil }
-                return text.content
-            }.joined()
-        }
-    }
-}
-
 extension SessionEvent {
     /// Whether this event is an open ``ToolInvocationRecord``.
     var isOpenInvocation: Bool {
