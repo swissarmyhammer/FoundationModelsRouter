@@ -44,10 +44,27 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Recording/SessionRecord.swift, Tests/FoundationModelsRouterTests/Helpers/RetainingLLMContainer.swift, Tools/RecordCompactionFixture/main.swift. `swift build --build-tests`: Build complete, no compiler warnings or errors (only the SwiftPM "missing creator for mutated node" mlx bundle notice, seen before this change). Full `swift test`: no failed test or suite in the output.
     - next: /review
   timestamp: 2026-10-22T19:48:46.194927+00:00
+- actor: claude-code
+  id: 01m5jjqj8c4ps2twnxpsfsev5z
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (2e98ed76): 0 findings (0 confirmed, 1 refuted, 7 attempted, 0 failed); 3 files reviewed, 2 .kanban files ignored. All 3 prior findings (2026-10-22 14:16) checked.
+    - next: done
+  timestamp: 2026-10-22T19:52:10.764188+00:00
+- actor: wballard
+  id: 01m5jjqyjhn3eqjh62pwy2m1pq
+  text: |-
+    ### finish iteration 2 — clean
+    - iteration 1: implement changed; test green per implementer (2104); commit f98b49e6; review findings — SessionRecord.swift:44, RetainingLLMContainer.swift:15, RecordCompactionFixture/main.swift:82
+    - implement: changed — the three review fixes
+    - test: green — swift test exit 0
+    - commit: 2e98ed76
+    - review: clean — 0 findings, 3/3 prior checked; card in done
+  timestamp: 2026-10-22T19:52:23.377062+00:00
 depends_on:
 - 01M5HS4GB26B9S1XGRGV6WCCQT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffb880
 title: 'ROUTER: index.md (frontmatter + open body) replaces session.json, facts.json and sessions.jsonl; sessions are listed by folder'
 ---
 ## What
