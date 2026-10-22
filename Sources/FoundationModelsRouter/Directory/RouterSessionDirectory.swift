@@ -24,10 +24,16 @@ import Synchronization
 /// ``SessionStateTracking``). The task holds neither the session nor the
 /// directory, and it ends when the session closes or is released.
 ///
+/// The directory also owns the record of past sessions (D72). Each new
+/// durable root session appends its line to `sessions.jsonl` when it
+/// registers, and the root sessions on disk under the recording roots of the
+/// host (``useRecordingRoots(_:)``) answer as recorded summaries
+/// (``RecordedSessions``).
+///
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
-/// live sessions, with the state and the last summary of each,
-/// ``start(_:)`` starts a root session through the launcher, and
-/// ``events()`` gives `started` for each session it registers and
+/// live sessions, with the state and the last summary of each, and for the
+/// recorded root sessions, ``start(_:)`` starts a root session through the
+/// launcher, and ``events()`` gives `started` for each session it registers and
 /// `stateChanged` for each change of what that event carries: the state, and
 /// the last summary when the state is idle (`nil` with any other state, as
 /// the port documents). ``summary(of:)`` reports the last summary in each
@@ -99,6 +105,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// with no launcher throws `noLauncher` from ``start(_:)``.
     private var launcher: (any SessionLauncher)?
 
+    /// The recording roots of the host, read at each query that includes
+    /// the recorded sessions. A directory with none gives no recorded
+    /// session.
+    private var recordingRoots: @Sendable () async throws -> [URL] = { [] }
+
     /// Makes an empty directory.
     public init() {}
 
@@ -117,6 +128,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// kind and its parent, and keeps its time of change, its state and its
     /// feed task. It sends no second `started`.
     ///
+    /// The first registration of a root session appends its line to the
+    /// record of past sessions (``RecordedSessions/appendIndexRecord(of:)``),
+    /// after the lock is released.
+    ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - kind: The kind of the session.
@@ -129,19 +144,22 @@ public actor RouterSessionDirectory: SessionDirectory {
         _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
     ) {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
-        state.withLock { registry in
+        let isFirstRegistration = state.withLock { registry in
             if let live = registry.entries[session.id], live.session != nil {
                 entry.updatedAt = live.updatedAt
                 entry.tracking = live.tracking
                 entry.stateFeed = live.stateFeed
                 registry.entries[session.id] = entry
-                return
+                return false
             }
             registry.entries[session.id]?.stateFeed?.cancel()
             entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
             registry.entries[session.id] = entry
             registry.fanout.send(.started(Self.summary(of: session, in: entry), requestedByClient: requestedByClient))
+            return true
         }
+        guard isFirstRegistration, kind == .root else { return }
+        RecordedSessions.appendIndexRecord(of: session)
     }
 
     /// Takes a session off the live list and ends the task that follows its
@@ -205,14 +223,21 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     // MARK: - Query
 
-    /// See `SessionDirectory.sessions(matching:)`. Only the live sessions
-    /// answer, newest first (ULID order), cut to the limit of `query`.
+    /// See `SessionDirectory.sessions(matching:)`. The live sessions answer,
+    /// and with `includesRecorded` the root sessions on disk under the
+    /// recording roots too (``RecordedSessions``); a session that is live and
+    /// recorded answers once, as live. The result is newest first (ULID
+    /// order), cut to the limit of `query`.
     ///
     /// - Parameter query: The filter. Each field that is not nil must match.
-    /// - Returns: The summaries of the matching live sessions.
+    /// - Returns: The summaries of the matching sessions.
+    /// - Throws: The error of the recording roots of the host, or of a read
+    ///   of the record of past sessions (``RecordedSessions/summaries()``).
     public func sessions(matching query: SessionQuery) async throws -> [SessionSummary] {
         let folder = query.workingDirectory.map(Self.comparablePath(of:))
-        let matching = liveSummaries()
+        let live = liveSummaries()
+        let candidates = query.includesRecorded ? Self.merging(live: live, recorded: try await recordedSummaries()) : live
+        let matching = candidates
             .filter { summary in
                 folder.map { $0 == Self.comparablePath(of: summary.workingDirectory) } ?? true
             }
@@ -221,21 +246,31 @@ public actor RouterSessionDirectory: SessionDirectory {
         return Array(matching.prefix(max(0, query.limit)))
     }
 
-    /// See `SessionDirectory.summary(of:)`.
+    /// See `SessionDirectory.summary(of:)`. A live session answers with its
+    /// live summary; a session that is not live answers with its recorded
+    /// summary (``RecordedSessions``), as the Extras port reads recorded
+    /// sessions with no `includesRecorded` flag here.
     ///
     /// - Parameter id: The session id.
-    /// - Returns: The summary, or `nil` when no live session has this id.
+    /// - Returns: The summary, or `nil` when no live or recorded session has
+    ///   this id.
+    /// - Throws: The error of the recording roots of the host, or of a read
+    ///   of the record of past sessions.
     public func summary(of id: ULID) async throws -> SessionSummary? {
-        state.withLock { registry in
+        let live = state.withLock { registry in
             registry.entries[id].flatMap(Self.summary(of:))
         }
+        guard let live else {
+            return try await recordedSummaries().first { $0.id == id }
+        }
+        return live
     }
 
     /// Tells whether `summary` matches each filter of `query` other than the
     /// working folder, which ``sessions(matching:)`` compares by path.
     ///
     /// - Parameters:
-    ///   - summary: The summary of one live session.
+    ///   - summary: The summary of one live or recorded session.
     ///   - query: The filter.
     /// - Returns: `true` when each field of `query` that is not nil matches.
     private static func matches(_ summary: SessionSummary, _ query: SessionQuery) -> Bool {
@@ -250,6 +285,28 @@ public actor RouterSessionDirectory: SessionDirectory {
         return checks.allSatisfy { $0 ?? true }
     }
 
+    /// The summaries of the root sessions on disk under the recording roots
+    /// of the host (``useRecordingRoots(_:)``).
+    ///
+    /// - Returns: One summary for each recorded root session, in no order.
+    /// - Throws: The error of the recording roots of the host, or of a read
+    ///   of the record of past sessions.
+    private func recordedSummaries() async throws -> [SessionSummary] {
+        try RecordedSessions(roots: try await recordingRoots()).summaries()
+    }
+
+    /// The live summaries, and each recorded summary whose session is not
+    /// live: a live session wins over its own record.
+    ///
+    /// - Parameters:
+    ///   - live: The summaries of the live sessions.
+    ///   - recorded: The summaries of the recorded sessions.
+    /// - Returns: One summary for each session, in no order.
+    private static func merging(live: [SessionSummary], recorded: [SessionSummary]) -> [SessionSummary] {
+        let liveIDs = Set(live.map(\.id))
+        return live + recorded.filter { !liveIDs.contains($0.id) }
+    }
+
     /// The path a folder compares by: symbolic links resolved, and no
     /// trailing `/`.
     ///
@@ -259,6 +316,20 @@ public actor RouterSessionDirectory: SessionDirectory {
         let path = folder.resolvingSymlinksInPath().standardizedFileURL.path
         guard path.count > 1, path.hasSuffix("/") else { return path }
         return String(path.dropLast())
+    }
+
+    // MARK: - Recording roots
+
+    /// Gives the directory the recording roots of the host: the folders that
+    /// hold a `sessions.jsonl` (``SessionIndex``) beside the recording
+    /// directories of its root sessions. Router reads no setting of the host
+    /// to find them. A query with `includesRecorded`, and ``summary(of:)``
+    /// for an id with no live session, read the roots again each time, so a
+    /// root the host adds later is found. A later call replaces the roots.
+    ///
+    /// - Parameter roots: Gives the recording roots of the host.
+    public func useRecordingRoots(_ roots: @escaping @Sendable () async throws -> [URL]) {
+        recordingRoots = roots
     }
 
     // MARK: - Launcher

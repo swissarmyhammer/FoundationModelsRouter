@@ -456,8 +456,9 @@ struct SessionSidecarTests {
     }
 
     /// Each session directory also holds its mutable `facts.json` (ROUTER-1),
-    /// beside the write-once `session.json`.
-    @Test("a run's whole recording tree holds only session.json, facts.json and transcript.jsonl files")
+    /// beside the write-once `session.json`. The recording root beside the
+    /// root session holds the record of past sessions (ROUTER-3).
+    @Test("a run's whole recording tree holds only the session index, session.json, facts.json and transcript.jsonl files")
     @MainActor
     func aRunWritesOnlySidecarsAndTranscripts() async throws {
         let cacheDir = Self.makeTempDir()
@@ -485,7 +486,10 @@ struct SessionSidecarTests {
         let rootDir = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
         let forkDir = rootDir.appendingPathComponent(fork.id.description, isDirectory: true)
 
-        #expect(try Set(Self.fileNames(directlyIn: routerDir)) == [root.id.description])
+        #expect(
+            try Set(Self.fileNames(directlyIn: routerDir)) == [
+                root.id.description, SessionIndex.indexFileName, SessionIndex.gitattributesFileName,
+            ])
         #expect(
             try Set(Self.fileNames(directlyIn: rootDir)) == [
                 "session.json", SessionFacts.fileName, "transcript.jsonl", fork.id.description,

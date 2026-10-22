@@ -277,8 +277,13 @@ struct PerSessionRecordingRootTests {
             )
         }
 
-        #expect(try childDirectoryNames(of: rootA) == [sessionA.id.description])
-        #expect(try childDirectoryNames(of: rootB) == [sessionB.id.description])
+        // Each root holds its one session and the record of past sessions
+        // that the directory appends the root's line to (ROUTER-3).
+        let indexFiles: Set<String> = [SessionIndex.indexFileName, SessionIndex.gitattributesFileName]
+        #expect(try childDirectoryNames(of: rootA) == indexFiles.union([sessionA.id.description]))
+        #expect(try childDirectoryNames(of: rootB) == indexFiles.union([sessionB.id.description]))
+        #expect(try SessionIndex(root: rootA).read().records.map(\.sessionId) == [sessionA.id.description])
+        #expect(try SessionIndex(root: rootB).read().records.map(\.sessionId) == [sessionB.id.description])
     }
 
     // MARK: - Restoration round-trips both layouts
