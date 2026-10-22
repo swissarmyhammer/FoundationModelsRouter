@@ -244,12 +244,6 @@ import Testing
                 updatedAt: Date(), additionalDirectories: []))
     }
 
-    /// The one recorded summary that the reading router gives for `id`.
-    private static func recordedSummary(of id: ULID, in fixture: Fixture) async throws -> SessionSummary {
-        let found = try await fixture.directory.sessions(matching: SessionQuery(includesRecorded: true))
-        return try #require(found.first { $0.id == id })
-    }
-
     /// A recorded summary carries the working folder of `session.json` and
     /// the facts of `facts.json`, and a root kind.
     @Test func aRecordedSummaryCarriesTheSidecarFolderAndTheFacts() async throws {
@@ -262,7 +256,8 @@ import Testing
         let recorded = await fixture.recordClosedRoot(configuration)
         await fixture.useRoot(of: recorded.recordingDirectory)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.workingDirectory == folder)
         #expect(summary.agentID == SessionFactsFixtures.agentID)
@@ -302,7 +297,8 @@ import Testing
         try Self.appendRecord(of: recorded, title: Self.recordTitle)
         await fixture.useRoot(of: recorded.recordingDirectory)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.kind == .subagent)
         #expect(summary.parentID == parent)
@@ -316,7 +312,8 @@ import Testing
         try Self.rewriteFacts(in: recorded.recordingDirectory) { $0.title = SessionFactsFixtures.title }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.title == SessionFactsFixtures.title)
     }
@@ -330,7 +327,8 @@ import Testing
         try Self.rewriteFacts(in: recorded.recordingDirectory) { $0.title = "" }
         await fixture.useRoot(of: recorded.recordingDirectory)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.title == Self.recordTitle)
     }
@@ -345,7 +343,8 @@ import Testing
         try Self.setFactsModificationDate(later, in: recorded.recordingDirectory)
         await fixture.useRoot(of: recorded.recordingDirectory)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.updatedAt == later)
     }
@@ -360,7 +359,8 @@ import Testing
         await fixture.useRoot(of: recorded.recordingDirectory)
         let record = try #require(try Self.indexRecords(beside: recorded.recordingDirectory).first)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.updatedAt == record.updatedAt)
     }
@@ -382,7 +382,8 @@ import Testing
             to: root.appendingPathComponent(SessionIndex.indexFileName), atomically: true, encoding: .utf8)
         await fixture.useRoot(of: recorded.recordingDirectory)
 
-        let summary = try await Self.recordedSummary(of: recorded.id, in: fixture)
+        let summary = try await SessionDirectorySummaries.summary(
+            of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
         #expect(summary.title == Self.recordTitle)
         #expect(summary.agentID == RouterSessionDirectory.defaultAgentID)

@@ -31,14 +31,6 @@ import Testing
         func vend() -> any RoutedSession {
             profile.standard.makeSession(configuration: SessionConfiguration())
         }
-
-        /// The one summary the directory holds for `session`.
-        ///
-        /// - Parameter session: A vended session.
-        /// - Returns: The summary of `session`.
-        func registeredSummary(of session: any RoutedSession) async throws -> SessionSummary {
-            try #require(try await directory.summary(of: session.id))
-        }
     }
 
     /// Makes a fixture over a scripted profile, resolved by a router of its
@@ -68,7 +60,7 @@ import Testing
 
         let received = await events.next(count: 1)
 
-        let summary = try await fixture.registeredSummary(of: session)
+        let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
         #expect(received == [.started(summary, requestedByClient: nil)])
         await Self.close([session])
     }
@@ -84,7 +76,8 @@ import Testing
         let receivedBySecond = await second.next(count: 1)
 
         let started = SessionDirectoryEvent.started(
-            try await fixture.registeredSummary(of: session), requestedByClient: nil)
+            try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory),
+            requestedByClient: nil)
         #expect(receivedByFirst == [started])
         #expect(receivedBySecond == [started])
         await Self.close([session])
@@ -115,7 +108,7 @@ import Testing
 
         let received = await events.next(count: 1)
 
-        let summary = try await fixture.registeredSummary(of: session)
+        let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
         #expect(received == [.started(summary, requestedByClient: Self.requestingClient)])
         await Self.close([session])
     }
@@ -147,7 +140,7 @@ import Testing
 
         let received = await events.next(count: 2)
 
-        let summary = try await fixture.registeredSummary(of: session)
+        let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
         #expect(received == [.started(summary, requestedByClient: nil), stateChanged])
         await Self.close([session])
     }

@@ -25,18 +25,6 @@ import Testing
         }
     }
 
-    /// The one summary `directory` holds for `id`.
-    ///
-    /// - Parameters:
-    ///   - id: The session id.
-    ///   - directory: The directory to read.
-    /// - Returns: The summary of the session.
-    private static func registeredSummary(
-        of id: ULID, in directory: RouterSessionDirectory
-    ) async throws -> SessionSummary {
-        try #require(try await directory.summary(of: id))
-    }
-
     /// Closes each session in `sessions`.
     private static func close(_ sessions: [any RoutedSession]) async {
         for session in sessions {
@@ -53,7 +41,7 @@ import Testing
             let source = profile.standard.makeSession(configuration: SessionConfiguration())
             let fork = try await source.fork(workingDirectory: nil)
 
-            let summary = try await Self.registeredSummary(of: fork.id, in: directory)
+            let summary = try await SessionDirectorySummaries.summary(of: fork.id, in: directory)
 
             #expect(summary.kind == .fork)
             #expect(summary.parentID == source.id)
@@ -70,7 +58,7 @@ import Testing
             await recorded.close()
 
             let restored = try await profile.standard.restoreSession(id: recorded.id)
-            let summary = try await Self.registeredSummary(of: restored.session.id, in: directory)
+            let summary = try await SessionDirectorySummaries.summary(of: restored.session.id, in: directory)
 
             #expect(summary.kind == .root)
             #expect(summary.parentID == nil)
@@ -89,7 +77,7 @@ import Testing
             await recorded.close()
 
             let restored = try await profile.standard.restoreSession(id: recorded.id)
-            let summary = try await Self.registeredSummary(of: restored.session.id, in: directory)
+            let summary = try await SessionDirectorySummaries.summary(of: restored.session.id, in: directory)
 
             #expect(summary.kind == .subagent)
             #expect(summary.parentID == spawningSessionId)
@@ -107,7 +95,7 @@ import Testing
 
             let tree = try await profile.standard.restoreSessionTree(root: source.id)
             let restoredFork = try #require(tree.session(fork.id))
-            let summary = try await Self.registeredSummary(of: restoredFork.id, in: directory)
+            let summary = try await SessionDirectorySummaries.summary(of: restoredFork.id, in: directory)
 
             #expect(summary.kind == .fork)
             #expect(summary.parentID == source.id)
@@ -125,7 +113,7 @@ import Testing
             await recorded.close()
 
             let restored = try await profile.standard.restoreSession(id: recorded.id)
-            let summary = try await Self.registeredSummary(of: restored.session.id, in: directory)
+            let summary = try await SessionDirectorySummaries.summary(of: restored.session.id, in: directory)
 
             #expect(summary.agentID == SessionFactsFixtures.agentID)
             #expect(summary.agentName == SessionFactsFixtures.agentName)
@@ -139,16 +127,18 @@ import Testing
 
     // MARK: - Close
 
-    /// A closed session is gone from the live query while the test still
-    /// holds it.
+    /// A session that is in the live query before `close()` is gone from it
+    /// after, while the test still holds it.
     @Test func aClosedSessionLeavesTheLiveList() async throws {
         try await Self.withRecordingProfile { profile, directory in
             let session = profile.standard.makeSession(configuration: SessionConfiguration())
+            let beforeClose = try await directory.sessions(matching: SessionQuery())
+
             await session.close()
+            let afterClose = try await directory.sessions(matching: SessionQuery())
 
-            let found = try await directory.sessions(matching: SessionQuery())
-
-            #expect(found.isEmpty)
+            #expect(beforeClose.map(\.id) == [session.id])
+            #expect(afterClose.isEmpty)
             withExtendedLifetime(session) {}
         }
     }

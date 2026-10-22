@@ -30,14 +30,6 @@ import Testing
         func vend(_ configuration: SessionConfiguration = SessionConfiguration()) -> any RoutedSession {
             profile.standard.makeSession(configuration: configuration)
         }
-
-        /// The one summary the directory holds for `session`.
-        ///
-        /// - Parameter session: A vended session.
-        /// - Returns: The summary of `session`.
-        func registeredSummary(of session: any RoutedSession) async throws -> SessionSummary {
-            try #require(try await directory.summary(of: session.id))
-        }
     }
 
     /// Makes a fixture over a scripted profile, resolved by a router of its
@@ -87,7 +79,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         let session = fixture.vend()
 
-        let summary = try await fixture.registeredSummary(of: session)
+        let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
 
         #expect(summary.kind == .root)
         #expect(summary.parentID == nil)
@@ -103,7 +95,7 @@ import Testing
         let parent = fixture.vend()
         let child = fixture.vend(SessionConfiguration(parentCall: try Self.parentCall(of: parent)))
 
-        let summary = try await fixture.registeredSummary(of: child)
+        let summary = try await SessionDirectorySummaries.summary(of: child.id, in: fixture.directory)
 
         #expect(summary.kind == .subagent)
         #expect(summary.parentID == parent.id)
@@ -119,7 +111,7 @@ import Testing
             parentSessionId: spawningSessionId, parentToolCallId: "agents-tool-call-1")
         let child = fixture.vend(SessionConfiguration(agentSpawn: spawn))
 
-        let summary = try await fixture.registeredSummary(of: child)
+        let summary = try await SessionDirectorySummaries.summary(of: child.id, in: fixture.directory)
 
         #expect(summary.kind == .subagent)
         #expect(summary.parentID == spawningSessionId)

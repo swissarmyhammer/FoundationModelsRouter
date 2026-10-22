@@ -40,11 +40,37 @@ comments:
     - needs a human decision: (a) accept the restoreSessionTree test, (b) restored root keeps its forks alive, (c) directory holds restored forks strongly
     - also noted: removal is by session id, so a second close() on a stale closed object could remove a live restored session with the same id
   timestamp: 2026-10-21T22:52:32.687239+00:00
+- actor: claude-code
+  id: 01m5hxxh64jsz9g0kzvsw5xyct
+  text: 'DECISION (user, 2026-10-22): option (a). `restoreSession(id:)` keeps its documented contract: it releases the recorded forks, and the directory stays weak. `restoreSessionTree(root:)` is the way to get live, listed forks; `aRestoredForkIsInTheDirectoryAsAForkOfItsSource` covers it. Subtask 2 and acceptance criterion 2 were rewritten to match and checked. Next: /review on 18bd0e0c.'
+  timestamp: 2026-10-22T13:48:26.180796+00:00
+- actor: claude-code
+  id: 01m5hy7v7bhgwrn3exxtz8vn7r
+  text: |-
+    ### review — findings
+    - evidence: review sha 18bd0e0c~1..18bd0e0c — 2 findings (2 confirmed, 1 refuted): Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkRestoreTests.swift:34 (reuse/reuse), Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkRestoreTests.swift:144 (completeness/inverse-operation-coverage)
+    - next: implement the two checklist items in the 2026-10-22 08:48 Review Findings section; task stays in review
+  timestamp: 2026-10-22T13:54:04.139063+00:00
+- actor: claude-code
+  id: 01m5hybwzbef0my2dj1m5dxezj
+  text: 'Picked up the 2026-10-22 08:48 Review Findings. Research: (1) `makeSession` DOES register roots — `RoutedLLM.swift` calls `sessionDirectory?.register(` since 522b7c6c (an ancestor of HEAD), so the finding''s premise "root sessions are never registered" is wrong, but its fix (assert listed before close) still stands and is applied. (2) The four summary helpers: Event/Registration have a `Fixture.registeredSummary(of session:)` over `directory.summary(of:)`; ForkRestore has a static `registeredSummary(of:in:)`; Recorded has `recordedSummary(of:in:)` over `sessions(matching: SessionQuery(includesRecorded: true))`. One shared helper covers all four: find the id in `sessions(matching: query)`, query defaulting to the live `SessionQuery()`. The live path of `summary(of:)` stays covered by RouterSessionDirectoryQueryTests and LauncherTests.'
+  timestamp: 2026-10-22T13:56:17.003144+00:00
+- actor: claude-code
+  id: 01m5hyk6b3qz1fkm6sy74yny1e
+  text: 'Findings fixed. (1) reuse/reuse: new `Tests/FoundationModelsRouterTests/Helpers/SessionDirectorySummaries.swift` — `SessionDirectorySummaries.summary(of:in:matching:)` finds the id in `sessions(matching: query)` (query defaults to the live `SessionQuery()`). The four copies are deleted: ForkRestore''s static `registeredSummary`, the `Fixture.registeredSummary` of Event and Registration, and Recorded''s `recordedSummary` (its callers pass `SessionQuery(includesRecorded: true)`). (2) inverse-operation-coverage: `aClosedSessionLeavesTheLiveList` now reads the live query before and after `close()` and expects `[session.id]` before and empty after. Mutation check: with `sessionDirectory?.unregister(id)` removed from `close()`, the test failed only on `afterClose.isEmpty` (the before-close listing held); the line is restored and `git diff -- Sources` is empty. Tool note: the sah `edit file` `replace_all: true` replaced only one occurrence per call here, so each identical call site was edited one at a time.'
+  timestamp: 2026-10-22T14:00:15.971034+00:00
+- actor: claude-code
+  id: 01m5hyk9h7aepxs0mh9t35k91q
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Tests/FoundationModelsRouterTests/Helpers/SessionDirectorySummaries.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkRestoreTests.swift, RouterSessionDirectoryEventTests.swift, RouterSessionDirectoryRegistrationTests.swift, RouterSessionDirectoryRecordedTests.swift. `swift build --build-tests` complete (exit 0); `swift test --filter RouterSessionDirectory` 72 tests in 7 suites passed. Both runs print one SwiftPM build-graph warning "missing creator for mutated node: .build/out/Products/Debug/mlx-swift_Cmlx.bundle/Contents/MacOS" — from the mlx-swift bundle, not from a changed file. Both Review Findings checked.
+    - next: /review
+  timestamp: 2026-10-22T14:00:19.239372+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F41EWV2VJ9EBCJT36A1Y9N
-position_column: review
-position_ordinal: '8780'
+position_column: doing
+position_ordinal: '80'
 title: 'ROUTER-3: Forks and restored sessions register, and close() leaves the live list'
 ---
 ## Goal
@@ -61,13 +87,13 @@ The other vend points register too: a fork, a restored root and each restored fo
 
 ## Subtasks
 - [x] Failing test first: `fork(workingDirectory:)` gives a child that is in the directory with kind `fork` and the source as parent.
-- [ ] Register restored sessions from `restoreSession(id:)`, root and recorded forks, using a recording made in the same test. (BLOCKED, see comments: the root registers; the recorded forks register, but `restoreSession(id:)` releases them and the weak directory drops them)
+- [x] Register restored sessions: `restoreSession(id:)` registers the root; `restoreSessionTree(root:)` registers the root and each recorded fork, using a recording made in the same test. (Decision 2026-10-22, option a: `restoreSession(id:)` releases recorded forks and the directory stays weak; `restoreSessionTree` is the way to get live forks.)
 - [x] `close()` unregisters; the closed session is gone from the query while the test still holds it.
 - [x] A restored session's summary carries the facts read back by the ROUTER-1 restore card.
 
 ## Acceptance Criteria
 - [x] A fork has `kind == .fork` and its source id as parent.
-- [ ] `restoreSession(id:)` gives a session that is in the directory, and its recorded forks are too. (BLOCKED: root yes; forks only while a caller holds them, which `restoreSession(id:)` does not)
+- [x] `restoreSession(id:)` gives a session that is in the directory; `restoreSessionTree(root:)` gives a root and recorded forks that are in the directory while the tree holds them.
 - [x] After `close()`, the session is not in the live query.
 
 ## Tests
@@ -76,3 +102,13 @@ The other vend points register too: a fork, a restored root and each restored fo
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api
+
+## Review Findings (2026-10-22 08:48)
+
+> Scope: `review sha 18bd0e0c~1..18bd0e0c` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkRestoreTests.swift:34` `reuse/reuse` — The `registeredSummary` helper is a near-duplicate (91% match) of similar functions in RouterSessionDirectoryEventTests, RouterSessionDirectoryRecordedTests, and RouterSessionDirectoryRegistrationTests. Defining the same function in multiple test files duplicates the implementation instead of reusing it. Extract the `registeredSummary` function to a shared test helper module or file so all test files can import and reuse it.
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkRestoreTests.swift:144` `completeness/inverse-operation-coverage` — The test unregisters root sessions created via `makeSession` by calling `close()`, but root sessions are never registered. The change registers sessions in `performFork` (line 280) and `restoreSessionTree` (line 341) but modifies `close()` to unregister all sessions (line 416), including root sessions that were never registered. The test does not verify the session was registered before `close()` — it only checks the directory is empty after close, which is trivially true if the session was never registered. Modify the test to create a fork or restored session (which are registered by this change) before testing `close()`; or add a preceding assertion that the session is registered before `close()` to verify the round-trip.
