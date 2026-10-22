@@ -564,8 +564,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: `SessionDirectoryError.unknownSession` for a session sender
     ///   or a session id target that no live or recorded session has, the
     ///   start errors of an agent address (`SessionDirectoryError.noLauncher`
-    ///   and the error of the launcher), the error of a read of a ledger, or
-    ///   the error of the recording roots of the host.
+    ///   and the error of the launcher),
+    ///   ``SessionMessageLedgerError/corruptLine(_:)`` when the
+    ///   `messages.jsonl` of a target is damaged before its final line, the
+    ///   file-system error of a read of a ledger, or the error of the
+    ///   recording roots of the host.
     public func send(_ message: OutgoingSessionMessage) async throws -> [SessionSendReceipt] {
         let recorded = try await recordedSummaries()
         let resolution = try message.to.resolution(from: message.from, among: liveSummaries()) { id in
@@ -680,8 +683,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Returns: The messages to the session that were not read, the
     ///   oldest first.
     /// - Throws: `SessionDirectoryError.unknownSession` when no live or
-    ///   recorded session has the id, the error of a read of the ledger, or
-    ///   the error of the recording roots of the host.
+    ///   recorded session has the id,
+    ///   ``SessionMessageLedgerError/corruptLine(_:)`` when the
+    ///   `messages.jsonl` of the session is damaged before its final line, the
+    ///   file-system error of a read of the ledger, or the error of the
+    ///   recording roots of the host.
     public func inbox(of id: ULID, markRead: Bool) async throws -> [SessionMessage] {
         guard var ledger = try await knownLedger(of: id) else {
             throw SessionDirectoryError.unknownSession(id)
@@ -704,7 +710,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - recipient: The session id that the message went to.
     /// - Returns: The message, read or not read, or `nil` when no message to
     ///   `recipient` has the id or no session has the id `recipient`.
-    /// - Throws: The error of a read of the ledger, or the error of the
+    /// - Throws: ``SessionMessageLedgerError/corruptLine(_:)`` when the
+    ///   `messages.jsonl` of `recipient` is damaged before its final line, the
+    ///   file-system error of a read of the ledger, or the error of the
     ///   recording roots of the host.
     public func message(_ id: MailID, to recipient: ULID) async throws -> SessionMessage? {
         try await knownLedger(of: recipient)?.message(id)
@@ -734,7 +742,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - directory: The recording directory of a durable session, or `nil`
     ///     for a memory-only session.
     /// - Returns: The ledger.
-    /// - Throws: The error of a read of `messages.jsonl`.
+    /// - Throws: ``SessionMessageLedgerError/corruptLine(_:)`` for a
+    ///   `messages.jsonl` damaged before its final line, or the file-system
+    ///   error of a read of it.
     private func ledger(of id: ULID, in directory: URL?) throws -> SessionMessageLedger {
         if let held = ledgers[id] {
             return held

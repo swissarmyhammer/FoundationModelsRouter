@@ -2,12 +2,30 @@ import Foundation
 import FoundationModelsExtras
 import Logging
 
-/// The ledger read refused to read: damage before the final line of a
-/// `messages.jsonl` is not a crash artifact, so the read does not guess past
-/// it.
-enum SessionMessageLedgerError: Error, Equatable {
-    /// A line before the final one of the file did not decode.
+/// Why the read of the message ledger of a session refused to read: damage
+/// before the final line of a `messages.jsonl` is not a crash artifact, so
+/// the read does not guess past it.
+///
+/// ``RouterSessionDirectory/send(_:)``,
+/// ``RouterSessionDirectory/inbox(of:markRead:)`` and
+/// ``RouterSessionDirectory/message(_:to:)`` read the ledger of a session, so
+/// each of them throws this error for a damaged ledger.
+/// `SessionDirectoryError` of the Extras port has no case for a damaged
+/// record of the router, so this error is the router's own, as
+/// ``SessionIndexError`` is for a damaged session index.
+public enum SessionMessageLedgerError: Error, Equatable, Sendable, CustomStringConvertible {
+    /// A line before the final one of the `messages.jsonl` at this file URL
+    /// did not decode.
     case corruptLine(URL)
+
+    /// A human-readable reason that names the file.
+    public var description: String {
+        switch self {
+        case .corruptLine(let file):
+            return "\(file.path): a line before the final one is corrupt; "
+                + "the message ledger of the session cannot be read"
+        }
+    }
 }
 
 /// The record of the messages that ``RouterSessionDirectory`` delivered to
