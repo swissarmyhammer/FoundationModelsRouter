@@ -15,10 +15,26 @@ comments:
     - evidence: `swift build --build-tests` clean (only the pre-existing mlx bundle build-system warning); `swift test`: 2143 tests / 262 suites passed (9 pre-existing known issues), 39 tests / 23 suites passed, 19 tests / 3 suites passed. 12 files — Package.swift, README.md, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift, Tests/FoundationModelsRouterTestSupport/StubURLProtocol.swift (new), Tests/FoundationModelsRouterTests/HuggingFaceMetadataSourceTests.swift, Tests/FoundationModelsRouterTests/LiveModelLoaderTokenProviderTests.swift (new), Tests/FoundationModelsRouterTests/LiveModelLoaderMLXModelLoader.swift (new), Tests/FoundationModelsRouterTests/LiveModelLoaderCacheFolderTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/HostTokenPublicSurfaceTests.swift (new), Tests/FoundationModelsRouterPublicSurfaceTests/RouterCacheDirectoryPublicSurfaceTests.swift (new)
     - next: /review
   timestamp: 2026-10-22T20:41:41.408135+00:00
+- actor: claude-code
+  id: 01m5jnwq5hfzp2m8rjey9mb1gc
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (7c42e271): 0 findings, 0 confirmed, 0 refuted; 14 attempted, 0 failed; 11 files reviewed; not reviewed: .kanban/ (2, .reviewignore), README.md (no validator matches)
+    - next: done
+  timestamp: 2026-10-22T20:47:25.361605+00:00
+- actor: wballard
+  id: 01m5jnxn9hnb0a44ds7jz8qg46
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — tokenProvider on LiveModelLoader and HuggingFaceMetadataSource; Router.cacheDirectory; direct swift-huggingface dependency
+    - test: green per implementer — swift test 2143 passed, 9 known issues
+    - commit: 7c42e271
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T20:47:56.209221+00:00
 depends_on:
 - 01M5J0J48N3D4539V5D57DTGHB
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffbb80
 title: 'ROUTER: host gives the Hugging Face token; Router shows its metadata cache folder'
 ---
 ## Goal
