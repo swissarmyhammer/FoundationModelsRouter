@@ -6,14 +6,18 @@ import Testing
 
 /// The pure resolver that turns the address of a send into a decision
 /// (ROUTER-4, the addressing table of session.md section 9): the live
-/// targets, a recorded session to restore, an agent to start, or a refusal
-/// with its reason.
+/// targets, a recorded session to restore, an agent to start, a refusal
+/// with its reason and target, or the `unknownSession` error of the
+/// FoundationModelsExtras send contract for an unknown sender or target.
 ///
 /// Each test builds the summaries by hand: no session runs. Only the link
 /// test makes a real folder, because a symbolic link must exist on disk to
 /// resolve.
 @Suite("SessionAddressResolution: the address rules of session.md section 9")
 struct SessionAddressResolutionTests {
+    /// The decision of the resolver, or the error that it throws.
+    typealias Outcome = Result<SessionAddressResolution, SessionDirectoryError>
+
     /// One row of the addressing table: a sender, an address, and the
     /// decision that the resolver must give for them.
     struct Row: Sendable, CustomTestStringConvertible {
@@ -26,8 +30,9 @@ struct SessionAddressResolutionTests {
         /// The address of the message.
         let address: SessionAddress
 
-        /// The decision that the resolver must give.
-        let expected: SessionAddressResolution
+        /// The decision that the resolver must give, or the error that it
+        /// must throw.
+        let expected: Outcome
 
         /// The name of the row.
         var testDescription: String { name }
@@ -167,93 +172,124 @@ struct SessionAddressResolutionTests {
     /// A user through a UI as the sender.
     static let fromUser = SessionMessageSender.user(clientID: "ui")
 
+    /// A session sender that no live or recorded session is.
+    static let fromUnknownSession = SessionMessageSender.session(unknownID)
+
     // MARK: - The table
 
     /// One row for each rule of the addressing table.
-    static let rows: [Row] = sessionRows + agentRows + folderRows + tagRows
+    static let rows: [Row] = sessionRows + agentRows + folderRows + tagRows + unknownSenderRows
 
     /// The rows of a session id address.
     static let sessionRows: [Row] = [
         Row(
             name: "a live session id gives that session",
-            sender: fromUser, address: .session(newerCoder.id), expected: .deliver([newerCoder.id])),
+            sender: fromUser, address: .session(newerCoder.id), expected: .success(.deliver([newerCoder.id]))),
         Row(
             name: "a recorded session id that is not live is restored, then delivered",
-            sender: fromUser, address: .session(recorded.id), expected: .restoreThenDeliver(recorded.id)),
+            sender: fromUser, address: .session(recorded.id), expected: .success(.restoreThenDeliver(recorded.id))),
         Row(
-            name: "an archived session id is refused as archived",
-            sender: fromReviewer, address: .session(archived.id), expected: .refused(reason: "archived")),
+            name: "an archived session id is refused as archived, with the archived session as the target",
+            sender: fromReviewer, address: .session(archived.id),
+            expected: .success(.refused(reason: "archived", target: archived.id))),
         Row(
-            name: "an unknown session id is refused as unknown",
-            sender: fromReviewer, address: .session(unknownID), expected: .refused(reason: "unknown session")),
+            name: "an unknown session id throws unknownSession with the id",
+            sender: fromReviewer, address: .session(unknownID), expected: .failure(.unknownSession(unknownID))),
     ]
 
     /// The rows of an agent address.
     static let agentRows: [Row] = [
         Row(
             name: "an agent with a folder gives its newest live root session in that folder",
-            sender: fromUser, address: .agent(id: coder, folder: project), expected: .deliver([newerCoder.id])),
+            sender: fromUser, address: .agent(id: coder, folder: project),
+            expected: .success(.deliver([newerCoder.id]))),
         Row(
             name: "an agent with another folder gives its root session in that folder",
-            sender: fromReviewer, address: .agent(id: coder, folder: other), expected: .deliver([elsewhereCoder.id])),
+            sender: fromReviewer, address: .agent(id: coder, folder: other),
+            expected: .success(.deliver([elsewhereCoder.id]))),
         Row(
             name: "an agent with no folder from a session looks in the folder of the sender",
-            sender: fromReviewer, address: .agent(id: coder, folder: nil), expected: .deliver([newerCoder.id])),
+            sender: fromReviewer, address: .agent(id: coder, folder: nil),
+            expected: .success(.deliver([newerCoder.id]))),
         Row(
             name: "an agent with no folder from a user gives its newest live root session in any folder",
-            sender: fromUser, address: .agent(id: coder, folder: nil), expected: .deliver([elsewhereCoder.id])),
+            sender: fromUser, address: .agent(id: coder, folder: nil),
+            expected: .success(.deliver([elsewhereCoder.id]))),
         Row(
             name: "an agent with no live root session in the folder is started there",
             sender: fromReviewer, address: .agent(id: coder, folder: empty),
-            expected: .startAgent(agentID: coder, folder: empty)),
+            expected: .success(.startAgent(agentID: coder, folder: empty))),
         Row(
             name: "an agent with no live session and no folder from a session is started in the folder of the sender",
             sender: fromReviewer, address: .agent(id: absentAgent, folder: nil),
-            expected: .startAgent(agentID: absentAgent, folder: project)),
+            expected: .success(.startAgent(agentID: absentAgent, folder: project))),
         Row(
             name: "an agent with no live session and no folder from a user is started with no folder",
             sender: fromUser, address: .agent(id: absentAgent, folder: nil),
-            expected: .startAgent(agentID: absentAgent, folder: nil)),
+            expected: .success(.startAgent(agentID: absentAgent, folder: nil))),
         Row(
             name: "an agent with only a subagent and a fork has no root session and is started",
             sender: fromUser, address: .agent(id: helper, folder: nil),
-            expected: .startAgent(agentID: helper, folder: nil)),
+            expected: .success(.startAgent(agentID: helper, folder: nil))),
     ]
 
     /// The rows of a folder address.
     static let folderRows: [Row] = [
         Row(
             name: "a folder gives its newest live root session of any agent, not a newer subagent or fork",
-            sender: fromUser, address: .folder(project), expected: .deliver([reviewer.id])),
+            sender: fromUser, address: .folder(project), expected: .success(.deliver([reviewer.id]))),
         Row(
             name: "another folder gives its one live root session",
-            sender: fromReviewer, address: .folder(other), expected: .deliver([elsewhereCoder.id])),
+            sender: fromReviewer, address: .folder(other), expected: .success(.deliver([elsewhereCoder.id]))),
         Row(
-            name: "a folder with no session is refused with the hint to name an agent",
+            name: "a folder with no session is refused with the hint to name an agent, and no target",
             sender: fromReviewer, address: .folder(empty),
-            expected: .refused(reason: "Name an agent: @agent:/path.")),
+            expected: .success(.refused(reason: "Name an agent: @agent:/path.", target: nil))),
         Row(
-            name: "a folder with only a subagent and a fork is refused with the hint to name an agent",
+            name: "a folder with only a subagent and a fork is refused with the hint to name an agent, and no target",
             sender: fromUser, address: .folder(nested),
-            expected: .refused(reason: "Name an agent: @agent:/path.")),
+            expected: .success(.refused(reason: "Name an agent: @agent:/path.", target: nil))),
     ]
 
     /// The rows of a tag address.
     static let tagRows: [Row] = [
         Row(
             name: "a tag gives each live session with the tag but the sender, the oldest first",
-            sender: fromReviewer, address: .tag(team), expected: .deliver([olderCoder.id, subagent.id])),
+            sender: fromReviewer, address: .tag(team), expected: .success(.deliver([olderCoder.id, subagent.id]))),
         Row(
             name: "a tag from a user gives each live session with the tag",
-            sender: fromUser, address: .tag(team), expected: .deliver([olderCoder.id, reviewer.id, subagent.id])),
+            sender: fromUser, address: .tag(team),
+            expected: .success(.deliver([olderCoder.id, reviewer.id, subagent.id]))),
         Row(
-            name: "a tag that no session has is refused once",
+            name: "a tag that no session has is refused once, with no target",
             sender: fromUser, address: .tag(absentTag),
-            expected: .refused(reason: "No live session has the tag.")),
+            expected: .success(.refused(reason: "No live session has the tag.", target: nil))),
         Row(
-            name: "a tag that only the sender has is refused once",
+            name: "a tag that only the sender has is refused once, with no target",
             sender: fromReviewer, address: .tag(lead),
-            expected: .refused(reason: "No live session has the tag.")),
+            expected: .success(.refused(reason: "No live session has the tag.", target: nil))),
+    ]
+
+    /// The rows of a session sender that no live or recorded session is:
+    /// each address throws `unknownSession` with the id of the sender, as
+    /// the FoundationModelsExtras send does, and never reads it as a user.
+    static let unknownSenderRows: [Row] = [
+        Row(
+            name: "an unknown session sender to a live session id throws unknownSession with the sender id",
+            sender: fromUnknownSession, address: .session(newerCoder.id),
+            expected: .failure(.unknownSession(unknownID))),
+        Row(
+            name: "an unknown session sender to an agent with no folder throws unknownSession with the sender id",
+            sender: fromUnknownSession, address: .agent(id: coder, folder: nil),
+            expected: .failure(.unknownSession(unknownID))),
+        Row(
+            name: "an unknown session sender to a folder throws unknownSession with the sender id",
+            sender: fromUnknownSession, address: .folder(project),
+            expected: .failure(.unknownSession(unknownID))),
+        Row(
+            name: "an unknown session sender to a tag throws unknownSession with the sender id",
+            sender: fromUnknownSession, address: .tag(team),
+            expected: .failure(.unknownSession(unknownID))),
     ]
 
     // MARK: - Builders
@@ -306,18 +342,21 @@ struct SessionAddressResolutionTests {
     ///   - address: The address.
     ///   - sender: The sender.
     ///   - live: The live sessions. The default is ``live``.
-    /// - Returns: The decision of the resolver.
+    /// - Returns: The decision of the resolver, or the error that it threw.
     static func resolve(
         _ address: SessionAddress,
         from sender: SessionMessageSender,
         among live: [SessionSummary] = live
-    ) -> SessionAddressResolution {
-        address.resolution(from: sender, among: live) { recordedByID[$0] }
+    ) -> Outcome {
+        Result { () throws(SessionDirectoryError) in
+            try address.resolution(from: sender, among: live) { recordedByID[$0] }
+        }
     }
 
     // MARK: - Tests
 
-    /// Each row of the addressing table gives its decision and reason text.
+    /// Each row of the addressing table gives its decision and reason text,
+    /// or throws its error.
     @Test(arguments: rows)
     func eachRowOfTheAddressingTableGivesItsDecision(_ row: Row) {
         #expect(Self.resolve(row.address, from: row.sender) == row.expected)
@@ -337,7 +376,7 @@ struct SessionAddressResolutionTests {
         ]
         let decisions = addresses.map { Self.resolve($0, from: Self.fromUser, among: [session]) }
 
-        #expect(decisions == Array(repeating: .deliver([session.id]), count: addresses.count))
+        #expect(decisions == Array(repeating: .success(.deliver([session.id])), count: addresses.count))
     }
 
     /// An agent address with no folder from a session sender looks in the
@@ -351,6 +390,6 @@ struct SessionAddressResolutionTests {
         let decision = Self.resolve(
             .agent(id: Self.coder, folder: nil), from: .session(sender.id), among: [target, sender])
 
-        #expect(decision == .deliver([target.id]))
+        #expect(decision == .success(.deliver([target.id])))
     }
 }

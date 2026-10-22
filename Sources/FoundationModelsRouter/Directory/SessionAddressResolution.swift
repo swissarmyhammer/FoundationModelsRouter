@@ -4,13 +4,18 @@ import FoundationModelsExtras
 /// What a send does with the address of a message (ROUTER-4, the
 /// addressing table of session.md section 9): the live sessions that get the
 /// message, a recorded session to restore first, an agent to start, or the
-/// reason of a refusal.
+/// reason and target of a refusal.
 ///
 /// ``FoundationModelsExtras/SessionAddress/resolution(from:among:recordedSummary:)``
 /// gives the decision. It is pure: it reads only the summaries it is given,
 /// and it starts, restores and delivers nothing. The send acts on it: it
 /// delivers, restores through the launcher (ROUTER-5), or starts a root
 /// session with origin `message` through the launcher (ROUTER-8).
+///
+/// An unknown session is not a decision: as the FoundationModelsExtras send
+/// contract says, the resolver throws `SessionDirectoryError.unknownSession`
+/// for a session sender or a session id target that no live or recorded
+/// session has, and the send lets that error out.
 enum SessionAddressResolution: Sendable, Equatable {
     /// Deliver the message to each of these live sessions, in this order.
     case deliver([ULID])
@@ -25,15 +30,14 @@ enum SessionAddressResolution: Sendable, Equatable {
     case startAgent(agentID: String, folder: URL?)
 
     /// Refuse the send with this reason, the text of
-    /// `SessionSendReceipt.reason`.
-    case refused(reason: String)
+    /// `SessionSendReceipt.reason`, for this target, the
+    /// `SessionSendReceipt.target`: the session that matched the address, or
+    /// `nil` when no session matched it.
+    case refused(reason: String, target: ULID?)
 
     /// The reason for a session id of an archived session (session.md
     /// section 10.2).
     static let archivedReason = "archived"
-
-    /// The reason for a session id that no live or recorded session has.
-    static let unknownSessionReason = "unknown session"
 
     /// The reason for a folder with no live root session: a folder alone does
     /// not name an agent (D61).
@@ -45,12 +49,11 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// The decision for a session id address.
     ///
     /// - Parameter target: The summary of the session with the id, live or
-    ///   recorded, or `nil` when no session has it.
-    /// - Returns: Refused as unknown or archived, a delivery to a live
-    ///   session, or a restore of a recorded one.
-    fileprivate static func reaching(session target: SessionSummary?) -> Self {
-        guard let target else { return .refused(reason: unknownSessionReason) }
-        guard target.state != .archived else { return .refused(reason: archivedReason) }
+    ///   recorded.
+    /// - Returns: Refused as archived with the session as its target, a
+    ///   delivery to a live session, or a restore of a recorded one.
+    fileprivate static func reaching(session target: SessionSummary) -> Self {
+        guard target.state != .archived else { return .refused(reason: archivedReason, target: target.id) }
         return target.isLive ? .deliver([target.id]) : .restoreThenDeliver(target.id)
     }
 
@@ -79,10 +82,11 @@ enum SessionAddressResolution: Sendable, Equatable {
     ///   - folder: The folder of the address.
     ///   - live: The live sessions.
     /// - Returns: A delivery to the newest live root session of any agent in
-    ///   the folder, else refused with the hint to name an agent.
+    ///   the folder, else refused with the hint to name an agent and no
+    ///   target.
     fileprivate static func reaching(folder: URL, among live: [SessionSummary]) -> Self {
         guard let target = newestRoot(among: live, agentID: nil, in: folder) else {
-            return .refused(reason: noRootSessionInTheFolderReason)
+            return .refused(reason: noRootSessionInTheFolderReason, target: nil)
         }
         return .deliver([target.id])
     }
@@ -95,7 +99,7 @@ enum SessionAddressResolution: Sendable, Equatable {
     ///   - sender: The session id of the sender, or `nil` for a user sender.
     ///   - live: The live sessions.
     /// - Returns: A delivery to each live session with the tag but the
-    ///   sender, the oldest first, else one refusal.
+    ///   sender, the oldest first, else one refusal with no target.
     fileprivate static func reaching(
         tag: String,
         from sender: ULID?,
@@ -105,7 +109,7 @@ enum SessionAddressResolution: Sendable, Equatable {
             .filter { $0.tags.contains(tag) && $0.id != sender }
             .map(\.id)
             .sorted()
-        guard !targets.isEmpty else { return .refused(reason: noSessionHasTheTagReason) }
+        guard !targets.isEmpty else { return .refused(reason: noSessionHasTheTagReason, target: nil) }
         return .deliver(targets)
     }
 
@@ -139,8 +143,12 @@ extension SessionAddress {
     /// The decision of a send to this address, by the rules of session.md
     /// section 9.
     ///
+    /// - A session sender must be a live or recorded session, for each
+    ///   address: an unknown one throws, and is never read as a user.
     /// - A session id gives that session when it is live, a restore when it
-    ///   is recorded, and a refusal when it is archived or unknown.
+    ///   is recorded, a refusal with the session as its target when it is
+    ///   archived, and throws when no session has it (section 9: the session
+    ///   must exist).
     /// - An agent gives its newest live root session in the folder of the
     ///   address, else in the working folder of a session sender. A user
     ///   sender has no folder, so an agent with no folder from a user matches
@@ -158,24 +166,30 @@ extension SessionAddress {
     ///   - recordedSummary: The summary of a recorded session by its id, or
     ///     `nil` when no session on disk has the id.
     /// - Returns: The decision.
+    /// - Throws: `SessionDirectoryError.unknownSession(_:)` with the id of a
+    ///   session sender, or of a session id target, that no live or recorded
+    ///   session has, as the FoundationModelsExtras send throws it.
     func resolution(
         from sender: SessionMessageSender,
         among live: [SessionSummary],
         recordedSummary: (ULID) -> SessionSummary?
-    ) -> SessionAddressResolution {
-        func summary(of id: ULID) -> SessionSummary? {
-            live.first { $0.id == id } ?? recordedSummary(id)
+    ) throws(SessionDirectoryError) -> SessionAddressResolution {
+        func knownSummary(of id: ULID) throws(SessionDirectoryError) -> SessionSummary {
+            guard let summary = live.first(where: { $0.id == id }) ?? recordedSummary(id) else {
+                throw .unknownSession(id)
+            }
+            return summary
         }
+        let senderSummary = try sender.sessionID.map(knownSummary(of:))
         switch self {
         case .session(let id):
-            return .reaching(session: summary(of: id))
+            return .reaching(session: try knownSummary(of: id))
         case .agent(let agentID, let folder):
-            let senderFolder = sender.sessionID.flatMap(summary(of:))?.workingDirectory
-            return .reaching(agent: agentID, in: folder ?? senderFolder, among: live)
+            return .reaching(agent: agentID, in: folder ?? senderSummary?.workingDirectory, among: live)
         case .folder(let folder):
             return .reaching(folder: folder, among: live)
         case .tag(let tag):
-            return .reaching(tag: tag, from: sender.sessionID, among: live)
+            return .reaching(tag: tag, from: senderSummary?.id, among: live)
         }
     }
 }
