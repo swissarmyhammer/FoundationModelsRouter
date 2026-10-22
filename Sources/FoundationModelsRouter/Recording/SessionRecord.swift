@@ -4,9 +4,7 @@ import FoundationModelsExtras
 /// One recorded session, as the YAML frontmatter of the `index.md` in its
 /// session folder holds it (``SessionIndexFile``).
 ///
-/// The record replaces the write-once `session.json` and the mutable
-/// `facts.json` of earlier recordings, and the `sessions.jsonl` listing. It
-/// holds three kinds of fields:
+/// It holds three kinds of fields:
 ///
 /// - **The facts** (ROUTER-1): ``facts``, written flat at the top level of
 ///   the frontmatter: `agentID`, `agentName`, `origin`, `startedBy`, `tags`,
