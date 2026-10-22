@@ -5,22 +5,25 @@ depends_on:
 - 01M5HS4C6FBNTAX30161HP0BS5
 position_column: todo
 position_ordinal: '9880'
-title: 'ROUTER: every JSONL file goes through Extras JSONLFile; sessions.jsonl and projects.jsonl remove by tombstone, never rewrite'
+title: 'ROUTER: transcript.jsonl goes through Extras JSONLFile; delete sessions.jsonl (SessionIndex) and the JSONL rewrite code'
 ---
 ## What
-User decisions (2026-10-22): JSONL is append-only, opened in append mode, one full line per write, fsync after every line, and one Extras type is used everywhere.
-- `transcript.jsonl` (JSONLRecorder, appendJSONLine, openHandleForAppending), `sessions.jsonl` (SessionIndex) and `projects.jsonl` (ProjectRegistry) all write and read through `JSONLFile`.
-- The transcript gets an fsync per line, not only at the end of a response.
-- **Removal:** `SessionIndex.removeRecords(sessionId:)` appends a tombstone line, and readers fold last line wins. The same goes for each ProjectRegistry update or removal.
-- **Rebuild:** `SessionIndex.rebuild(cwd:)` appends lines; it never replaces the file.
-- Delete `JSONLines.replaceFile` and the seek-to-end FileHandle appends.
+User decisions (2026-10-22):
+- JSONL is append-only. Files open in append mode, each write is one full line, and every line is fsynced. One Extras type, `JSONLFile`, is used everywhere.
+- `sessions.jsonl` is eliminated. Sessions are listed by listing the recording root's session folders and reading each `index.md` (see the index.md card).
+- `projects.jsonl` becomes a folder with one file per project (see the ProjectStore card).
+
+So the only JSONL file Router writes is `transcript.jsonl`.
+- `transcript.jsonl` (JSONLRecorder, appendJSONLine, openHandleForAppending) writes and reads through `JSONLFile`, with an fsync per line instead of only when a response finishes.
+- Delete `SessionIndex`, `SessionIndexRecord`, `sessions.jsonl`, and the directory's sessions.jsonl writer from ed7b7c27. Recorded listing reads index.md instead.
+- Delete `JSONLines.replaceFile`, `JSONLines.appendLine` and the seek-to-end FileHandle appends.
 - No backward compatibility.
 
 ## Subtasks
-- [ ] Move all three files onto JSONLFile
-- [ ] Tombstone record for sessions.jsonl and projects.jsonl; readers honour it
-- [ ] Failing tests first: removal grows the file and hides the session; earlier bytes are unchanged after any operation
-- [ ] Tell ACPAgent and Kanban to move their JSONL writes onto JSONLFile (Kanban EventLog, ACPAgent snapshots)
+- [ ] Move transcript.jsonl onto JSONLFile with an fsync per line
+- [ ] Delete SessionIndex and sessions.jsonl, and their tests; update RecordedSessions and the public-surface tests
+- [ ] Delete the JSONLines rewrite and append helpers
+- [ ] Failing tests first: a transcript append only grows the file, and each line is fsynced
 - [ ] `swift test` passes, zero warnings
 
-Depends on the EXTRAS JSONLFile card. #recording #cross-repo
+Depends on the EXTRAS JSONLFile card.
