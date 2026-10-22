@@ -64,11 +64,29 @@ comments:
     - evidence: 4 files — Sources/FoundationModelsRouter/Directory/SessionStateTracking.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/SessionStateTrackingTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryStateTests.swift; `swift build --build-tests` ok; `swift test --skip-build --filter "SessionStateTrackingTests|RouterSessionDirectory"` 72/72 pass; finding flipped to [x]
     - next: /test, then /review
   timestamp: 2026-10-22T00:22:33.943638+00:00
+- actor: claude-code
+  id: 01m5gfzb9d3pkh3n2zskfjs9dm
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (e3b84de1) — engine counts 0 findings / 0 confirmed / 0 refuted (7 attempted, 0 failed; 4 files reviewed, .kanban/ excluded by .reviewignore). Prior Review Findings (2026-10-21 19:12): 1/1 checked. Port-contract check: FoundationModelsExtras Sessions/SessionDirectoryEvent.swift:17-18 ("`lastSummary` is the last final message of the session, when the state is idle") is met — `SessionStateTracking.idleSummary` gives `lastSummary` only when `state == .idle`, otherwise nil; `RouterSessionDirectory.recordState(after:of:)` compares and sends `(state, idleSummary)`; `summary(of:)` keeps the stored `lastSummary`; the type doc and the tests (RouterSessionDirectoryStateTests, SessionStateTrackingTests) pin the idle-only payload.
+    - next: none — task moved to done
+  timestamp: 2026-10-22T00:25:31.181806+00:00
+- actor: claude-code
+  id: 01m5gfzxtpkkm8yfyta2ddr81r
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — SessionStateTracking.swift (new), RouterSessionDirectory.swift, RoutedSessionActor.swift, tests
+    - test: green — swift test, 2058/35/19
+    - commit: 0ac457bf
+    - review: findings — RouterSessionDirectory.swift:647 (lastSummary only for idle, Extras SessionDirectoryEvent.swift:17-18)
+    - implement: changed — idleSummary; test: green 2060/35/19; commit: e3b84de1
+    - review: clean — 0 findings
+  timestamp: 2026-10-22T00:25:50.166665+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffa880
 title: 'ROUTER-9: Session state (working, needsInput, idle, archived) and the 500-character last summary'
 ---
 ## Goal
