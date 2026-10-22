@@ -133,9 +133,39 @@ import Testing
         #expect(delivered.text == Self.text)
         #expect(delivered.chainDepth == 1)
         #expect(await target.awaitIdle())
+        let senderSummary = try #require(try await fixture.directory.summary(of: sender.id))
         await fixture.closeSessions([sender, target])
         let mail = try Self.queuedMail(messageID, of: target, in: fixture)
-        #expect(mail == Mail(id: messageID, sender: .session(sender.id), body: .agentMessage(from: sender.id, content: Self.text)))
+        let header = AgentMessageHeader(
+            sender: sender.id, agentID: senderSummary.agentID, agentName: nil, title: nil,
+            folder: senderSummary.workingDirectory.path, inReplyTo: nil)
+        let content = AgentMessageContent(header: header, text: Self.text).encoded
+        #expect(mail == Mail(id: messageID, sender: .session(sender.id), body: .agentMessage(from: sender.id, content: content)))
+        await fixture.close([])
+    }
+
+    /// The mail of a message from a session starts with the header that the
+    /// directory writes from the live summary of the sender: its agent,
+    /// title and folder, and the message that the message answers. The text
+    /// of the sender follows the header.
+    @Test func theMailOfAMessageCarriesTheHeaderOfTheSender() async throws {
+        let fixture = try await Self.makeFixture()
+        let folder = fixture.directories.cacheDir
+        let sender = fixture.makeSession(SessionConfiguration(workingDirectory: folder, agentID: Self.agentID, title: Self.title))
+        let target = fixture.makeSession()
+        let answered = MailID()
+
+        let receipts = try await fixture.directory.send(
+            OutgoingSessionMessage(from: .session(sender.id), to: .session(target.id), text: Self.text, inReplyTo: answered))
+
+        let messageID = try Self.messageID(of: receipts)
+        #expect(await target.awaitIdle())
+        await fixture.closeSessions([sender, target])
+        let mail = try Self.queuedMail(messageID, of: target, in: fixture)
+        let header = AgentMessageHeader(
+            sender: sender.id, agentID: Self.agentID, agentName: nil, title: Self.title, folder: folder.path,
+            inReplyTo: answered)
+        #expect(mail.body == .agentMessage(from: sender.id, content: AgentMessageContent(header: header, text: Self.text).encoded))
         await fixture.close([])
     }
 
@@ -544,6 +574,9 @@ import Testing
 
     /// The agent of each agent address.
     private static let agentID = "reviewer"
+
+    /// The title of a sender whose header a test reads.
+    private static let title = "Review"
 
     /// The tag of each tag address.
     private static let tag = "triage"

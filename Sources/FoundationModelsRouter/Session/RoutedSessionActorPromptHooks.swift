@@ -220,20 +220,24 @@ extension RoutedSessionActor {
 
 extension MailBody {
     /// The text that a `PrePrompt` carries: the prompt of a user message or
-    /// the content of an agent message. The other kinds carry no model input
-    /// text from outside the session, so they get no `PrePrompt`.
+    /// the text of the sender of an agent message, with no header of the
+    /// session directory (``AgentMessageContent``). The other kinds carry no
+    /// model input text from outside the session, so they get no
+    /// `PrePrompt`.
     var hookPromptText: String? {
         switch self {
         case .userMessage(let prompt, _):
             prompt
-        case .agentMessage(_, let content):
-            content
+        case .agentMessage(let sender, let content):
+            AgentMessageContent(parsing: content, from: sender).text
         case .runEvent, .elicitationAnswer, .catalogChange:
             nil
         }
     }
 
-    /// This body with `text` in place of its ``hookPromptText``.
+    /// This body with `text` in place of its ``hookPromptText``. An agent
+    /// message keeps the header that the session directory wrote, so a hook
+    /// can neither drop nor change the facts of the sender.
     ///
     /// - Parameter text: The new text.
     /// - Returns: The new body, or `nil` for a body with no ``hookPromptText``.
@@ -241,8 +245,11 @@ extension MailBody {
         switch self {
         case .userMessage(_, let options):
             .userMessage(prompt: text, options: options)
-        case .agentMessage(let sender, _):
-            .agentMessage(from: sender, content: text)
+        case .agentMessage(let sender, let content):
+            .agentMessage(
+                from: sender,
+                content: AgentMessageContent(header: AgentMessageContent(parsing: content, from: sender).header, text: text)
+                    .encoded)
         case .runEvent, .elicitationAnswer, .catalogChange:
             nil
         }

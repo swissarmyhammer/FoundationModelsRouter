@@ -272,13 +272,21 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: The error of the recording roots of the host, or of a read
     ///   of the record of past sessions.
     public func summary(of id: ULID) async throws -> SessionSummary? {
-        let live = state.withLock { registry in
-            registry.entries[id].flatMap(Self.summary(of:))
-        }
-        guard let live else {
+        guard let live = liveSummary(of: id) else {
             return try await recordedSummaries().first { $0.id == id }
         }
         return live
+    }
+
+    /// The summary of the live session `id`.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The summary, or `nil` when the directory holds no live
+    ///   session with the id.
+    private nonisolated func liveSummary(of id: ULID) -> SessionSummary? {
+        state.withLock { registry in
+            registry.entries[id].flatMap(Self.summary(of:))
+        }
     }
 
     /// Tells whether `summary` matches each filter of `query` other than the
@@ -399,7 +407,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   before `start` returns.
     public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
         let session = try await launch(
-            request, firstMail: Self.mail(carrying: request.firstMessage, from: request.startedBy))
+            request, firstMail: mail(carrying: request.firstMessage, from: request.startedBy, inReplyTo: nil))
         guard let summary = try await summary(of: session.id) else {
             throw SessionDirectoryError.unknownSession(session.id)
         }
@@ -525,16 +533,31 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// user message with the sender ``MailSender/user``, because a UI has no
     /// session id and the message is input of the user.
     ///
+    /// The content of an agent message starts with the header of the sender
+    /// (``AgentMessageHeader``): its agent, title and folder from its live
+    /// summary, and `inReplyTo`. The renderer of the target cannot read the
+    /// directory, so the header is how the model learns who sent the
+    /// message (section 10.1 of `session.md`). A sender that is not live
+    /// gets a header with its id and `inReplyTo` only. The directory writes
+    /// the header first for each message, so a header that the sender writes
+    /// in its text stays in the fenced text.
+    ///
     /// - Parameters:
     ///   - id: The id of the mail. The default is a new id.
     ///   - text: The text of the message.
     ///   - sender: The session that sends the message, or `nil` for a user.
+    ///   - inReplyTo: The id of the message that this message answers, or
+    ///     `nil`.
     /// - Returns: The mail.
-    private static func mail(id: MailID = MailID(), carrying text: String, from sender: ULID?) -> Mail {
+    private nonisolated func mail(
+        id: MailID = MailID(), carrying text: String, from sender: ULID?, inReplyTo: MailID?
+    ) -> Mail {
         guard let sender else {
             return Mail(id: id, sender: .user, body: .userMessage(prompt: text, options: UserMessageOptions()))
         }
-        return Mail(id: id, sender: .session(sender), body: .agentMessage(from: sender, content: text))
+        let header = AgentMessageHeader(sender: sender, summary: liveSummary(of: sender), inReplyTo: inReplyTo)
+        let content = AgentMessageContent(header: header, text: text).encoded
+        return Mail(id: id, sender: .session(sender), body: .agentMessage(from: sender, content: content))
     }
 
     // MARK: - Messages
@@ -607,7 +630,10 @@ public actor RouterSessionDirectory: SessionDirectory {
         let ledger = try ledger(of: id, in: Self.ledgerDirectory(of: session))
         let delivered = Self.delivered(message, to: id)
         do {
-            _ = try session.mail(Self.mail(id: delivered.id, carrying: delivered.text, from: message.from.sessionID))
+            _ = try session.mail(
+                mail(
+                    id: delivered.id, carrying: delivered.text, from: message.from.sessionID,
+                    inReplyTo: delivered.inReplyTo))
         } catch MailRefusal.closed {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
@@ -637,7 +663,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             startedBy: message.from.sessionID, origin: .message)
         let messageID = MailID()
         let session = try await launch(
-            request, firstMail: Self.mail(id: messageID, carrying: message.text, from: request.startedBy))
+            request,
+            firstMail: mail(id: messageID, carrying: message.text, from: request.startedBy, inReplyTo: message.inReplyTo))
         let delivered = Self.delivered(message, id: messageID, to: session.id)
         keep(delivered, in: try ledger(of: session.id, in: Self.ledgerDirectory(of: session)))
         return SessionSendReceipt(messageID: messageID, target: session.id, outcome: .started)

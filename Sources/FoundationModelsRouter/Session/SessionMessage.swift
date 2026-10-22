@@ -115,9 +115,10 @@ extension Mail {
     /// - A user message is its prompt.
     /// - An agent message is untrusted input (section 10.1 of
     ///   `session.md`): one line that names the session id of the sender,
-    ///   the sentence ``agentMessageNotice``, then the content in a fence
-    ///   labeled ``agentMessageFenceLabel``
-    ///   (``agentMessageText(from:content:)``).
+    ///   the agent, title and folder of the sender and the message it
+    ///   answers from the header that the session directory wrote, the
+    ///   sentence ``agentMessageNotice``, then the text in a fence labeled
+    ///   ``agentMessageFenceLabel`` (``agentMessageText(from:content:)``).
     /// - An elicitation answer is one line that names the elicitation id,
     ///   the action and the content. A decline or a cancel that gives a
     ///   reason adds a line break, then `reason: ` and the reason, so that
@@ -155,26 +156,30 @@ extension Mail {
     private static let minimumFenceLength = 3
 
     /// The prompt text of an agent message: a line that names the session
-    /// id of the sender, the sentence ``agentMessageNotice``, then the
-    /// content in a fence labeled ``agentMessageFenceLabel``.
+    /// id of the sender, one line for each fact of the header that the
+    /// session directory wrote (``AgentMessageHeader/factLines``), the
+    /// sentence ``agentMessageNotice``, then the text of the sender in a
+    /// fence labeled ``agentMessageFenceLabel``.
+    ///
+    /// Only a header that the directory wrote on the first line, and that
+    /// names `sender`, renders outside the fence
+    /// (``AgentMessageContent/init(parsing:from:)``). Content with no such
+    /// header is all text, in the fence.
     ///
     /// The fence is one character longer than the longest run of fence
-    /// characters in the content, so no line of the content can close it
-    /// and speak outside the block.
+    /// characters in the text, so no line of the text can close it and
+    /// speak outside the block.
     ///
     /// - Parameters:
     ///   - sender: The session id of the sender.
     ///   - content: The content of the message.
     /// - Returns: The text of the block.
     private static func agentMessageText(from sender: ULID, content: String) -> String {
-        let fence = String(repeating: fenceCharacter, count: fenceLength(enclosing: content))
-        return [
-            "[message from session \(sender.ulidString)]",
-            agentMessageNotice,
-            fence + agentMessageFenceLabel,
-            content,
-            fence,
-        ].joined(separator: "\n")
+        let message = AgentMessageContent(parsing: content, from: sender)
+        let fence = String(repeating: fenceCharacter, count: fenceLength(enclosing: message.text))
+        return (["[message from session \(sender.ulidString)]"] + (message.header?.factLines ?? [])
+            + [agentMessageNotice, fence + agentMessageFenceLabel, message.text, fence])
+            .joined(separator: "\n")
     }
 
     /// The length of a fence that no run of fence characters in `content`
