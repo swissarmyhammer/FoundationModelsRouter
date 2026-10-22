@@ -410,6 +410,9 @@ enum RouterTelemetry {
 
         /// The session directory of a router (``RouterSessionDirectory``).
         case sessionDirectory = "SessionDirectory"
+
+        /// The project files of a user (``ProjectStore``).
+        case projectStore = "ProjectStore"
     }
 
     /// The key of every metadata value of a router log record.

@@ -14,11 +14,10 @@ import Logging
 typealias JSONLLineAppend = @Sendable (_ record: any Encodable, _ file: URL) throws -> Void
 
 /// The one way this module appends to a JSONL file — `transcript.jsonl`
-/// (``JSONLRecorder``), `messages.jsonl` (``SessionMessageLedger``) and
-/// `projects.jsonl` (``ProjectRegistry``): the Extras `JSONLFile`. The file
-/// is append only. Each append is one whole line in one write, opened with
-/// `O_APPEND`, healed when the file ends with a torn line, and flushed with
-/// `fsync(2)` before it returns.
+/// (``JSONLRecorder``) and `messages.jsonl` (``SessionMessageLedger``): the
+/// Extras `JSONLFile`. The file is append only. Each append is one whole line
+/// in one write, opened with `O_APPEND`, healed when the file ends with a torn
+/// line, and flushed with `fsync(2)` before it returns.
 enum JSONLAppend {
     /// Appends a record through `JSONLFile`, after it creates the folder of
     /// the file when the folder is absent.

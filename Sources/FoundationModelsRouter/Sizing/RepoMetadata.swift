@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Logging
 
@@ -516,9 +515,7 @@ struct RepoMetadataCache: Sendable {
     /// The file URL for a `(repo, revision)` key. The key is hashed into a filesystem-safe name.
     func fileURL(repo: String, revision: String?) -> URL {
         let key = "\(repo)\u{0}\(revision ?? "")"
-        let digest = SHA256.hash(data: Data(key.utf8))
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
-        return cacheDir.appendingPathComponent("repo-metadata-\(hex).json", isDirectory: false)
+        return cacheDir.appendingPathComponent("repo-metadata-\(SHA256Hex.text(of: key)).json", isDirectory: false)
     }
 }
 
