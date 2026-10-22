@@ -1,6 +1,11 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: wballard
+  id: 01m5j2y7wfsxn3r5dcayt1sye8
+  text: 'Owned by the Extras session: Extras board card 01M5J2XR7WFPCA2702K78MQP3H. Closes when it lands and Router''s pin is bumped.'
+  timestamp: 2026-10-22T15:16:12.303808+00:00
 position_column: todo
 position_ordinal: '9680'
 title: 'EXTRAS: FrontmatterDocument save — write to a temp file and swap into place by default'

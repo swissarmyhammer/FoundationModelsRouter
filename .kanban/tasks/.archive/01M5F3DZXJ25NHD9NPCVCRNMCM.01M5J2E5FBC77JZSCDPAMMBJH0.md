@@ -61,6 +61,10 @@ comments:
     - A failed save is logged and the session keeps working. That settles the RoutedSessionActor.swift:1037 finding as best-effort, with the write moved out of the initializer.
     - The rework gets its own cards; this card is superseded by them.
   timestamp: 2026-10-22T12:20:55.150940+00:00
+- actor: wballard
+  id: 01m5j2e39mcrzsq927f1yzq7av
+  text: 'Archived: superseded by ^2cqepsd (index.md replaces session.json and facts.json; saves are best-effort and atomic), per the user''s decision 2026-10-22. Its open findings are about facts.json, which goes away.'
+  timestamp: 2026-10-22T15:07:23.316904+00:00
 depends_on:
 - 01M5F3D4VMZDN4VPA8D2MY7ET8
 position_column: review

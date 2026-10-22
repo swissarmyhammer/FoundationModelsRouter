@@ -1,10 +1,16 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: wballard
+  id: 01m5j2y1gnk494449jcv47mmvh
+  text: 'Waits on ^2cqepsd (user decision 2026-10-22): index.md replaces session.json and facts.json. Where this card says facts.json, write the facts into the session''s index.md frontmatter instead (through the ^2cqepsd save path, best-effort and atomic).'
+  timestamp: 2026-10-22T15:16:05.781917+00:00
 depends_on:
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
 - 01M5F3HHXA8XHWQWDZJ2CC8D3F
 - 01M5F43CQ0KR0A2E8FA8CAT9XK
+- 01M5HS4PZCZH6W43MM72CQEPSD
 position_column: todo
 position_ordinal: '8880'
 title: 'ROUTER-3: addTags, removeTags and setTitle write facts.json and send factsChanged (covers ROUTER-2)'

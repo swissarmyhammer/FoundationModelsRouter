@@ -51,8 +51,7 @@ comments:
     - commit: 77aae5c4
     - review: clean — 0 findings
   timestamp: 2026-10-21T22:19:53.844573+00:00
-depends_on:
-- 01M5F3DZXJ25NHD9NPCVCRNMCM
+depends_on: []
 position_column: done
 position_ordinal: ffffffffa280
 title: 'ROUTER-1: A restore reads facts.json back and a fork writes its own facts'

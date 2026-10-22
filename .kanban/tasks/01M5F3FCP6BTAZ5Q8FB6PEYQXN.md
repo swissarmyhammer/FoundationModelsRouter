@@ -40,8 +40,7 @@ comments:
     ### finish iteration 1 — clean
     - review (19254b88): clean — 0 findings; implemented and tested earlier, no implement/test/commit needed this iteration
   timestamp: 2026-10-21T22:24:51.423212+00:00
-depends_on:
-- 01M5F3DZXJ25NHD9NPCVCRNMCM
+depends_on: []
 position_column: done
 position_ordinal: ffffffffa380
 title: 'ROUTER-3: RouterSessionDirectory actor, router.sessionDirectory, and the live query'

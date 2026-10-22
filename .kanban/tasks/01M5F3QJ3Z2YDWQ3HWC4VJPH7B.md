@@ -1,12 +1,17 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: wballard
+  id: 01m5j2y2kkff2g03caabb6zzr0
+  text: 'Waits on ^2cqepsd (user decision 2026-10-22): index.md replaces session.json and facts.json. Where this card says facts.json, write the facts into the session''s index.md frontmatter instead (through the ^2cqepsd save path, best-effort and atomic).'
+  timestamp: 2026-10-22T15:16:06.899148+00:00
 depends_on:
-- 01M5F3DZXJ25NHD9NPCVCRNMCM
 - 01M5F3HHXA8XHWQWDZJ2CC8D3F
 - 01M5F3PESH74WZB1EDN6KQ5BQD
 - 01M5F3KKY94S2A8N8JCBN9FC99
 - 01M5F43CQ0KR0A2E8FA8CAT9XK
+- 01M5HS4PZCZH6W43MM72CQEPSD
 position_column: todo
 position_ordinal: '9080'
 title: 'ROUTER-11: archive(_:by:) stops the turn, leaves the live list, writes archivedAt, and sends archived'
