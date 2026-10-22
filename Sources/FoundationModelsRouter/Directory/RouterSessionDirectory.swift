@@ -42,12 +42,12 @@ import Synchronization
 /// delivered message in the ledger of its target (``SessionMessageLedger``,
 /// ROUTER-4), and sends `messageDelivered`; ``inbox(of:markRead:)`` and
 /// ``message(_:to:)`` read that ledger, and a read mark withdraws the mail
-/// that still waits. ``setAdditionalDirectories(to:for:)`` changes the
-/// ``SessionRecord`` of a live or recorded session, and
+/// that still waits. ``addTags(_:to:)``, ``removeTags(_:from:)``,
+/// ``setTitle(_:of:)`` and ``setAdditionalDirectories(to:for:)`` change the
+/// ``SessionRecord`` of a live or recorded session (ROUTER-2, ROUTER-3), and
 /// ``recordedSessions(in:)`` lists the records of a recording root with no
-/// router. The other requirements of the port have provisional
-/// bodies that later cards replace: the tag and title changes (ROUTER-3) and
-/// ``archive(_:by:)`` (ROUTER-11).
+/// router. ``archive(_:by:)`` has a provisional body that ROUTER-11
+/// replaces.
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -974,7 +974,9 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Sets the folders a host added to the working folder of the session
     /// `id` (``SessionRecord/additionalDirectories``), rewrites the `index.md`
-    /// of the session, and sends `factsChanged` with its summary.
+    /// of the session, and sends `factsChanged` with its summary. The folders
+    /// the session holds already change nothing and send no event
+    /// (``changeRecord(of:_:)``).
     ///
     /// - Parameters:
     ///   - directories: The added folders, in the order the host gives them.
@@ -999,6 +1001,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// the `index.md` of its folder, changed, and saved back; a failed save
     /// throws, because no session goes on to hold the change.
     ///
+    /// A change that leaves the record as it was gives the summary and sends
+    /// no event; a recorded session's `index.md` is then not written.
+    ///
     /// - Parameters:
     ///   - id: The session id.
     ///   - change: The change to apply to the record.
@@ -1015,11 +1020,13 @@ public actor RouterSessionDirectory: SessionDirectory {
             return try changeLiveRecord(of: session, change)
         }
         guard let folder = try await recordedFolder(of: id),
-            var record = try SessionIndexFile.read(in: folder)
+            let stored = try SessionIndexFile.read(in: folder)
         else {
             throw SessionDirectoryError.unknownSession(id)
         }
+        var record = stored
         change(&record)
+        guard record != stored else { return RecordedSessions.summary(of: stored) }
         try SessionIndexFile.save(record, in: folder)
         let summary = RecordedSessions.summary(of: record)
         emit(.factsChanged(summary))
@@ -1027,7 +1034,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Changes the record of a live session through the session itself, and
-    /// sends `factsChanged` with its live summary (``recordFactsChange(of:)``).
+    /// sends `factsChanged` with its live summary (``recordFactsChange(of:)``)
+    /// when the change altered the record. A change that leaves the record
+    /// as it was sends no event and leaves the time of change of the entry.
     ///
     /// Only a ``RoutedSessionActor`` can change its record. Each session that
     /// a router vends is one, so another live session is a surprise: the
@@ -1050,54 +1059,91 @@ public actor RouterSessionDirectory: SessionDirectory {
                 metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
             throw SessionDirectoryError.unknownSession(session.id)
         }
-        actor.updateRecord(change)
-        recordFactsChange(of: session.id)
+        var changed = false
+        actor.updateRecord { record in
+            let before = record
+            change(&record)
+            changed = record != before
+        }
+        if changed {
+            recordFactsChange(of: session.id)
+        }
         guard let summary = liveSummary(of: session.id) else {
             throw SessionDirectoryError.unknownSession(session.id)
         }
         return summary
     }
 
-    // MARK: - Provisional bodies
+    // MARK: - Tags and title
 
-    /// See `SessionDirectory.addTags(_:to:)`. Provisional until the tags card
-    /// of ROUTER-3 (^axhfdx1), which makes it a change through
-    /// `changeRecord(of:_:)`.
+    /// See `SessionDirectory.addTags(_:to:)`. Checks each tag against the
+    /// tag rule (``SessionTagRule``) before it changes anything, then joins
+    /// the tags to the tags of the session through ``changeRecord(of:_:)``,
+    /// which rewrites the `index.md` of the session and sends one
+    /// `factsChanged`. Tags the session holds already change nothing, and a
+    /// call that changes nothing sends no event. An archived session takes
+    /// tags too: only messages are refused to it.
     ///
     /// - Parameters:
     ///   - tags: The tags to add.
     ///   - id: The session id.
-    /// - Returns: Nothing yet.
-    /// - Throws: `SessionDirectoryError.unknownSession`.
+    /// - Returns: The summary of the session with the new tags.
+    /// - Throws: `SessionDirectoryError.invalidTag` with the first tag
+    ///   outside the rule, in name order, and nothing changed;
+    ///   `SessionDirectoryError.unknownSession` when no live or recorded
+    ///   session has the id; or the error of the recording roots of the host,
+    ///   or of the read or the save of the `index.md` of a recorded session
+    ///   that is not live.
+    @discardableResult
     public func addTags(_ tags: Set<String>, to id: ULID) async throws -> SessionSummary {
-        throw SessionDirectoryError.unknownSession(id)
+        try SessionTagRule.validate(tags)
+        return try await changeRecord(of: id) { $0.facts.tags.formUnion(tags) }
     }
 
-    /// See `SessionDirectory.removeTags(_:from:)`. Provisional until the tags
-    /// card of ROUTER-3 (^axhfdx1), which makes it a change through
-    /// `changeRecord(of:_:)`.
+    /// See `SessionDirectory.removeTags(_:from:)`. Checks each tag against
+    /// the tag rule (``SessionTagRule``) before it changes anything, then
+    /// takes the tags off the session through ``changeRecord(of:_:)``, which
+    /// rewrites the `index.md` of the session and sends one `factsChanged`.
+    /// Tags the session does not hold change nothing, and a call that changes
+    /// nothing sends no event.
     ///
     /// - Parameters:
     ///   - tags: The tags to remove.
     ///   - id: The session id.
-    /// - Returns: Nothing yet.
-    /// - Throws: `SessionDirectoryError.unknownSession`.
+    /// - Returns: The summary of the session with the tags that stay.
+    /// - Throws: `SessionDirectoryError.invalidTag` with the first tag
+    ///   outside the rule, in name order, and nothing changed;
+    ///   `SessionDirectoryError.unknownSession` when no live or recorded
+    ///   session has the id; or the error of the recording roots of the host,
+    ///   or of the read or the save of the `index.md` of a recorded session
+    ///   that is not live.
+    @discardableResult
     public func removeTags(_ tags: Set<String>, from id: ULID) async throws -> SessionSummary {
-        throw SessionDirectoryError.unknownSession(id)
+        try SessionTagRule.validate(tags)
+        return try await changeRecord(of: id) { $0.facts.tags.subtract(tags) }
     }
 
-    /// See `SessionDirectory.setTitle(_:of:)`. Provisional until the tags card
-    /// of ROUTER-3 (^axhfdx1), which makes it a change through
-    /// `changeRecord(of:_:)`.
+    /// See `SessionDirectory.setTitle(_:of:)` (Rename, a control action:
+    /// TestudoApp D84). Sets the title of the session through
+    /// ``changeRecord(of:_:)``, which rewrites the `index.md` of the session,
+    /// so ``recordedSessions(in:)`` reads the new title back, and sends one
+    /// `factsChanged`. The title the session holds already changes nothing,
+    /// and sends no event. An archived session can be renamed too.
     ///
     /// - Parameters:
     ///   - title: The new title.
     ///   - id: The session id.
-    /// - Returns: Nothing yet.
-    /// - Throws: `SessionDirectoryError.unknownSession`.
+    /// - Returns: The summary of the session with the new title.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id, or the error of the recording roots of
+    ///   the host, or of the read or the save of the `index.md` of a recorded
+    ///   session that is not live.
+    @discardableResult
     public func setTitle(_ title: String, of id: ULID) async throws -> SessionSummary {
-        throw SessionDirectoryError.unknownSession(id)
+        try await changeRecord(of: id) { $0.facts.title = title }
     }
+
+    // MARK: - Provisional bodies
 
     /// See `SessionDirectory.archive(_:by:)`. Provisional until ROUTER-11
     /// (^4vjph7b), which makes it a change through `changeRecord(of:_:)`.

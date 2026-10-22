@@ -14,62 +14,9 @@ import Testing
 /// recordings folder, standing in for a new process, and finds them through
 /// the roots the host gives with `useRecordingRoots(_:)`.
 @Suite struct RouterSessionDirectoryRecordedTests {
-    /// The two routers of one test over one recordings folder.
-    struct Fixture {
-        /// The cache and recordings folders of the test.
-        let directories: TestDirectories
-
-        /// The router that records the sessions.
-        let recordingRouter: Router
-
-        /// The resolved profile of ``recordingRouter``.
-        let recordingProfile: LanguageModelProfile
-
-        /// The router of the "new process": a second router over the same
-        /// recordings folder.
-        let readingRouter: Router
-
-        /// The directory of ``readingRouter``.
-        var directory: RouterSessionDirectory { readingRouter.sessionDirectory }
-
-        /// Vends a root session of ``recordingRouter`` and closes it, so it is
-        /// on disk and live nowhere.
-        ///
-        /// - Parameter configuration: The configuration of the session.
-        /// - Returns: The id and the recording directory of the session.
-        func recordClosedRoot(
-            _ configuration: SessionConfiguration = SessionConfiguration()
-        ) async -> (id: ULID, recordingDirectory: URL) {
-            let session = recordingProfile.standard.makeSession(configuration: configuration)
-            await session.close()
-            return (session.id, session.recordingDirectory)
-        }
-
-        /// Gives the directory of ``readingRouter`` the recording root of
-        /// `recordingDirectory`: the folder that holds it.
-        ///
-        /// - Parameter recordingDirectory: The recording directory of a root.
-        func useRoot(of recordingDirectory: URL) async {
-            let root = recordingDirectory.deletingLastPathComponent()
-            await directory.useRecordingRoots { [root] }
-        }
-
-        /// Removes the folders of the test.
-        func remove() {
-            directories.remove()
-        }
-    }
-
     /// Makes the two routers over one new recordings folder.
-    private static func makeFixture() async throws -> Fixture {
-        let directories = TestDirectories(prefix: "RouterSessionDirectoryRecordedTests")
-        let (recordingRouter, recordingProfile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: BasicLLMContainer(), cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
-        let (readingRouter, _) = try await RouterTestFixtures.resolveStandardProfile(
-            over: BasicLLMContainer(), cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
-        return Fixture(
-            directories: directories, recordingRouter: recordingRouter, recordingProfile: recordingProfile,
-            readingRouter: readingRouter)
+    private static func makeFixture() async throws -> SessionDirectoryRouterPair {
+        try await SessionDirectoryRouterPair.make(prefix: "RouterSessionDirectoryRecordedTests")
     }
 
     // MARK: - A new process
