@@ -39,21 +39,6 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         let embedding: ModelRef
         /// The working context, in tokens, shared by every slot.
         let context: Int
-
-        /// Creates a resolved-profile record.
-        init(
-            definitionName: String,
-            standard: ModelRef,
-            flash: ModelRef,
-            embedding: ModelRef,
-            context: Int
-        ) {
-            self.definitionName = definitionName
-            self.standard = standard
-            self.flash = flash
-            self.embedding = embedding
-            self.context = context
-        }
     }
 
     /// The parent session and the tool call that spawned this session.

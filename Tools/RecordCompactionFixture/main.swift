@@ -79,7 +79,7 @@ func recordedFiles(under directory: URL) -> [URL] {
     }
     return enumerator
         .compactMap { $0 as? URL }
-        .filter { ["md", "jsonl"].contains($0.pathExtension) }
+        .filter { ["md", "jsonl"].contains($0.pathExtension.lowercased()) }
         .sorted { $0.path < $1.path }
 }
 

@@ -25,6 +25,25 @@ comments:
     - evidence: `swift build --build-tests` clean (no errors/warnings from Sources/Tests/Tools); `swift test`: 2104 tests in 259 suites passed (9 known issues, pre-existing), 35 + 19 passed. New: Recording/SessionRecord.swift, SessionIndexFile.swift, SessionIndexWriter.swift (was SessionSidecar.swift), MillisecondDate.swift, Session/RoutedSessionActorIndex.swift (was RoutedSessionActorFacts.swift); JSONLines moved to Tests/Helpers. Changed: SessionFacts, RoutedSessionActor(+Forking, +SubmissionEvents, +Compaction), RoutedLLM, Router, RouterTelemetry, TranscriptTree, MergedTranscript, SessionTreeRestoration, SessionRestoration, RecordingSchemaVersion, RecordedSessions, RouterSessionDirectory, SessionMessageLedger, doc-only sweeps; fixtures → index.md; tests migrated (SessionSidecarTests→SessionIndexTests, SessionFactsRecordingTests→SessionIndexRecordingTests, SessionFactsTests deleted, new SessionIndexFileTests, RecordedSessionsPublicSurfaceTests); session.md, generation-queue.md, UPSTREAM_ASKS.md, docc updated.
     - next: /review
   timestamp: 2026-10-22T19:15:42.053301+00:00
+- actor: claude-code
+  id: 01m5jjaz6g4qxdwxa14a0vm2n5
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (f98b49e6): 3 findings (3 confirmed, 0 refuted, 70 attempted) — Sources/FoundationModelsRouter/Recording/SessionRecord.swift:44, Tests/FoundationModelsRouterTests/Helpers/RetainingLLMContainer.swift:15, Tools/RecordCompactionFixture/main.swift:82
+    - next: /implement the dated Review Findings checklist, then re-review
+  timestamp: 2026-10-22T19:45:18.032004+00:00
+- actor: claude-code
+  id: 01m5jjhafj0ts2ynmnngj17z04
+  text: |-
+    Findings fix pass (2026-10-22 14:16 checklist):
+    1. SessionRecord.swift: removed ResolvedProfile's internal init (same as the synthesized one; the only caller, Router.buildProfile, is in-module). Swept SessionRecord, SessionIndexFile, SessionIndexWriter, MillisecondDate, RoutedSessionActorIndex: AgentSpawn's `public init` stays (public type); SessionRecord's init rounds dates (not synthesized-equivalent); DurableRecording and SessionIndexWriter `package init`s stay — RealModelHarness (FoundationModelsRouterRealModelSupport, another module) calls both, and a synthesized init is internal. The other files declare no init.
+    2. RetainingLLMContainer: `@unchecked Sendable` replaced by a plain `Sendable` conformance; the last vended backend now sits in `Mutex<StubSessionBackend?>` (same pattern as MailOnlyAnswerFixtures.Container). `lastBackend` is a computed read through the lock.
+    3. RecordCompactionFixture/main.swift: extension filter compares `pathExtension.lowercased()`; it is the only extension comparison in the file.
+
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Recording/SessionRecord.swift, Tests/FoundationModelsRouterTests/Helpers/RetainingLLMContainer.swift, Tools/RecordCompactionFixture/main.swift. `swift build --build-tests`: Build complete, no compiler warnings or errors (only the SwiftPM "missing creator for mutated node" mlx bundle notice, seen before this change). Full `swift test`: no failed test or suite in the output.
+    - next: /review
+  timestamp: 2026-10-22T19:48:46.194927+00:00
 depends_on:
 - 01M5HS4GB26B9S1XGRGV6WCCQT
 position_column: doing
@@ -66,3 +85,115 @@ This supersedes the file format of ^2my7et8, ^vcrnmcm and ^36a1y9n, and the sess
 - [x] Failing tests first; `swift test` passes, zero warnings
 
 Depends on the EXTRAS FrontmatterDocument save card.
+
+## Review Findings (2026-10-22 14:16)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 84 file(s) reviewed, 11 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 9 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/01M0BGQR2DV5T0P9XQ1PS05K8V/index.md` — no validator matches this file
+> - `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/01M0BGQR2DV5T0P9XQ1PS05K8V/session.json` — no validator matches this file
+> - `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/README.md` — no validator matches this file
+> - `Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/index.md` — no validator matches this file
+> - `Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/session.json` — no validator matches this file
+> - `UPSTREAM_ASKS.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+> - `session.md` — no validator matches this file
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Recording/JSONLines.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorFacts.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/SessionSidecarTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Recording/JSONLines.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorFacts.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/SessionSidecarTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Recording/JSONLines.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorFacts.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/SessionSidecarTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Recording/JSONLines.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorFacts.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/SessionSidecarTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Recording/JSONLines.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorFacts.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsRecordingTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/SessionFactsTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/SessionSidecarTests.swift, so its declarations are unread
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionRecord.swift:44` `code-hygiene/idioms-swift` — UseSynthesizedInitializer: remove this explicit initializer, which is identical to the compiler-synthesized initializer.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/RetainingLLMContainer.swift:15` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+- [x] `Tools/RecordCompactionFixture/main.swift:82` `completeness/case-sensitivity-coverage` — The file extension filter is case-sensitive but file extensions are case-insensitive (especially on macOS/Windows). Files with uppercase extensions like `.MD` or `.JSONL` would be filtered out. Normalize the extension before comparing: `.filter { ["md", "jsonl"].contains($0.pathExtension.lowercased()) }`.
