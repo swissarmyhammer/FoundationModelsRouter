@@ -13,8 +13,9 @@ User decisions (2026-10-22):
 - `sessions.jsonl` is eliminated. Sessions are listed by listing the recording root's session folders and reading each `index.md` (see the index.md card).
 - `projects.jsonl` becomes a folder with one file per project (see the ProjectStore card).
 
-So the only JSONL file Router writes is `transcript.jsonl`.
+So the JSONL files Router writes are `transcript.jsonl` and, since ^17nh345, each session's `messages.jsonl`.
 - `transcript.jsonl` (JSONLRecorder, appendJSONLine, openHandleForAppending) writes and reads through `JSONLFile`, with an fsync per line instead of only when a response finishes.
+- `messages.jsonl` (`SessionMessageLedger`, ^17nh345) writes and reads through `JSONLFile` too; read marks stay appended records. Drop the shared `TranscriptLineDecoding` torn-tail code in favour of `JSONLFile`'s reader.
 - Delete `SessionIndex`, `SessionIndexRecord`, `sessions.jsonl`, and the directory's sessions.jsonl writer from ed7b7c27. Recorded listing reads index.md instead.
 - Delete `JSONLines.replaceFile`, `JSONLines.appendLine` and the seek-to-end FileHandle appends.
 - No backward compatibility.

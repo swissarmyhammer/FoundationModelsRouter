@@ -37,10 +37,13 @@ import Synchronization
 /// `stateChanged` for each change of what that event carries: the state, and
 /// the last summary when the state is idle (`nil` with any other state, as
 /// the port documents). ``summary(of:)`` reports the last summary in each
-/// state. The other requirements of the port have provisional bodies that
-/// later cards replace: the tag and title changes (ROUTER-3), ``send(_:)``,
-/// ``inbox(of:markRead:)`` and ``message(_:to:)`` (ROUTER-4), and
-/// ``archive(_:by:)`` (ROUTER-11).
+/// state. ``send(_:)`` delivers a message to each live target of its address
+/// as a `Mail`, or starts a session of an agent for it, keeps each delivered
+/// message in the ledger of its target (``SessionMessageLedger``, ROUTER-4),
+/// and sends `messageDelivered`; ``inbox(of:markRead:)`` and
+/// ``message(_:to:)`` read that ledger. The other requirements of the port
+/// have provisional bodies that later cards replace: the tag and title
+/// changes (ROUTER-3) and ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -53,9 +56,15 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// client. Confirmed by the owner of session.md.
     static let defaultOrigin: FoundationModelsExtras.SessionDirectoryOrigin = .client
 
-    /// The reason of the one refused receipt ``send(_:)`` gives until the
-    /// directory delivers messages (ROUTER-4).
-    static let messagesUnavailableReason = "messages are not available yet"
+    /// The reason of the refused receipt of a target that is not live: a
+    /// recorded session, until ROUTER-5 restores it, or a session that
+    /// closed.
+    static let notLiveReason = "not live"
+
+    /// The chain depth of each message until ROUTER-5 computes it from the
+    /// turn of the sender: the depth of a message from a user turn or from a
+    /// UI.
+    static let firstChainDepth = 1
 
     /// One registered session: a weak hold on it, and the facts of the
     /// directory that the session does not hold.
@@ -109,6 +118,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// the recorded sessions. A directory with none gives no recorded
     /// session.
     private var recordingRoots: @Sendable () async throws -> [URL] = { [] }
+
+    /// The message ledger of each session that the directory delivered a
+    /// message to or read the inbox of, by session id. A ledger is read from
+    /// its recording directory at its first use and held here after, so the
+    /// ledger of a memory-only session lives here alone.
+    private var ledgers: [ULID: SessionMessageLedger] = [:]
 
     /// Makes an empty directory.
     public init() {}
@@ -383,14 +398,31 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   `SessionDirectoryError.unknownSession` when the session closed
     ///   before `start` returns.
     public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
-        guard let launcher else { throw SessionDirectoryError.noLauncher }
-        let session = try await launcher.launchRootSession(for: request)
-        try admit(session: session, startedFor: request)
-        _ = try session.mail(Self.firstMail(of: request))
+        let session = try await launch(
+            request, firstMail: Self.mail(carrying: request.firstMessage, from: request.startedBy))
         guard let summary = try await summary(of: session.id) else {
             throw SessionDirectoryError.unknownSession(session.id)
         }
         return summary
+    }
+
+    /// Starts a new root session for `request` through the launcher, makes
+    /// it live with the facts of `request`, and puts `firstMail` in its mail
+    /// queue.
+    ///
+    /// - Parameters:
+    ///   - request: The start request.
+    ///   - firstMail: The mail that carries the first message of `request`.
+    /// - Returns: The new session.
+    /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
+    ///   launcher, the error of the launcher, the error of a write of the
+    ///   facts of the session, or the refusal of the first mail.
+    private func launch(_ request: SessionStartRequest, firstMail: Mail) async throws -> any RoutedSession {
+        guard let launcher else { throw SessionDirectoryError.noLauncher }
+        let session = try await launcher.launchRootSession(for: request)
+        try admit(session: session, startedFor: request)
+        _ = try session.mail(firstMail)
+        return session
     }
 
     /// Makes the session that the launcher returned for `request` live in
@@ -486,16 +518,265 @@ public actor RouterSessionDirectory: SessionDirectory {
         facts.origin = facts.origin ?? request.origin
     }
 
-    /// The mail that carries the first message of `request`.
+    /// The mail that carries a message, by the body rule of
+    /// `SessionDirectory.send(_:)`: a message from a session is
+    /// ``MailBody/agentMessage(from:content:)`` with the sender
+    /// ``MailSender/session(_:)``, and a message from a user or a UI is a
+    /// user message with the sender ``MailSender/user``, because a UI has no
+    /// session id and the message is input of the user.
     ///
-    /// - Parameter request: The start request.
-    /// - Returns: An agent message from `startedBy` when the request names
-    ///   it, else a user message.
-    private static func firstMail(of request: SessionStartRequest) -> Mail {
-        guard let startedBy = request.startedBy else {
-            return Mail(sender: .user, body: .userMessage(prompt: request.firstMessage, options: UserMessageOptions()))
+    /// - Parameters:
+    ///   - id: The id of the mail. The default is a new id.
+    ///   - text: The text of the message.
+    ///   - sender: The session that sends the message, or `nil` for a user.
+    /// - Returns: The mail.
+    private static func mail(id: MailID = MailID(), carrying text: String, from sender: ULID?) -> Mail {
+        guard let sender else {
+            return Mail(id: id, sender: .user, body: .userMessage(prompt: text, options: UserMessageOptions()))
         }
-        return Mail(sender: .session(startedBy), body: .agentMessage(from: startedBy, content: request.firstMessage))
+        return Mail(id: id, sender: .session(sender), body: .agentMessage(from: sender, content: text))
+    }
+
+    // MARK: - Messages
+
+    /// See `SessionDirectory.send(_:)`. Resolves the address
+    /// (``FoundationModelsExtras/SessionAddress/resolution(from:among:recordedSummary:)``)
+    /// and acts on the decision:
+    ///
+    /// - Each live target gets the message as a `Mail` in its mail queue,
+    ///   with the sender in its transcript, and the receipt is `delivered`
+    ///   (``deliver(_:to:)``). ROUTER-5 adds `queued`.
+    /// - An agent with no live root session gets a new one through the
+    ///   launcher, with origin `message` and the message as its first
+    ///   message, and the receipt is `started` (``startAgent(_:in:for:)``).
+    /// - A recorded target that is not live is refused as not live until
+    ///   ROUTER-5 restores it.
+    /// - A refusal of the resolver is a `refused` receipt with its reason
+    ///   and target.
+    ///
+    /// Each delivered message goes into the ledger of its target
+    /// (``SessionMessageLedger``) with the chain depth
+    /// ``firstChainDepth``, and a `messageDelivered` event follows it.
+    ///
+    /// - Parameter message: The sender, the address, the text and the reply
+    ///   id of the message.
+    /// - Returns: One receipt for each target session.
+    /// - Throws: `SessionDirectoryError.unknownSession` for a session sender
+    ///   or a session id target that no live or recorded session has, the
+    ///   start errors of an agent address (`SessionDirectoryError.noLauncher`
+    ///   and the error of the launcher), the error of a read of a ledger, or
+    ///   the error of the recording roots of the host.
+    public func send(_ message: OutgoingSessionMessage) async throws -> [SessionSendReceipt] {
+        let recorded = try await recordedSummaries()
+        let resolution = try message.to.resolution(from: message.from, among: liveSummaries()) { id in
+            recorded.first { $0.id == id }
+        }
+        switch resolution {
+        case .deliver(let targets):
+            return try targets.map { try deliver(message, to: $0) }
+        case .restoreThenDeliver(let id):
+            return [SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)]
+        case .startAgent(let agentID, let folder):
+            return [try await startAgent(agentID, in: folder, for: message)]
+        case .refused(let reason, let target):
+            return [SessionSendReceipt(target: target, outcome: .refused, reason: reason)]
+        }
+    }
+
+    /// Delivers `message` to the live session `id`: puts its mail in the mail
+    /// queue of the session, keeps it in the ledger of the session, and sends
+    /// `messageDelivered`.
+    ///
+    /// A session that left the directory since the resolve, or that closed
+    /// and takes no more mail, is refused as not live.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - id: The session id of a live target.
+    /// - Returns: The `delivered` receipt, or a `refused` receipt as not
+    ///   live.
+    /// - Throws: The error of a read of the ledger of the session, or a
+    ///   refusal of the mail other than a closed session.
+    private func deliver(_ message: OutgoingSessionMessage, to id: ULID) throws -> SessionSendReceipt {
+        guard let session = liveSession(id) else {
+            return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
+        }
+        let ledger = try ledger(of: id, in: Self.ledgerDirectory(of: session))
+        let delivered = Self.delivered(message, to: id)
+        do {
+            _ = try session.mail(Self.mail(id: delivered.id, carrying: delivered.text, from: message.from.sessionID))
+        } catch MailRefusal.closed {
+            return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
+        }
+        keep(delivered, in: ledger)
+        return SessionSendReceipt(messageID: delivered.id, target: id, outcome: .delivered)
+    }
+
+    /// Starts a root session of the agent through the launcher with
+    /// `message` as its first message, keeps the message in the ledger of
+    /// the new session, and sends `messageDelivered`.
+    ///
+    /// - Parameters:
+    ///   - agentID: The agent of the address.
+    ///   - folder: The folder of the address, else the folder of the sender
+    ///     session, or `nil` for a user sender with no folder.
+    ///   - message: The message.
+    /// - Returns: The `started` receipt, with the new session as its target.
+    /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
+    ///   launcher, the error of the launcher, the error of a write of the
+    ///   facts of the session, the refusal of the first mail, or the error of
+    ///   a read of the ledger of the new session.
+    private func startAgent(
+        _ agentID: String, in folder: URL?, for message: OutgoingSessionMessage
+    ) async throws -> SessionSendReceipt {
+        let request = SessionStartRequest(
+            agentID: agentID, workingDirectory: folder, firstMessage: message.text,
+            startedBy: message.from.sessionID, origin: .message)
+        let messageID = MailID()
+        let session = try await launch(
+            request, firstMail: Self.mail(id: messageID, carrying: message.text, from: request.startedBy))
+        let delivered = Self.delivered(message, id: messageID, to: session.id)
+        keep(delivered, in: try ledger(of: session.id, in: Self.ledgerDirectory(of: session)))
+        return SessionSendReceipt(messageID: messageID, target: session.id, outcome: .started)
+    }
+
+    /// The record of `message` as the directory delivers it to `target` now.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - id: The id of the mail that carries it. The default is a new id.
+    ///   - target: The session id of the target.
+    /// - Returns: The delivered message, not read, with the chain depth
+    ///   ``firstChainDepth``.
+    private static func delivered(
+        _ message: OutgoingSessionMessage, id: MailID = MailID(), to target: ULID
+    ) -> SessionMessage {
+        SessionMessage(
+            id: id, from: message.from, to: target, text: message.text, inReplyTo: message.inReplyTo,
+            sentAt: Date(), chainDepth: firstChainDepth)
+    }
+
+    /// Records `delivered` in `ledger`, the ledger of its target, holds the
+    /// ledger, and sends `messageDelivered`.
+    ///
+    /// - Parameters:
+    ///   - delivered: The delivered message.
+    ///   - ledger: The ledger of the target of `delivered`.
+    private func keep(_ delivered: SessionMessage, in ledger: SessionMessageLedger) {
+        var ledger = ledger
+        ledger.record(delivered)
+        ledgers[delivered.to] = ledger
+        emit(.messageDelivered(delivered))
+    }
+
+    /// See `SessionDirectory.inbox(of:markRead:)`. Reads the ledger of the
+    /// session: the ledger the directory holds, else the ledger in the
+    /// recording directory of the live session, else the ledger in the
+    /// folder of a recorded session under the recording roots of the host.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - markRead: True to mark the messages read.
+    /// - Returns: The messages to the session that were not read, the
+    ///   oldest first.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id, the error of a read of the ledger, or
+    ///   the error of the recording roots of the host.
+    public func inbox(of id: ULID, markRead: Bool) async throws -> [SessionMessage] {
+        guard var ledger = try await knownLedger(of: id) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        let unread = ledger.unread
+        if markRead {
+            ledger.markRead(unread.map(\.id))
+        }
+        ledgers[id] = ledger
+        return unread
+    }
+
+    /// See `SessionDirectory.message(_:to:)`. Reads the ledger of
+    /// `recipient` as ``inbox(of:markRead:)`` does. It never throws
+    /// `unknownSession`, unlike ``inbox(of:markRead:)``, and marks nothing
+    /// read.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the message.
+    ///   - recipient: The session id that the message went to.
+    /// - Returns: The message, read or not read, or `nil` when no message to
+    ///   `recipient` has the id or no session has the id `recipient`.
+    /// - Throws: The error of a read of the ledger, or the error of the
+    ///   recording roots of the host.
+    public func message(_ id: MailID, to recipient: ULID) async throws -> SessionMessage? {
+        try await knownLedger(of: recipient)?.message(id)
+    }
+
+    /// The ledger of the session `id`, when a live session or a recorded
+    /// session folder has the id.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The ledger, or `nil` when no live session and no session
+    ///   folder under the recording roots has the id.
+    /// - Throws: The error of a read of the ledger, or the error of the
+    ///   recording roots of the host.
+    private func knownLedger(of id: ULID) async throws -> SessionMessageLedger? {
+        if let session = liveSession(id) {
+            return try ledger(of: id, in: Self.ledgerDirectory(of: session))
+        }
+        guard let folder = try await recordedFolder(of: id) else { return nil }
+        return try ledger(of: id, in: folder)
+    }
+
+    /// The ledger of the session `id`: the one the directory holds, else the
+    /// one read from `directory`.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - directory: The recording directory of a durable session, or `nil`
+    ///     for a memory-only session.
+    /// - Returns: The ledger.
+    /// - Throws: The error of a read of `messages.jsonl`.
+    private func ledger(of id: ULID, in directory: URL?) throws -> SessionMessageLedger {
+        if let held = ledgers[id] {
+            return held
+        }
+        return try SessionMessageLedger.load(from: directory)
+    }
+
+    /// The folder of the recorded session `id` under the recording roots of
+    /// the host: the folder named by the id in the first root that holds one.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The folder, or `nil` when no root holds one.
+    /// - Throws: The error of the recording roots of the host.
+    private func recordedFolder(of id: ULID) async throws -> URL? {
+        try await recordingRoots()
+            .map { $0.appendingPathComponent(id.description, isDirectory: true) }
+            .first { folder in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory)
+                    && isDirectory.boolValue
+            }
+    }
+
+    /// The recording directory that holds the ledger of `session`: its
+    /// recording directory when it records durably, else `nil`, because a
+    /// memory-only session writes nothing to disk.
+    ///
+    /// - Parameter session: A live session.
+    /// - Returns: The recording directory, or `nil` for a memory-only
+    ///   session.
+    private static func ledgerDirectory(of session: any RoutedSession) -> URL? {
+        guard let actor = session as? RoutedSessionActor, actor.sidecarOrigin.recordsFacts else { return nil }
+        return session.recordingDirectory
+    }
+
+    /// The live session `id`.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The session, or `nil` when the directory holds no live
+    ///   session with the id.
+    private nonisolated func liveSession(_ id: ULID) -> (any RoutedSession)? {
+        state.withLock { $0.entries[id]?.session }
     }
 
     // MARK: - Provisional bodies
@@ -534,38 +815,6 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: `SessionDirectoryError.unknownSession`.
     public func setTitle(_ title: String, of id: ULID) async throws -> SessionSummary {
         throw SessionDirectoryError.unknownSession(id)
-    }
-
-    /// See `SessionDirectory.send(_:)`. Provisional until ROUTER-4: one
-    /// refused receipt.
-    ///
-    /// - Parameter message: The message.
-    /// - Returns: One `refused` receipt with no target.
-    public func send(_ message: OutgoingSessionMessage) async throws -> [SessionSendReceipt] {
-        [SessionSendReceipt(outcome: .refused, reason: Self.messagesUnavailableReason)]
-    }
-
-    /// See `SessionDirectory.inbox(of:markRead:)`. Provisional until
-    /// ROUTER-4: no messages.
-    ///
-    /// - Parameters:
-    ///   - id: The session id.
-    ///   - markRead: True to mark the messages read.
-    /// - Returns: No messages.
-    public func inbox(of id: ULID, markRead: Bool) async throws -> [SessionMessage] {
-        []
-    }
-
-    /// See `SessionDirectory.message(_:to:)`. Provisional until ROUTER-4: no
-    /// message was delivered yet, so every lookup gives `nil`. It never throws
-    /// `unknownSession`, unlike ``inbox(of:markRead:)``, and marks nothing read.
-    ///
-    /// - Parameters:
-    ///   - id: The id of the message.
-    ///   - recipient: The session id that the message went to.
-    /// - Returns: `nil`.
-    public func message(_ id: MailID, to recipient: ULID) async throws -> SessionMessage? {
-        nil
     }
 
     /// See `SessionDirectory.archive(_:by:)`. Provisional until ROUTER-11.
@@ -608,8 +857,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Gives `event` to each open stream of ``events()``, under the lock of
-    /// the registry. The later directory cards send `messageDelivered` and
-    /// `archived` through it.
+    /// the registry. ``send(_:)`` sends `messageDelivered` through it, and
+    /// the archive card sends `archived` through it.
     ///
     /// - Parameter event: The event.
     nonisolated func emit(_ event: SessionDirectoryEvent) {
@@ -733,7 +982,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Returns: The ids of the open questions, or `nil` when the session is
     ///   gone.
     private nonisolated func openQuestions(of id: ULID) async -> Set<ULID>? {
-        guard let session = state.withLock({ $0.entries[id]?.session }) else { return nil }
+        guard let session = liveSession(id) else { return nil }
         return Set(await session.openElicitationIds().compactMap { ULID($0) })
     }
 }

@@ -4,7 +4,10 @@ import Logging
 /// The one line-decoding path every `transcript.jsonl` reader in this module
 /// (``TranscriptTree`` and ``MergedTranscript``) shares, so the two readers
 /// cannot drift: both drop the torn final line ``JSONLRecorder``'s durability
-/// policy expects, and both fail loudly on corruption anywhere before it.
+/// policy expects, and both fail loudly on corruption anywhere before it. The
+/// `messages.jsonl` of a session (``SessionMessageLedger``) is appended the
+/// same way, and reads through the same path
+/// (``decodeLines(of:at:tornLineMessage:corruptLineError:)``).
 enum TranscriptLineDecoding {
     /// One raw line of a `transcript.jsonl`: its byte offset within the file
     /// and its bytes, without the terminating newline.
@@ -35,25 +38,51 @@ enum TranscriptLineDecoding {
         at fileURL: URL,
         corruptLineError: (URL) -> Error
     ) throws -> [TranscriptEvent] {
+        try decodeLines(
+            of: TranscriptEvent.self, at: fileURL,
+            tornLineMessage: "dropping the torn final line of a transcript file",
+            corruptLineError: corruptLineError)
+    }
+
+    /// Decodes every line of the JSONL file at `fileURL` as one `Record`, by
+    /// the rule of ``decodeEvents(at:corruptLineError:)``: a final line that
+    /// fails to decode is a torn append, dropped with the warning
+    /// `tornLineMessage`; a line before it that fails to decode throws.
+    ///
+    /// - Parameters:
+    ///   - type: The type of each line.
+    ///   - fileURL: The file to read. Must exist.
+    ///   - tornLineMessage: The constant log message of a dropped final line.
+    ///   - corruptLineError: Builds the error thrown when a line before the
+    ///     file's last fails to decode.
+    /// - Returns: The decoded records, in file order.
+    /// - Throws: The error `corruptLineError` builds when a line before the
+    ///   file's last fails to decode; otherwise if the file cannot be read.
+    static func decodeLines<Record: Decodable>(
+        of type: Record.Type,
+        at fileURL: URL,
+        tornLineMessage: Logger.Message,
+        corruptLineError: (URL) -> Error
+    ) throws -> [Record] {
         let lines = nonEmptyLines(in: try Data(contentsOf: fileURL))
         let decoder = JSONDecoder()
-        var events: [TranscriptEvent] = []
+        var records: [Record] = []
         for (index, line) in lines.enumerated() {
             do {
-                events.append(try decoder.decode(TranscriptEvent.self, from: line.bytes))
+                records.append(try decoder.decode(type, from: line.bytes))
             } catch {
                 guard index == lines.indices.last else {
                     throw corruptLineError(fileURL)
                 }
                 RouterTelemetry.makeLogger(.transcriptLineDecoding).warning(
-                    "dropping the torn final line of a transcript file",
+                    tornLineMessage,
                     metadata: RouterTelemetry.errorMetadata(error).merging([
                         RouterTelemetry.LogMetadataKey.filePath: "\(fileURL.path)",
                         RouterTelemetry.LogMetadataKey.byteOffset: "\(line.byteOffset)",
                     ]) { _, new in new })
             }
         }
-        return events
+        return records
     }
 
     /// Splits `data` into its non-empty lines, keeping each line's byte

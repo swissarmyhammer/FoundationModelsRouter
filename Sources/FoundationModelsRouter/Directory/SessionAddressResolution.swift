@@ -196,7 +196,7 @@ extension SessionAddress {
 
 extension SessionMessageSender {
     /// The session id of a session sender, or `nil` for a user sender.
-    fileprivate var sessionID: ULID? {
+    var sessionID: ULID? {
         guard case .session(let id) = self else { return nil }
         return id
     }
