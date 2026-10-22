@@ -15,10 +15,26 @@ comments:
     - evidence: swift build --build-tests clean of compiler warnings; swift test: 2161 tests in 265 suites passed (9 known issues, pre-existing withKnownIssue), plus 39 and 19 test runs passed; new suites SessionMessageLoopGuardTests (6 tests) and RouterSessionDirectoryNoCapTests (1 test) green. Files: Sources/FoundationModelsRouter/Directory/SessionMessageLimits.swift (new), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/Helpers/DirectorySendTool.swift (new), Tests/FoundationModelsRouterTests/Helpers/ScriptedRoundsModel.swift, Tests/FoundationModelsRouterTests/SessionMessageLoopGuardTests.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryNoCapTests.swift (new)
     - next: /review
   timestamp: 2026-10-22T21:23:48.367517+00:00
+- actor: claude-code
+  id: 01m5jrb3m51t5jwgq8c581kgp8
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (bd2dfb04): 0 findings, 0 confirmed, 2 refuted, 7 attempted, 0 failed; 6 files reviewed, 2 .kanban files excluded by .reviewignore
+    - next: done
+  timestamp: 2026-10-22T21:30:14.021956+00:00
+- actor: wballard
+  id: 01m5jrbjz5hk3dt97r0h67ee10
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — SessionMessageLimits; the four guards in send; no-cap test
+    - test: green per implementer — swift test 2161 passed, 9 known issues
+    - commit: bd2dfb04
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T21:30:29.733515+00:00
 depends_on:
 - 01M5F3PESH74WZB1EDN6KQ5BQD
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffbd80
 title: 'ROUTER-5: Loop guards (chain depth 3, 16 sends per turn, 8 tag targets, 16 KB) and no cap on working sessions'
 ---
 ## Goal
