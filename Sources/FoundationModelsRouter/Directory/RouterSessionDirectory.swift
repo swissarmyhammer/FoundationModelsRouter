@@ -46,8 +46,9 @@ import Synchronization
 /// ``setTitle(_:of:)`` and ``setAdditionalDirectories(to:for:)`` change the
 /// ``SessionRecord`` of a live or recorded session (ROUTER-2, ROUTER-3), and
 /// ``recordedSessions(in:)`` lists the records of a recording root with no
-/// router. ``archive(_:by:)`` has a provisional body that ROUTER-11
-/// replaces.
+/// router. ``archive(_:by:)`` ends a live or recorded session (ROUTER-11):
+/// it stops a running turn, takes the session off the live list, writes
+/// `archivedAt` to its `index.md`, and sends `archived`.
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -215,6 +216,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The summary of a live session, from its `nonisolated` properties, its
     /// facts and its registry entry, with no `await`.
     ///
+    /// The state is the tracked work state, or `archived` when the facts of
+    /// the session hold `archivedAt`: a live session whose record says it is
+    /// archived reads as archived, so the resolver refuses a message to it.
+    ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - entry: The registry entry of `session`.
@@ -229,7 +234,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             title: facts.title,
             tags: facts.tags,
             kind: entry.kind,
-            state: entry.tracking.state,
+            state: facts.archivedAt == nil ? entry.tracking.state : .archived,
             parentID: entry.parentID,
             startedBy: facts.startedBy,
             origin: facts.origin ?? defaultOrigin,
@@ -1019,6 +1024,32 @@ public actor RouterSessionDirectory: SessionDirectory {
         if let session = liveSession(id) {
             return try changeLiveRecord(of: session, change)
         }
+        let (summary, changed) = try await changeRecordedRecord(of: id, change)
+        if changed {
+            emit(.factsChanged(summary))
+        }
+        return summary
+    }
+
+    /// Changes the record of the recorded session `id`, which is not live:
+    /// reads the `index.md` of its folder, changes the record, and saves it
+    /// back when the change altered it. A failed save throws, because no
+    /// session goes on to hold the change. The call sends no event; the
+    /// caller sends the one its change calls for.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - change: The change to apply to the record.
+    /// - Returns: The recorded summary after the change, and whether the
+    ///   change altered the record. A record the change left as it was is
+    ///   not written.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no session
+    ///   folder under the recording roots holds an `index.md` for the id; the
+    ///   error of the recording roots of the host; or the error of the read
+    ///   or the save of the `index.md`.
+    private func changeRecordedRecord(
+        of id: ULID, _ change: (inout SessionRecord) -> Void
+    ) async throws -> (summary: SessionSummary, changed: Bool) {
         guard let folder = try await recordedFolder(of: id),
             let stored = try SessionIndexFile.read(in: folder)
         else {
@@ -1026,11 +1057,9 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
         var record = stored
         change(&record)
-        guard record != stored else { return RecordedSessions.summary(of: stored) }
+        guard record != stored else { return (RecordedSessions.summary(of: stored), false) }
         try SessionIndexFile.save(record, in: folder)
-        let summary = RecordedSessions.summary(of: record)
-        emit(.factsChanged(summary))
-        return summary
+        return (RecordedSessions.summary(of: record), true)
     }
 
     /// Changes the record of a live session through the session itself, and
@@ -1038,27 +1067,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// when the change altered the record. A change that leaves the record
     /// as it was sends no event and leaves the time of change of the entry.
     ///
-    /// Only a ``RoutedSessionActor`` can change its record. Each session that
-    /// a router vends is one, so another live session is a surprise: the
-    /// call stops a debug build, logs the surprise, and changes nothing.
-    ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - change: The change to apply to the record.
     /// - Returns: The live summary of the session after the change.
     /// - Throws: `SessionDirectoryError.unknownSession` when the session is
-    ///   not a ``RoutedSessionActor``, or when it left the directory before
-    ///   its summary was read.
+    ///   not a ``RoutedSessionActor`` (``recordOwner(of:)``), or when it left
+    ///   the directory before its summary was read.
     private func changeLiveRecord(
         of session: any RoutedSession, _ change: @Sendable (inout SessionRecord) -> Void
     ) throws -> SessionSummary {
-        guard let actor = session as? RoutedSessionActor else {
-            assertionFailure("a live session that cannot change its record")
-            RouterTelemetry.makeLogger(.sessionDirectory).error(
-                "a live session cannot change its record; the record stays as the session holds it",
-                metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
-            throw SessionDirectoryError.unknownSession(session.id)
-        }
+        let actor = try Self.recordOwner(of: session)
         var changed = false
         actor.updateRecord { record in
             let before = record
@@ -1068,8 +1087,40 @@ public actor RouterSessionDirectory: SessionDirectory {
         if changed {
             recordFactsChange(of: session.id)
         }
-        guard let summary = liveSummary(of: session.id) else {
+        return try requireLiveSummary(of: session.id)
+    }
+
+    /// The live session as the one type that can change its record.
+    ///
+    /// Only a ``RoutedSessionActor`` can change its record. Each session that
+    /// a router vends is one, so another live session is a surprise: the
+    /// call stops a debug build, logs the surprise, and throws, so the
+    /// caller changes nothing.
+    ///
+    /// - Parameter session: The live session.
+    /// - Returns: The session as a ``RoutedSessionActor``.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session is
+    ///   not a ``RoutedSessionActor``.
+    private static func recordOwner(of session: any RoutedSession) throws -> RoutedSessionActor {
+        guard let actor = session as? RoutedSessionActor else {
+            assertionFailure("a live session that cannot change its record")
+            RouterTelemetry.makeLogger(.sessionDirectory).error(
+                "a live session cannot change its record; the record stays as the session holds it",
+                metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
             throw SessionDirectoryError.unknownSession(session.id)
+        }
+        return actor
+    }
+
+    /// The summary of the live session `id`, which the caller holds.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The live summary.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session left
+    ///   the directory.
+    private nonisolated func requireLiveSummary(of id: ULID) throws -> SessionSummary {
+        guard let summary = liveSummary(of: id) else {
+            throw SessionDirectoryError.unknownSession(id)
         }
         return summary
     }
@@ -1143,18 +1194,164 @@ public actor RouterSessionDirectory: SessionDirectory {
         try await changeRecord(of: id) { $0.facts.title = title }
     }
 
-    // MARK: - Provisional bodies
+    // MARK: - Archive
 
-    /// See `SessionDirectory.archive(_:by:)`. Provisional until ROUTER-11
-    /// (^4vjph7b), which makes it a change through `changeRecord(of:_:)`.
+    /// See `SessionDirectory.archive(_:by:)` (ROUTER-11, D68): ends the
+    /// session `id`. An archived session takes no message: the resolver
+    /// refuses each send to it with the reason "archived", and the directory
+    /// never restores it.
+    ///
+    /// - A live session stops its work (``archiveLive(_:by:)``): its running
+    ///   turn ends cancelled and its waiting mail is dropped, not delivered.
+    ///   Its `index.md` gets `archivedAt`, it leaves the live list and
+    ///   closes, and the directory sends `stateChanged` with `archived` and
+    ///   then `archived`.
+    /// - A recorded session that is not live gets `archivedAt` in the
+    ///   `index.md` of its folder, and the same two events
+    ///   (``archiveRecorded(_:by:)``). The launcher gets no call.
+    /// - A session that is archived already gives its summary again and
+    ///   sends no event.
+    ///
+    /// `archiver` goes to the log with the session id, for the audit. It is
+    /// not a fact of the session. Router puts no limit on an archive.
     ///
     /// - Parameters:
     ///   - id: The session id.
     ///   - archiver: The session or the user that archives it.
-    /// - Returns: Nothing yet.
-    /// - Throws: `SessionDirectoryError.unknownSession`.
+    /// - Returns: The summary of the archived session. It is not live.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id, or when the live session is not a
+    ///   ``RoutedSessionActor``; the error of the recording roots of the
+    ///   host; or the error of the read or the save of the `index.md` of a
+    ///   recorded session.
+    @discardableResult
     public func archive(_ id: ULID, by archiver: SessionMessageSender) async throws -> SessionSummary {
-        throw SessionDirectoryError.unknownSession(id)
+        guard let session = liveSession(id) else {
+            return try await archiveRecorded(id, by: archiver)
+        }
+        return try await archiveLive(session, by: archiver)
+    }
+
+    /// Archives a live session. The stop of its work and the write of
+    /// `archivedAt` come with no suspension between them, so a message that
+    /// a send sends after the call began is refused as archived.
+    ///
+    /// 1. ``RoutedSession/cancelAll()`` stops the running turn, as a cancel
+    ///    does, and drops each waiting mail, also the mail of a message
+    ///    that waits for the end of the turn.
+    /// 2. ``RoutedSessionActor/updateRecord(_:)`` writes `archivedAt`, and
+    ///    the session saves its `index.md`.
+    /// 3. The call waits for the end of the cancel (``awaitEnd(of:in:)``).
+    /// 4. The session leaves the live list with its work state `archived`
+    ///    (``takeArchived(_:)``), and closes.
+    /// 5. `stateChanged` with `archived`, then `archived`, go out.
+    ///
+    /// - Parameters:
+    ///   - session: The live session.
+    ///   - archiver: The session or the user that archives it.
+    /// - Returns: The summary of the archived session, or its live summary
+    ///   when its record holds `archivedAt` already.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session is
+    ///   not a ``RoutedSessionActor``, or when it left the directory.
+    private func archiveLive(_ session: any RoutedSession, by archiver: SessionMessageSender) async throws
+        -> SessionSummary
+    {
+        guard session.facts.archivedAt == nil else { return try requireLiveSummary(of: session.id) }
+        let actor = try Self.recordOwner(of: session)
+        let stop = session.cancelAll()
+        let archivedAt = MillisecondDate.rounded(Date())
+        actor.updateRecord { $0.facts.archivedAt = archivedAt }
+        await Self.awaitEnd(of: stop, in: session)
+        let summary = try takeArchived(session.id)
+        await session.close()
+        sendArchived(session.id, by: archiver)
+        return summary
+    }
+
+    /// Archives a recorded session that is not live: writes `archivedAt` to
+    /// the `index.md` of its folder (``changeRecordedRecord(of:_:)``) and
+    /// sends `stateChanged` with `archived`, then `archived`. A record that
+    /// holds `archivedAt` already is not written, and no event goes out.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - archiver: The session or the user that archives it.
+    /// - Returns: The recorded summary of the archived session.
+    /// - Throws: What ``changeRecordedRecord(of:_:)`` throws.
+    private func archiveRecorded(_ id: ULID, by archiver: SessionMessageSender) async throws -> SessionSummary {
+        let archivedAt = MillisecondDate.rounded(Date())
+        let (summary, changed) = try await changeRecordedRecord(of: id) { record in
+            record.facts.archivedAt = record.facts.archivedAt ?? archivedAt
+        }
+        if changed {
+            sendArchived(id, by: archiver)
+        }
+        return summary
+    }
+
+    /// Waits for the end of the cancel signal `stop` of `session`.
+    ///
+    /// A wait that cannot run is not an error of the archive, so the call
+    /// logs it and goes on: a session that archives itself from its own
+    /// turn cannot wait inside its own submission, and a session that
+    /// closed meanwhile has no work left. The close that follows ends the
+    /// work in each case.
+    ///
+    /// - Parameters:
+    ///   - stop: The id of the ``RoutedSession/cancelAll()`` signal.
+    ///   - session: The session that runs the signal.
+    private static func awaitEnd(of stop: SignalID, in session: any RoutedSession) async {
+        do {
+            _ = try await session.awaitTerminal(of: stop)
+        } catch {
+            var metadata = RouterTelemetry.errorMetadata(error)
+            metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(session.id)"
+            RouterTelemetry.makeLogger(.sessionDirectory).debug(
+                "the archive did not wait for the cancel of the session; its close ends the work",
+                metadata: metadata)
+        }
+    }
+
+    /// Takes the session `id` off the live list as archived, under the lock
+    /// of the registry: its entry leaves, the task that follows its state
+    /// ends, and its work state becomes `archived`
+    /// (``SessionStateTracking/archive()``), so no later event of the
+    /// session changes it.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The summary of the archived session, not live, changed now.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session left
+    ///   the directory.
+    private nonisolated func takeArchived(_ id: ULID) throws -> SessionSummary {
+        try state.withLock { registry in
+            guard var entry = registry.entries.removeValue(forKey: id), let session = entry.session else {
+                throw SessionDirectoryError.unknownSession(id)
+            }
+            entry.stateFeed?.cancel()
+            entry.tracking.archive()
+            entry.updatedAt = Date()
+            var summary = Self.summary(of: session, in: entry)
+            summary.isLive = false
+            return summary
+        }
+    }
+
+    /// Sends `stateChanged` with `archived` and then `archived` for the
+    /// session `id`, and writes the audit record of the archive to the log:
+    /// the session id and `archiver`.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the archived session.
+    ///   - archiver: The session or the user that archived it.
+    private nonisolated func sendArchived(_ id: ULID, by archiver: SessionMessageSender) {
+        emit(.stateChanged(id: id, state: .archived, lastSummary: nil))
+        emit(.archived(id: id))
+        RouterTelemetry.makeLogger(.sessionDirectory).notice(
+            "a session was archived",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id)",
+                RouterTelemetry.LogMetadataKey.archivedBy: "\(archiver)",
+            ])
     }
 
     // MARK: - Events
@@ -1187,7 +1384,7 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Gives `event` to each open stream of ``events()``, under the lock of
     /// the registry. ``send(_:)`` sends `messageDelivered` through it, and
-    /// the archive card sends `archived` through it.
+    /// ``archive(_:by:)`` sends `archived` through it.
     ///
     /// - Parameter event: The event.
     nonisolated func emit(_ event: SessionDirectoryEvent) {

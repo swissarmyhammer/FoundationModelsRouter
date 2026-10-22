@@ -428,6 +428,11 @@ enum RouterTelemetry {
         /// The id of the session.
         static let sessionId = prefix + AttributeKey.sessionId
 
+        /// The session or the UI client that archived a session
+        /// (``RouterSessionDirectory/archive(_:by:)``): a session id or a
+        /// client id, for the audit.
+        static let archivedBy = prefix + "session.archived_by"
+
         /// The id of a transcript entry.
         static let entryId = prefix + "entry.id"
 
@@ -539,8 +544,8 @@ enum RouterTelemetry {
 
         /// Every key above.
         static let allKeys = [
-            category, sessionId, entryId, segmentId, responseFormatName, entryCase, userPresence, encodeContext,
-            schemaName, errorType, errorCode, filePath, eventSeq, supersededSeq,
+            category, sessionId, archivedBy, entryId, segmentId, responseFormatName, entryCase, userPresence,
+            encodeContext, schemaName, errorType, errorCode, filePath, eventSeq, supersededSeq,
             repetitionStop, reasoningStop, generationStall, mailDeliveryPause, contextTokens, promptTokens,
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,

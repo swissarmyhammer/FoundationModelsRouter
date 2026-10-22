@@ -4,7 +4,8 @@ import Foundation
 
 /// Two routers over one recordings folder, which the directory suites of
 /// recorded sessions share (`RouterSessionDirectoryRecordedTests`,
-/// `RouterSessionDirectoryTagTests`, ROUTER-3).
+/// `RouterSessionDirectoryTagTests`, ROUTER-3; `RouterSessionDirectoryArchiveTests`,
+/// ROUTER-11).
 ///
 /// The recording router records the sessions; the reading router is a new
 /// router over the same recordings folder, standing in for a new process,
@@ -32,13 +33,18 @@ struct SessionDirectoryRouterPair {
 
     /// Makes the two routers over one new recordings folder.
     ///
-    /// - Parameter prefix: The name of the suite, which starts the name of
-    ///   each folder of the test.
+    /// - Parameters:
+    ///   - prefix: The name of the suite, which starts the name of each
+    ///     folder of the test.
+    ///   - recordingContainer: The container that vends the backend of each
+    ///     session of ``recordingRouter``. The default is a basic container.
     /// - Returns: The two routers.
-    static func make(prefix: String) async throws -> Self {
+    static func make(
+        prefix: String, recordingContainer: any LoadedLLMContainer = BasicLLMContainer()
+    ) async throws -> Self {
         let directories = TestDirectories(prefix: prefix)
         let (recordingRouter, recordingProfile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: BasicLLMContainer(), cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
+            over: recordingContainer, cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
         let (readingRouter, readingProfile) = try await RouterTestFixtures.resolveStandardProfile(
             over: BasicLLMContainer(), cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
         return Self(
