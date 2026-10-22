@@ -38,14 +38,30 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Tracing/RouterTelemetry.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift (new, 11 tests), Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryRouterPair.swift, this card. `swift build --build-tests` clean; `swift test --filter RouterSessionDirectoryArchive` 11/11 (10 red first for the missing feature); full `swift test` 2154 tests in 263 suites passed (9 known issues are the pre-existing helper self-tests).
     - next: /review
   timestamp: 2026-10-22T21:01:01.594518+00:00
+- actor: claude-code
+  id: 01m5jpydyk0fvxy71r6vmycxje
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (5090cc40) — 0 findings, 0 confirmed, 0 refuted; 7 validator runs attempted, 0 failed; 4 files reviewed, 2 .kanban files excluded by .reviewignore. No prior Review Findings sections.
+    - next: done
+  timestamp: 2026-10-22T21:05:50.035528+00:00
+- actor: wballard
+  id: 01m5jpytantttrkky3fncdh03x
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — archive(_:by:) for live and recorded sessions; a live archived session refuses send
+    - test: green per implementer — swift test 2154 passed, 9 known issues
+    - commit: 5090cc40
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T21:06:02.709863+00:00
 depends_on:
 - 01M5F3HHXA8XHWQWDZJ2CC8D3F
 - 01M5F3PESH74WZB1EDN6KQ5BQD
 - 01M5F3KKY94S2A8N8JCBN9FC99
 - 01M5F43CQ0KR0A2E8FA8CAT9XK
 - 01M5HS4PZCZH6W43MM72CQEPSD
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffbc80
 title: 'ROUTER-11: archive(_:by:) stops the turn, leaves the live list, writes archivedAt, and sends archived'
 ---
 ## Goal
