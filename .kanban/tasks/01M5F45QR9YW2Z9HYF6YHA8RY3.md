@@ -39,10 +39,26 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Session/AgentMessageHeader.swift (new), Sources/FoundationModelsRouter/Session/SessionMessage.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptHooks.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/AgentMessagePromptTextTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryMessageTests.swift. `swift build --build-tests` OK (only the existing SwiftPM "missing creator for mutated node" mlx bundle warning); filtered run 13/13 pass; full `swift test` exit 0 (2124 tests in 260 suites passed with 9 existing known issues, plus 38 and 19 in the other targets).
     - next: /review
   timestamp: 2026-10-22T16:20:03.871235+00:00
+- actor: claude-code
+  id: 01m5j6t2rxmnsb8085j403ekpy
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (08c2b41b) — 0 findings (attempted 7, confirmed 0, refuted 0, failed 0); 6 files reviewed, 2 .kanban files excluded by .reviewignore
+    - next: done
+  timestamp: 2026-10-22T16:23:50.301899+00:00
+- actor: wballard
+  id: 01m5j6tkcjzdajj6acwbjcarqc
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — AgentMessageHeader, renderer, prompt hooks, directory mail header; tests
+    - test: green per implementer — swift test 2124 passed, 9 known issues
+    - commit: 08c2b41b
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T16:24:07.314007+00:00
 depends_on:
 - 01M5F3NPMDDMRR7DZQZBXX4CKM
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffffffb180
 title: 'ROUTER-4: The rendered message also names the sender''s agent, title and folder'
 ---
 ## Goal
