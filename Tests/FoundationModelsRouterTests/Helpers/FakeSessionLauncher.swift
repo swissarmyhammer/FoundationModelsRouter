@@ -5,18 +5,23 @@ import Synchronization
 @testable import FoundationModelsRouter
 
 /// A ``SessionLauncher`` for the tests of ``RouterSessionDirectory/start(_:)``
-/// (ROUTER-8): it records each request it gets, and vends each session from
-/// the `.standard` slot of one scripted profile.
+/// (ROUTER-8) and of the delivery to a recorded session (ROUTER-5): it
+/// records each request and each restore it gets, vends each session from
+/// the `.standard` slot of one scripted profile, and restores each recorded
+/// session through that slot.
 ///
-/// It keeps each session it vends. The directory holds a session weakly, so
-/// the launcher holds the strong reference, as a host does.
+/// It keeps each session it vends or restores. The directory holds a session
+/// weakly, so the launcher holds the strong reference, as a host does.
 final class FakeSessionLauncher: SessionLauncher {
     /// What the launcher records.
     private struct State {
         /// Each request, in the order the launcher got them.
         var requests: [SessionStartRequest] = []
 
-        /// Each session the launcher vended, in order.
+        /// The id of each restore, in the order the launcher got them.
+        var restoredIDs: [ULID] = []
+
+        /// Each session the launcher vended or restored, in order.
         var sessions: [any RoutedSession] = []
     }
 
@@ -28,7 +33,12 @@ final class FakeSessionLauncher: SessionLauncher {
     /// for a launcher that breaks the contract and vends with none of them.
     private let copiesRequestFacts: Bool
 
-    /// The requests and the sessions, which `start` changes from its task.
+    /// The error each restore throws, or `nil` for a launcher whose restores
+    /// succeed.
+    private let restoreError: (any Error)?
+
+    /// The requests, the restores and the sessions, which the directory
+    /// changes from its task.
     private let state = Mutex(State())
 
     /// Makes a launcher over a scripted profile.
@@ -38,9 +48,12 @@ final class FakeSessionLauncher: SessionLauncher {
     ///   - copiesRequestFacts: `true` (the default) to copy the facts of each
     ///     request into the configuration of its session; `false` to vend
     ///     each session with none of them.
-    init(profile: LanguageModelProfile, copiesRequestFacts: Bool = true) {
+    ///   - restoreError: The error each restore throws, or `nil` (the
+    ///     default) for restores that succeed.
+    init(profile: LanguageModelProfile, copiesRequestFacts: Bool = true, restoreError: (any Error)? = nil) {
         self.profile = profile
         self.copiesRequestFacts = copiesRequestFacts
+        self.restoreError = restoreError
     }
 
     /// Each request the launcher got, in order.
@@ -48,7 +61,13 @@ final class FakeSessionLauncher: SessionLauncher {
         state.withLock { $0.requests }
     }
 
-    /// Each session the launcher vended, in order.
+    /// The id of each restore the launcher got, in order, also of a restore
+    /// that threw.
+    var restoredIDs: [ULID] {
+        state.withLock { $0.restoredIDs }
+    }
+
+    /// Each session the launcher vended or restored, in order.
     var sessions: [any RoutedSession] {
         state.withLock { $0.sessions }
     }
@@ -66,16 +85,24 @@ final class FakeSessionLauncher: SessionLauncher {
         return session
     }
 
-    /// The fake restores nothing.
+    /// Records the restore of `id`, and restores the recorded session `id`
+    /// through the `.standard` slot of the profile.
     ///
     /// - Parameter id: The session id.
-    /// - Returns: Nothing.
-    /// - Throws: `SessionDirectoryError.unknownSession(id)`.
+    /// - Returns: The restored session.
+    /// - Throws: The `restoreError` of the launcher, or the error of the
+    ///   restore.
     func restoreSession(id: ULID) async throws -> any RoutedSession {
-        throw SessionDirectoryError.unknownSession(id)
+        state.withLock { $0.restoredIDs.append(id) }
+        if let restoreError {
+            throw restoreError
+        }
+        let session = try await profile.standard.restoreSession(id: id).session
+        state.withLock { $0.sessions.append(session) }
+        return session
     }
 
-    /// Closes each session the launcher vended.
+    /// Closes each session the launcher vended or restored.
     func closeSessions() async {
         for session in sessions {
             await session.close()

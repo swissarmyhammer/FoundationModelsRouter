@@ -6,6 +6,13 @@ comments:
   id: 01m5j2y2kkff2g03caabb6zzr0
   text: 'Waits on ^2cqepsd (user decision 2026-10-22): index.md replaces session.json and facts.json. Where this card says facts.json, write the facts into the session''s index.md frontmatter instead (through the ^2cqepsd save path, best-effort and atomic).'
   timestamp: 2026-10-22T15:16:06.899148+00:00
+- actor: claude-code
+  id: 01m5j7qgvx82a3z72q8s4fk7xw
+  text: |-
+    ### gap from ^6kq5bqd (ROUTER-5 delivery rules)
+    - `send` refuses an archived target through the resolver (`SessionAddressResolution.archivedReason`) and never calls the launcher for it. Today the archived state comes from `facts.json` `archivedAt` for a recorded session (RecordedSessions), and for a live session only from `SessionStateTracking.archive()`, which nothing calls yet.
+    - So a live session whose facts hold `archivedAt` still reports its tracked state and a send to it is delivered. `archive(_:by:)` must call the entry's `tracking.archive()` (or take the session off the live list), and carry `archivedAt` onto index.md (^2cqepsd), so the refusal covers each archived session.
+  timestamp: 2026-10-22T16:39:55.005146+00:00
 depends_on:
 - 01M5F3HHXA8XHWQWDZJ2CC8D3F
 - 01M5F3PESH74WZB1EDN6KQ5BQD

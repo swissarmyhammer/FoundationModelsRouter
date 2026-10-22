@@ -21,6 +21,10 @@ comments:
   id: 01m5j2xm9ht7jybgvqxtv65kfd
   text: 'Owned by the Extras session: its card ^5rw57mj (Extras board) is the same work, already in doing. My implementer collided with it in the Extras tree and withdrew. This card closes when Extras lands JSONLFile and Router''s pin is bumped. Torn-tail design gap passed to Extras.'
   timestamp: 2026-10-22T15:15:52.241496+00:00
+- actor: wballard
+  id: 01m5j7m8sskbh8f9s0vtkrwrd9
+  text: 'Landed in Extras at e08f50d (origin/main). Torn tail per user decision: the writer adds a missing newline before it appends; the reader skips a line that won''t decode, with a warning; corruptLine is removed. Closes when Router''s pin is bumped.'
+  timestamp: 2026-10-22T16:38:08.441373+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'EXTRAS: JSONLFile — the one append-only JSONL writer and reader (append mode, one full line per write, fsync per line)'

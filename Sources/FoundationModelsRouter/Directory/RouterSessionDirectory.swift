@@ -38,12 +38,14 @@ import Synchronization
 /// the last summary when the state is idle (`nil` with any other state, as
 /// the port documents). ``summary(of:)`` reports the last summary in each
 /// state. ``send(_:)`` delivers a message to each live target of its address
-/// as a `Mail`, or starts a session of an agent for it, keeps each delivered
-/// message in the ledger of its target (``SessionMessageLedger``, ROUTER-4),
-/// and sends `messageDelivered`; ``inbox(of:markRead:)`` and
-/// ``message(_:to:)`` read that ledger. The other requirements of the port
-/// have provisional bodies that later cards replace: the tag and title
-/// changes (ROUTER-3) and ``archive(_:by:)`` (ROUTER-11).
+/// as a `Mail` by the delivery rules of ROUTER-5, restores a recorded target
+/// through the launcher, or starts a session of an agent for it, keeps each
+/// delivered message in the ledger of its target (``SessionMessageLedger``,
+/// ROUTER-4), and sends `messageDelivered`; ``inbox(of:markRead:)`` and
+/// ``message(_:to:)`` read that ledger, and a read mark withdraws the mail
+/// that still waits. The other requirements of the port have provisional
+/// bodies that later cards replace: the tag and title changes (ROUTER-3) and
+/// ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -56,9 +58,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// client. Confirmed by the owner of session.md.
     static let defaultOrigin: FoundationModelsExtras.SessionDirectoryOrigin = .client
 
-    /// The reason of the refused receipt of a target that is not live: a
-    /// recorded session, until ROUTER-5 restores it, or a session that
-    /// closed.
+    /// The reason of the refused receipt of a target that the resolver found
+    /// live, and that left the directory or closed before its mail went out.
     static let notLiveReason = "not live"
 
     /// The chain depth of each message until ROUTER-5 computes it from the
@@ -124,6 +125,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// its recording directory at its first use and held here after, so the
     /// ledger of a memory-only session lives here alone.
     private var ledgers: [ULID: SessionMessageLedger] = [:]
+
+    /// The restore through the launcher that runs now for each recorded
+    /// session, by session id (``restore(_:through:)``). Two sends to one
+    /// recorded session while its restore runs share that one restore, so
+    /// the launcher never makes two live sessions with one id. A restore
+    /// leaves the map when it ends.
+    private var restores: [ULID: Task<any RoutedSession, any Error>] = [:]
 
     /// Makes an empty directory.
     public init() {}
@@ -566,16 +574,23 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``FoundationModelsExtras/SessionAddress/resolution(from:among:recordedSummary:)``)
     /// and acts on the decision:
     ///
-    /// - Each live target gets the message as a `Mail` in its mail queue,
-    ///   with the sender in its transcript, and the receipt is `delivered`
-    ///   (``deliver(_:to:)``). ROUTER-5 adds `queued`.
+    /// - Each live target gets the message as a `Mail` in its own mail queue,
+    ///   with the sender in its transcript (``deliver(_:to:)``). The receipt
+    ///   follows the delivery rules of ROUTER-5: `delivered` for an idle
+    ///   target, whose mail starts a turn, and `queued` for a working target
+    ///   or one that needs input, whose mail waits in its queue for the end
+    ///   of the turn. The session's pump then carries every waiting message
+    ///   in one turn. No delivery waits for a free slot: the number of
+    ///   sessions that work at the same time has no limit (D72).
+    /// - A recorded target that is not live is restored through the
+    ///   launcher, and then gets the message as a live target does
+    ///   (``restoreThenDeliver(_:to:)``). A restore that throws is a
+    ///   `refused` receipt with the text of the error.
     /// - An agent with no live root session gets a new one through the
     ///   launcher, with origin `message` and the message as its first
     ///   message, and the receipt is `started` (``startAgent(_:in:for:)``).
-    /// - A recorded target that is not live is refused as not live until
-    ///   ROUTER-5 restores it.
     /// - A refusal of the resolver is a `refused` receipt with its reason
-    ///   and target.
+    ///   and target. An archived target is one: it is never restored.
     ///
     /// Each delivered message goes into the ledger of its target
     /// (``SessionMessageLedger``) with the chain depth
@@ -585,9 +600,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   id of the message.
     /// - Returns: One receipt for each target session.
     /// - Throws: `SessionDirectoryError.unknownSession` for a session sender
-    ///   or a session id target that no live or recorded session has, the
-    ///   start errors of an agent address (`SessionDirectoryError.noLauncher`
-    ///   and the error of the launcher),
+    ///   or a session id target that no live or recorded session has,
+    ///   `SessionDirectoryError.noLauncher` when an agent address must start
+    ///   a session or a recorded target must be restored with no launcher,
+    ///   the start errors of the launcher for an agent address,
     ///   ``SessionMessageLedgerError/corruptLine(_:)`` when the
     ///   `messages.jsonl` of a target is damaged before its final line, the
     ///   file-system error of a read of a ledger, or the error of the
@@ -601,7 +617,8 @@ public actor RouterSessionDirectory: SessionDirectory {
         case .deliver(let targets):
             return try targets.map { try deliver(message, to: $0) }
         case .restoreThenDeliver(let id):
-            return [SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)]
+            let summary = try Self.recordedSummary(of: id, in: recorded)
+            return [try await restoreThenDeliver(message, to: summary)]
         case .startAgent(let agentID, let folder):
             return [try await startAgent(agentID, in: folder, for: message)]
         case .refused(let reason, let target):
@@ -613,18 +630,23 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// queue of the session, keeps it in the ledger of the session, and sends
     /// `messageDelivered`.
     ///
-    /// A session that left the directory since the resolve, or that closed
-    /// and takes no more mail, is refused as not live.
+    /// The mail goes into the queue of the session in each state (the
+    /// decision of the user on ROUTER-5), and the receipt tells which rule
+    /// applied (``deliveryOutcome(of:)``): `delivered` when the session was
+    /// idle, so the mail starts a turn, else `queued`, because the mail
+    /// waits for the end of the turn that runs. A session that left the
+    /// directory since the resolve, or that closed and takes no more mail,
+    /// is refused as not live.
     ///
     /// - Parameters:
     ///   - message: The message.
     ///   - id: The session id of a live target.
-    /// - Returns: The `delivered` receipt, or a `refused` receipt as not
-    ///   live.
+    /// - Returns: The `delivered` or `queued` receipt, or a `refused`
+    ///   receipt as not live.
     /// - Throws: The error of a read of the ledger of the session, or a
     ///   refusal of the mail other than a closed session.
     private func deliver(_ message: OutgoingSessionMessage, to id: ULID) throws -> SessionSendReceipt {
-        guard let session = liveSession(id) else {
+        guard let session = liveSession(id), let outcome = deliveryOutcome(of: id) else {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
         let ledger = try ledger(of: id, in: Self.ledgerDirectory(of: session))
@@ -638,7 +660,93 @@ public actor RouterSessionDirectory: SessionDirectory {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
         keep(delivered, in: ledger)
-        return SessionSendReceipt(messageID: delivered.id, target: id, outcome: .delivered)
+        return SessionSendReceipt(messageID: delivered.id, target: id, outcome: outcome)
+    }
+
+    /// The receipt outcome of a mail to the live session `id` now, by the
+    /// work state that the directory tracks for it (ROUTER-9,
+    /// ``SessionStateTracking``): `delivered` for `idle`, else `queued`.
+    ///
+    /// The tracking follows the events of the session in a task of its own,
+    /// so it can lag behind the session by the events that task has not read
+    /// yet. A mail that a send put in the queue of an idle session an
+    /// instant ago can thus leave the state `idle` for a second send. The
+    /// mail of that second send still waits in the queue for the end of the
+    /// turn, as each mail does.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The outcome, or `nil` when the directory holds no entry for
+    ///   `id`.
+    private nonisolated func deliveryOutcome(of id: ULID) -> SessionSendReceipt.Outcome? {
+        state.withLock { registry in
+            registry.entries[id].map { $0.tracking.state == .idle ? .delivered : .queued }
+        }
+    }
+
+    /// Restores the recorded session of `summary` through the launcher
+    /// (ROUTER-8), makes it live in the directory, and delivers `message` to
+    /// it (``deliver(_:to:)``), where its mail starts a turn.
+    ///
+    /// A session that this router restores registered itself when the
+    /// restore vended it. A session from another router is not in the
+    /// directory, so this registers it with the kind and the parent of its
+    /// record.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - summary: The recorded summary of the target, which is not live.
+    /// - Returns: The receipt of the delivery, or a `refused` receipt with
+    ///   the text of the error when the restore throws.
+    /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
+    ///   launcher, or the errors of ``deliver(_:to:)``.
+    private func restoreThenDeliver(
+        _ message: OutgoingSessionMessage, to summary: SessionSummary
+    ) async throws -> SessionSendReceipt {
+        guard let launcher else { throw SessionDirectoryError.noLauncher }
+        let session: any RoutedSession
+        do {
+            session = try await restore(summary.id, through: launcher)
+        } catch {
+            return SessionSendReceipt(target: summary.id, outcome: .refused, reason: String(describing: error))
+        }
+        if !isRegistered(session: session) {
+            register(session, kind: summary.kind, parentID: summary.parentID)
+        }
+        return try deliver(message, to: summary.id)
+    }
+
+    /// Restores the recorded session `id` through `launcher`, or joins the
+    /// restore of `id` that runs now (``restores``).
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - launcher: The launcher of the directory.
+    /// - Returns: The restored session.
+    /// - Throws: The error of the restore.
+    private func restore(_ id: ULID, through launcher: any SessionLauncher) async throws -> any RoutedSession {
+        if let running = restores[id] {
+            return try await running.value
+        }
+        let restore = Task { try await launcher.restoreSession(id: id) }
+        restores[id] = restore
+        defer { restores[id] = nil }
+        return try await restore.value
+    }
+
+    /// The recorded summary of the session `id`, which the resolver read
+    /// when it decided to restore the session.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - recorded: The recorded summaries that the resolver read.
+    /// - Returns: The summary.
+    /// - Throws: `SessionDirectoryError.unknownSession(_:)` when `recorded`
+    ///   holds no summary with the id, which the resolver never decides.
+    private static func recordedSummary(of id: ULID, in recorded: [SessionSummary]) throws -> SessionSummary {
+        guard let summary = recorded.first(where: { $0.id == id }) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        return summary
     }
 
     /// Starts a root session of the agent through the launcher with
@@ -704,9 +812,22 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// recording directory of the live session, else the ledger in the
     /// folder of a recorded session under the recording roots of the host.
     ///
+    /// A read message never starts a turn (ROUTER-5). The mail of a message
+    /// to a working session waits in the session's own mail queue, so with
+    /// `markRead` each marked message whose mail still waits there leaves
+    /// the queue through ``RoutedSession/cancel(_:)``
+    /// (``withdrawWaitingMail(_:from:)``). The transcript of the session
+    /// keeps the cancel record, and the mail gets its terminal event
+    /// ``SessionEvent/cancelled(_:)``. A cancel is a signal of the session,
+    /// which runs after the signals before it: a mail that the pump of the
+    /// session takes before the cancel runs is delivered anyway, and its
+    /// message stays read in the ledger. That is the trade-off the user
+    /// accepted on ROUTER-5 when the mail went to the queue of the session.
+    ///
     /// - Parameters:
     ///   - id: The session id.
-    ///   - markRead: True to mark the messages read.
+    ///   - markRead: True to mark the messages read, and withdraw their
+    ///     mail that still waits.
     /// - Returns: The messages to the session that were not read, the
     ///   oldest first.
     /// - Throws: `SessionDirectoryError.unknownSession` when no live or
@@ -720,11 +841,30 @@ public actor RouterSessionDirectory: SessionDirectory {
             throw SessionDirectoryError.unknownSession(id)
         }
         let unread = ledger.unread
-        if markRead {
-            ledger.markRead(unread.map(\.id))
+        guard markRead else {
+            ledgers[id] = ledger
+            return unread
         }
+        ledger.markRead(unread.map(\.id))
         ledgers[id] = ledger
+        await withdrawWaitingMail(unread.map(\.id), from: id)
         return unread
+    }
+
+    /// Cancels the mail of each message of `ids` that still waits in the
+    /// mail queue of the live session `id` (``RoutedSession/cancel(_:)``).
+    /// A mail the pump took is not in the queue, and gets no cancel. A
+    /// session that is not live has no queue, so nothing changes.
+    ///
+    /// - Parameters:
+    ///   - ids: The ids of the messages that the inbox marked read.
+    ///   - id: The session id of their target.
+    private func withdrawWaitingMail(_ ids: [MailID], from id: ULID) async {
+        guard !ids.isEmpty, let session = liveSession(id) else { return }
+        let waiting = Set(await session.pendingMessages().map(\.id))
+        for mailID in ids where waiting.contains(mailID) {
+            session.cancel(mailID)
+        }
     }
 
     /// See `SessionDirectory.message(_:to:)`. Reads the ledger of

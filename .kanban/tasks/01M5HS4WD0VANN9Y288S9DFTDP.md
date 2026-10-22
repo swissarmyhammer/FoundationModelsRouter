@@ -19,6 +19,7 @@ So the JSONL files Router writes are `transcript.jsonl` and, since ^17nh345, eac
 - Delete `SessionIndex`, `SessionIndexRecord`, `sessions.jsonl`, and the directory's sessions.jsonl writer from ed7b7c27. Recorded listing reads index.md instead.
 - Delete `JSONLines.replaceFile`, `JSONLines.appendLine` and the seek-to-end FileHandle appends.
 - No backward compatibility.
+- Extras JSONLFile landed at e08f50d (user decision on the torn tail): the writer adds a missing "\n" before it appends; the reader skips a line that won't decode, with a warning, and never throws for one. Router follows the same rule: `SessionMessageLedgerError.corruptLine` and the transcript reader's "a corrupt middle line throws" go away, with their tests changed to expect a skip and a warning. Bump Router's pin with `swift package update FoundationModelsExtras` first.
 
 ## Subtasks
 - [ ] Move transcript.jsonl onto JSONLFile with an fsync per line

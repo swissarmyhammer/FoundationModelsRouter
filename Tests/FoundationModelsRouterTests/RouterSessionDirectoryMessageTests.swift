@@ -373,46 +373,6 @@ import Testing
         await fixture.close([sender])
     }
 
-    /// A session id of a recorded session that is not live is refused as not
-    /// live, with the session as its target, until ROUTER-5 restores it.
-    @Test func aRecordedSessionThatIsNotLiveIsRefusedAsNotLive() async throws {
-        let fixture = try await Self.makeFixture()
-        var recorded: (any RoutedSession)? = fixture.makeSession()
-        let id = try #require(recorded?.id)
-        let root = try #require(recorded.map(fixture.recordingRoot(of:)))
-        await recorded?.close()
-        recorded = nil
-        await fixture.directory.useRecordingRoots { [root] }
-
-        let receipts = try await fixture.directory.send(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(id), text: Self.text))
-
-        #expect(
-            receipts == [SessionSendReceipt(target: id, outcome: .refused, reason: RouterSessionDirectory.notLiveReason)]
-        )
-        await fixture.close([])
-    }
-
-    /// A session that closed leaves the live list while the host still holds
-    /// it: the message to it is refused as not live, with the session as its
-    /// target.
-    @Test func aClosedSessionIsRefusedAsNotLive() async throws {
-        let fixture = try await Self.makeFixture()
-        let target = fixture.makeSession()
-        let root = fixture.recordingRoot(of: target)
-        await target.close()
-        await fixture.directory.useRecordingRoots { [root] }
-
-        let receipts = try await fixture.directory.send(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
-
-        #expect(
-            receipts == [
-                SessionSendReceipt(target: target.id, outcome: .refused, reason: RouterSessionDirectory.notLiveReason)
-            ])
-        await fixture.close([])
-    }
-
     /// A session id that no live or recorded session has throws
     /// `unknownSession`.
     @Test func anUnknownSessionIdThrows() async throws {
