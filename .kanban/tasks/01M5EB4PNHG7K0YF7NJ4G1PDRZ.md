@@ -1,6 +1,13 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m5gkcdn2r37mcs4706cchfn5
+  text: |-
+    ### finish — skipped
+    - skipped by /finish (2026-10-21): the fix lives in the swissarmyhammer mlx-swift-lm fork (MLXLanguageModel.runAllowedToolGeneration), another repository; it needs a fork change, a push there, and a pin bump here. Left in todo for a session working in the fork.
+  timestamp: 2026-10-22T01:25:05.314813+00:00
 position_column: todo
 position_ordinal: '80'
 title: 'MLX allowed-tool path: stream response text and tool-call arguments as they decode'
