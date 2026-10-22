@@ -26,6 +26,11 @@ import FoundationModelsExtras
 ///   ``lastSummaryLength`` characters, as ``lastSummary``. The state stays.
 /// - ``archive()`` gives `archived`, and no later event changes it.
 ///
+/// A `stateChanged` carries ``idleSummary``: the last summary with idle, and
+/// `nil` with any other state, as the `SessionDirectory` port documents.
+/// ``lastSummary`` keeps the reply in each state, for the summary of the
+/// session.
+///
 /// A form answer of the client (``RoutedSession/respond(elicitationId:response:)``)
 /// sends no event that names its question. So at each work end the directory
 /// gives the tracking the open questions of the session itself
@@ -40,6 +45,15 @@ struct SessionStateTracking: Sendable {
     /// The last final reply of the session, cut to ``lastSummaryLength``
     /// characters, or `nil` before the first answer.
     private(set) var lastSummary: String?
+
+    /// The last summary that a `stateChanged` carries: ``lastSummary`` while
+    /// the state is `idle`, else `nil`. The `SessionDirectory` port carries
+    /// the last summary of a state change only with idle, so a working,
+    /// needsInput or archived state carries none, while ``lastSummary``
+    /// keeps the reply for the summary of the session.
+    var idleSummary: String? {
+        state == .idle ? lastSummary : nil
+    }
 
     /// Whether the session has work: a ``SessionEvent/workStarted`` came
     /// after the last ``SessionEvent/workEnded``.

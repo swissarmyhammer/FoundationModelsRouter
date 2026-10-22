@@ -28,9 +28,11 @@ import Synchronization
 /// live sessions, with the state and the last summary of each,
 /// ``start(_:)`` starts a root session through the launcher, and
 /// ``events()`` gives `started` for each session it registers and
-/// `stateChanged` for each change of its state or its last summary. The other
-/// requirements of the port have provisional bodies that later cards
-/// replace: the tag and title changes (ROUTER-3), ``send(_:)``,
+/// `stateChanged` for each change of what that event carries: the state, and
+/// the last summary when the state is idle (`nil` with any other state, as
+/// the port documents). ``summary(of:)`` reports the last summary in each
+/// state. The other requirements of the port have provisional bodies that
+/// later cards replace: the tag and title changes (ROUTER-3), ``send(_:)``,
 /// ``inbox(of:markRead:)`` and ``message(_:to:)`` (ROUTER-4), and
 /// ``archive(_:by:)`` (ROUTER-11).
 public actor RouterSessionDirectory: SessionDirectory {
@@ -619,9 +621,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Applies `event` to the state of the session `id`, and sends
-    /// `stateChanged` with the state and the last summary when either
-    /// changed, under the lock of the registry. The time of the change
-    /// becomes the time of the last change of the session.
+    /// `stateChanged` with the state and the idle summary
+    /// (``SessionStateTracking/idleSummary``) when either changed, under the
+    /// lock of the registry. The time of the change becomes the time of the
+    /// last change of the session. An answer while the session works
+    /// changes only the stored last summary, which the event does not carry,
+    /// so it sends nothing.
     ///
     /// At a work end, the open questions of the session itself replace the
     /// open questions the tracking holds, because a form answer of the
@@ -636,12 +641,12 @@ public actor RouterSessionDirectory: SessionDirectory {
         let openQuestions = event == .workEnded ? await openQuestions(of: id) : nil
         state.withLock { registry in
             guard !Task.isCancelled, var entry = registry.entries[id], entry.session != nil else { return }
-            let before = (entry.tracking.state, entry.tracking.lastSummary)
+            let before = (entry.tracking.state, entry.tracking.idleSummary)
             if let openQuestions {
                 entry.tracking.replaceOpenQuestions(with: openQuestions)
             }
             entry.tracking.apply(event: event)
-            let after = (entry.tracking.state, entry.tracking.lastSummary)
+            let after = (entry.tracking.state, entry.tracking.idleSummary)
             if after != before {
                 entry.updatedAt = Date()
                 registry.fanout.send(.stateChanged(id: id, state: after.0, lastSummary: after.1))

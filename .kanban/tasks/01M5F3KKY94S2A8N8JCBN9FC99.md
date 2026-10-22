@@ -41,6 +41,29 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Directory/SessionStateTracking.swift (new), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift (doc), Tests/FoundationModelsRouterTests/SessionStateTrackingTests.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryStateTests.swift (new); `swift test --filter "SessionStateTracking|RouterSessionDirectoryState"` 22/22 pass; full `swift test` 2058 pass
     - next: /review
   timestamp: 2026-10-22T00:10:44.758502+00:00
+- actor: claude-code
+  id: 01m5gfgvrjw8vqdbepc9kc83nt
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (0ac457bf) — engine counts 0 findings / 0 confirmed / 0 refuted (7 attempted, 0 failed; .kanban/ excluded by .reviewignore). Port-contract check requested by the orchestrator: 1 finding — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:647 sends `lastSummary` with every `stateChanged` (incl. working), while FoundationModelsExtras `SessionDirectoryEvent.swift:17-18` documents `lastSummary` "when the state is idle" and the reference `InMemorySessionDirectoryState` sends nil with working/needsInput (:324, :348, :397).
+    - next: /implement ^bn9fc99 to bring `stateChanged` in line with the port contract, then /review again
+  timestamp: 2026-10-22T00:17:36.530763+00:00
+- actor: claude-code
+  id: 01m5gfsvperkr4ppkmcvpwje0w
+  text: |-
+    ### port-contract fix landed (contract/session-directory-port)
+    - New `SessionStateTracking.idleSummary`: `lastSummary` while the state is idle, else nil. `recordState(after:of:)` now compares and sends `(state, idleSummary)`, so `stateChanged` carries the last summary only with idle, and an `answered` while working changes only the stored summary and sends no event (updatedAt also stays then, since nothing the event carries changed). `summary(of:)` still reports the stored `lastSummary` in every state.
+    - Docs updated: RouterSessionDirectory type doc and `recordState` doc, SessionStateTracking type doc.
+    - TDD: RED observed for the new reducer test (4 issues: working, next turn, needsInput, archived gave the reply), the updated turn-end tests (got `stateChanged(working, reply)`), and the new directory test (second turn's working carried "answer 1"). GREEN: `swift test --filter "SessionStateTrackingTests|RouterSessionDirectory"` 72 tests in 7 suites pass.
+    - Build shows one SwiftPM/llbuild line "warning: missing creator for mutated node: .../mlx-swift_Cmlx.bundle/Contents/MacOS" in both runs; it is a build-graph note about the mlx bundle, not from source.
+  timestamp: 2026-10-22T00:22:31.374631+00:00
+- actor: claude-code
+  id: 01m5gfsy6q08cb10sr8fbybse2
+  text: |-
+    ### implement — changed
+    - evidence: 4 files — Sources/FoundationModelsRouter/Directory/SessionStateTracking.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/SessionStateTrackingTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryStateTests.swift; `swift build --build-tests` ok; `swift test --skip-build --filter "SessionStateTrackingTests|RouterSessionDirectory"` 72/72 pass; finding flipped to [x]
+    - next: /test, then /review
+  timestamp: 2026-10-22T00:22:33.943638+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
@@ -84,3 +107,14 @@ The directory maps the events of each live session to a `SessionState` and keeps
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #session #router-api
+
+## Review Findings (2026-10-21 19:12)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> The engine fleet returned 0 findings (7 attempted, 0 failed). The item below is the port-contract check the orchestrator asked for (the implementer's open question), checked against the FoundationModelsExtras `SessionDirectory` port docs in `.build/checkouts/FoundationModelsExtras`.
+
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:647` `contract/session-directory-port` — `recordState(after:of:)` sends `.stateChanged(id:state:lastSummary:)` with the tracked `lastSummary` for every state (working, needsInput, archived), and an `answered` while the session still works sends `stateChanged(working, reply)`. The port contract documents `lastSummary` only for idle: `SessionDirectoryEvent.stateChanged` says "`lastSummary` is the last final message of the session, when the state is idle." (`FoundationModelsExtras/Sessions/SessionDirectoryEvent.swift:17-18`), and the reference `InMemorySessionDirectoryState.changeState(of:to:lastSummary:at:)` documents the parameter as "The new last summary, for the idle state." and sends `lastSummary: nil` with working and needsInput (`InMemorySessionDirectoryState.swift:324`, `:348`, `:397`). Send `lastSummary` in `stateChanged` only when the state is idle (nil otherwise), keep `summary(of:)` reporting the stored `lastSummary`, decide whether an `answered` with no state change still sends an event under that contract (the `(state, lastSummary)` change test at `RouterSessionDirectory.swift:639`/`:644` must follow the event payload, not the stored summary), and update the type doc at `RouterSessionDirectory.swift:31` ("for each change of its state or its last summary") and the tests that pin the divergent payload (`Tests/FoundationModelsRouterTests/RouterSessionDirectoryStateTests.swift:166`, `:198`).

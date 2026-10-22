@@ -8,7 +8,8 @@ import Testing
 /// The work state and the last summary that ``RouterSessionDirectory`` keeps
 /// for each live session (ROUTER-9): one feed task for each registered
 /// session reads `streamSessionEvents()`, applies ``SessionStateTracking``,
-/// and sends `stateChanged` for each change, after the `started` of the
+/// and sends `stateChanged` for each change of the state, or of the last
+/// summary that it carries only with idle, after the `started` of the
 /// session.
 ///
 /// Each test runs a scripted backend, so the suite needs no network and no
@@ -52,13 +53,19 @@ struct RouterSessionDirectoryStateTests {
     /// call.
     private static let continuationCall = 2
 
+    /// The number of the call of the second turn, when each call of the
+    /// first turn answers at once.
+    private static let secondTurnCall = 2
+
     /// The events of a vend and of one held turn up to the state of the
     /// turn: `started`, then `stateChanged` to working.
     private static let eventsUpToTheTurn = 2
 
-    /// The events of the end of a turn: `stateChanged` with the new last
-    /// summary while the session still works, and `stateChanged` to idle.
-    private static let eventsOfTheTurnEnd = 2
+    /// The events of the end of a turn: one `stateChanged` to idle with the
+    /// new last summary. The answer while the session still works sends
+    /// none, because a `stateChanged` carries the last summary only with
+    /// idle.
+    private static let eventsOfTheTurnEnd = 1
 
     /// An event no session sends, which a test sends to mark the end of what
     /// it reads.
@@ -161,11 +168,7 @@ struct RouterSessionDirectoryStateTests {
 
         #expect(upToTheTurn.last == Self.stateChanged(of: session.id, to: .working, lastSummary: nil))
         #expect(during.state == .working)
-        #expect(
-            turnEnd == [
-                Self.stateChanged(of: session.id, to: .working, lastSummary: reply),
-                Self.stateChanged(of: session.id, to: .idle, lastSummary: reply),
-            ])
+        #expect(turnEnd == [Self.stateChanged(of: session.id, to: .idle, lastSummary: reply)])
         #expect(after.state == .idle)
         #expect(after.lastSummary == reply)
         #expect(after.updatedAt > session.id.timestamp)
@@ -195,10 +198,42 @@ struct RouterSessionDirectoryStateTests {
         #expect(
             Array(received.dropFirst()) == [
                 Self.stateChanged(of: session.id, to: .working, lastSummary: nil),
-                Self.stateChanged(of: session.id, to: .working, lastSummary: reply),
                 Self.stateChanged(of: session.id, to: .idle, lastSummary: reply),
             ])
         #expect(afterTheTurn == [Self.marker])
+    }
+
+    /// The production change that makes this test fail: a `stateChanged`
+    /// that carries the stored last summary in every state. The port
+    /// documents `lastSummary` only for idle, so the working of the next
+    /// turn carries none, while the summary still reports the last reply.
+    @Test("a stateChanged carries the last summary only with idle, and the summary keeps it while the next turn works")
+    func aStateChangedCarriesTheLastSummaryOnlyWithIdle() async throws {
+        let latch = RunLatch()
+        let fixture = try await Self.makeFixture(script: [Self.secondTurnCall: .hold(latch)])
+        var events = fixture.directory.events().makeAsyncIterator()
+        let session = fixture.vend()
+        defer {
+            await latch.open()
+            await session.close()
+        }
+        let firstReply = Backend.answer(ofCall: Self.firstCall)
+        let secondReply = Backend.answer(ofCall: Self.secondTurnCall)
+
+        _ = try session.send(Self.prompt)
+        _ = await Self.events(from: &events) { event in
+            event == Self.stateChanged(of: session.id, to: .idle, lastSummary: firstReply)
+        }
+        _ = try session.send(Self.prompt)
+        let nextTurn = await events.next(count: 1)
+        let during = try #require(try await fixture.directory.summary(of: session.id))
+        await latch.open()
+        let nextTurnEnd = await events.next(count: Self.eventsOfTheTurnEnd)
+
+        #expect(nextTurn == [Self.stateChanged(of: session.id, to: .working, lastSummary: nil)])
+        #expect(during.state == .working)
+        #expect(during.lastSummary == firstReply)
+        #expect(nextTurnEnd == [Self.stateChanged(of: session.id, to: .idle, lastSummary: secondReply)])
     }
 
     // MARK: - Needs input

@@ -241,6 +241,28 @@ struct SessionStateTrackingTests {
         #expect(tracking.lastSummary == later)
     }
 
+    /// The production change that makes this test fail: an idle summary that
+    /// gives the stored last summary in every state. The port documents
+    /// `lastSummary` of `stateChanged` only for the idle state.
+    @Test("the idle summary is the last summary while idle, and nil while working, needing input, or archived")
+    func theIdleSummaryIsTheLastSummaryOnlyWhileIdle() {
+        let answering = Self.tracking(after: [.workStarted, Self.answered(with: Self.reply)])
+        let idle = Self.tracking(after: [.workStarted, Self.answered(with: Self.reply), .workEnded])
+        let nextTurn = Self.tracking(after: [.workStarted, Self.answered(with: Self.reply), .workEnded, .workStarted])
+        let asking = Self.tracking(after: [
+            .workStarted, Self.answered(with: Self.reply), Self.questionAsked(id: .generate()),
+        ])
+        var archived = idle
+        archived.archive()
+
+        #expect(answering.idleSummary == nil)
+        #expect(idle.idleSummary == Self.reply)
+        #expect(nextTurn.idleSummary == nil)
+        #expect(asking.idleSummary == nil)
+        #expect(archived.idleSummary == nil)
+        #expect(archived.lastSummary == Self.reply)
+    }
+
     // MARK: - Needs input
 
     @Test("elicitationRequested gives needsInput, also while the session works")
