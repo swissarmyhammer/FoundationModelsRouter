@@ -21,14 +21,30 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Directory/SessionTagRule.swift (new), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/SessionTagRuleTests.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryTagTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryRouterPair.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryRecordedTests.swift. `swift build --build-tests` clean; full `swift test`: 2139 tests in 261 suites passed (9 known issues come from existing withKnownIssue tests), plus 35 and 19 in the other targets, 0 failures.
     - next: /review
   timestamp: 2026-10-22T20:26:06.202379+00:00
+- actor: claude-code
+  id: 01m5jmyjdf8m1zd4bs3bt5q2h6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (1775cd9b) — 0 findings (7 attempted, 2 refuted, 0 failed); 6 files reviewed, 2 .kanban files excluded by .reviewignore
+    - next: done
+  timestamp: 2026-10-22T20:30:57.455612+00:00
+- actor: wballard
+  id: 01m5jmyzd8r56v335kgxwpyccp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — SessionTagRule; tag and title setters on changeRecord; no-op sends no event
+    - test: green per implementer — swift test 2139 passed, 9 known issues
+    - commit: 1775cd9b
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T20:31:10.760029+00:00
 depends_on:
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
 - 01M5F3HHXA8XHWQWDZJ2CC8D3F
 - 01M5F43CQ0KR0A2E8FA8CAT9XK
 - 01M5HS4PZCZH6W43MM72CQEPSD
-position_column: doing
-position_ordinal: '80'
-title: 'ROUTER-3: addTags, removeTags and setTitle write facts.json and send factsChanged (covers ROUTER-2)'
+position_column: done
+position_ordinal: ffffffffba80
+title: 'ROUTER-3: addTags, removeTags and setTitle write index.md and send factsChanged (covers ROUTER-2)'
 ---
 ## Goal
 Tags and the title change only through the directory: `addTags`, `removeTags` and `setTitle` validate, rewrite `facts.json`, and send `factsChanged`. This is the ROUTER-2 behavior that ROUTER-3 carries (tags at creation already come from `SessionConfiguration.tags`, ROUTER-1).
