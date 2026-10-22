@@ -38,14 +38,30 @@ comments:
     - evidence: 4 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveryTests.swift (new, 9 tests), Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryMessageTests.swift (2 obsolete tests removed). `swift build --build-tests` clean; `swift test --filter RouterSessionDirectoryDelivery` 9/9 passed; full `swift test` 2131 tests in 261 suites passed (9 known issues, all pre-existing `withKnownIssue` tests), plus 38 and 19 in the other targets.
     - next: /review
   timestamp: 2026-10-22T16:39:58.010161+00:00
+- actor: claude-code
+  id: 01m5j8390k26mjfd57z1gvay0h
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (1cd652e8) — 0 findings, 0 confirmed, 1 refuted, 7 attempted, 0 failed; 4 files reviewed, 9 .kanban files excluded by .reviewignore
+    - next: done
+  timestamp: 2026-10-22T16:46:20.179651+00:00
+- actor: wballard
+  id: 01m5j8468npkv13h1q155rdk9m
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — delivery rules in RouterSessionDirectory; RouterSessionDirectoryDeliveryTests
+    - test: green per implementer — swift test 2131 passed, 9 known issues
+    - commit: 1cd652e8
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T16:46:50.133777+00:00
 depends_on:
 - 01M5F3N4646VMYQWK4S17NH345
 - 01M5F3K0T51RYV86Y2NXVGFFEC
 - 01M5F3KKY94S2A8N8JCBN9FC99
 - 01M5F3HHXA8XHWQWDZJ2CC8D3F
 - 01M5F43CQ0KR0A2E8FA8CAT9XK
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffffffb280
 title: 'ROUTER-5: Delivery rules (idle starts a turn, working queues, recorded restores, archived refuses, read never starts a turn)'
 ---
 ## Goal
