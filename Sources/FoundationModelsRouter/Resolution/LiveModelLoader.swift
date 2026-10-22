@@ -1240,6 +1240,19 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         }
     }
 
+    /// Measures the bytes of the model of `key` for the Extras model pool,
+    /// through the model loader: the Extras `MLXModelLoader` in a live loader,
+    /// which measures the weights of the model in its cache folder. A pool
+    /// that the application gives this loader counts the result as the
+    /// footprint of the model.
+    ///
+    /// - Parameter key: The model that ``load(_:)`` loaded.
+    /// - Returns: The bytes that the model loader measures.
+    /// - Throws: The error of the measure of the model loader.
+    public func footprintBytes(of key: ModelPoolKey) async throws -> Int64 {
+        try await modelLoader.footprintBytes(of: key)
+    }
+
     /// Sends the memory budget to the process-wide prompt cache of the fork,
     /// `MLXLanguageModel.configurePromptCache(memoryBudgetBytes:)`. The fork
     /// applies it at once: a smaller budget moves the least recently used

@@ -39,12 +39,28 @@ comments:
     - evidence: `swift build --build-tests` clean; `swift test --filter RouterSessionDirectoryRecorded` 17/17 pass; full `swift test` 2080 tests in 257 suites pass (9 known issues already in the suite), plus 35 + 19 in the other targets; `--filter RecordingRootsPublicSurface` 1/1 pass. Files: Sources/FoundationModelsRouter/Directory/RecordedSessions.swift (new), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryRecordedTests.swift (new), Tests/FoundationModelsRouterPublicSurfaceTests/RecordingRootsPublicSurfaceTests.swift (new), Tests/FoundationModelsRouterTests/PerSessionRecordingRootTests.swift, Tests/FoundationModelsRouterTests/SessionSidecarTests.swift
     - next: /review
   timestamp: 2026-10-22T01:07:24.747892+00:00
+- actor: claude-code
+  id: 01m5gjt0pvvrgthf0va80y1j0c
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (ed7b7c27): 0 findings, 0 confirmed, 0 refuted; 14 pairs attempted, 0 failed; 6 files reviewed, 4 `.kanban/` files excluded by .reviewignore. Contract check against FoundationModelsExtras (SessionQuery.includesRecorded "False: only the live sessions. True: also the sessions that are on disk only, the archived ones too"; SessionSummary.isLive "in memory now"; SessionDirectory.summary(of:) "nil when no session has this id"; InMemorySessionDirectoryState.summaries(matching:) filter `query.includesRecorded || summary.isLive`, archive sets isLive false, summary(of:) answers non-live entries): Router matches. Without includesRecorded it gives live only; with it, it merges recorded root sessions (isLive false, archived ones included) with live winning on the same id; summary(of:) falls back to the recorded summary with no flag, as the fake does. sessions.jsonl written by the directory per the settled user decision.
+    - next: none; task moved to done.
+  timestamp: 2026-10-22T01:15:02.235632+00:00
+- actor: claude-code
+  id: 01m5gjtwvmzqha2vcq19w0r7rf
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — RecordedSessions.swift (new), RouterSessionDirectory.swift, tests
+    - test: green — swift test, 2080/36/19
+    - commit: ed7b7c27
+    - review: clean — 0 findings; Extras contract matched
+  timestamp: 2026-10-22T01:15:31.060352+00:00
 depends_on:
 - 01M5F3EMARATMXFR829ZMNM17K
 - 01M5F42DYA5TD84E9CYK176PRD
 - 01M5F3FCP6BTAZ5Q8FB6PEYQXN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffaa80
 title: 'ROUTER-3: includesRecorded gives the root sessions on disk through SessionIndex, the sidecar and facts.json'
 ---
 ## Goal

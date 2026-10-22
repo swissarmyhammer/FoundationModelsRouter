@@ -402,6 +402,20 @@ struct SlotPoolLoaderTests {
         #expect(modelLoader.evictedTypes == [String(describing: ForeignEmbedding.self)])
     }
 
+    @Test("an Extras pool of the live loader counts the footprint that its model loader measures")
+    func poolCountsFootprintOfLiveLoaderModelLoader() async throws {
+        let modelLoader = RecordingPoolLoader()
+        let pool = FoundationModelsExtras.ModelPool(
+            loader: Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in }))
+        let key = ModelPoolKey(ref: Self.ref, role: .embedding)
+
+        let hold = try await pool.acquire(key)
+
+        #expect(try await pool.admittedFootprint.resident == [key: Self.measuredFootprintBytes])
+        #expect(modelLoader.measuredKeys == [key])
+        withExtendedLifetime(hold) {}
+    }
+
     @Test("a generation load of the live loader goes to its model loader, and the resolution progress shows the download")
     @MainActor
     func liveGenerationLoadReportsDownloadToResolutionProgress() async throws {
@@ -478,21 +492,41 @@ struct SlotPoolLoaderTests {
         .loading,
     ]
 
+    /// The footprint that ``RecordingPoolLoader`` measures for each key. It
+    /// differs from ``footprintBytes``, so a pool that counts it got it from
+    /// the measure, not from a caller.
+    private static let measuredFootprintBytes: Int64 = 4_321
+
     /// A model loader in place of `MLXModelLoader`. It records each key it
-    /// loads and the type of each container it evicts, and reports
-    /// ``reportedSteps``. It gives a
+    /// loads, each key it measures and the type of each container it evicts,
+    /// and reports ``reportedSteps``. It gives a
     /// ``ForeignEmbedding`` for an embedding key, and a ``ForeignContainer``
     /// for a generation key: a real `MLXLanguageModel` would need the metal
-    /// library when the live loader wraps it.
+    /// library when the live loader wraps it. It measures
+    /// ``measuredFootprintBytes`` for each key.
     private final class RecordingPoolLoader: PooledModelLoader {
-        /// The keys and the evicted container types, under one lock.
-        private let recorded = Mutex<(keys: [ModelPoolKey], evicted: [String])>(([], []))
+        /// The loaded keys, the measured keys and the evicted container types,
+        /// under one lock.
+        private let recorded = Mutex<(keys: [ModelPoolKey], measured: [ModelPoolKey], evicted: [String])>(
+            ([], [], []))
 
         /// The keys of each load, in the order the loads came.
         var loadedKeys: [ModelPoolKey] { recorded.withLock { $0.keys } }
 
+        /// The keys of each measure, in the order the measures came.
+        var measuredKeys: [ModelPoolKey] { recorded.withLock { $0.measured } }
+
         /// The type of each evicted container, in the order of the evictions.
         var evictedTypes: [String] { recorded.withLock { $0.evicted } }
+
+        /// Records `key`, and measures ``measuredFootprintBytes`` for it.
+        ///
+        /// - Parameter key: The model that the pool loaded.
+        /// - Returns: ``measuredFootprintBytes``.
+        func footprintBytes(of key: ModelPoolKey) async throws -> Int64 {
+            recorded.withLock { $0.measured.append(key) }
+            return SlotPoolLoaderTests.measuredFootprintBytes
+        }
 
         func load(_ key: ModelPoolKey) async throws -> any Sendable {
             try await load(key: key) { _ in }
