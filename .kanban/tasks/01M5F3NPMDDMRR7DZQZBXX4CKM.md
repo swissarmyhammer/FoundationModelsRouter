@@ -33,10 +33,27 @@ comments:
     - evidence: 5 files — Tests/FoundationModelsRouterTests/Helpers/TranscriptPromptTexts.swift (new), Helpers/SessionEventCollection.swift, AgentMessagePromptTextTests.swift, PromptHookTests.swift, RouterSessionDirectoryLauncherTests.swift (+ card finding flipped to [x]). `swift build --build-tests` OK, no source warnings; `swift test --filter "AgentMessagePromptText|PromptHook|RouterSessionDirectoryLauncher|ReasoningTokenLimit"` 47 tests in 8 suites passed.
     - next: /review
   timestamp: 2026-10-22T16:04:39.030434+00:00
+- actor: claude-code
+  id: 01m5j5wrc1w837aewjddhkxndh
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (4255a750): 0 findings (0 confirmed, 0 refuted; 7 attempted, 0 failed, 0 skipped validators); 5 files reviewed, 2 .kanban/ files excluded by .reviewignore. Prior `## Review Findings (2026-10-22 10:58)` item (reuse/reuse) is checked.
+    - next: none — task moved to done
+  timestamp: 2026-10-22T16:07:49.377876+00:00
+- actor: wballard
+  id: 01m5j5x79t2j1n62m7e45yjs4s
+  text: |-
+    ### finish iteration 2 — clean
+    - iteration 1: implement changed (fc51d482), test green per implementer (2116), review findings — AgentMessagePromptTextTests.swift:106 reuse/reuse
+    - implement: changed — one shared Transcript.promptTexts helper
+    - test: green — swift test 2116 passed, 9 known issues
+    - commit: 4255a750
+    - review: clean — 0 findings, 1/1 prior checked; card in done
+  timestamp: 2026-10-22T16:08:04.666621+00:00
 depends_on:
 - 01M5F3N4646VMYQWK4S17NH345
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffffffb080
 title: 'ROUTER-4: The model sees a message from another session as untrusted input with its sender'
 ---
 ## Goal
