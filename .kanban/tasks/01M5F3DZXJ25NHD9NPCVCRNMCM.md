@@ -52,6 +52,15 @@ comments:
     - implement: stuck — the finding conflicts with a documented contract: SessionSidecarWriter logs and drops a failed write by design, SessionSidecarTests.sessionWithUnwritableSidecarStillForksAndGenerates pins best-effort writes, and the public makeSession does not throw
     - needs a human decision: (a) move both writes into makeRoutedSessionActor and keep best-effort, (b) make vend/fork/restore throw (public API change), or (c) refute the finding
   timestamp: 2026-10-21T22:05:41.439883+00:00
+- actor: claude-code
+  id: 01m5hrx97ekm6whrt3b6z1fq0q
+  text: |-
+    ### decision (user, 2026-10-22)
+    - Replace session.json + facts.json with one index.md per session folder: markdown with frontmatter holding the facts and the restore data, plus an open-ended body that Router keeps as-is. No backward compatibility, so no reader for the old pair (ARCHITECTURE.md, all packages).
+    - Saves go through the Extras FrontmatterDocument save, which by default writes to a temp file and swaps it into place.
+    - A failed save is logged and the session keeps working. That settles the RoutedSessionActor.swift:1037 finding as best-effort, with the write moved out of the initializer.
+    - The rework gets its own cards; this card is superseded by them.
+  timestamp: 2026-10-22T12:20:55.150940+00:00
 depends_on:
 - 01M5F3D4VMZDN4VPA8D2MY7ET8
 position_column: review
