@@ -14,9 +14,9 @@ import Testing
 struct TranscriptEventSchemaTests {
     private static let fixedInstant = Date(timeIntervalSinceReferenceDate: 2_000.25)
 
-    /// The `ts` of a hand-written transcript line, as the whole-second ISO
-    /// 8601 text a recorder writes.
-    private static let recordedTimestamp = "2001-01-01T00:00:00Z"
+    /// The `ts` of a hand-written transcript line, as the ISO 8601 text with
+    /// milliseconds a recorder writes.
+    private static let recordedTimestamp = "2001-01-01T00:00:00.000Z"
 
     // MARK: - New Kind cases
 

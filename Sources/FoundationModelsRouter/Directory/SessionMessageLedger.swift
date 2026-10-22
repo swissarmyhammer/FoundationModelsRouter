@@ -33,13 +33,15 @@ struct SessionMessageLedger: Sendable {
     }
 
     /// `date` at the precision a line of the ledger keeps: the ISO 8601 date
-    /// of a `JSONLFile` line holds whole seconds. A message stamped with this
-    /// instant reads back from the file equal to the message in memory.
+    /// of a `JSONLFile` line holds milliseconds, the text of the Extras
+    /// `DateTime`. A message stamped with this instant reads back from the
+    /// file equal to the message in memory.
     ///
     /// - Parameter date: An instant.
-    /// - Returns: The instant at the start of its whole second.
+    /// - Returns: The instant rounded to the nearest millisecond, as the line
+    ///   writes it.
     static func recordedInstant(of date: Date) -> Date {
-        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
+        DateTime(date).date
     }
 
     /// The messages to the session, in the order of their delivery, each with

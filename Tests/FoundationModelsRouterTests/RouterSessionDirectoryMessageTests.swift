@@ -211,6 +211,49 @@ import Testing
         let sent = [try #require(sentFromSession), try #require(sentFromUI)]
         #expect(await target.awaitIdle())
         await fixture.closeSessions([sender, target])
+        let (inbox, restored) = try await Self.inboxAfterARestore(of: target.id, in: fixture)
+
+        #expect(inbox == sent)
+        #expect(inbox.first?.inReplyTo == answered)
+        #expect(inbox.last?.from == .user(clientID: Self.clientID))
+        #expect(inbox.map(\.chainDepth) == [1, 1])
+        await restored.close()
+        await fixture.close([])
+    }
+
+    /// The production change that makes this test fail: a `sentAt` stamped
+    /// at the start of its whole second, which reads back earlier than the
+    /// send.
+    @Test func theSentAtOfAMessageReadsBackAfterARestoreToTheMillisecond() async throws {
+        let fixture = try await Self.makeFixture()
+        let target = fixture.makeSession()
+        let sendStart = DateTime(Date())
+        _ = try await fixture.directory.send(
+            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
+        let sendEnd = DateTime(Date())
+        #expect(await target.awaitIdle())
+        await fixture.closeSessions([target])
+
+        let (inbox, restored) = try await Self.inboxAfterARestore(of: target.id, in: fixture)
+
+        let sentAt = DateTime(try #require(inbox.first).sentAt)
+        #expect(sendStart <= sentAt)
+        #expect(sentAt <= sendEnd)
+        await restored.close()
+        await fixture.close([])
+    }
+
+    /// Restores a closed session of `fixture` on a new router over the same
+    /// recordings, as a host does after a restart, and reads its inbox there.
+    ///
+    /// - Parameters:
+    ///   - id: The id of a closed root session of `fixture`.
+    ///   - fixture: The fixture of the test.
+    /// - Returns: The inbox of the restored session, every message with no
+    ///   read mark, and the restored session. The caller closes it.
+    private static func inboxAfterARestore(
+        of id: ULID, in fixture: Fixture
+    ) async throws -> (inbox: [SessionMessage], restored: any RoutedSession) {
         let recorder = await fixture.router.recorder
         let resumingRouter = RouterTestFixtures.makeRouter(
             id: fixture.router.id, cacheDir: fixture.directories.cacheDir,
@@ -218,16 +261,9 @@ import Testing
             loader: StubModelLoader(container: BasicLLMContainer(), dimension: RouterTestFixtures.stubDimension))
         let resumingProfile = try await resumingRouter.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let restored = try await resumingProfile.standard.restoreSession(id: target.id)
-
-        let inbox = try await resumingRouter.sessionDirectory.inbox(of: target.id, markRead: false)
-
-        #expect(inbox == sent)
-        #expect(inbox.first?.inReplyTo == answered)
-        #expect(inbox.last?.from == .user(clientID: Self.clientID))
-        #expect(inbox.map(\.chainDepth) == [1, 1])
-        await restored.session.close()
-        await fixture.close([])
+        let restored = try await resumingProfile.standard.restoreSession(id: id)
+        let inbox = try await resumingRouter.sessionDirectory.inbox(of: id, markRead: false)
+        return (inbox, restored.session)
     }
 
     /// The inbox of a recorded session that is not live reads its ledger

@@ -4,10 +4,25 @@ comments:
   id: 01m5janp1ac52yx26z9wgpabrj
   text: 'Extras landed fractional seconds: feature 4024c7d, on origin/main at 8f00461. Dates are written rounded to the millisecond (2026-10-22T10:58:03.123Z), and only that exact form is read; a whole-second date throws DecodingError.dataCorrupted.'
   timestamp: 2026-10-22T17:31:20.491001+00:00
+- actor: claude-code
+  id: 01m5jb0nf870sj9dn1ah5pjtvn
+  text: 'Research (implement). Pin bumped: `swift package update FoundationModelsExtras` resolved main at 8f00461 (Package.resolved is gitignored, so no diff). First full run on the new pin: 2109 tests, 32 issues in MergedTranscriptPublicSurfaceTests, OperationEventsPublicSurfaceTests, ProjectRegistryTests, RepetitionStopRestoreTests, StoredRecoveriesKeyTests (fixture PreRequestRenameRecording/transcript.jsonl), TranscriptEventSchemaTests, TranscriptReconstructionTests. JSONLFile skips undecodable lines without throwing, so passing tests can hide stale lines too. Grep found: (1) `recordedTimestamp = "2001-01-01T00:00:00Z"` in three suites; (2) `ISO8601Format()` in MergedTranscriptPublicSurfaceTests; (3) ProjectRegistryTests first/secondVisitText; (4) the PreRequestRenameRecording fixture; (5) Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording transcript.jsonl has NUMERIC `ts` (timeIntervalSinceReferenceDate). The IntegrationTests RecordedTranscriptCompactionIntegrationTests read it through TranscriptTree.load, so every line was already being skipped; it gets the millisecond form too; (6) `JSONLines` (the facts.json coders, also used by tests to encode TranscriptEvent lines) uses `.iso8601`, which writes whole seconds. Its doc says it matches the JSONLFile line coders, and the card names SessionFacts, so it moves to the millisecond form through Extras'' public `DateTime` (ISO8601JSON is `package` access, so Router cannot call it). Whole-second stamping: `SessionMessageLedger.recordedInstant(of:)` (floors to the second), called from `RouterSessionDirectory.delivered`. `theRecordReadsBackAfterTheTargetIsRestored` asserts `inbox == sent`. Extras rounds to the nearest millisecond, so an unstamped `Date()` would read back up to 0.5 ms off and break that equality. The stamp therefore moves to the millisecond through `DateTime(date).date` (Extras owns the precision) instead of being dropped with nothing in its place.'
+  timestamp: 2026-10-22T17:37:20.360574+00:00
+- actor: claude-code
+  id: 01m5jbp6207nwxspyr2rr0ny4d
+  text: 'Implementation landed (TDD). RED was watched on the pre-feature Extras 827bdae, set in the gitignored Package.resolved for one run and then put back with `swift package update`. That run failed both new tests for the expected reasons: RecorderTests `jsonlKeepsSubSecondTimestamps` (events.map(\.ts) == [first, second] failed, because whole-second ts made the two stamps equal) and RouterSessionDirectoryMessageTests `theSentAtOfAMessageReadsBackAfterARestoreToTheMillisecond` (sendStart <= sentAt failed, because sentAt was floored). After the re-bump (Extras main is now 447344d, two commits past 8f00461, tests only) the ts test was green and sentAt still red. `SessionMessageLedger.recordedInstant(of:)` now rounds to the nearest millisecond through Extras `DateTime(date).date` instead of flooring to the second, and sentAt went green. `inbox == sent` in theRecordReadsBackAfterTheTargetIsRestored still holds. The restore steps of that test moved into a shared helper `inboxAfterARestore(of:in:)`. JSONLines (facts.json coders): RED in SessionFactsTests (millisecond archivedAt round trip, the byte text `2025-08-24T01:46:40.123Z`, and a new `aWholeSecondDateIsRefused`), then GREEN with a DateTime encoder and a strict decoder that, like Extras ISO8601JSON, takes only the exact millisecond text. No whole-second fallback anywhere. Tests and fixtures moved to the millisecond form: recordedTimestamp in TranscriptReconstructionTests, OperationEventsPublicSurfaceTests and TranscriptEventSchemaTests; MergedTranscriptPublicSurfaceTests ts (ISO8601FormatStyle with fractional seconds); ProjectRegistryTests (the ACPAgent byte-compatibility section is renamed "The line format", since the millisecond form ends that compatibility and ARCHITECTURE.md keeps none); SessionMessageLedgerTests sentAt (now inside a second); the stale RecorderTests and SessionRecordPublicSurfaceTests docs; the PreRequestRenameRecording fixture (6 lines); and the CompactionRecording fixture (31 numeric ts converted to milliseconds, checked against a computed table, every other byte unchanged; its README now records the edit). A hidden one: RestoredRenderCounterTests.appendUnfinishedCall wrote its line with a default JSONEncoder (numeric ts), so the reader skipped it and "a later call of the root is not read" passed without reading the line. It now appends through JSONLFile and still passes. Discovered, not in this card: IntegrationTests/Package.resolved (gitignored) pinned Extras 39c9cde, which has no JSONLFile, so the IntegrationTests package did not compile at HEAD. I bumped it locally to 447344d, and RecordedTranscriptCompactionIntegrationTests.theRecordingCarriesTheShapeRealTrafficHas passes with the converted fixture (29 entries, all six kinds). The fixture README still says "30-entry transcript". The count is 29 because a later rule drops the failed-answer close at seq 6; that is stale doc unrelated to ts and was left as is. Verification: `swift build --build-tests` has zero warnings from our code (the only warning is SwiftPM''s "missing creator for mutated node" for the mlx-swift_Cmlx bundle, present before any change). `swift test`: 2112 tests in 259 suites passed, 9 known issues (the same 9 as before), plus 19 and 33 in the other test products.'
+  timestamp: 2026-10-22T17:49:05.472226+00:00
+- actor: claude-code
+  id: 01m5jbpfcbkesvr3e7hecmmyr4
+  text: |-
+    ### implement — changed
+    - evidence: 16 files. Sources/FoundationModelsRouter/Directory/SessionMessageLedger.swift, Sources/FoundationModelsRouter/Recording/JSONLines.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionRecordPublicSurfaceTests.swift, Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/01M0BGQR2DV5T0P9XQ1PS05K8V/transcript.jsonl, Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/README.md, Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/transcript.jsonl, Tests/FoundationModelsRouterTests/{MergedTranscriptPublicSurfaceTests, OperationEventsPublicSurfaceTests, ProjectRegistryTests, RecorderTests, RestoredRenderCounterTests, RouterSessionDirectoryMessageTests, SessionFactsTests, SessionMessageLedgerTests, TranscriptEventSchemaTests, TranscriptReconstructionTests}.swift. Package.resolved (gitignored) now resolves Extras at 447344d (8f00461 or later). `swift build --build-tests` has 0 warnings from our code; `swift test` passed 2112 tests in 259 suites, 0 failures, 9 known issues as before.
+    - next: /review
+  timestamp: 2026-10-22T17:49:15.019124+00:00
 depends_on:
 - 01M5HS4WD0VANN9Y288S9DFTDP
-position_column: todo
-position_ordinal: 9d80
+position_column: doing
+position_ordinal: '80'
 title: 'ROUTER: sub-second ts and sentAt on disk once Extras JSONLFile writes fractional seconds; drop whole-second stamping'
 ---
 ## Goal
@@ -22,14 +37,14 @@ Transcript `ts` and message `sentAt` keep sub-second precision on disk again, an
 - Extras decision (2026-10-22): `ISO8601JSON`, which serves JSONLFile and every other user, writes fractional seconds and reads ONLY that format, with no whole-second fallback. So every Router test and fixture that writes a whole-second date line must switch to fractional seconds. ^s9dftdp rewrote eleven test files and one fixture transcript to whole seconds; find them all, and also any SessionFacts or other JSON that goes through ISO8601JSON.
 
 ## Subtasks
-- [ ] Failing test first: two transcript events 10 ms apart read back in order with distinct `ts`; a delivered message's `sentAt` survives a restore to the millisecond.
-- [ ] Remove the whole-second stamping.
+- [x] Failing test first: two transcript events 10 ms apart read back in order with distinct `ts`; a delivered message's `sentAt` survives a restore to the millisecond.
+- [x] Remove the whole-second stamping.
 
 ## Acceptance Criteria
-- [ ] Sub-second `ts` and `sentAt` survive a write and a read.
+- [x] Sub-second `ts` and `sentAt` survive a write and a read.
 
 ## Tests
-- [ ] `swift test` passes.
+- [x] `swift test` passes.
 
 ## Workflow
 - Use `/tdd`. Blocked until the Extras sha arrives. #recording #cross-repo

@@ -1,5 +1,7 @@
 import Foundation
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -19,9 +21,37 @@ import Testing
 @Suite("Recorder")
 struct RecorderTests {
     /// A fixed instant so stamped timestamps are deterministic in assertions.
-    /// It falls on a whole second, because a transcript line keeps its `ts`
-    /// to the whole second.
+    /// It falls on a whole millisecond, because a transcript line keeps its
+    /// `ts` to the millisecond.
     private static let fixedInstant = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    /// The first stamp of the sub-second test, in milliseconds since 1970: a
+    /// time inside a second, not at its start.
+    private static let subSecondStartMilliseconds: Int64 = 1_792_000_000_123
+
+    /// The gap between the two stamps of the sub-second test, in
+    /// milliseconds: less than one second.
+    private static let subSecondGapMilliseconds: Int64 = 10
+
+    /// A clock that gives the instants of a list in turn, one for each call.
+    private final class InstantSequence: Sendable {
+        /// The instants that the next calls give, in order.
+        private let remaining: Mutex<[Date]>
+
+        /// Makes a clock over `instants`.
+        ///
+        /// - Parameter instants: The instants, in the order the calls get them.
+        init(_ instants: [Date]) {
+            remaining = Mutex(instants)
+        }
+
+        /// The next instant of the list.
+        ///
+        /// - Returns: The first instant that no earlier call got.
+        func next() -> Date {
+            remaining.withLock { $0.removeFirst() }
+        }
+    }
 
     /// Builds a sample partial event with the given kind; provenance ids are
     /// fresh ULIDs and the optional metering fields are populated.
@@ -84,6 +114,30 @@ struct RecorderTests {
         #expect(decoded.map(\.seq) == [0, 1, 2])
         #expect(decoded.map(\.kind) == [.session, .prompt, .response])
         #expect(decoded.allSatisfy { $0.ts == Self.fixedInstant })
+    }
+
+    /// The production change that makes this test fail: a `transcript.jsonl`
+    /// line that keeps its `ts` to the whole second, so both events read back
+    /// with one `ts` and lose their order in time.
+    @Test("jsonl keeps two events 10 ms apart in order, each with its own ts")
+    func jsonlKeepsSubSecondTimestamps() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = DateTime(millisecondsSince1970: Self.subSecondStartMilliseconds).date
+        let second = DateTime(
+            millisecondsSince1970: Self.subSecondStartMilliseconds + Self.subSecondGapMilliseconds
+        ).date
+        let clock = InstantSequence([first, second])
+        let recorder: JSONLRecorder = .jsonl(directory: dir, now: { clock.next() })
+
+        await recorder.append(samplePartial(kind: .prompt), to: nil)
+        await recorder.append(samplePartial(kind: .response), to: nil)
+
+        let fileURL = dir.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        let events = try JSONLFile(url: fileURL).records(as: TranscriptEvent.self)
+        #expect(events.map(\.kind) == [.prompt, .response])
+        #expect(events.map(\.ts) == [first, second])
     }
 
     @Test("jsonl swallows a forced write error instead of throwing")

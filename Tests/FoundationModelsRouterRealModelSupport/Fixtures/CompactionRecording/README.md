@@ -37,7 +37,11 @@ nests under, and it requires a root session to sit DIRECTLY under the root it is
 given. So the session directory sits here, which is the same shape the router
 writes for a session vended with a per-session `recordingRoot:`.
 
-Neither recorded file was edited. Both are byte-for-byte what the router wrote.
+`session.json` is byte-for-byte what the router wrote. `transcript.jsonl` is too,
+with one edit: the router wrote each `ts` as a number of seconds since the
+reference date, and a recording is now read only with each `ts` as ISO 8601 text
+in UTC with milliseconds (task `^p6xesjn`). Each `ts` was rewritten to that
+text, rounded to the nearest millisecond, and nothing else in the line changed.
 The recording run's own router id is not a path segment here, but it is not lost
 either: `session.json` carries it as `routerId`.
 

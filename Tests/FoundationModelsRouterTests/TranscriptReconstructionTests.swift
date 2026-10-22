@@ -283,9 +283,9 @@ struct TranscriptReconstructionTests {
     private static let stubDimension = 8
     private static let cannedText = "canned response"
 
-    /// The `ts` of a hand-written transcript line, as the whole-second ISO
-    /// 8601 text a recorder writes.
-    private static let recordedTimestamp = "2001-01-01T00:00:00Z"
+    /// The `ts` of a hand-written transcript line, as the ISO 8601 text with
+    /// milliseconds a recorder writes.
+    private static let recordedTimestamp = "2001-01-01T00:00:00.000Z"
 
     /// Makes a new temporary directory with the name of this suite, through
     /// the shared ``RouterTestFixtures/makeTempDir(prefix:)``. The caller

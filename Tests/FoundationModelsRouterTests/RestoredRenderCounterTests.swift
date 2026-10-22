@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -309,13 +310,15 @@ struct RestoredRenderCounterTests {
 
     /// Appends to the recorded transcript of `sessionId` one call of a later
     /// submission that asked for a tool and then stopped before it recorded
-    /// its entries, as a process that stops in a tool loop leaves it.
+    /// its entries, as a process that stops in a tool loop leaves it. The line
+    /// goes through the Extras `JSONLFile`, as the recorder writes each line,
+    /// so its `ts` is the text the read takes.
     ///
     /// - Parameters:
     ///   - sessionId: The session whose transcript gets the call.
     ///   - routerId: The router that owns the recording.
     ///   - routerDirectory: The recording root of the router.
-    /// - Throws: Whatever reading or writing the transcript throws.
+    /// - Throws: Whatever reading or appending to the transcript throws.
     private static func appendUnfinishedCall(toSession sessionId: ULID, routerId: ULID, under routerDirectory: URL)
         throws
     {
@@ -325,8 +328,6 @@ struct RestoredRenderCounterTests {
         let transcriptURL = routerDirectory
             .appendingPathComponent(sessionId.description, isDirectory: true)
             .appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let existing = try String(contentsOf: transcriptURL, encoding: .utf8)
-        let line = try #require(String(data: try JSONEncoder().encode(unfinishedEvent), encoding: .utf8))
-        try (existing + line + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+        try JSONLFile(url: transcriptURL).append(unfinishedEvent)
     }
 }

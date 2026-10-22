@@ -42,9 +42,9 @@ struct OperationEventsPublicSurfaceTests {
     /// The completion token every event in this suite is correlated under.
     private static let correlationID = "01AN4Z07BY79KA1307SR9X4MV3"
 
-    /// The wall-clock stamp of the fixture line, as the whole-second ISO 8601
-    /// text a recorder writes.
-    private static let recordedTimestamp = "2001-01-01T00:00:00Z"
+    /// The wall-clock stamp of the fixture line, as the ISO 8601 text with
+    /// milliseconds a recorder writes.
+    private static let recordedTimestamp = "2001-01-01T00:00:00.000Z"
 
     // MARK: - The read
 

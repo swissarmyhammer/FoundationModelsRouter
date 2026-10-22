@@ -159,36 +159,36 @@ import Testing
         #expect(warnings == 1)
     }
 
-    // MARK: - ACPAgent compatibility
+    // MARK: - The line format
 
-    /// One line of `projects.jsonl` byte for byte as the ACPAgent
-    /// `ProjectRegistry` wrote it: sorted keys, unescaped slashes, RFC 3339
-    /// dates, one newline after the record.
+    /// One line of `projects.jsonl` byte for byte: sorted keys, unescaped
+    /// slashes, RFC 3339 dates in UTC with milliseconds, one newline after
+    /// the record.
     ///
     /// - Parameters:
     ///   - project: The project directory the line names.
     ///   - lastSeen: The RFC 3339 text of `lastSeen`; `firstSeen` is always
     ///     ``firstVisitText``.
     /// - Returns: The line, with its newline.
-    private static func acpAgentLine(for project: URL, lastSeen: String) -> String {
+    private static func registryLine(for project: URL, lastSeen: String) -> String {
         "{\"firstSeen\":\"\(firstVisitText)\",\"lastSeen\":\"\(lastSeen)\",\"path\":\"\(project.path)\"}\n"
     }
 
-    /// ``firstVisit`` as the ACPAgent code serialized it.
-    private static let firstVisitText = "2025-08-24T01:46:40Z"
+    /// ``firstVisit`` as a line of the registry writes it.
+    private static let firstVisitText = "2025-08-24T01:46:40.000Z"
 
-    /// ``secondVisit`` as the ACPAgent code serialized it.
-    private static let secondVisitText = "2025-08-25T05:33:20Z"
+    /// ``secondVisit`` as a line of the registry writes it.
+    private static let secondVisitText = "2025-08-25T05:33:20.000Z"
 
-    /// A file the ACPAgent code wrote reads back to the same records, in file
+    /// A file of hand-written lines reads back to the same records, in file
     /// order.
-    @Test func anACPAgentRegistryFileReadsToTheSameRecords() throws {
+    @Test func aRegistryFileReadsToTheSameRecords() throws {
         let fixture = Fixture()
         let first = try fixture.makeProjectDirectory(named: "alpha")
         let second = try fixture.makeProjectDirectory(named: "beta")
         try fixture.writeRegistryText(
-            Self.acpAgentLine(for: first, lastSeen: Self.secondVisitText)
-                + Self.acpAgentLine(for: second, lastSeen: Self.firstVisitText))
+            Self.registryLine(for: first, lastSeen: Self.secondVisitText)
+                + Self.registryLine(for: second, lastSeen: Self.firstVisitText))
 
         let records = try fixture.registry.projects()
 
@@ -199,14 +199,14 @@ import Testing
             ])
     }
 
-    /// A session start in a new working directory writes the same bytes the
-    /// ACPAgent code wrote for it.
-    @Test func recordSessionStartWritesTheACPAgentBytes() throws {
+    /// A session start in a new working directory writes one line in the
+    /// line format.
+    @Test func recordSessionStartWritesTheRegistryLine() throws {
         let fixture = Fixture()
         let project = try fixture.makeProjectDirectory(named: "alpha")
 
         try fixture.registry.recordSessionStart(workingDirectory: project, at: Self.firstVisit)
 
-        #expect(try fixture.registryText() == Self.acpAgentLine(for: project, lastSeen: Self.firstVisitText))
+        #expect(try fixture.registryText() == Self.registryLine(for: project, lastSeen: Self.firstVisitText))
     }
 }

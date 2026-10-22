@@ -15,10 +15,10 @@ import Testing
     /// The UI client that sends the UI messages of a test.
     private static let clientID = "client-a"
 
-    /// A delivery time on a whole second — the precision of the ISO 8601
-    /// dates of a `JSONLFile` line — so a test sees the time read back
-    /// exactly.
-    private static let sentAt = Date(timeIntervalSinceReferenceDate: 783_000_000)
+    /// A delivery time inside a second, on a whole millisecond — the
+    /// precision of the ISO 8601 dates of a `JSONLFile` line — so a test sees
+    /// the time read back exactly, milliseconds included.
+    private static let sentAt = DateTime(millisecondsSince1970: 1_761_307_200_456).date
 
     /// The chain depth of the messages of a test, other than the depth 1 of
     /// a UI message, so a test sees the depth read back.

@@ -86,11 +86,14 @@ struct MergedTranscriptPublicSurfaceTests {
         /// The event's body text, which the assertions read back.
         let text: String
 
-        /// The wall-clock stamp, as the whole-second ISO 8601 text a recorder
-        /// writes: ``seq`` seconds after the reference date. It rises with
-        /// ``seq``, so `(ts, seq)` and `seq` agree on the order the merge must
-        /// produce.
-        var ts: String { Date(timeIntervalSinceReferenceDate: TimeInterval(seq)).ISO8601Format() }
+        /// The wall-clock stamp, as the ISO 8601 text with milliseconds a
+        /// recorder writes: ``seq`` seconds after the reference date. It rises
+        /// with ``seq``, so `(ts, seq)` and `seq` agree on the order the merge
+        /// must produce.
+        var ts: String {
+            Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+                .format(Date(timeIntervalSinceReferenceDate: TimeInterval(seq)))
+        }
     }
 
     /// The lines the session at `offset` records, newest first.

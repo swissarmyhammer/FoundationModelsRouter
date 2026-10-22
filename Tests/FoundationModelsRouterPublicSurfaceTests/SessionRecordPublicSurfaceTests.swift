@@ -12,7 +12,8 @@ import FoundationModelsRouter
 /// `public` stops this file from compiling before a single test runs.
 @Suite("ProjectRegistry and ProjectRegistryRecord over a plain import")
 struct SessionRecordPublicSurfaceTests {
-    /// A whole second, so the RFC 3339 round trip of a record is exact.
+    /// A whole second, and so a whole millisecond, the precision of the RFC
+    /// 3339 date a line keeps, so the round trip of a record is exact.
     private static let wholeSecond = Date(timeIntervalSince1970: 1_756_000_000)
 
     /// A fresh directory under the temp directory. The OS reclaims it.

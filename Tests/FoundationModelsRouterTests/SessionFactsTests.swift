@@ -9,9 +9,15 @@ import Testing
 /// `session.json`. Every test writes into its own throwaway session
 /// directory under the temp directory.
 @Suite struct SessionFactsTests {
-    /// The instant every made value is archived at, in seconds since 1970.
-    /// A whole second, so the date round trip is exact.
-    private static let archivedSecondSince1970: TimeInterval = 1_756_000_000
+    /// The instant every made value is archived at, in milliseconds since
+    /// 1970. It falls inside a second, so a file that keeps whole seconds
+    /// does not read it back.
+    private static let archivedMillisecondsSince1970: Int64 = 1_756_000_000_123
+
+    /// The instant every made value is archived at.
+    private static var archivedAt: Date {
+        DateTime(millisecondsSince1970: archivedMillisecondsSince1970).date
+    }
 
     /// The bytes of the write-once sidecar the overwrite tests put beside
     /// `facts.json`.
@@ -34,7 +40,7 @@ import Testing
             title: "Review the login change",
             startedBy: ULID.generate(),
             origin: .tool,
-            archivedAt: Date(timeIntervalSince1970: archivedSecondSince1970))
+            archivedAt: archivedAt)
     }
 
     /// A write followed by a read gives an equal value, the folder agent id,
@@ -142,13 +148,15 @@ import Testing
     }
 
     /// The file holds the facts in the record encoding the other Recording
-    /// files share: one line, sorted keys, RFC 3339 dates and unescaped
-    /// slashes.
+    /// files share: one line, sorted keys, RFC 3339 dates in UTC with
+    /// milliseconds and unescaped slashes.
+    ///
+    /// The production change that makes this test fail: a `facts.json` date
+    /// written with whole seconds, as the JSONL lines no longer are.
     @Test func theFileIsWrittenInTheSharedRecordEncoding() throws {
         let directory = try Self.makeSessionDirectory()
         let facts = SessionFacts(
-            agentID: "folder:/agents/reviewer", tags: ["review"],
-            archivedAt: Date(timeIntervalSince1970: Self.archivedSecondSince1970))
+            agentID: "folder:/agents/reviewer", tags: ["review"], archivedAt: Self.archivedAt)
 
         try facts.write(to: directory)
 
@@ -156,9 +164,24 @@ import Testing
             contentsOf: directory.appendingPathComponent(SessionFacts.fileName), encoding: .utf8)
         #expect(
             text == """
-                {"agentID":"folder:/agents/reviewer","archivedAt":"2025-08-24T01:46:40Z",\
+                {"agentID":"folder:/agents/reviewer","archivedAt":"2025-08-24T01:46:40.123Z",\
                 "schemaVersion":1,"tags":["review"]}
                 """)
+    }
+
+    /// A date with whole seconds only is not the text the file writes, so the
+    /// read refuses it rather than reading a different instant.
+    ///
+    /// The production change that makes this test fail: a `facts.json`
+    /// reader that still takes whole-second dates.
+    @Test func aWholeSecondDateIsRefused() throws {
+        let directory = try Self.makeSessionDirectory()
+        let text = "{\"archivedAt\":\"2025-08-24T01:46:40Z\"}"
+        try Data(text.utf8).write(to: directory.appendingPathComponent(SessionFacts.fileName))
+
+        #expect(throws: DecodingError.self) {
+            try SessionFacts.read(from: directory)
+        }
     }
 
     /// The origin is the Extras `SessionDirectoryOrigin`, by its raw value.
