@@ -40,7 +40,11 @@ import Synchronization
 /// as a `Mail` by the delivery rules of ROUTER-5, restores a recorded target
 /// through the launcher, or starts a session of an agent for it, keeps each
 /// delivered message in the ledger of its target (``SessionMessageLedger``,
-/// ROUTER-4), and sends `messageDelivered`; ``inbox(of:markRead:)`` and
+/// ROUTER-4) with its chain depth, and sends `messageDelivered`. Each send
+/// passes the loop guards of ``SessionMessageLimits`` first (ROUTER-5): the
+/// chain depth, the sends of one turn, the targets of one tag send and the
+/// length of the text. No guard limits the sessions that work at the same
+/// time. ``inbox(of:markRead:)`` and
 /// ``message(_:to:)`` read that ledger, and a read mark withdraws the mail
 /// that still waits. ``addTags(_:to:)``, ``removeTags(_:from:)``,
 /// ``setTitle(_:of:)`` and ``setAdditionalDirectories(to:for:)`` change the
@@ -65,10 +69,25 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// live, and that left the directory or closed before its mail went out.
     static let notLiveReason = "not live"
 
-    /// The chain depth of each message until ROUTER-5 computes it from the
-    /// turn of the sender: the depth of a message from a user turn or from a
-    /// UI.
+    /// The chain depth of a message from a UI, from a user turn, or from a
+    /// session outside a turn: the first message of a chain. A message that
+    /// a turn sends has the depth of the deepest message of that turn plus
+    /// one (``chainDepth(of:in:)``).
     static let firstChainDepth = 1
+
+    /// The sends that one turn of a session made, for the guard of
+    /// ``SessionMessageLimits/maxSendsPerTurn``.
+    struct TurnSends {
+        /// The mail ids of the turn: the ids of the origin of the turn
+        /// (``OriginContext/current``). A mail that joins the turn adds its
+        /// id, so the turn keeps its count.
+        var mailIDs: Set<MailID>
+
+        /// The sends that the turn made.
+        var count: Int
+    }
+
+
 
     /// One registered session: a weak hold on it, and the facts of the
     /// directory that the session does not hold.
@@ -136,8 +155,21 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// leaves the map when it ends.
     private var restores: [ULID: Task<any RoutedSession, any Error>] = [:]
 
+    /// The loop guards that ``send(_:)`` applies to each message (ROUTER-5).
+    private let limits: SessionMessageLimits
+
+    /// The sends of the last turn of each session that sent from a turn, by
+    /// session id (``countSend(from:in:)``). A new turn of the session
+    /// replaces the entry, so a session holds one entry at most.
+    private var turnSends: [ULID: TurnSends] = [:]
+
     /// Makes an empty directory.
-    public init() {}
+    ///
+    /// - Parameter limits: The loop guards of each send. The default is the
+    ///   guard table of session.md section 5.7; a test lowers them.
+    public init(limits: SessionMessageLimits = SessionMessageLimits()) {
+        self.limits = limits
+    }
 
     // MARK: - Registry
 
@@ -597,7 +629,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// and acts on the decision:
     ///
     /// - Each live target gets the message as a `Mail` in its own mail queue,
-    ///   with the sender in its transcript (``deliver(_:to:)``). The receipt
+    ///   with the sender in its transcript (``deliver(_:chainDepth:to:)``). The receipt
     ///   follows the delivery rules of ROUTER-5: `delivered` for an idle
     ///   target, whose mail starts a turn, and `queued` for a working target
     ///   or one that needs input, whose mail waits in its queue for the end
@@ -606,45 +638,150 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   sessions that work at the same time has no limit (D72).
     /// - A recorded target that is not live is restored through the
     ///   launcher, and then gets the message as a live target does
-    ///   (``restoreThenDeliver(_:to:)``). A restore that throws is a
+    ///   (``restoreThenDeliver(_:chainDepth:to:)``). A restore that throws is a
     ///   `refused` receipt with the text of the error.
     /// - An agent with no live root session gets a new one through the
     ///   launcher, with origin `message` and the message as its first
-    ///   message, and the receipt is `started` (``startAgent(_:in:for:)``).
+    ///   message, and the receipt is `started`
+    ///   (``startAgent(_:in:for:chainDepth:)``).
     /// - A refusal of the resolver is a `refused` receipt with its reason
     ///   and target. An archived target is one: it is never restored.
     ///
+    /// The loop guards of ``SessionMessageLimits`` apply to each sender
+    /// (ROUTER-5). A text longer than the limit throws before the address is
+    /// resolved. After the resolve, a send of a turn after the most sends of
+    /// one turn (``countSend(from:in:)``), or a send above the deepest chain
+    /// (``chainDepth(of:in:)``), is one `refused` receipt with no target. A
+    /// tag send delivers to its first targets up to the limit, and each other
+    /// target gets a `refused` receipt (``deliver(_:chainDepth:toEach:)``).
+    ///
+    /// The turn of a session sender is the origin of the work that runs the
+    /// send (``OriginContext/current``), read before the first `await`. The
+    /// sender's tool call makes the send inside its turn, so its origin is in
+    /// scope here, also for the first tool call of the turn, before the event
+    /// feed of the directory has seen that turn.
+    ///
     /// Each delivered message goes into the ledger of its target
-    /// (``SessionMessageLedger``) with the chain depth
-    /// ``firstChainDepth``, and a `messageDelivered` event follows it.
+    /// (``SessionMessageLedger``) with its chain depth, and a
+    /// `messageDelivered` event follows it.
     ///
     /// - Parameter message: The sender, the address, the text and the reply
     ///   id of the message.
     /// - Returns: One receipt for each target session.
-    /// - Throws: `SessionDirectoryError.unknownSession` for a session sender
-    ///   or a session id target that no live or recorded session has,
-    ///   `SessionDirectoryError.noLauncher` when an agent address must start
-    ///   a session or a recorded target must be restored with no launcher,
-    ///   the start errors of the launcher for an agent address,
-    ///   `JSONLFileError.readFailed(description:)` when the `messages.jsonl`
-    ///   of a target exists and does not read, or the error of the recording
-    ///   roots of the host.
+    /// - Throws: `SessionDirectoryError.messageTooLong(limit:)` for a text
+    ///   longer than the limit, `SessionDirectoryError.unknownSession` for a
+    ///   session sender or a session id target that no live or recorded
+    ///   session has, `SessionDirectoryError.noLauncher` when an agent
+    ///   address must start a session or a recorded target must be restored
+    ///   with no launcher, the start errors of the launcher for an agent
+    ///   address, `JSONLFileError.readFailed(description:)` when the
+    ///   `messages.jsonl` of a target or of the sender exists and does not
+    ///   read, or the error of the recording roots of the host.
     public func send(_ message: OutgoingSessionMessage) async throws -> [SessionSendReceipt] {
+        let turn = OriginContext.current
+        guard message.text.utf8.count <= limits.maxMessageBytes else {
+            throw SessionDirectoryError.messageTooLong(limit: limits.maxMessageBytes)
+        }
         let recorded = try await recordedSummaries()
         let resolution = try message.to.resolution(from: message.from, among: liveSummaries()) { id in
             recorded.first { $0.id == id }
         }
+        let chainDepth = try await chainDepth(of: message.from, in: turn)
+        if let refusal = countSend(from: message.from, in: turn) ?? refusal(ofChainDepth: chainDepth) {
+            return [SessionSendReceipt(outcome: .refused, reason: refusal)]
+        }
         switch resolution {
         case .deliver(let targets):
-            return try targets.map { try deliver(message, to: $0) }
+            return try deliver(message, chainDepth: chainDepth, toEach: targets)
         case .restoreThenDeliver(let id):
             let summary = try Self.recordedSummary(of: id, in: recorded)
-            return [try await restoreThenDeliver(message, to: summary)]
+            return [try await restoreThenDeliver(message, chainDepth: chainDepth, to: summary)]
         case .startAgent(let agentID, let folder):
-            return [try await startAgent(agentID, in: folder, for: message)]
+            return [try await startAgent(agentID, in: folder, for: message, chainDepth: chainDepth)]
         case .refused(let reason, let target):
             return [SessionSendReceipt(target: target, outcome: .refused, reason: reason)]
         }
+    }
+
+    /// The chain depth of a message that `sender` sends in `turn`: one more
+    /// than the deepest message of the turn, by the ledger of the sender. The
+    /// mail ids of the turn are the ids of the messages the turn answers, and
+    /// the ledger of the sender holds each message the directory delivered
+    /// to it.
+    ///
+    /// A UI sender, a sender outside a turn, and a turn that no directory
+    /// message started (a user turn) give ``firstChainDepth``.
+    ///
+    /// - Parameters:
+    ///   - sender: The sender of the message.
+    ///   - turn: The origin of the work that runs the send.
+    /// - Returns: The chain depth.
+    /// - Throws: The error of a read of the ledger of the sender, or the
+    ///   error of the recording roots of the host.
+    private func chainDepth(of sender: SessionMessageSender, in turn: Origin) async throws -> Int {
+        guard let id = sender.sessionID, case .mail(let mailIDs) = turn,
+            let ledger = try await knownLedger(of: id)
+        else { return Self.firstChainDepth }
+        let turnDepth = mailIDs.compactMap { ledger.message($0)?.chainDepth }.max()
+        return turnDepth.map { $0 + 1 } ?? Self.firstChainDepth
+    }
+
+    /// Counts a send of `sender` in `turn`, for the guard of
+    /// ``SessionMessageLimits/maxSendsPerTurn``.
+    ///
+    /// The count is keyed by the mail ids of the turn: a turn that shares no
+    /// mail id with the last counted turn of the sender is a new turn, and
+    /// starts a new count. A mail that joins the running turn adds its id to
+    /// the origin of the turn, so the turn keeps its count. A UI sender and a
+    /// sender outside a turn have no turn, so this guard does not apply to
+    /// them.
+    ///
+    /// - Parameters:
+    ///   - sender: The sender of the message.
+    ///   - turn: The origin of the work that runs the send.
+    /// - Returns: The reason of the refusal when the turn already made the
+    ///   most sends, else `nil` after the send is counted.
+    private func countSend(from sender: SessionMessageSender, in turn: Origin) -> String? {
+        guard let id = sender.sessionID, case .mail(let mailIDs) = turn else { return nil }
+        let sameTurn = turnSends[id].flatMap { $0.mailIDs.isDisjoint(with: mailIDs) ? nil : $0 }
+        var sends = sameTurn ?? TurnSends(mailIDs: [], count: 0)
+        guard sends.count < limits.maxSendsPerTurn else { return limits.tooManySendsReason }
+        sends.mailIDs.formUnion(mailIDs)
+        sends.count += 1
+        turnSends[id] = sends
+        return nil
+    }
+
+    /// The refusal of a message of `chainDepth`.
+    ///
+    /// - Parameter chainDepth: The chain depth of a message.
+    /// - Returns: The reason of the refusal above
+    ///   ``SessionMessageLimits/maxChainDepth``, else `nil`.
+    private func refusal(ofChainDepth chainDepth: Int) -> String? {
+        chainDepth > limits.maxChainDepth ? limits.chainTooDeepReason : nil
+    }
+
+    /// Delivers `message` to each live session of `targets`, in order, up to
+    /// ``SessionMessageLimits/maxTagTargets``; each other target gets a
+    /// `refused` receipt with the reason of the limit. Only a tag address
+    /// resolves to more than one target.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - chainDepth: The chain depth of the message.
+    ///   - targets: The session ids of the live targets, in order.
+    /// - Returns: One receipt for each target, in the order of `targets`.
+    /// - Throws: The errors of ``deliver(_:chainDepth:to:)``.
+    private func deliver(
+        _ message: OutgoingSessionMessage, chainDepth: Int, toEach targets: [ULID]
+    ) throws -> [SessionSendReceipt] {
+        let delivered = try targets.prefix(limits.maxTagTargets).map {
+            try deliver(message, chainDepth: chainDepth, to: $0)
+        }
+        let refused = targets.dropFirst(limits.maxTagTargets).map {
+            SessionSendReceipt(target: $0, outcome: .refused, reason: limits.tooManyTargetsReason)
+        }
+        return delivered + refused
     }
 
     /// Delivers `message` to the live session `id`: puts its mail in the mail
@@ -661,17 +798,20 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameters:
     ///   - message: The message.
+    ///   - chainDepth: The chain depth of the message.
     ///   - id: The session id of a live target.
     /// - Returns: The `delivered` or `queued` receipt, or a `refused`
     ///   receipt as not live.
     /// - Throws: The error of a read of the ledger of the session, or a
     ///   refusal of the mail other than a closed session.
-    private func deliver(_ message: OutgoingSessionMessage, to id: ULID) throws -> SessionSendReceipt {
+    private func deliver(
+        _ message: OutgoingSessionMessage, chainDepth: Int, to id: ULID
+    ) throws -> SessionSendReceipt {
         guard let session = liveSession(id), let outcome = deliveryOutcome(of: id) else {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
         let ledger = try ledger(of: id, in: Self.ledgerDirectory(of: session))
-        let delivered = Self.delivered(message, to: id)
+        let delivered = Self.delivered(message, chainDepth: chainDepth, to: id)
         do {
             _ = try session.mail(
                 mail(
@@ -706,7 +846,7 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Restores the recorded session of `summary` through the launcher
     /// (ROUTER-8), makes it live in the directory, and delivers `message` to
-    /// it (``deliver(_:to:)``), where its mail starts a turn.
+    /// it (``deliver(_:chainDepth:to:)``), where its mail starts a turn.
     ///
     /// A session that this router restores registered itself when the
     /// restore vended it. A session from another router is not in the
@@ -715,13 +855,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameters:
     ///   - message: The message.
+    ///   - chainDepth: The chain depth of the message.
     ///   - summary: The recorded summary of the target, which is not live.
     /// - Returns: The receipt of the delivery, or a `refused` receipt with
     ///   the text of the error when the restore throws.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
-    ///   launcher, or the errors of ``deliver(_:to:)``.
+    ///   launcher, or the errors of ``deliver(_:chainDepth:to:)``.
     private func restoreThenDeliver(
-        _ message: OutgoingSessionMessage, to summary: SessionSummary
+        _ message: OutgoingSessionMessage, chainDepth: Int, to summary: SessionSummary
     ) async throws -> SessionSendReceipt {
         guard let launcher else { throw SessionDirectoryError.noLauncher }
         let session: any RoutedSession
@@ -733,7 +874,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         if !isRegistered(session: session) {
             register(session, kind: summary.kind, parentID: summary.parentID)
         }
-        return try deliver(message, to: summary.id)
+        return try deliver(message, chainDepth: chainDepth, to: summary.id)
     }
 
     /// Restores the recorded session `id` through `launcher`, or joins the
@@ -779,12 +920,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - folder: The folder of the address, else the folder of the sender
     ///     session, or `nil` for a user sender with no folder.
     ///   - message: The message.
+    ///   - chainDepth: The chain depth of the message.
     /// - Returns: The `started` receipt, with the new session as its target.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
     ///   launcher, the error of the launcher, the refusal of the first mail,
     ///   or the error of a read of the ledger of the new session.
     private func startAgent(
-        _ agentID: String, in folder: URL?, for message: OutgoingSessionMessage
+        _ agentID: String, in folder: URL?, for message: OutgoingSessionMessage, chainDepth: Int
     ) async throws -> SessionSendReceipt {
         let request = SessionStartRequest(
             agentID: agentID, workingDirectory: folder, firstMessage: message.text,
@@ -793,7 +935,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         let session = try await launch(
             request,
             firstMail: mail(id: messageID, carrying: message.text, from: request.startedBy, inReplyTo: message.inReplyTo))
-        let delivered = Self.delivered(message, id: messageID, to: session.id)
+        let delivered = Self.delivered(message, id: messageID, chainDepth: chainDepth, to: session.id)
         keep(delivered, in: try ledger(of: session.id, in: Self.ledgerDirectory(of: session)))
         return SessionSendReceipt(messageID: messageID, target: session.id, outcome: .started)
     }
@@ -803,17 +945,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameters:
     ///   - message: The message.
     ///   - id: The id of the mail that carries it. The default is a new id.
+    ///   - chainDepth: The chain depth of the message.
     ///   - target: The session id of the target.
-    /// - Returns: The delivered message, not read, with the chain depth
-    ///   ``firstChainDepth``, sent now at the precision of the ledger
+    /// - Returns: The delivered message, not read, with `chainDepth`, sent
+    ///   now at the precision of the ledger
     ///   (``SessionMessageLedger/recordedInstant(of:)``), so the message a
     ///   restore reads back equals the one delivered.
     private static func delivered(
-        _ message: OutgoingSessionMessage, id: MailID = MailID(), to target: ULID
+        _ message: OutgoingSessionMessage, id: MailID = MailID(), chainDepth: Int, to target: ULID
     ) -> SessionMessage {
         SessionMessage(
             id: id, from: message.from, to: target, text: message.text, inReplyTo: message.inReplyTo,
-            sentAt: SessionMessageLedger.recordedInstant(of: Date()), chainDepth: firstChainDepth)
+            sentAt: SessionMessageLedger.recordedInstant(of: Date()), chainDepth: chainDepth)
     }
 
     /// Records `delivered` in `ledger`, the ledger of its target, holds the
