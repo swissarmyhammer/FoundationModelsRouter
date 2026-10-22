@@ -15,7 +15,7 @@ import Synchronization
 /// ``register(_:kind:parentID:requestedByClient:)`` can build one too.
 ///
 /// The directory starts a root session through the ``SessionLauncher`` that
-/// the host gives with ``useLauncher(_:)`` (ROUTER-8), because Router cannot
+/// the host gives with ``use(launcher:)`` (ROUTER-8), because Router cannot
 /// compose the tools of a session and does not know the agent catalog.
 /// ``shutdown()`` releases the launcher again.
 ///
@@ -101,7 +101,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     private let state = Mutex<Registry>(Registry())
 
     /// The launcher that ``start(_:)`` starts each root session through, or
-    /// `nil` before ``useLauncher(_:)`` and after ``shutdown()``. A directory
+    /// `nil` before ``use(launcher:)`` and after ``shutdown()``. A directory
     /// with no launcher throws `noLauncher` from ``start(_:)``.
     private var launcher: (any SessionLauncher)?
 
@@ -339,7 +339,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// replaces the launcher, and ``shutdown()`` releases it.
     ///
     /// - Parameter launcher: The launcher of the host.
-    public func useLauncher(_ launcher: any SessionLauncher) {
+    public func use(launcher: any SessionLauncher) {
         self.launcher = launcher
     }
 
@@ -348,7 +348,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The directory holds the launcher, and the launcher makes surfaces that
     /// hold the directory, so the host calls this at shutdown to break that
     /// loop. After the call, ``start(_:)`` throws `noLauncher` until the next
-    /// ``useLauncher(_:)``. The streams end after the lock is released,
+    /// ``use(launcher:)``. The streams end after the lock is released,
     /// because the end of a stream takes the lock to leave the directory.
     public func shutdown() {
         launcher = nil
@@ -384,7 +384,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   before `start` returns.
     public func start(_ request: SessionStartRequest) async throws -> SessionSummary {
         guard let launcher else { throw SessionDirectoryError.noLauncher }
-        let session = try await launcher.launchRootSession(request)
+        let session = try await launcher.launchRootSession(for: request)
         try admit(session: session, startedFor: request)
         _ = try session.mail(Self.firstMail(of: request))
         guard let summary = try await summary(of: session.id) else {

@@ -104,12 +104,12 @@ The states are `working`, `needsInput`, `idle` and `archived`. The events are `s
 
   ```swift
   public protocol SessionLauncher: Sendable {
-      func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession
-      func restoreSession(_ id: ULID) async throws -> any RoutedSession
+      func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession
+      func restoreSession(id: ULID) async throws -> any RoutedSession
   }
   ```
 
-  The host sets the launcher with `directory.useLauncher(_:)` after it makes both objects. The directory releases it at shutdown, to break the reference loop at run time (the directory holds the launcher, and the launcher makes surfaces that hold the directory). With no launcher, `start`, and a send that needs a start or a restore, throw `noLauncher`.
+  The host sets the launcher with `directory.use(launcher:)` after it makes both objects. The directory releases it at shutdown, to break the reference loop at run time (the directory holds the launcher, and the launcher makes surfaces that hold the directory). With no launcher, `start`, and a send that needs a start or a restore, throw `noLauncher`.
 - **The agent of a start may be nil.** `SessionStartRequest.agentID` and `workingDirectory` are optional. The launcher in ACPAgent (ACPA-9) resolves them: with no folder, the folder of `startedBy` (AG-5); with no agent, the `AGENT.md` of the folder, else the default agent (D71). An unknown agent id throws `unknownAgent` with the near names. The session that the launcher returns has the resolved agent id in its configuration, and the directory writes it to `facts.json` (ROUTER-1).
 - **Why:** The Router cannot compose the tools of a session and does not know the agent catalog. A port keeps ACPAgent and FoundationModelsAgents out of Router (constraint 2 of the plan, D23, D61, D71).
 - **Depends on:** ROUTER-3.

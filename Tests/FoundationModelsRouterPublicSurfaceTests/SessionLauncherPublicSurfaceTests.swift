@@ -22,7 +22,7 @@ struct SessionLauncherPublicSurfaceTests {
         /// - Returns: Nothing.
         /// - Throws: `SessionDirectoryError.unknownAgent` for
         ///   ``SessionLauncherPublicSurfaceTests/unknownAgentID``.
-        func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession {
+        func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
             throw SessionDirectoryError.unknownAgent(SessionLauncherPublicSurfaceTests.unknownAgentID, nearNames: [])
         }
 
@@ -31,7 +31,7 @@ struct SessionLauncherPublicSurfaceTests {
         /// - Parameter id: The session id.
         /// - Returns: Nothing.
         /// - Throws: `SessionDirectoryError.unknownSession`.
-        func restoreSession(_ id: ULID) async throws -> any RoutedSession {
+        func restoreSession(id: ULID) async throws -> any RoutedSession {
             throw SessionDirectoryError.unknownSession(id)
         }
     }
@@ -46,7 +46,7 @@ struct SessionLauncherPublicSurfaceTests {
     @Test("a host's launcher gets the start of the router's directory")
     func aHostLauncherGetsTheStart() async throws {
         let directory = Router(pool: ModelPool()).sessionDirectory
-        await directory.useLauncher(AgentlessLauncher())
+        await directory.use(launcher: AgentlessLauncher())
 
         await #expect(throws: SessionDirectoryError.unknownAgent(Self.unknownAgentID, nearNames: [])) {
             try await directory.start(Self.request)
@@ -57,7 +57,7 @@ struct SessionLauncherPublicSurfaceTests {
     @Test("after shutdown, a start throws noLauncher")
     func afterShutdownAStartThrowsNoLauncher() async throws {
         let directory = Router(pool: ModelPool()).sessionDirectory
-        await directory.useLauncher(AgentlessLauncher())
+        await directory.use(launcher: AgentlessLauncher())
 
         await directory.shutdown()
 

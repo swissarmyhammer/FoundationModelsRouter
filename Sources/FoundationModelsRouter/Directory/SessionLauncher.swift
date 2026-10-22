@@ -6,7 +6,7 @@ import FoundationModelsExtras
 /// the host makes each session; the directory only asks for one.
 ///
 /// The host gives its launcher to the directory with
-/// ``RouterSessionDirectory/useLauncher(_:)`` after it makes both objects,
+/// ``RouterSessionDirectory/use(launcher:)`` after it makes both objects,
 /// and ``RouterSessionDirectory/shutdown()`` releases it again: the directory
 /// holds the launcher, and the launcher makes surfaces that hold the
 /// directory. With no launcher, ``RouterSessionDirectory/start(_:)`` throws
@@ -45,7 +45,7 @@ public protocol SessionLauncher: Sendable {
     /// - Throws: `SessionDirectoryError.unknownAgent(_:nearNames:)` when the
     ///   agent id names no agent, `SessionDirectoryError.notADirectory(_:)`
     ///   when the folder is not a folder, or the error of the host.
-    func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession
+    func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession
 
     /// Restores the recorded session `id`, with the tools that the host gives
     /// it, so a message can reach a session that is not live (ROUTER-5).
@@ -54,5 +54,5 @@ public protocol SessionLauncher: Sendable {
     /// - Returns: The restored session.
     /// - Throws: `SessionDirectoryError.unknownSession(_:)` when no recorded
     ///   session has this id, or the error of the restore.
-    func restoreSession(_ id: ULID) async throws -> any RoutedSession
+    func restoreSession(id: ULID) async throws -> any RoutedSession
 }

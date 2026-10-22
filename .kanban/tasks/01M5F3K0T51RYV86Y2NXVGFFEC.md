@@ -40,12 +40,23 @@ comments:
     - commit: 599f90fb
     - open: 3 swift/fluent-usage findings conflict with the documented SessionLauncher contract (session.md 5.4, Multitool session.md ROUTER-8): useLauncher(_:) RouterSessionDirectory.swift:239, launchRootSession(_ request:) SessionLauncher.swift:48, restoreSession(_ id:) SessionLauncher.swift:57 — needs a human to change the spec or correct the rule
   timestamp: 2026-10-21T23:32:32.453026+00:00
+- actor: claude-code
+  id: 01m5j0cre855tccbakv44c4xmp
+  text: |-
+    Applied the user decision (2026-10-22): renamed `useLauncher(_:)` to `use(launcher:)`, `launchRootSession(_ request:)` to `launchRootSession(for request:)` and `restoreSession(_ id:)` to `restoreSession(id:)`, with no old names kept. Updated the protocol, RouterSessionDirectory (declaration, the call in start, three DocC links), FakeSessionLauncher, the public-surface conformance and its two calls, and the three calls plus the suite doc of RouterSessionDirectoryLauncherTests. `rg 'useLauncher|launchRootSession\(_|restoreSession\(_'` over Sources and Tests finds nothing. Specs: Router session.md 5.4 (protocol block and the use(launcher:) sentence); Multitool session.md dependency-inversion bullet and ROUTER-8 Spec line. TestudoApp foundationmodels-router.md names only the bare `launchRootSession`/`restoreSession`, so it needed no edit. The other cards: ROUTER-5 (^6kq5bqd) `launcher.restoreSession(id)` became `launcher.restoreSession(id: id)`; ^17nh345 and ROUTER-11 name only the bare names. Title, What and the two subtasks that named useLauncher on this card now use the new names; the three findings are checked.
+
+    Discovery: three tests of RouterSessionDirectoryLauncherTests fail on most runs, and they fail the same way at HEAD 10f141bf with my changes stashed (checked over 3 runs): startSendsExactlyOneStartedWithTheFactsOfTheRequest, startWritesTheFactsALauncherDidNotCopy, startRegistersASessionFromAnotherRouter. Cause: ROUTER-9 (0ac457bf) landed after these tests and sends stateChanged(working) for the first turn that start's first message begins, so the next event after started/factsChanged is that stateChanged instead of the marker, and the started summary (idle) differs from the summary start returns (working). Not caused by the rename. New card ^y9p28dy (01M5J0C1HTQBGEBJPW8Y9P28DY) tracks the fix. The card's Tests item "swift test --filter ... passes" is therefore not true today.
+
+    ### implement — changed
+    - evidence: swift build --build-tests: 0 errors, 0 warnings from code. swift test --skip-build --filter "RouterSessionDirectory|SessionLauncherPublicSurface": SessionLauncherPublicSurface 2/2 passed; FoundationModelsRouterTests 72 tests in 7 suites, 1 to 3 failing per run, all in the three pre-existing race tests above (fail at HEAD too). Files: Sources/FoundationModelsRouter/Directory/SessionLauncher.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryLauncherTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift, session.md, .kanban/tasks/01M5F3K0T51RYV86Y2NXVGFFEC.md, .kanban/tasks/01M5F3PESH74WZB1EDN6KQ5BQD.md, new .kanban/tasks/01M5J0C1HTQBGEBJPW8Y9P28DY.md; other repos (not committed): FoundationModelsMultitool/session.md.
+    - next: fix ^y9p28dy (or decide it rides on this card), then /review
+  timestamp: 2026-10-22T14:31:42.280535+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F3GXDWVK2X4CKF7KTDQB5Z
-position_column: review
-position_ordinal: '8880'
-title: 'ROUTER-8: SessionLauncher port, directory.useLauncher(_:), start(_:), and shutdown()'
+position_column: doing
+position_ordinal: '80'
+title: 'ROUTER-8: SessionLauncher port, directory.use(launcher:), start(_:), and shutdown()'
 ---
 ## Goal
 Add the `SessionLauncher` protocol that the host fills, so the directory can start a new root session and restore a recorded one without knowing the agent catalog or the tools of a session.
@@ -59,23 +70,23 @@ Add the `SessionLauncher` protocol that the host fills, so the directory can sta
 - New `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Sources/FoundationModelsRouter/Directory/SessionLauncher.swift`:
   ```swift
   public protocol SessionLauncher: Sendable {
-      func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession
-      func restoreSession(_ id: ULID) async throws -> any RoutedSession
+      func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession
+      func restoreSession(id: ULID) async throws -> any RoutedSession
   }
   ```
   Doc comment: the launcher resolves the folder (none: the folder of `startedBy`, AG-5) and the agent (none: the folder's `AGENT.md`, else the default agent, D71); an unknown agent throws `SessionDirectoryError.unknownAgent(_:nearNames:)`. Router stores only the resolved agent id (ROUTER-1).
 - `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift`:
-  - `public func useLauncher(_ launcher: any SessionLauncher)` and `public func shutdown()`, which releases the launcher (it breaks the run-time loop: the directory holds the launcher, the launcher makes surfaces that hold the directory) and finishes the open `events()` streams.
+  - `public func use(launcher: any SessionLauncher)` and `public func shutdown()`, which releases the launcher (it breaks the run-time loop: the directory holds the launcher, the launcher makes surfaces that hold the directory) and finishes the open `events()` streams.
   - `start(_:)`: no launcher throws `.noLauncher`; else call `launchRootSession` with the request as it came (a nil agent and a nil folder stay nil). The returned session registers itself when `makeSession` vends it (registration card), and that registration sends the one `started` event. So the request's facts must be in the session before it registers: the launcher contract (doc comment) says the launcher copies `tags`, `title`, `startedBy`, `origin` and `requestedByClient` from the request into the `SessionConfiguration` it vends with. Add `requestedByClient: String?` to `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Sources/FoundationModelsRouter/Session/SessionConfiguration.swift` (not persisted, like `hookOrigin`), and pass it to `register` so `started` carries it. `start` never sends a second `started`. If the returned session's facts lack a request fact (a launcher that broke the contract), `start` writes it with `updateFacts` and sends `factsChanged`; a session from another router is registered by `start` itself. Then deliver `request.firstMessage` as the first mail: `MailBody.agentMessage(from: startedBy, content:)` with sender `.session(startedBy)` when `startedBy` is set, else `.userMessage`. The first message starts a turn.
   - `restoreSession` is used by ROUTER-5 (a message to a recorded session); this card only adds the requirement.
 - Fake launcher for tests: `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterTests/Helpers/FakeSessionLauncher.swift` (records each request, vends scripted-model sessions from a test router).
 
 ## Subtasks
 - [x] Failing test first: with no launcher, `start(_:)` throws `noLauncher`.
-- [x] Add the protocol, `useLauncher`, and `start`; a test that the fake launcher gets the request unchanged (nil agent stays nil).
+- [x] Add the protocol, `use(launcher:)`, and `start`; a test that the fake launcher gets the request unchanged (nil agent stays nil).
 - [x] The returned session is in the directory; exactly one `started` comes, and that event already holds the request's tags, title, `startedBy`, origin and `requestedByClient`; the first message starts a turn (the scripted model answers).
 - [x] `shutdown()` releases the launcher (a weak reference to the fake becomes nil) and ends the open event streams.
-- [x] Public surface test that conforms a type to `SessionLauncher` and calls `useLauncher` without `@testable`.
+- [x] Public surface test that conforms a type to `SessionLauncher` and calls `use(launcher:)` without `@testable`.
 
 ## Acceptance Criteria
 - [x] `start` with no launcher throws `SessionDirectoryError.noLauncher`.
@@ -99,12 +110,12 @@ Add the `SessionLauncher` protocol that the host fills, so the directory can sta
 > 4 file(s) not reviewed — excluded by an ignore rule:
 > - `.kanban/ (from .reviewignore)` — 4 file(s)
 
-- [ ] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:239` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Providing a launcher is not a value-preserving conversion. Change signature to `public func useLauncher(launcher: any SessionLauncher)` to label the parameter.
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:239` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Providing a launcher is not a value-preserving conversion. Change signature to `public func useLauncher(launcher: any SessionLauncher)` to label the parameter.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:307` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Admitting a session is not a value-preserving conversion. Change signature to `private func admit(session: any RoutedSession, startedFor request: SessionStartRequest)` to label the parameter.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:322` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Checking if a session is registered is not a value-preserving conversion. Change signature to `private nonisolated func isRegistered(session: any RoutedSession)` to label the parameter.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:379` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Completing facts is not a value-preserving conversion. Change signature to `private static func complete(facts: inout SessionFacts, with request: SessionStartRequest)` to label the parameter.
-- [ ] `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:48` `swift/fluent-usage` — First parameter is unlabeled, but should be labeled: 'Omit the first argument label only for value-preserving conversions.' This method creates a session from a request, which is not a value-preserving conversion. Change signature to `func launchRootSession(request: SessionStartRequest) async throws -> any RoutedSession` to label the fundamental parameter.
-- [ ] `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:57` `swift/fluent-usage` — First parameter is unlabeled, but should be labeled: 'Omit the first argument label only for value-preserving conversions.' This method restores a session from an ID, which is not a value-preserving conversion. Change signature to `func restoreSession(id: ULID) async throws -> any RoutedSession` to label the fundamental parameter.
+- [x] `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:48` `swift/fluent-usage` — First parameter is unlabeled, but should be labeled: 'Omit the first argument label only for value-preserving conversions.' This method creates a session from a request, which is not a value-preserving conversion. Change signature to `func launchRootSession(request: SessionStartRequest) async throws -> any RoutedSession` to label the fundamental parameter.
+- [x] `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:57` `swift/fluent-usage` — First parameter is unlabeled, but should be labeled: 'Omit the first argument label only for value-preserving conversions.' This method restores a session from an ID, which is not a value-preserving conversion. Change signature to `func restoreSession(id: ULID) async throws -> any RoutedSession` to label the fundamental parameter.
 - [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:325` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Registering a vended session is not a value-preserving conversion. Change signature to `private func registerVendedSession(session: any RoutedSession, subagentParentID: ULID?, requestedByClient: String?)` to label the first parameter.
 - [x] `Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift:9` `swift/fluent-usage` — First parameter is unlabeled but should be labeled: 'Omit the first argument label only for value-preserving conversions.' Reading the next N events is not a value-preserving conversion. Change signature to `mutating func next(count: Int) async` to label the parameter.
 
@@ -115,5 +126,7 @@ Three of the findings above, all from `swift/fluent-usage` ("Omit the first argu
 - `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:239` wants `useLauncher(launcher:)`. The spec says `directory.useLauncher(_:)`: /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/session.md section 5.4, /Users/wballard/github/swissarmyhammer/FoundationModelsMultitool/session.md (dependency-inversion bullet and ROUTER-8 Spec), and this card's title and What section.
 - `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:48` wants `launchRootSession(request:)`. The spec declares `func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession` in the same two session.md files.
 - `Sources/FoundationModelsRouter/Directory/SessionLauncher.swift:57` wants `restoreSession(id:)`. The spec declares `func restoreSession(_ id: ULID) async throws -> any RoutedSession` in the same two session.md files.
+
+**Decision (user, 2026-10-22): change the spec to fit the rule.** The names become `use(launcher:)` (in place of `useLauncher(_:)`), `launchRootSession(for request: SessionStartRequest)` and `restoreSession(id: ULID)`. Change the code, every caller and DocC link, Router session.md 5.4, Multitool session.md (dependency-inversion bullet and ROUTER-8), and this card's title and What section together. No old names are kept (ARCHITECTURE.md, no backward compatibility). ACPAgent updates its conformance and callers on its own card.
 
 ACPAgent implements `SessionLauncher` against that spec (ACPA-9), so the rule and the documented contract cannot both be obeyed. A person must decide: change the spec documents (Router session.md 5.4, Multitool session.md ROUTER-8, this card) to the labeled forms, or correct the rule. The other five findings (RouterSessionDirectory.swift:307, :322, :379, RoutedLLM.swift:325, SessionDirectoryEventReads.swift:9) are private/internal or test-helper signatures the spec does not name; they are not part of this conflict.

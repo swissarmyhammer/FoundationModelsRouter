@@ -34,7 +34,7 @@ Where a message to a working session waits. The spec says it "waits until the cu
   - **Idle target** (ROUTER-9 state `idle`): mail it now; it starts a turn. Receipt `delivered`.
   - **Working or needsInput target:** the directory holds the message as unread in the ledger and does not mail it yet. Receipt `queued`. When the target's state goes to `idle` (the ROUTER-9 feed), the directory mails all of its unread held messages as one batch, so they start one turn.
   - **Read messages never start a turn:** `inbox(of:markRead: true)` marks the held messages read, and a read message is never mailed later. This is why the directory holds the messages itself: a mail already in the session's own queue (`Session/SessionOutbox.swift`) cannot be withdrawn without a `cancelled` record. If the spec owner prefers withdrawal from the session queue, change this card first.
-  - **Recorded target that is not live** (resolver `restoreThenDeliver`): `launcher.restoreSession(id)` (ROUTER-8), register it, then mail the message; it starts a turn. Receipt `delivered`. A restore that throws gives `refused` with the error text. No launcher throws `noLauncher`.
+  - **Recorded target that is not live** (resolver `restoreThenDeliver`): `launcher.restoreSession(id: id)` (ROUTER-8), register it, then mail the message; it starts a turn. Receipt `delivered`. A restore that throws gives `refused` with the error text. No launcher throws `noLauncher`.
   - **Archived target:** `refused` with the reason "archived" (the resolver already decides it; ROUTER-11 sets the state). The launcher is never called for it.
   - No start and no delivery waits for a free slot: there is no limit on the number of sessions that work at the same time (D72; the model pool controls the load, D7).
 

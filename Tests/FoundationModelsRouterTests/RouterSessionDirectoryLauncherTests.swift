@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// The session launcher port of ``RouterSessionDirectory`` (ROUTER-8):
-/// `useLauncher(_:)`, `start(_:)` and `shutdown()`.
+/// `use(launcher:)`, `start(_:)` and `shutdown()`.
 ///
 /// Each test starts its sessions through a ``FakeSessionLauncher`` that vends
 /// them from a scripted model. A test that must show a stream holds nothing
@@ -51,7 +51,7 @@ import Testing
     private static func makeFixture(copiesRequestFacts: Bool = true) async throws -> Fixture {
         let (router, profile) = try await makeRouter()
         let launcher = FakeSessionLauncher(profile: profile, copiesRequestFacts: copiesRequestFacts)
-        await router.sessionDirectory.useLauncher(launcher)
+        await router.sessionDirectory.use(launcher: launcher)
         return Fixture(router: router, launcher: launcher)
     }
 
@@ -65,6 +65,34 @@ import Testing
         SessionStartRequest(
             firstMessage: firstMessage, tags: tags, title: title, startedBy: startedBy,
             requestedByClient: requestingClient, origin: origin)
+    }
+
+    /// `summary` with the fields that the first turn moves set to those of a
+    /// session at rest: the turn that a start mails runs while the test
+    /// reads, so these fields differ between two reads of one session.
+    ///
+    /// - Parameter summary: A summary of a session that a start mailed its
+    ///   first message to.
+    /// - Returns: The summary with an idle state, no last summary and the
+    ///   creation time as the update time.
+    private static func atRest(_ summary: SessionSummary) -> SessionSummary {
+        var rest = summary
+        rest.state = .idle
+        rest.lastSummary = nil
+        rest.updatedAt = rest.createdAt
+        return rest
+    }
+
+    /// `event` with the summary it holds, if any, at rest.
+    ///
+    /// - Parameter event: An event of the directory.
+    /// - Returns: The event.
+    private static func atRest(_ event: SessionDirectoryEvent) -> SessionDirectoryEvent {
+        switch event {
+        case .started(let summary, let client): .started(atRest(summary), requestedByClient: client)
+        case .factsChanged(let summary): .factsChanged(atRest(summary))
+        default: event
+        }
     }
 
     /// The text of each prompt of `transcript`, in order.
@@ -143,7 +171,7 @@ import Testing
 
         let session = try fixture.launchedSession()
         let summary = try #require(try await fixture.directory.summary(of: session.id))
-        #expect(returned == summary)
+        #expect(Self.atRest(returned) == Self.atRest(summary))
         #expect(summary.kind == .root)
         #expect(summary.tags == Self.tags)
         #expect(summary.title == Self.title)
@@ -160,9 +188,9 @@ import Testing
 
         let summary = try await fixture.directory.start(Self.request())
         fixture.directory.emit(Self.marker)
-        let received = await events.next(count: 2)
+        let received = await events.next(through: Self.marker).map(Self.atRest)
 
-        #expect(received == [.started(summary, requestedByClient: Self.requestingClient), Self.marker])
+        #expect(received == [.started(Self.atRest(summary), requestedByClient: Self.requestingClient), Self.marker])
         #expect(summary.tags == Self.tags)
         #expect(summary.title == Self.title)
         await fixture.launcher.closeSessions()
@@ -215,7 +243,7 @@ import Testing
 
         let summary = try await fixture.directory.start(Self.request(startedBy: startedBy))
         fixture.directory.emit(Self.marker)
-        let received = await events.next(count: 3)
+        let received = await events.next(through: Self.marker).map(Self.atRest)
 
         let session = try fixture.launchedSession()
         let facts = session.facts
@@ -224,7 +252,7 @@ import Testing
         #expect(facts.startedBy == startedBy)
         #expect(facts.origin == Self.origin)
         #expect(received.count == 3)
-        #expect(received.dropFirst() == [.factsChanged(summary), Self.marker])
+        #expect(received.dropFirst() == [.factsChanged(Self.atRest(summary)), Self.marker])
         await fixture.launcher.closeSessions()
     }
 
@@ -237,16 +265,17 @@ import Testing
         let (router, _) = try await Self.makeRouter()
         let (_, otherProfile) = try await Self.makeRouter()
         let launcher = FakeSessionLauncher(profile: otherProfile)
-        await router.sessionDirectory.useLauncher(launcher)
+        await router.sessionDirectory.use(launcher: launcher)
         var events = router.sessionDirectory.events().makeAsyncIterator()
 
         let summary = try await router.sessionDirectory.start(Self.request())
         router.sessionDirectory.emit(Self.marker)
-        let received = await events.next(count: 2)
+        let received = await events.next(through: Self.marker).map(Self.atRest)
 
         let session = try #require(launcher.sessions.only)
-        #expect(try await router.sessionDirectory.summary(of: session.id) == summary)
-        #expect(received == [.started(summary, requestedByClient: Self.requestingClient), Self.marker])
+        let listed = try #require(try await router.sessionDirectory.summary(of: session.id))
+        #expect(Self.atRest(listed) == Self.atRest(summary))
+        #expect(received == [.started(Self.atRest(summary), requestedByClient: Self.requestingClient), Self.marker])
         #expect(summary.tags == Self.tags)
         await launcher.closeSessions()
     }
@@ -261,7 +290,7 @@ import Testing
         do {
             let launcher = FakeSessionLauncher(profile: profile)
             released = launcher
-            await router.sessionDirectory.useLauncher(launcher)
+            await router.sessionDirectory.use(launcher: launcher)
         }
         #expect(released != nil)
 

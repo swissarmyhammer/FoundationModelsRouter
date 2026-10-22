@@ -57,7 +57,7 @@ final class FakeSessionLauncher: SessionLauncher {
     ///
     /// - Parameter request: The start request, as the directory gives it.
     /// - Returns: The vended session.
-    func launchRootSession(_ request: SessionStartRequest) async throws -> any RoutedSession {
+    func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
         let session = profile.standard.makeSession(configuration: configuration(for: request))
         state.withLock { state in
             state.requests.append(request)
@@ -71,7 +71,7 @@ final class FakeSessionLauncher: SessionLauncher {
     /// - Parameter id: The session id.
     /// - Returns: Nothing.
     /// - Throws: `SessionDirectoryError.unknownSession(id)`.
-    func restoreSession(_ id: ULID) async throws -> any RoutedSession {
+    func restoreSession(id: ULID) async throws -> any RoutedSession {
         throw SessionDirectoryError.unknownSession(id)
     }
 
