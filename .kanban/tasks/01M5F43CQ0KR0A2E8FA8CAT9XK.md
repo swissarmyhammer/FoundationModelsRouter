@@ -66,11 +66,28 @@ comments:
     - evidence: 5 files — Tests/FoundationModelsRouterTests/Helpers/SessionDirectorySummaries.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkRestoreTests.swift, RouterSessionDirectoryEventTests.swift, RouterSessionDirectoryRegistrationTests.swift, RouterSessionDirectoryRecordedTests.swift. `swift build --build-tests` complete (exit 0); `swift test --filter RouterSessionDirectory` 72 tests in 7 suites passed. Both runs print one SwiftPM build-graph warning "missing creator for mutated node: .build/out/Products/Debug/mlx-swift_Cmlx.bundle/Contents/MacOS" — from the mlx-swift bundle, not from a changed file. Both Review Findings checked.
     - next: /review
   timestamp: 2026-10-22T14:00:19.239372+00:00
+- actor: claude-code
+  id: 01m5hyrfrq7m81e20rhp534dj6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (a444cad6) — 0 findings (0 confirmed, 0 refuted; 7 files attempted, 5 reviewed, 2 .kanban files excluded by .reviewignore). Both items in the 2026-10-22 08:48 Review Findings are checked.
+    - next: none; task moved to done
+  timestamp: 2026-10-22T14:03:09.463993+00:00
+- actor: claude-code
+  id: 01m5hyrw858fsgjj9dxjz60b19
+  text: |-
+    ### finish iteration 2 — clean
+    - decision: option (a), restoreSessionTree gives live forks
+    - implement: changed — shared SessionDirectorySummaries helper; close() test asserts listed before close
+    - test: green — swift test, 2081 passed, 9 known issues
+    - commit: a444cad6
+    - review: clean — 0 findings, 2/2 prior checked; card in done
+  timestamp: 2026-10-22T14:03:22.245632+00:00
 depends_on:
 - 01M5F3G4HNS9E19VBRV600KVMJ
 - 01M5F41EWV2VJ9EBCJT36A1Y9N
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffac80
 title: 'ROUTER-3: Forks and restored sessions register, and close() leaves the live list'
 ---
 ## Goal
