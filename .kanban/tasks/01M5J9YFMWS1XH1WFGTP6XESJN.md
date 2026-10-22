@@ -19,10 +19,26 @@ comments:
     - evidence: 16 files. Sources/FoundationModelsRouter/Directory/SessionMessageLedger.swift, Sources/FoundationModelsRouter/Recording/JSONLines.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SessionRecordPublicSurfaceTests.swift, Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/01M0BGQR2DV5T0P9XQ1PS05K8V/transcript.jsonl, Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/README.md, Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/transcript.jsonl, Tests/FoundationModelsRouterTests/{MergedTranscriptPublicSurfaceTests, OperationEventsPublicSurfaceTests, ProjectRegistryTests, RecorderTests, RestoredRenderCounterTests, RouterSessionDirectoryMessageTests, SessionFactsTests, SessionMessageLedgerTests, TranscriptEventSchemaTests, TranscriptReconstructionTests}.swift. Package.resolved (gitignored) now resolves Extras at 447344d (8f00461 or later). `swift build --build-tests` has 0 warnings from our code; `swift test` passed 2112 tests in 259 suites, 0 failures, 9 known issues as before.
     - next: /review
   timestamp: 2026-10-22T17:49:15.019124+00:00
+- actor: claude-code
+  id: 01m5jbyfxq5fx4fjbrf1n9s2j4
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (2386810c): 0 findings, 0 confirmed, 0 refuted; 14 attempted, 0 failed; 13 files reviewed, 5 not reviewed (2 .kanban by .reviewignore; 2 fixture transcript.jsonl and CompactionRecording/README.md, no validator matches)
+    - next: done
+  timestamp: 2026-10-22T17:53:37.719897+00:00
+- actor: wballard
+  id: 01m5jbyyhd0amw8jwf87hc5yyx
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — pin at Extras 447344d; millisecond sentAt; fixtures moved to millisecond dates
+    - test: green per implementer — swift test 2112 passed, 9 known issues
+    - commit: 2386810c
+    - review: clean — 0 findings; card in done
+  timestamp: 2026-10-22T17:53:52.685628+00:00
 depends_on:
 - 01M5HS4WD0VANN9Y288S9DFTDP
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffb780
 title: 'ROUTER: sub-second ts and sentAt on disk once Extras JSONLFile writes fractional seconds; drop whole-second stamping'
 ---
 ## Goal
