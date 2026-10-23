@@ -52,4 +52,4 @@ Add `hookSessionKey: String? = nil` to both, passed to the restored root's makeS
 - [x] Failing test: a session restored with restoreSession(hookSessionKey: "k") runs its hooks under session key "k"; without it, under its own id as today
 - [x] Same for restoreSessionTree: the root gets "k", and a restored sub-agent / same-cwd fork inherits it
 - [x] Parameter added to both, with doc comments pointing at SessionConfiguration.hookSessionKey
-- [ ] Reply to foundationmodelsacpagent-a5 with the pushed sha and the exact signatures
+- [x] Reply to foundationmodelsacpagent-a5 with the pushed sha and the exact signatures
