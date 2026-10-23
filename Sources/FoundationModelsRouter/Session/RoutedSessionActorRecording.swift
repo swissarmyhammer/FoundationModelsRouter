@@ -509,7 +509,8 @@ extension RoutedSessionActor {
     ///   - callTiming: The prefill and the decode time of one generation
     ///     call, or `nil`. Only the `.generationCall` kind carries one. Its
     ///     presence also stamps whether the session saw the first token of
-    ///     the call (``TranscriptEvent/firstTokenSeen``).
+    ///     the call (``TranscriptEvent/firstTokenSeen``) and whether its
+    ///     output was buffered (``TranscriptEvent/outputBuffered``).
     ///   - callDuration: The whole time of one generation call, or `nil`.
     ///     Only the `.generationCall` kind carries one.
     ///   - agentSpawn: The spawn context to stamp, or `nil`. Only the
@@ -545,6 +546,7 @@ extension RoutedSessionActor {
             decodeMs: callTiming?.decodeTime?.wholeMilliseconds,
             callMs: callDuration?.wholeMilliseconds,
             firstTokenSeen: callTiming.map { $0.timeToFirstToken != nil },
+            outputBuffered: callTiming?.outputBuffered,
             entry: entry,
             agentSpawn: agentSpawn
         )

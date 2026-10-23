@@ -9,8 +9,8 @@ import Foundation
 /// self-contained JSON object. Schema v2 is additive over v1: `entry`
 /// decodes as `nil` when absent, and ``Kind/toolCall`` still decodes.
 /// ``agentSpawn``, ``tokensCached``, ``timeToFirstTokenMs``, ``decodeMs``,
-/// ``callMs`` and ``firstTokenSeen`` are later optional keys within v2 and
-/// decode as `nil` when absent by the same rule.
+/// ``callMs``, ``firstTokenSeen`` and ``outputBuffered`` are later optional
+/// keys within v2 and decode as `nil` when absent by the same rule.
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
@@ -153,6 +153,13 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// ``timeToFirstTokenMs`` and no ``decodeMs`` because the split is
     /// unknown, not because it is zero.
     public let firstTokenSeen: Bool?
+    /// Whether the output of one generation call reached the session as
+    /// exactly one output event (``GenerationCallUsage/outputBuffered``,
+    /// task ^kg3yjc9). Set on each ``Kind/generationCall`` event; `nil`
+    /// otherwise and on a recording made before this key existed. `true`
+    /// means the event's ``firstTokenSeen`` is `false` by design: the first
+    /// token of a buffered call cannot be seen.
+    public let outputBuffered: Bool?
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records. `nil` for v1 recordings, and for each router-only kind
     /// except ``Kind/repeatedPartRemoval``, ``Kind/watchStop`` and
@@ -220,6 +227,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         decodeMs: Int? = nil,
         callMs: Int? = nil,
         firstTokenSeen: Bool? = nil,
+        outputBuffered: Bool? = nil,
         entry: TranscriptEntryPayload? = nil,
         agentSpawn: SessionRecord.AgentSpawn? = nil
     ) {
@@ -241,6 +249,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         self.decodeMs = decodeMs
         self.callMs = callMs
         self.firstTokenSeen = firstTokenSeen
+        self.outputBuffered = outputBuffered
         self.entry = entry
         self.agentSpawn = agentSpawn
     }
@@ -285,6 +294,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// Whether the session saw the first output token of a generation
         /// call, or `nil`; see ``TranscriptEvent/firstTokenSeen``.
         public let firstTokenSeen: Bool?
+        /// Whether the output of a generation call was buffered, or `nil`;
+        /// see ``TranscriptEvent/outputBuffered``.
+        public let outputBuffered: Bool?
         /// The structural entry payload, or `nil`.
         public let entry: TranscriptEntryPayload?
         /// The spawn context, or `nil`. Set only on a ``Kind/session``
@@ -310,6 +322,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             decodeMs: Int? = nil,
             callMs: Int? = nil,
             firstTokenSeen: Bool? = nil,
+            outputBuffered: Bool? = nil,
             entry: TranscriptEntryPayload? = nil,
             agentSpawn: SessionRecord.AgentSpawn? = nil
         ) {
@@ -329,6 +342,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.decodeMs = decodeMs
             self.callMs = callMs
             self.firstTokenSeen = firstTokenSeen
+            self.outputBuffered = outputBuffered
             self.entry = entry
             self.agentSpawn = agentSpawn
         }
@@ -378,6 +392,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 decodeMs: decodeMs,
                 callMs: callMs,
                 firstTokenSeen: firstTokenSeen,
+                outputBuffered: outputBuffered,
                 entry: entry ?? self.entry,
                 agentSpawn: agentSpawn
             )
@@ -406,6 +421,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 decodeMs: decodeMs,
                 callMs: callMs,
                 firstTokenSeen: firstTokenSeen,
+                outputBuffered: outputBuffered,
                 entry: entry,
                 agentSpawn: agentSpawn
             )

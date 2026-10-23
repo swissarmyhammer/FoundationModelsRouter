@@ -67,8 +67,8 @@ extension RoutedSessionActor {
 
     /// Writes the attributes of one generation call on its span: its tokens
     /// in, cached and out, its whole time, whether the session saw its first
-    /// output token, its prefill and decode times when it did, its finish
-    /// reason and its tool calls.
+    /// output token, whether its output was buffered, its prefill and decode
+    /// times when it saw that token, its finish reason and its tool calls.
     ///
     /// - Parameters:
     ///   - usage: The usage report of the call.
@@ -85,6 +85,7 @@ extension RoutedSessionActor {
         }
         span.attributes[RouterTelemetry.AttributeKey.callMs] = duration.wholeMilliseconds
         span.attributes[RouterTelemetry.AttributeKey.firstTokenSeen] = usage.firstTokenSeen
+        span.attributes[RouterTelemetry.AttributeKey.outputBuffered] = usage.outputBuffered
         if let timeToFirstToken = usage.timeToFirstToken {
             span.attributes[RouterTelemetry.AttributeKey.timeToFirstTokenMs] = timeToFirstToken.wholeMilliseconds
         }

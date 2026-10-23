@@ -25,6 +25,17 @@ enum GenerationCallPhase: Sendable, Equatable {
     /// that gives no output reports it never.
     case firstOutput(at: ContinuousClock.Instant)
 
+    /// The running pass sent its first output event. A pass reports it at
+    /// most one time, and before its ``firstOutput(at:)``. A pass that sends
+    /// no output event reports it never.
+    ///
+    /// The event is the first token of the pass only when a second output
+    /// event follows it, which ``firstOutput(at:)`` reports. A pass that
+    /// reports this phase and no ``firstOutput(at:)`` sent its whole output
+    /// in this one event: its output was buffered, and its first token
+    /// cannot be seen (``GenerationCallUsage/outputBuffered``).
+    case firstOutputEvent
+
     /// The event that tells the consumer of the session about this phase, or
     /// `nil` for a phase the consumer does not see.
     ///
@@ -42,7 +53,7 @@ enum GenerationCallPhase: Sendable, Equatable {
         switch self {
         case .submissionQueued:
             submission.map(SessionEvent.submissionQueued)
-        case .submissionStarted, .passStarted, .passEnded, .firstOutput:
+        case .submissionStarted, .passStarted, .passEnded, .firstOutput, .firstOutputEvent:
             nil
         }
     }
@@ -175,6 +186,15 @@ final class GenerationPassObserver: Sendable {
     /// - Parameter instant: When the first output event of the pass came.
     func passProducedOutput(at instant: ContinuousClock.Instant) {
         record(.firstOutput(at: instant))
+    }
+
+    /// Records that the running pass sent its first output event.
+    ///
+    /// The caller is the relay of the executor channel of the pass
+    /// (``PassOutputRelay``), when the first output event of the pass comes,
+    /// before the relay forwards that event to the SDK.
+    func passSentFirstOutputEvent() {
+        record(.firstOutputEvent)
     }
 
     /// Waits until no pass is open, or until the calling task is cancelled.

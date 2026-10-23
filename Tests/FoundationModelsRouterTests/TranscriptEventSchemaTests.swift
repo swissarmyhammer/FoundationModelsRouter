@@ -258,6 +258,22 @@ struct TranscriptEventSchemaTests {
         #expect(decoded.agentSpawn == Self.sampleSpawn)
     }
 
+    @Test("a .generationCall event that marks its output buffered round-trips through Codable")
+    func bufferedGenerationCallRoundTrips() throws {
+        let event = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .generationCall,
+            callMs: 8_400,
+            firstTokenSeen: false,
+            outputBuffered: true
+        ).stamped(seq: 0, ts: Self.fixedInstant)
+        let data = try JSONEncoder().encode(event)
+        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: data)
+        #expect(decoded == event)
+        #expect(decoded.outputBuffered == true)
+    }
+
     @Test("a recorded line with no agentSpawn key decodes with agentSpawn == nil")
     func lineWithoutAgentSpawnKeyDecodesAsNil() throws {
         let routerId = ULID.generate().description

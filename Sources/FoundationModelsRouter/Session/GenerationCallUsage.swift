@@ -33,6 +33,11 @@ public struct GenerationCallUsage: Sendable, Equatable {
     /// output token, reasoning included. `nil` when the session saw no output
     /// token of the call, for example on a backend that reports no passes.
     ///
+    /// The time is measured only on a streamed call, whose output reaches the
+    /// session in more than one output event. A buffered call
+    /// (``outputBuffered``) is left out by design: its first token cannot be
+    /// seen, so it has no such time.
+    ///
     /// The prefill rate of the call is ``tokensIn`` minus ``tokensCached``,
     /// divided by this time.
     public let timeToFirstToken: Duration?
@@ -44,8 +49,17 @@ public struct GenerationCallUsage: Sendable, Equatable {
     /// The MLX executor sends the text and the tool calls of a call that may
     /// call a tool only when the call ends (task ^0m997jr), so the session
     /// sees no first token of a call whose only output is one tool call.
-    /// Both times are then `nil`, and ``firstTokenSeen`` is `false`.
+    /// Both times are then `nil`, ``firstTokenSeen`` is `false`, and
+    /// ``outputBuffered`` is `true`.
     public let decodeTime: Duration?
+
+    /// Whether the output of the call reached the session as exactly one
+    /// output event (task ^kg3yjc9). The backend generated that output before
+    /// it sent it, so the time of the event splits nothing: the first token
+    /// of the call cannot be seen, and ``firstTokenSeen`` is `false` by
+    /// design, not for lost data. A streamed call, and a call with no output
+    /// event, are `false`.
+    public let outputBuffered: Bool
 
     /// The whole time of the call: its prefill and its decode when the
     /// session saw its first token, else the time from its start to its end.
@@ -55,6 +69,7 @@ public struct GenerationCallUsage: Sendable, Equatable {
     /// Whether the session saw the first output token of the call, so the
     /// call has a ``timeToFirstToken`` and a ``decodeTime``. A call that is
     /// `false` has no split of its ``callDuration``; its split is not zero.
+    /// A buffered call (``outputBuffered``) is always `false`.
     public var firstTokenSeen: Bool {
         timeToFirstToken != nil
     }
@@ -94,6 +109,8 @@ public struct GenerationCallUsage: Sendable, Equatable {
     ///     token.
     ///   - decodeTime: The time from the first output token of the call to
     ///     its end, or `nil` (the default) when the session saw no such token.
+    ///   - outputBuffered: Whether the output of the call reached the session
+    ///     as exactly one output event. The default is `false`.
     ///   - callDuration: The whole time of the call, or `nil` (the default)
     ///     when no session measured it.
     public init(
@@ -105,12 +122,14 @@ public struct GenerationCallUsage: Sendable, Equatable {
         tokensCached: Int? = nil,
         timeToFirstToken: Duration? = nil,
         decodeTime: Duration? = nil,
+        outputBuffered: Bool = false,
         callDuration: Duration? = nil
     ) {
         self.tokensIn = tokensIn
         self.tokensCached = tokensCached
         self.timeToFirstToken = timeToFirstToken
         self.decodeTime = decodeTime
+        self.outputBuffered = outputBuffered
         self.callDuration = callDuration
         self.tokensOut = tokensOut
         self.finishReason = finishReason

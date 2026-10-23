@@ -261,7 +261,7 @@ struct GenerationStallWatch: Sendable {
         case .passEnded:
             reportsPasses = true
             passRunningSince = nil
-        case .firstOutput:
+        case .firstOutput, .firstOutputEvent:
             // The appends of the call are its progress
             // (``RoutedSessionActor/noteGenerationProgress(_:)``); the first
             // output only times the generation call.

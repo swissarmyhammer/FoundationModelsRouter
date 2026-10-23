@@ -80,6 +80,7 @@ enum RouterTelemetry {
         /// of the ``submission`` span. It carries ``AttributeKey/tokensIn``,
         /// ``AttributeKey/tokensCached``, ``AttributeKey/tokensOut``,
         /// ``AttributeKey/callMs``, ``AttributeKey/firstTokenSeen``,
+        /// ``AttributeKey/outputBuffered``,
         /// ``AttributeKey/timeToFirstTokenMs``, ``AttributeKey/decodeMs``,
         /// ``AttributeKey/finishReason`` and ``AttributeKey/toolCallCount``.
         static let generationCall = prefix + "generation_call"
@@ -227,7 +228,9 @@ enum RouterTelemetry {
 
         /// The time from the start of a generation call to its first output
         /// token, in milliseconds. A call whose first output token the
-        /// session did not see writes no such key.
+        /// session did not see writes no such key. It is measured only on a
+        /// streamed call; a buffered call (``outputBuffered``) is left out by
+        /// design.
         static let timeToFirstTokenMs = "generation.time_to_first_token_ms"
 
         /// The time from the first output token of a generation call to its
@@ -240,8 +243,18 @@ enum RouterTelemetry {
         /// Whether the session saw the first output token of a generation
         /// call (task ^0m997jr). A span that is `false` has no
         /// ``timeToFirstTokenMs`` and no ``decodeMs``: the split of its
-        /// ``callMs`` is unknown, not zero.
+        /// ``callMs`` is unknown, not zero. A span whose
+        /// ``outputBuffered`` is `true` is `false` here by design.
         static let firstTokenSeen = "generation.first_token_seen"
+
+        /// Whether the output of a generation call reached the session as
+        /// exactly one output event (task ^kg3yjc9), so its first token cannot
+        /// be seen. Each generation call span carries it. Time to first token
+        /// is measured only on a streamed call: a span that is `true` has no
+        /// ``timeToFirstTokenMs`` and no ``decodeMs`` by design, and a reader
+        /// leaves it out of a first-token statistic instead of counting it as
+        /// lost data.
+        static let outputBuffered = "generation.output_buffered"
 
         /// The whole time of a generation call, in milliseconds. Each
         /// generation call span carries it.

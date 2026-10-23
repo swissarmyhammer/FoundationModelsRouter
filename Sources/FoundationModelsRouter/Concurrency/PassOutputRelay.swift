@@ -3,9 +3,10 @@ import Synchronization
 
 /// The relay of the executor channel of one pass (task ^0m997jr): it gives the
 /// wrapped executor a channel of its own, forwards each event to the channel
-/// of the SDK unchanged and in order, and reports the first streamed output
-/// of the pass to the pass observer of the session
-/// (``GenerationPassObserver/passProducedOutput(at:)``).
+/// of the SDK unchanged and in order, and reports the first output event
+/// (``GenerationPassObserver/passSentFirstOutputEvent()``) and the first
+/// streamed output (``GenerationPassObserver/passProducedOutput(at:)``) of
+/// the pass to the pass observer of the session.
 ///
 /// The executor channel is the first place that any output of a pass shows:
 /// response text, reasoning text and tool-call arguments. The transcript of
@@ -16,8 +17,10 @@ import Synchronization
 /// The first output event of a pass is its first token only when a later
 /// output event of the same pass follows it. A pass that sends its whole
 /// output in one event sent it after it generated it, so the time of that
-/// event splits nothing: the pass reports no first output, and its call has
-/// no split (``GenerationCallUsage/firstTokenSeen`` is `false`). The
+/// event splits nothing: the pass reports its one output event and no first
+/// output, so its call is buffered (``GenerationCallUsage/outputBuffered``,
+/// task ^kg3yjc9) and has no split by design
+/// (``GenerationCallUsage/firstTokenSeen`` is `false`). The
 /// allowed-tool path of the MLX executor is such a pass: it keeps the
 /// response text and the tool calls of the pass until the generation ends,
 /// and then sends them. Its only signals inside the pass (its generation
@@ -41,7 +44,7 @@ enum PassOutputRelay {
     private static let deepestEventLevel = 8
 
     /// What the pump of one pass saw of its output, and the report of its
-    /// first streamed output.
+    /// first output event and its first streamed output.
     private final class OutputWatch: Sendable {
         /// What the pump saw of the output of the pass.
         private struct Seen {
@@ -66,24 +69,45 @@ enum PassOutputRelay {
             self.observer = observer
         }
 
+        /// What one output event of the pass reports to the observer.
+        private enum Report {
+            /// The first output event of the pass
+            /// (``GenerationPassObserver/passSentFirstOutputEvent()``).
+            case firstOutputEvent
+
+            /// The first token of the pass, which the first output event
+            /// gave at `at` (``GenerationPassObserver/passProducedOutput(at:)``).
+            case firstToken(at: ContinuousClock.Instant)
+        }
+
         /// Notes one event of the pass: the first output event starts the
-        /// output, and the next output event reports it as the first token.
+        /// output and is reported at once, and the next output event reports
+        /// it as the first token.
+        ///
+        /// The first output event is reported before the pump hands it to
+        /// the forwarder, so the session has the report before the SDK sees
+        /// the event, and before a tool call of the pass can open.
         ///
         /// - Parameter event: An event of the pass.
         func note(_ event: Event) {
             guard isOutput(event) else { return }
             let now = observer.clock.now
-            let firstAt: ContinuousClock.Instant? = seen.withLock { seen in
+            let report: Report? = seen.withLock { seen in
                 guard let firstAt = seen.firstAt else {
                     seen.firstAt = now
-                    return nil
+                    return .firstOutputEvent
                 }
                 guard !seen.reported else { return nil }
                 seen.reported = true
-                return firstAt
+                return .firstToken(at: firstAt)
             }
-            if let firstAt {
+            switch report {
+            case .firstOutputEvent:
+                observer.passSentFirstOutputEvent()
+            case .firstToken(let firstAt):
                 observer.passProducedOutput(at: firstAt)
+            case nil:
+                break
             }
         }
     }
@@ -128,8 +152,8 @@ enum PassOutputRelay {
     }
 
     /// Runs `run` with a new channel, forwards each of its events to
-    /// `channel`, and reports the first streamed output of the pass to
-    /// `observer`.
+    /// `channel`, and reports the first output event and the first streamed
+    /// output of the pass to `observer`.
     ///
     /// - Parameters:
     ///   - channel: The channel of the SDK.

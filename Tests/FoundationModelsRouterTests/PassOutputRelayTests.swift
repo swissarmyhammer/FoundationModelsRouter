@@ -6,7 +6,9 @@ import Testing
 /// Task ^0m997jr: the relay of the executor channel of one pass finds the
 /// first streamed output of any kind (response text, reasoning text,
 /// tool-call arguments) and reports it as the first token of the pass, and
-/// it forwards each event unchanged and in order.
+/// it forwards each event unchanged and in order. Task ^kg3yjc9: it also
+/// reports the first output event of a pass at once, so a pass that sends
+/// only that one event reads as buffered.
 @Suite("Pass output relay: the first streamed output of a pass, from the executor channel")
 struct PassOutputRelayTests {
     /// The type of the events of a pass.
@@ -99,5 +101,36 @@ struct PassOutputRelayTests {
 
         #expect(forwarded == events.count)
         #expect(Self.firstOutputs(of: observer).isEmpty)
+    }
+
+    @Test("a pass that sends its whole output in one event reports that event, so its call reads as buffered")
+    func oneOutputEventIsReportedAsTheFirstOutputEvent() async throws {
+        let observer = GenerationPassObserver()
+
+        _ = try await Self.relay([Self.metadata, Self.toolCallArguments, Self.usage], reportingTo: observer)
+
+        #expect(observer.takePhases() == [.firstOutputEvent])
+    }
+
+    @Test("a pass that streams reports its first output event once, before its first output")
+    func streamedPassReportsItsFirstOutputEventOnce() async throws {
+        let observer = GenerationPassObserver()
+        let events = [Self.reasoningText, Self.responseText, Self.responseText, Self.usage]
+
+        _ = try await Self.relay(events, reportingTo: observer)
+
+        let phases = observer.takePhases()
+        #expect(phases.first == .firstOutputEvent)
+        #expect(phases.filter { $0 == .firstOutputEvent }.count == 1)
+        #expect(phases.count == 2)
+    }
+
+    @Test("a pass that sends no output event reports no output event")
+    func passWithoutOutputReportsNoOutputEvent() async throws {
+        let observer = GenerationPassObserver()
+
+        _ = try await Self.relay([Self.metadata, Self.usage], reportingTo: observer)
+
+        #expect(observer.takePhases().isEmpty)
     }
 }

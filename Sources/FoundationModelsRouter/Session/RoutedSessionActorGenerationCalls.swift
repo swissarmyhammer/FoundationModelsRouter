@@ -2,8 +2,9 @@ import FoundationModels
 
 /// The prefill and the decode time of one generation call
 /// (``GenerationCallUsage/timeToFirstToken`` and
-/// ``GenerationCallUsage/decodeTime``). Each is `nil` when the session saw
-/// no output token of the call.
+/// ``GenerationCallUsage/decodeTime``), and whether its output was buffered
+/// (``GenerationCallUsage/outputBuffered``). Each time is `nil` when the
+/// session saw no output token of the call.
 struct GenerationCallTiming: Sendable, Equatable {
     /// The time from the start of the call to its first output token.
     let timeToFirstToken: Duration?
@@ -11,14 +12,23 @@ struct GenerationCallTiming: Sendable, Equatable {
     /// The time from the first output token of the call to its end.
     let decodeTime: Duration?
 
+    /// Whether the output of the call reached the session as exactly one
+    /// output event, so its first token cannot be seen.
+    let outputBuffered: Bool
+
     /// The timing of a call whose first output token the session did not see.
-    static let unobserved = GenerationCallTiming(timeToFirstToken: nil, decodeTime: nil)
+    static let unobserved = GenerationCallTiming(timeToFirstToken: nil, decodeTime: nil, outputBuffered: false)
+
+    /// The timing of a call whose output reached the session as exactly one
+    /// output event: its first token cannot be seen, by design.
+    static let buffered = GenerationCallTiming(timeToFirstToken: nil, decodeTime: nil, outputBuffered: true)
 }
 
 extension GenerationCallUsage {
-    /// The prefill and the decode time of the call.
+    /// The prefill and the decode time of the call, and whether its output
+    /// was buffered.
     var timing: GenerationCallTiming {
-        GenerationCallTiming(timeToFirstToken: timeToFirstToken, decodeTime: decodeTime)
+        GenerationCallTiming(timeToFirstToken: timeToFirstToken, decodeTime: decodeTime, outputBuffered: outputBuffered)
     }
 }
 
@@ -73,9 +83,14 @@ struct GenerationCallLedger {
     /// (``GenerationCallPhase/firstOutput(at:)``).
     var firstOutputAt: ContinuousClock.Instant?
 
+    /// Whether that pass sent an output event, or `false` before the backend
+    /// reported one (``GenerationCallPhase/firstOutputEvent``). A pass that
+    /// sent one and gave no first output token is buffered.
+    var sawOutputEvent = false
+
     /// Applies one reported phase of the model call: the start of a pass
-    /// starts the times of a new generation call, and the first output of
-    /// the pass ends its prefill.
+    /// starts the times of a new generation call, its first output event
+    /// marks that it sent output, and its first output ends its prefill.
     ///
     /// - Parameter phase: The phase the model call reported.
     mutating func apply(_ phase: GenerationCallPhase) {
@@ -83,6 +98,9 @@ struct GenerationCallLedger {
         case .passStarted(let instant):
             passStartedAt = instant
             firstOutputAt = nil
+            sawOutputEvent = false
+        case .firstOutputEvent:
+            sawOutputEvent = true
         case .firstOutput(let instant):
             firstOutputAt = firstOutputAt ?? instant
         case .submissionQueued, .submissionStarted, .passEnded:
@@ -91,17 +109,20 @@ struct GenerationCallLedger {
     }
 
     /// The prefill and the decode time of the generation call that ends at
-    /// `endedAt`.
+    /// `endedAt`, and whether its output was buffered.
     ///
     /// - Parameter endedAt: When the call ended, on the clock of the pass
     ///   observer.
     /// - Returns: The time from the start of the pass to its first output,
-    ///   and from that output to `endedAt`, or ``GenerationCallTiming/unobserved``
-    ///   when the backend reported no start or no first output of the pass.
+    ///   and from that output to `endedAt`. ``GenerationCallTiming/buffered``
+    ///   when the pass sent an output event and gave no first output, and
+    ///   ``GenerationCallTiming/unobserved`` when the backend reported no
+    ///   start or no output of the pass.
     func timingOfEndedCall(endedAt: ContinuousClock.Instant) -> GenerationCallTiming {
-        guard let passStartedAt, let firstOutputAt else { return .unobserved }
+        guard let passStartedAt, let firstOutputAt else { return sawOutputEvent ? .buffered : .unobserved }
         return GenerationCallTiming(
-            timeToFirstToken: passStartedAt.duration(to: firstOutputAt), decodeTime: firstOutputAt.duration(to: endedAt))
+            timeToFirstToken: passStartedAt.duration(to: firstOutputAt), decodeTime: firstOutputAt.duration(to: endedAt),
+            outputBuffered: false)
     }
 
     /// The usage of the call that ended since the last report.
@@ -312,6 +333,7 @@ extension RoutedSessionActor {
         generationCallLedger?.callStartedAt = endedAt
         generationCallLedger?.passStartedAt = nil
         generationCallLedger?.firstOutputAt = nil
+        generationCallLedger?.sawOutputEvent = false
         generationCallLedger?.reported = (
             ledger.reported.input + backendUsage.input, ledger.reported.output + backendUsage.output
         )
@@ -345,6 +367,7 @@ extension RoutedSessionActor {
             tokensCached: cached,
             timeToFirstToken: timing.timeToFirstToken,
             decodeTime: timing.decodeTime,
+            outputBuffered: timing.outputBuffered,
             callDuration: duration)
     }
 
