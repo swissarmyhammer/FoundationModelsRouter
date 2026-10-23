@@ -3,8 +3,8 @@ import FoundationModels
 import FoundationModelsExtras
 
 /// A failure to restore recorded sessions from disk, through
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -83,7 +83,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 ///
 /// This type stays internal. A caller resumes a session by an id it holds,
 /// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` is the
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` is the
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
@@ -225,6 +225,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     replaces the recorded value on the root and on each recorded
     ///     fork. The recorded `index.md` files on disk do not change. A fork that a
     ///     restored node makes later records the supplied value.
+    ///   - hookSessionKey: The key of the hook lineage of the root node, or
+    ///     `nil` (the default) to give the root its recorded id as its key.
+    ///     A recorded fork under the root keeps the fork rule against its
+    ///     restored parent: a fork in the working directory of its parent
+    ///     gets the key of its parent, so it gets this key too. A sub-agent
+    ///     that starts from the restored root, live or restored, gets the
+    ///     key of the root while the root is open. The recording does not
+    ///     hold the key, because it is for the hooks only, so a host gives it
+    ///     again here. See ``SessionConfiguration/hookSessionKey``.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -237,7 +246,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         toolOutputProtection: ToolOutputProtection? = nil,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
-        userPresence: UserPresence? = nil
+        userPresence: UserPresence? = nil,
+        hookSessionKey: String? = nil
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -279,9 +289,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// The hooks of one restored node, or `nil` when the router has no
         /// hook dispatcher. The origin is `.resumed`. A recorded fork follows
         /// the fork rule against its restored parent, and a node with a
-        /// recorded spawn parent follows the sub-agent rule. The key of a
-        /// restored root is its recorded id, the same key as before the
-        /// restore.
+        /// recorded spawn parent follows the sub-agent rule. The key of the
+        /// restored root is this call's `hookSessionKey`, else its recorded
+        /// id, the same key as before the restore. Every other node derives
+        /// its key from its lineage.
         ///
         /// - Parameters:
         ///   - node: The loaded node.
@@ -294,7 +305,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 ?? node.record.agentSpawn.map { routerHooks.subagentParent(of: $0.parentSessionId) }
             let hooks = routerHooks.makeSessionHooks(
                 sessionID: node.id, workingDirectory: node.record.workingDirectory, parent: parent,
-                isRestored: true)
+                requestedKey: node.id == rootId ? hookSessionKey : nil, isRestored: true)
             hooksById[node.id] = hooks
             return hooks
         }
@@ -598,7 +609,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``
         /// releases those forks anyway. A live fork taken later from the
         /// restored root does inherit the override, because it inherits both
         /// the backend transcript and ``RoutedSessionActor/instructions``.

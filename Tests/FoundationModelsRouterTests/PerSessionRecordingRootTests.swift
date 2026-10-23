@@ -19,7 +19,7 @@ import Testing
 /// `<recordingsDir>/<routerId>/<sessionId>/` layout byte-for-byte; two
 /// sessions from the same Router with different roots never leak into each
 /// other; and
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``
 /// round-trips both layouts, with the recording routerId still readable from
 /// the restored flat session's `index.md` record.
 ///

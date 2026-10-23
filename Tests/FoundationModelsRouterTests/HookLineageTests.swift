@@ -24,6 +24,9 @@ struct HookLineageTests {
     /// The session key that a host gives to a model-switch replacement.
     private static let replacementKey = "k"
 
+    /// The tool call id that the recorded spawn of a sub-agent names.
+    private static let spawnToolCallID = "start-agent-call"
+
     /// A visitor that records each `SessionStart` and each `SessionEnd`, in
     /// the order of delivery.
     final class RecordingHookVisitor: HookVisitor {
@@ -323,6 +326,75 @@ struct HookLineageTests {
             #expect(restoredFork.parentSessionID == root.id.description)
             await tree.session(fork.id)?.close()
             await tree.root.close()
+        }
+    }
+
+    @Test("restoreSession with a hook key gives the restored session that key")
+    func restoreSessionWithAHookKeyGivesThatKey() async throws {
+        try await Self.withHookedProfile { hooked in
+            let recorded = hooked.profile.standard.makeSession()
+            await recorded.close()
+
+            let restored = try await hooked.profile.standard.restoreSession(
+                id: recorded.id, hookSessionKey: Self.replacementKey)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events(of: recorded.id))
+            #expect(resumed.count == 1)
+            let session = try #require(resumed.first)
+            #expect(session.sessionID == recorded.id.description)
+            #expect(session.sessionKey == Self.replacementKey)
+            #expect(session.parentSessionID == nil)
+            await restored.session.close()
+        }
+    }
+
+    @Test("restoreSessionTree with a hook key gives it to the root and to a fork in the root's directory")
+    func restoreSessionTreeWithAHookKeyGivesItToTheRootAndASameDirectoryFork() async throws {
+        try await Self.withHookedProfile { hooked in
+            let root = hooked.profile.standard.makeSession(workingDirectory: hooked.directory)
+            let fork = try await root.fork(workingDirectory: hooked.directory)
+            await fork.close()
+            await root.close()
+
+            let tree = try await hooked.profile.standard.restoreSessionTree(
+                root: root.id, hookSessionKey: Self.replacementKey)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events)
+            let restoredRoot = try #require(resumed.first { $0.sessionID == root.id.description })
+            let restoredFork = try #require(resumed.first { $0.sessionID == fork.id.description })
+            #expect(restoredRoot.sessionKey == Self.replacementKey)
+            #expect(restoredFork.sessionKey == Self.replacementKey)
+            #expect(restoredFork.parentSessionID == root.id.description)
+            await tree.session(fork.id)?.close()
+            await tree.root.close()
+        }
+    }
+
+    @Test("a restored sub-agent gets the hook key its restored parent was given")
+    func aRestoredSubagentGetsTheHookKeyOfItsRestoredParent() async throws {
+        try await Self.withHookedProfile { hooked in
+            let parent = hooked.profile.standard.makeSession()
+            let child = hooked.profile.standard.makeSession(
+                configuration: SessionConfiguration(
+                    agentSpawn: SessionRecord.AgentSpawn(
+                        parentSessionId: parent.id, parentToolCallId: Self.spawnToolCallID)))
+            await child.close()
+            await parent.close()
+
+            let restoredParent = try await hooked.profile.standard.restoreSession(
+                id: parent.id, hookSessionKey: Self.replacementKey)
+            let restoredChild = try await hooked.profile.standard.restoreSession(id: child.id)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events(of: child.id))
+            #expect(resumed.count == 1)
+            let session = try #require(resumed.first)
+            #expect(session.sessionKey == Self.replacementKey)
+            #expect(session.parentSessionID == parent.id.description)
+            await restoredChild.session.close()
+            await restoredParent.session.close()
         }
     }
 

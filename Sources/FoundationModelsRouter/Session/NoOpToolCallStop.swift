@@ -19,7 +19,7 @@ import FoundationModelsExtras
 /// ``SessionConfiguration/isNoOpToolCall``. The check is a closure, so the
 /// session's `index.md` does not record it. A fork inherits it. A restore gets it again
 /// from the host, through the `isNoOpToolCall` argument of
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
 ///
 /// - Parameters:
 ///   - toolName: The name of the called tool.

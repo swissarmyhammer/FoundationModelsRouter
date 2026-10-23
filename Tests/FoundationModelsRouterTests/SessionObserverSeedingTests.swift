@@ -12,7 +12,7 @@ import Testing
 /// that the seeded rows are equal to the rows that a live observer made
 /// in the original run, row for row by id. It uses a real recorded tool
 /// answer, a
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``
 /// in a fresh process, and the read-only ``RoutedSession/transcript``
 /// accessor.
 @Suite("SessionObserver seeding from a cold Transcript (task ^5aky6xr)")

@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^w30hzsy: the public single-session restore surface
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
 ///
 /// The suite proves the three instructions cases the card names. `nil` keeps
 /// the recorded string and writes nothing. A supplied string equal to the

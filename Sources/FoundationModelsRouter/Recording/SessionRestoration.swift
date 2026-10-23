@@ -3,7 +3,7 @@ import FoundationModels
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -88,7 +88,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionRecord`` against this call's owning profile, and a mismatch
     /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -136,6 +136,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session's `index.md` on disk does not change. A fork that the restored
     ///     session makes later records the supplied value. See
     ///     ``SessionConfiguration/userPresence``.
+    ///   - hookSessionKey: The key of the hook lineage of the restored
+    ///     session, or `nil` (the default) to give it its own id as its key,
+    ///     the same key as before the restore. A host sets it when the
+    ///     restored session joins the lineage of other sessions, for example
+    ///     a key shared by the sessions of one working directory. The
+    ///     recording does not hold the key, because it is for the hooks only,
+    ///     so a host gives it again here. A recorded fork in the working
+    ///     directory of the session gets the key too, and so does a sub-agent
+    ///     that starts from the session while it is open. See
+    ///     ``SessionConfiguration/hookSessionKey``.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -149,12 +159,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         toolOutputProtection: ToolOutputProtection? = nil,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
-        userPresence: UserPresence? = nil
+        userPresence: UserPresence? = nil,
+        hookSessionKey: String? = nil
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
-            userPresence: userPresence)
+            userPresence: userPresence, hookSessionKey: hookSessionKey)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

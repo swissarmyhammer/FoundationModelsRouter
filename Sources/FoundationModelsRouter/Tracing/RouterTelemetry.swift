@@ -336,7 +336,7 @@ enum RouterTelemetry {
         case new
 
         /// One node of a tree rebuilt from what is on disk, through
-        /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:)``.
+        /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
         case restored
 
         /// A child taken from a live session, through
