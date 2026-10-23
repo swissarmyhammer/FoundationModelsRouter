@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -498,11 +499,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     private func recordedEvents(from harness: ChokepointHarness) throws -> [TranscriptEvent] {
         let fileURL = harness.recordingDirectory.appendingPathComponent(
             "transcript.jsonl", isDirectory: false)
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
-        let decoder = JSONDecoder()
-        return try text.split(separator: "\n").map {
-            try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
-        }
+        return try JSONLFile(url: fileURL).records(as: TranscriptEvent.self)
     }
 
     /// Task qb9p7gs's core acceptance criterion, proved against a real model:

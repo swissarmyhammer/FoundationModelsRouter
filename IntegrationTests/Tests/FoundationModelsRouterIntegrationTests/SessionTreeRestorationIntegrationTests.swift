@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -220,11 +221,7 @@ struct SessionTreeRestorationIntegrationTests {
     private static func recordedEvents(in directory: URL) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
-        let decoder = JSONDecoder()
-        return try text.split(separator: "\n").filter { !$0.isEmpty }.map {
-            try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
-        }
+        return try JSONLFile(url: fileURL).records(as: TranscriptEvent.self)
     }
 
     /// A root session's own `index.md`, under a router's recording root.

@@ -59,6 +59,13 @@ let package = Package(
             url: "https://github.com/apple/\(tracingPackage).git",
             from: "1.5.0"
         ),
+        // The Extras package the root manifest pins. The integration suites
+        // read a recorded `transcript.jsonl` through its `JSONLFile`, as the
+        // router does.
+        .package(
+            url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
+            branch: "main"
+        ),
     ],
     targets: [
         // The real-model suites (milestone 7): they download real models and
@@ -72,6 +79,7 @@ let package = Package(
                 mlxCommonProduct,
                 mlxFoundationModelsProduct,
                 .product(name: "InMemoryTracing", package: tracingPackage),
+                .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
             ],
             path: "Tests/\(routerPackage)IntegrationTests"
         ),
