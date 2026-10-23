@@ -56,8 +56,24 @@ comments:
     - evidence: swift test — three runs passed: 2172 tests in 266 suites (9 known issues, withKnownIssue), 39 tests in 23 suites, 19 tests in 3 suites; 0 failures, 0 ✘ lines, 0 compiler warnings (only the allowed mlx-swift_Cmlx.bundle missing-creator notice)
     - next: review/commit
   timestamp: 2026-10-23T09:24:00.162547+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: wballard
+  id: 01m5m1chsqmebx6r85m09ekehg
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (local backend, commit 3224f00b), 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed); 1 file reviewed (Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift), 4 .kanban files excluded by .reviewignore; prior finding (TranscriptEventSchemaTests.swift:261 completeness/invariant-propagation) checked
+    - next: none — moved to done
+  timestamp: 2026-10-23T09:27:32.919165+00:00
+- actor: wballard
+  id: 01m5m1cxrj1jkrvg4jrf8a9wgb
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (TranscriptEventSchemaTests.swift)
+    - test: green — swift test, 2172 + 39 + 19 passed (9 expected known issues)
+    - commit: 3224f00b
+    - review: clean — 0 findings; card done
+  timestamp: 2026-10-23T09:27:45.170432+00:00
+position_column: done
+position_ordinal: ffffffffbe80
 title: Label passes whose output arrives in one buffered event (generation.output_buffered)
 ---
 Replaces ^4g1pdrz. Decision 2026-10-23: no change to mlx-swift-lm. Its allowed-tool path sends a tool-call-only pass (no reasoning) as one output event at the end of generation, and its public API carries no prefill timing, so Router cannot observe the first token of such a pass. Today those calls record first_token_seen=false with nothing to say why (45 of 105 calls in router-telemetry-16), which looks like lost data.
