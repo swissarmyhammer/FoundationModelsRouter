@@ -25,8 +25,24 @@ comments:
     - evidence: swift test — XCTest 0 tests 0 failures; swift-testing 2175 tests in 266 suites passed (9 known issues, all withKnownIssue by design); 39 tests in 23 suites passed; 19 tests in 3 suites passed; zero ✘ lines, zero skipped. Rebuilt touched sources and tests (swift build --build-tests): zero compiler warnings (only the allowed mlx-swift_Cmlx.bundle notice). No DocC/doc-link check exists in the repo (ci.yml has none; catalog is excluded from the SwiftPM build), so skipped.
     - next: commit
   timestamp: 2026-10-23T09:35:23.695898+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: wballard
+  id: 01m5m2774s5jc70qgsnz735n0q
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (768bcc62), backend local — 0 findings, 0 confirmed, 0 refuted; 14 validator passes attempted, 0 failed; 15 files reviewed; not reviewed: .kanban/ (2 files, .reviewignore), FoundationModelsRouter.docc/RoutedSession.md (no validator matches)
+    - next: orchestrator pushes and replies to foundationmodelsacpagent-a5 with the pushed sha and signatures (remaining checkbox, post-push step)
+  timestamp: 2026-10-23T09:42:06.745210+00:00
+- actor: wballard
+  id: 01m5m283hz4g6b1vcqmpx9v3jy
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 18 files (2 source, HookLineageTests, DocC link updates in 15)
+    - test: green — swift test, 2175 + 39 + 19 passed (9 expected known issues)
+    - commit: 768bcc62
+    - review: clean — 0 findings; card done
+  timestamp: 2026-10-23T09:42:35.839204+00:00
+position_column: done
+position_ordinal: ffffffffbf80
 title: restoreSession / restoreSessionTree take a hook session key
 ---
 Asked by foundationmodelsacpagent-a5 (2026-10-23), for the user's design: sessions in one process with the same cwd share one snapshot timeline, keyed by sha256 of the resolved cwd. New sessions already pass that key (SessionConfiguration.hookSessionKey -> makeSessionHooks(requestedKey:)), and model-switch replacements carry it through the hook lineage. Restore cannot: restoreSession (Recording/SessionRestoration.swift:145) and restoreSessionTree (Recording/SessionTreeRestoration.swift:233) take no key, so a resumed session falls back to its own id as its hook session key.
