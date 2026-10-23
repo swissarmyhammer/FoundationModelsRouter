@@ -274,6 +274,19 @@ struct TranscriptEventSchemaTests {
         #expect(decoded.outputBuffered == true)
     }
 
+    @Test("a recorded .generationCall line with no outputBuffered key decodes with outputBuffered == nil")
+    func generationCallWithoutOutputBufferedKeyDecodesAsNil() throws {
+        let routerId = ULID.generate().description
+        let sessionId = ULID.generate().description
+        let json = """
+        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":"\(Self.recordedTimestamp)","kind":"generationCall","callMs":8400,"firstTokenSeen":false}
+        """
+        let decoded = try JSONLines.makeDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
+        #expect(decoded.kind == .generationCall)
+        #expect(decoded.firstTokenSeen == false)
+        #expect(decoded.outputBuffered == nil)
+    }
+
     @Test("a recorded line with no agentSpawn key decodes with agentSpawn == nil")
     func lineWithoutAgentSpawnKeyDecodesAsNil() throws {
         let routerId = ULID.generate().description
