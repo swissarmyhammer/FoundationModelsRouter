@@ -330,6 +330,139 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(output.text != "unbound")
     }
 
+    // MARK: - A recorded fork tree: each node gets its own wiring
+
+    /// Records a root session that answers once, and a recorded fork of it
+    /// that answers once (``RecordedForkFixtures``), through a router over
+    /// `container`. Both sessions close before this returns.
+    ///
+    /// - Parameters:
+    ///   - container: The container of the recording router.
+    ///   - cacheDir: The disposable cache directory.
+    ///   - recordingsDir: The durable recordings root.
+    /// - Returns: The id of the recording router, the id of the root and the
+    ///   id of the fork.
+    /// - Throws: What the resolve, an answer or the write of the fork throws.
+    private static func recordRootWithFork(
+        container: any LoadedLLMContainer, cacheDir: URL, recordingsDir: URL
+    ) async throws -> (routerId: ULID, rootId: ULID, forkId: ULID) {
+        let router = makeRouter(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile.standard.makeSession()
+        let donor = profile.standard.makeSession()
+        do {
+            _ = try await root.respond(to: "hello")
+            _ = try await donor.respond(to: "fork answer")
+        } catch {
+            await donor.close()
+            await root.close()
+            throw error
+        }
+        await donor.close()
+        await root.close()
+        let cut = try RecordedForkFixtures.cut(
+            atEndOf: root.id,
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
+        try RecordedForkFixtures.nest(donor: donor.recordingDirectory, under: root.recordingDirectory, cut: cut)
+        return (router.id, root.id, donor.id)
+    }
+
+    /// The production change that makes this test fail: a restore that
+    /// shares one outbox or one mount wrapper across the nodes of a tree.
+    @Test("each restored node of a recorded fork tree gets its own fresh outbox with its own mount wrapper")
+    @MainActor
+    func eachRestoredNodeGetsItsOwnOutboxAndMountWrapper() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+        let recorded = try await Self.recordRootWithFork(
+            container: ToolCapturingRestoreContainer(), cacheDir: cacheDir, recordingsDir: recordingsDir)
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: recorded.routerId, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let emitter = AmbientEventPostingTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: recorded.rootId, tools: [emitter])
+        defer { await SessionFixtureLifecycle.close(restored) }
+        let restoredFork = try #require(restored.session(recorded.forkId))
+
+        #expect(restored.root.outbox !== restoredFork.outbox)
+        // The restore walks the root first, then its fork.
+        try #require(container2.threadedToolsByCall.count == 2)
+        let rootMounted = try #require(
+            failureDeliveryPeeled(container2.threadedToolsByCall[0].first) as? RunToCompletionRunner<AmbientToolArguments>)
+        let forkMounted = try #require(
+            failureDeliveryPeeled(container2.threadedToolsByCall[1].first) as? RunToCompletionRunner<AmbientToolArguments>)
+        // Both nodes share the one original instance of the caller. The
+        // isolation is the own mount wrapper of each node, whose ambient
+        // context posts to the own outbox of that node.
+        #expect(mountWrapped(rootMounted) as? AmbientEventPostingTool === emitter)
+        #expect(mountWrapped(forkMounted) as? AmbientEventPostingTool === emitter)
+
+        _ = try await rootMounted.call(arguments: AmbientToolArguments(value: "from-root"))
+        _ = try await forkMounted.call(arguments: AmbientToolArguments(value: "from-fork"))
+
+        #expect(await restored.root.outbox.pending().events.map(\.event.detail) == ["from-root"])
+        #expect(await restoredFork.outbox.pending().events.map(\.event.detail) == ["from-fork"])
+    }
+
+    /// The production change that makes this test fail: a restore that
+    /// shares one binding wrapper across the nodes of a tree, or one token
+    /// across their calls.
+    @Test(
+        "each restored node of a recorded fork tree gets its own ContextBindingTool for a non-String-output tool, posting to its own outbox under its own call's correlationID"
+    )
+    @MainActor
+    func eachRestoredNodeGetsItsOwnOutboxAndBindingWrapperForNonStringOutput() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+        let recorded = try await Self.recordRootWithFork(
+            container: ToolCapturingRestoreContainer(), cacheDir: cacheDir, recordingsDir: recordingsDir)
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: recorded.routerId, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let emitter = AmbientNonStringOutputTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: recorded.rootId, tools: [emitter])
+        defer { await SessionFixtureLifecycle.close(restored) }
+        let restoredFork = try #require(restored.session(recorded.forkId))
+
+        #expect(restored.root.outbox !== restoredFork.outbox)
+        try #require(container2.threadedToolsByCall.count == 2)
+        let rootBound = try #require(
+            failureDeliveryPeeled(container2.threadedToolsByCall[0].first)
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
+        let forkBound = try #require(
+            failureDeliveryPeeled(container2.threadedToolsByCall[1].first)
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
+        #expect(mountWrapped(rootBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(mountWrapped(forkBound) as? AmbientNonStringOutputTool === emitter)
+
+        let rootOutput = try await rootBound.call(arguments: AmbientToolArguments(value: "from-root"))
+        let forkOutput = try await forkBound.call(arguments: AmbientToolArguments(value: "from-fork"))
+
+        let rootEvents = await restored.root.outbox.pending().events.map(\.event)
+        let forkEvents = await restoredFork.outbox.pending().events.map(\.event)
+        #expect(rootEvents.map(\.detail) == ["from-root"])
+        #expect(forkEvents.map(\.detail) == ["from-fork"])
+        #expect(rootEvents.map(\.tool) == [emitter.name])
+        #expect(forkEvents.map(\.tool) == [emitter.name])
+        // The event of each node holds the new token of its own call as its
+        // correlationID, never the token of the other node.
+        #expect(rootEvents.map(\.correlationID) == [rootOutput.text])
+        #expect(forkEvents.map(\.correlationID) == [forkOutput.text])
+        #expect(rootOutput.text != forkOutput.text)
+    }
+
     @Test("a session with no tools argument restores with an empty, unconnected outbox")
     @MainActor
     func restoringWithNoToolsHasEmptyOutbox() async throws {

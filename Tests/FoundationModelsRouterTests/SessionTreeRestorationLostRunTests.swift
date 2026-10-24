@@ -466,6 +466,134 @@ struct SessionTreeRestorationLostRunTests {
         #expect(manufactured.correlationID == "3")
     }
 
+    // MARK: - Recorded fork trees: the scan is per node, over the effective view of that node
+
+    /// Records a root session that posts `beforeTheCut`, answers once, and
+    /// posts `afterTheCut` with a second answer when it is not empty. Writes
+    /// a recorded fork of the root, cut after the first answer, whose own
+    /// history is one answer (``RecordedForkFixtures``). Then restores the
+    /// tree under a second router with the same recording root. The recorded
+    /// root stays open, as the session of a crashed process does.
+    ///
+    /// - Parameters:
+    ///   - beforeTheCut: The events posted before the first answer.
+    ///   - afterTheCut: The events posted before a second answer, after the
+    ///     cut. Empty gives no second answer.
+    ///   - cacheDir: The disposable cache directory.
+    ///   - recordingsDir: The durable recordings root.
+    /// - Returns: The restored tree, the id of the recorded fork and the
+    ///   recorded root. The caller closes the restored tree and the root.
+    /// - Throws: What an answer, the write of the fork or the restore throws.
+    private static func recordForkAndRestore(
+        beforeTheCut: [OperationEvent],
+        afterTheCut: [OperationEvent],
+        cacheDir: URL,
+        recordingsDir: URL
+    ) async throws -> (restored: RestoredSessionTree, forkId: ULID, recorded: any RoutedSession) {
+        let router1 = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        return try await RouterTestFixtures.removingDirectoryOnThrow(
+            cacheDir, alsoOnThrow: { await root.close() }
+        ) {
+            for event in beforeTheCut {
+                await root.outbox.post(event: event)
+            }
+            _ = try await root.respond(to: "hello")
+            let cut = try RecordedForkFixtures.cut(
+                atEndOf: root.id,
+                under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
+            if !afterTheCut.isEmpty {
+                for event in afterTheCut {
+                    await root.outbox.post(event: event)
+                }
+                _ = try await root.respond(to: "parent answer two")
+            }
+            let donor = profile1.standard.makeSession()
+            do {
+                _ = try await donor.respond(to: "fork answer")
+            } catch {
+                await donor.close()
+                throw error
+            }
+            await donor.close()
+            try RecordedForkFixtures.nest(donor: donor.recordingDirectory, under: root.recordingDirectory, cut: cut)
+
+            let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+            let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
+            let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+            return (restored, donor.id, root)
+        }
+    }
+
+    /// The production change that makes this test fail: a scan of the own
+    /// events of a node only, which gives the fork no `.lost`.
+    @Test("an orphaned run of a parent makes one .lost on each restored node whose inherited prefix holds it")
+    @MainActor
+    func parentOrphanMakesLostOnParentAndRecordedFork() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let (restored, forkId, recorded) = try await Self.recordForkAndRestore(
+            beforeTheCut: [Self.event(correlationID: "run-1", kind: .progress, detail: "dangling")],
+            afterTheCut: [],
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir)
+        defer {
+            await SessionFixtureLifecycle.close(restored)
+            await recorded.close()
+        }
+        let restoredFork = try #require(restored.session(forkId))
+
+        // The dangling .progress is in the effective stream of both nodes
+        // (the fork inherits it in its prefix), so each restored node gets
+        // its own .lost, on its own outbox.
+        let rootPending = await restored.root.outbox.pending()
+        #expect(rootPending.events.map(\.event.outcome) == [.lost])
+        let forkPending = await restoredFork.outbox.pending()
+        #expect(forkPending.events.map(\.event.outcome) == [.lost])
+        #expect(forkPending.events.first?.event.correlationID == "run-1")
+    }
+
+    /// The production change that makes this test fail: a scan of the whole
+    /// history of the parent for a fork, which finds the terminal that came
+    /// after the cut.
+    @Test("a run that the parent completed after the cut of a recorded fork is .lost only in the view of the fork")
+    @MainActor
+    func runCompletedAfterTheCutIsLostOnlyInTheFork() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let (restored, forkId, recorded) = try await Self.recordForkAndRestore(
+            beforeTheCut: [Self.event(correlationID: "run-1", kind: .progress, detail: "running")],
+            afterTheCut: [
+                Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded)
+            ],
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir)
+        defer {
+            await SessionFixtureLifecycle.close(restored)
+            await recorded.close()
+        }
+        let restoredFork = try #require(restored.session(forkId))
+
+        // The view of the parent holds the terminal, so nothing is made. The
+        // view of the fork ends on the dangling .progress: from its
+        // conversation the outcome is unknown, so it gets a .lost.
+        let rootPending = await restored.root.outbox.pending()
+        #expect(rootPending.events.isEmpty)
+        let forkPending = await restoredFork.outbox.pending()
+        #expect(forkPending.events.map(\.event.outcome) == [.lost])
+    }
+
     // MARK: - A run's report is carried whole
 
     /// The length of the report the whole-report test drives through the run

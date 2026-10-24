@@ -4,8 +4,12 @@ comments:
   id: 01m5px8hkbkygkxw7x5sasvgfn
   text: 'Deleted RoutedSession.fork and its fork-only helpers (makeFork(tools:), makeFork(tools:seededFrom:), makeForkHooks, SessionFacts.forFork, SettledTranscript.removingUnansweredCalls/historyOrdinal, SpanName.fork, forkChildSessionId, SessionOrigin.forked) and ~115 fork tests. Kept makeFork() (default replacingTranscript uses it; other packages implement it), settledTranscript, TranscriptTree.forkPrefix, and HookParent.fork + SessionHooks.forkParent: restore of a recorded fork tree (SessionTreeRestoration:304) still makes HookParent.fork, so the case stays; SessionOrigin.forked is a FoundationModelsHooks type, kept, Router''s fork use removed. OPEN: acceptance rg ''func fork|\.fork\('' Sources still matches 3 HookParent.fork lines in SessionHooks.swift (and the forkPrefix declaration) — needs a decision. ACP agent tests break: SessionLifecycleTests.swift:143, SessionListTests.swift:283, TranscriptStoreTests.swift:219, Support/CloseCountingRoutedSession.swift:97-99. swift test: 2082 tests/264 suites (9 known issues) + 39 + 19, all pass.'
   timestamp: 2026-10-24T12:13:10.635725+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: wballard
+  id: 01m5py7v96pa2degtyamd9p0dh
+  text: 'Decision (coordinator): keep HookParent.fork and the restore path so old recordings load; check is now rg -n ''func fork\(|\.fork\(workingDirectory'' Sources, which finds nothing. Restore coverage put back with an on-disk recorded fork fixture (RecordedForkFixtures, no live fork): 25 tests in RecordedForkTreeRestoreTests and the lost-run, tool-wiring, hook-lineage, relay, restore-fidelity and repetition-stop suites. swift test: 2107 tests/265 suites (9 known issues) + 39 + 19, all pass. ACP agent tests that call fork still need the ACP session''s update.'
+  timestamp: 2026-10-24T12:30:16.358223+00:00
+position_column: done
+position_ordinal: ffffffffc180
 title: Delete the unused RoutedSession.fork
 ---
 ## What
@@ -20,7 +24,7 @@ Delete the unused session fork. Nothing in any package's `Sources/` calls `Route
 
 ## Acceptance Criteria
 
-- [ ] `rg -n 'func fork|\.fork\(' Sources` finds nothing in Router.
+- [x] `rg -n 'func fork\(|\.fork\(workingDirectory' Sources` finds nothing in Router (check changed by the coordinator: HookParent.fork stays for the restore of recorded fork trees).
 - [x] No Router test names a fork.
 
 ## Tests

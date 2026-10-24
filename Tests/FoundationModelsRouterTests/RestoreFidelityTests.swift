@@ -8,7 +8,7 @@ import Testing
 /// Exercises task ^810gdjj: restore fidelity for rich content and repeated
 /// compactions — always-run, no GPU, no gated suites.
 ///
-/// Two gaps close here, each against a real `Router` recording through a
+/// Three gaps close here, each against a real `Router` recording through a
 /// `JSONLRecorder` into a temp directory:
 ///
 /// 1. **Rich content through the full disk path.** A scripted tool answer —
@@ -23,6 +23,9 @@ import Testing
 ///    and the restored transcript must equal the live
 ///    post-second-compaction transcript — both through ``TranscriptTree`` and
 ///    through a fresh-process `restoreSessionTree(root:)`.
+/// 3. **A driven restored fork.** A recorded fork (``RecordedForkFixtures``)
+///    that is restored answers a new message with content that exists only
+///    in an entry it inherited from its parent.
 ///
 /// The warm-up answers and the compaction-budget floor come from the shared
 /// compaction fixtures in `Helpers/CompactionFixtures.swift` —
@@ -277,5 +280,94 @@ struct RestoreFidelityTests {
         #expect(restored.root.id == root.id)
         let restoredBackend = try #require(registry2.created.last)
         #expect(restoredBackend.transcriptEntries() == live)
+    }
+
+    // MARK: - 3. Drive a restored recorded fork whose answer needs inherited entries
+
+    /// The production change that makes this test fail: a restore that
+    /// seeds a recorded fork with its own events only, so the answer of the
+    /// fork cannot read the tool output that only its parent recorded.
+    @Test("a restored recorded fork's new answer holds content that exists only in an entry inherited from its parent")
+    @MainActor
+    func restoredForkAnswersFromInheritedParentEntries() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        // The answer of the parent calls the marker tool one time. The
+        // scripted model makes each answer from the tool outputs that the
+        // transcript holds, never from a canned string.
+        let script = ScriptedAnswerScript(
+            rounds: [
+                [
+                    ScriptedToolCall(
+                        id: "call-one",
+                        toolName: MarkerEmittingTool.toolName,
+                        argument: .literal(ScriptedToolFixture.firstStepName)
+                    )
+                ]
+            ]
+        )
+        let inheritedAnswer = ScriptedToolFixture.answer(
+            fromToolOutputs: [ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)])
+
+        let recorder = JSONLRecorder(directory: recordingsDir)
+        let router1 = RouterTestFixtures.makeRouter(
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            recorder: recorder,
+            loader: StubModelLoader(
+                container: ScriptedToolCallingContainer(
+                    model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog())),
+                dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile1 = try await router1.resolve(
+            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let parent = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
+        defer { await parent.close() }
+        let parentReply = try await parent.respond(to: ScriptedToolFixture.prompt)
+        #expect(parentReply == inheritedAnswer)
+
+        // A recorded fork cut at the end of the answer of the parent, with no
+        // events of its own: the marker is only in the recorded span of the
+        // parent, so a reply that holds it can only come from inherited
+        // entries.
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let forkDirectory = try RecordedForkFixtures.writeFork(
+            under: parent.recordingDirectory,
+            cut: try RecordedForkFixtures.cut(atEndOf: parent.id, under: routerDirectory))
+        let forkId = try #require(ULID(forkDirectory.lastPathComponent))
+        #expect(try TranscriptTree.load(under: routerDirectory).events(forSession: forkId).isEmpty)
+
+        // A new process restores the tree. The transcript of the restored
+        // fork already holds the one tool-calling round of the parent, so the
+        // next pass of the scripted model is the answering pass, made from
+        // the `.toolOutput` entries that the restore seeded.
+        let log2 = ScriptedAnswerLog()
+        let router2 = RouterTestFixtures.makeRouter(
+            id: router1.id,
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            recorder: recorder,
+            loader: StubModelLoader(
+                container: ScriptedToolCallingContainer(model: ScriptedToolCallingModel(script: script, log: log2)),
+                dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile2 = try await router2.resolve(
+            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: parent.id)
+        defer { await SessionFixtureLifecycle.close(restored) }
+        let restoredFork = try #require(restored.session(forkId))
+
+        let reply = try await restoredFork.respond(to: "tell me what the tool told you earlier")
+        #expect(reply == inheritedAnswer)
+        // The answering pass read the inherited output from the transcript
+        // it got: continuity of meaning, not the same canned text by chance.
+        #expect(log2.deliveredToolOutputs == [ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)])
+        // The answer of the fork goes into its own file, after the cut.
+        #expect(try TranscriptTree.load(under: routerDirectory).events(forSession: forkId).contains { $0.kind == .prompt })
     }
 }

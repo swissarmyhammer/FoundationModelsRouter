@@ -319,6 +319,58 @@ struct HookLineageTests {
         }
     }
 
+    /// The production change that makes this test fail: a restore that does
+    /// not give a recorded fork the fork rule against its restored parent,
+    /// or that gives a restored node an origin that is not `resumed`.
+    @Test("restoreSessionTree gives one resumed SessionStart for each node, and a recorded fork in another directory gets its own id as its key")
+    func restoreSessionTreeGivesOneResumedStartForEachSession() async throws {
+        try await Self.withHookedProfile { hooked in
+            let root = hooked.profile.standard.makeSession()
+            await root.close()
+            let forkDirectory = try RecordedForkFixtures.writeFork(
+                under: root.recordingDirectory, cut: RecordedForkCut(historyOrdinal: 0, entryCount: 0))
+            let forkId = try #require(ULID(forkDirectory.lastPathComponent))
+
+            let tree = try await hooked.profile.standard.restoreSessionTree(root: root.id)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events)
+            #expect(resumed.map(\.sessionID).sorted() == [root.id.description, forkId.description].sorted())
+            let restoredFork = try #require(resumed.first { $0.sessionID == forkId.description })
+            #expect(restoredFork.parentSessionID == root.id.description)
+            // The fork works in its own folder, not in the folder of its parent.
+            #expect(restoredFork.sessionKey == forkId.description)
+            await SessionFixtureLifecycle.close(tree)
+        }
+    }
+
+    /// The production change that makes this test fail: a restore that
+    /// gives the supplied key to the root only, so a recorded fork in the
+    /// working directory of the root loses the key of its parent.
+    @Test("restoreSessionTree with a hook key gives it to the root and to a recorded fork in the root's directory")
+    func restoreSessionTreeWithAHookKeyGivesItToTheRootAndASameDirectoryFork() async throws {
+        try await Self.withHookedProfile { hooked in
+            let root = hooked.profile.standard.makeSession(workingDirectory: hooked.directory)
+            await root.close()
+            let forkDirectory = try RecordedForkFixtures.writeFork(
+                under: root.recordingDirectory, cut: RecordedForkCut(historyOrdinal: 0, entryCount: 0),
+                workingDirectory: hooked.directory)
+            let forkId = try #require(ULID(forkDirectory.lastPathComponent))
+
+            let tree = try await hooked.profile.standard.restoreSessionTree(
+                root: root.id, hookSessionKey: Self.replacementKey)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events)
+            let restoredRoot = try #require(resumed.first { $0.sessionID == root.id.description })
+            let restoredFork = try #require(resumed.first { $0.sessionID == forkId.description })
+            #expect(restoredRoot.sessionKey == Self.replacementKey)
+            #expect(restoredFork.sessionKey == Self.replacementKey)
+            #expect(restoredFork.parentSessionID == root.id.description)
+            await SessionFixtureLifecycle.close(tree)
+        }
+    }
+
     // MARK: - The lineage function
 
     @Test("a restored fork node whose directory differs only in its form gets the key of its parent")

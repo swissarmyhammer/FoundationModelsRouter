@@ -157,4 +157,45 @@ struct RelayedQuestionContextTests {
             #expect(try Self.holds(question, in: await child.transcript))
         }
     }
+
+    // MARK: - A recorded fork
+
+    /// The prompt of the second answer of the root. That answer comes after
+    /// the journal of the root recorded the question, so a fork cut after it
+    /// inherits the question in its recorded prefix.
+    private static let promptAfterTheQuestion = "continue after the question"
+
+    /// The production change that makes this test fail: a restore context
+    /// of a recorded fork that keeps the journal entry of a relayed
+    /// question that the fork inherited from the relaying level.
+    @Test("a restored recorded fork of the relaying level gives a context with no relayed question")
+    func aRestoredForkOfTheRelayingLevelLeavesTheQuestionOutOfTheContext() async throws {
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: recordingsDir) }
+        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
+        let fixture = try await Self.makeFixture(rootStep: rootStep, recordingsDir: recordingsDir)
+        var asked: OperationEvent?
+        try await fixture.base.endingAfter(opening: [rootStep.gate]) {
+            asked = try await Self.relayedQuestion(of: fixture)
+            _ = try await fixture.session.respond(to: Self.promptAfterTheQuestion)
+        }
+        let question = try #require(asked)
+        let elicitationId = try #require(question.elicitation).elicitationId
+        let rootDirectory = fixture.session.recordingDirectory
+        let routerDirectory = rootDirectory.deletingLastPathComponent()
+        let forkDirectory = try RecordedForkFixtures.writeFork(
+            under: rootDirectory,
+            cut: try RecordedForkFixtures.cut(atEndOf: fixture.session.id, under: routerDirectory))
+        let forkId = try #require(ULID(forkDirectory.lastPathComponent))
+        // The recorded prefix of the fork holds the question, so only the
+        // context projection can leave it out.
+        let inherited = try TranscriptTree.load(under: routerDirectory)
+            .effectiveEntryEvents(forSession: forkId).flatMap(\.operationEvents)
+        #expect(inherited.contains { $0.elicitation?.elicitationId == elicitationId })
+
+        try await Self.withRestoredTree(root: fixture.session.id, of: fixture, recordingsDir: recordingsDir) { tree in
+            let restoredFork = try #require(tree.session(forkId))
+            #expect(try Self.holds(question, in: await restoredFork.transcript) == false)
+        }
+    }
 }

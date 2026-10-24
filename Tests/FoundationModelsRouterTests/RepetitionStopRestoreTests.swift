@@ -333,6 +333,34 @@ struct RepetitionStopRestoreTests {
         #expect(Self.renderLines(of: restoredRender) == Self.renderLines(of: liveRender))
     }
 
+    /// The production change that makes this test fail: a fork prefix that
+    /// drops the record of the cut of its parent, so the restored fork gets
+    /// the full stopped entry back.
+    @Test("a restored recorded fork of a session that had a stop holds the render the live session held after the stop")
+    func restoredForkRenderEqualsTheLiveRender() async throws {
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
+        defer { directories.remove() }
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
+        defer { await stopped.session.close() }
+        let liveRender = await stopped.session.backend.transcriptEntries()
+        // A recorded fork with no answer of its own, cut at the end of the
+        // stopped answer: a live fork was seeded with the live render.
+        let forkDirectory = try RecordedForkFixtures.writeFork(
+            under: stopped.session.recordingDirectory,
+            cut: try RecordedForkFixtures.cut(
+                atEndOf: stopped.session.id, under: Self.routerDirectory(of: stopped, directories: directories)))
+        let forkId = try #require(ULID(forkDirectory.lastPathComponent))
+
+        let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
+        defer { await SessionFixtureLifecycle.close(restored) }
+        let restoredFork = try #require(restored.session(forkId) as? RoutedSessionActor)
+        let restoredForkRender = await restoredFork.backend.transcriptEntries()
+        withExtendedLifetime(profile) {}
+
+        #expect(Self.reasoningText(of: Transcript(entries: restoredForkRender)) == [Self.keptReasoning])
+        #expect(Self.renderLines(of: restoredForkRender) == Self.renderLines(of: liveRender))
+    }
+
     @Test("a restored session reports the context counter the live session had after the stop")
     func restoredCounterEqualsTheLiveCounter() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
