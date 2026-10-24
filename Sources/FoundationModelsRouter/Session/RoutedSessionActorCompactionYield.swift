@@ -83,10 +83,10 @@ extension RoutedSessionActor {
     /// round have no output yet.
     ///
     /// A tool body that outlived its model call is in no open model call of
-    /// this session (``ModelCallMark/isOpenModelCall(of:)``), and settles
+    /// this session (``SessionCallMark/isOpenCall(of:)``), and settles
     /// nothing: another call can write the transcript by then.
     private func settleTranscriptAtToolResult() {
-        guard ModelCallMark.current?.isOpenModelCall(of: id) == true else { return }
+        guard SessionCallMark.current?.isOpenCall(of: id) == true else { return }
         settleTranscript()
     }
 

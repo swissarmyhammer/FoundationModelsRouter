@@ -63,7 +63,7 @@ extension RoutedSessionActor {
     /// gives no hint.
     func noteDelegationHintDue() async {
         guard let advisor = delegationAdvisorSlot.withLock({ $0 }),
-            ModelCallMark.current?.isOpenModelCall(of: id) == true, mayStopForDelegationHint,
+            SessionCallMark.current?.isOpenCall(of: id) == true, mayStopForDelegationHint,
             roundIsComplete
         else { return }
         guard let hint = await advisor.takeHint() else { return }

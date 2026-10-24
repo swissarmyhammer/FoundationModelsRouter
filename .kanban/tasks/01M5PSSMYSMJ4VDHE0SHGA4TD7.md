@@ -1,8 +1,13 @@
 ---
+comments:
+- actor: wballard
+  id: 01m5q5n6dwsw5vabnhw3yxt15b
+  text: 'Done in the card-2 commit. Router now owns the mark and the error: SessionCallMark (Sources/FoundationModelsRouter/Session/SessionCallMark.swift, bound in the task-local wrapper submission(...) in place of ModelCallMark) and the public RoutedSessionError.inBandWaitForOwnSession(sessionID:). refuseInBandWaitForOwnSession() refuses only when the open mark names the waited session; the queue check and refuseWaitInsideOpenSubmission() are gone, and the GenerationQueueError alias is removed. Background runs: Extras'' BackgroundToolRunner runs the body, and this card may not change Extras, so Router cannot wrap the body or clear the mark there. The check instead knows a background run by its ambient ToolContext: the body runs with the completion token of its run, and that run is open on the run plane of the session; such a wait is not refused. After the call that started the run ended, the mark (one shared reference) is closed, so a later wait is not refused either. Removing the run-plane check makes NestedGenerationReentryTests ''a declared background body asks the session that started it for an answer'' fail, so it is load-bearing. The summarizer call binds no mark now (its backend has no tools). Tests: own-session refusal, background run after its answer ended, and the task-local reads (ToolContext, SessionOwnWork, SessionCallMark, SubagentQuestionHost) are in ToolBodyHoldsNoLockTests; the two same-model waits were restated as answered in card ^qhgfajc; NestedGenerationReentryTests now expects RoutedSessionError; GenerationQueuePublicSurfaceTests became InBandWaitRefusalPublicSurfaceTests.'
+  timestamp: 2026-10-24T14:39:53.788756+00:00
 depends_on:
 - 01M5PSSK1HD9DVYPW7WQHGFAJC
-position_column: todo
-position_ordinal: '8280'
+position_column: done
+position_ordinal: ffffffffc380
 title: Refuse an in-band wait only for the same session, with a Router-owned mark
 ---
 ## What

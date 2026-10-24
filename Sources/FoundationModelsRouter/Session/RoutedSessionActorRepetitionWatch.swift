@@ -408,7 +408,7 @@ extension RoutedSessionActor {
     ///   or in this check. The tool body must then not run.
     func checkToolCallForRepetition(_ call: ToolCallIdentity?) throws {
         guard repetitionDetection.isEnabled, let watchId = repetitionWatch.activeWatchId,
-            ModelCallMark.current?.isOpenModelCall(of: id) == true
+            SessionCallMark.current?.isOpenCall(of: id) == true
         else { return }
         if repetitionWatch.stop == nil {
             repetitionWatch.toolCallRun.add(call)

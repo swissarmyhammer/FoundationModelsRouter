@@ -169,7 +169,7 @@ extension RoutedSessionActor {
     /// - Throws: `CancellationError` for a no-op call that the session does
     ///   not run. The tool body must then not run.
     func checkToolCallForNoOp(toolName: String, arguments: GeneratedContent) async throws {
-        guard ModelCallMark.current?.isOpenModelCall(of: id) == true, isNoOpToolCall(toolName, arguments)
+        guard SessionCallMark.current?.isOpenCall(of: id) == true, isNoOpToolCall(toolName, arguments)
         else { return }
         guard await hasPendingOperation() else { return }
         await waitForTheRealCallsOfTheRound(ofNoOpCallOf: toolName)
@@ -246,7 +246,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameter result: The tool result.
     func noteRealToolResult(_ result: ToolResultAppend) {
-        guard ModelCallMark.current?.isOpenModelCall(of: id) == true else { return }
+        guard SessionCallMark.current?.isOpenCall(of: id) == true else { return }
         noOpToolCallRound.enter(callsEntryId: currentRoundCalls()?.id)
         noOpToolCallRound.append(result)
         noOpRoundChanges.signal()

@@ -799,8 +799,8 @@ extension RoutedSessionActor {
         // answer of this same session is refused at once rather than parked
         // behind this call, which waits for the tool. Closed in the `defer`
         // below, so a task that outlives the call is in no model call of
-        // this session. See ``ModelCallMark``.
-        let modelCallMark = ModelCallMark(sessionID: id)
+        // this session. See ``SessionCallMark``.
+        let modelCallMark = SessionCallMark(sessionID: id)
         defer { modelCallMark.close() }
         // The origin of the work that makes this call. The submission and the
         // report of its start bind it again, and each event of the call
@@ -908,7 +908,7 @@ extension RoutedSessionActor {
     private static func submission(
         of body: @escaping @Sendable (String) async throws -> String,
         composedPrompt: String,
-        mark: ModelCallMark,
+        mark: SessionCallMark,
         boundary: ToolResultAppendBoundary,
         checks: ModelCallToolChecks,
         context: ToolContext,
@@ -920,7 +920,7 @@ extension RoutedSessionActor {
         {
             try await OriginContext.$current.withValue(origin) {
                 try await ServiceContext.$current.withValue(serviceContext) {
-                    try await ModelCallMark.$current.withValue(mark) {
+                    try await SessionCallMark.$current.withValue(mark) {
                         try await ToolResultAppendBoundary.$current.withValue(boundary) {
                             try await checks.bound {
                                 try await ToolContext.$current.withValue(context) {

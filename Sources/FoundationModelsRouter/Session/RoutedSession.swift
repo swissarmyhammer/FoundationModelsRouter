@@ -40,7 +40,7 @@ import FoundationModels
 /// inside it, holds nothing: the other sessions on the same model take turns
 /// at each pass. A cloud model needs no lock. An in-band tool body that asks
 /// its own session for an answer is refused at once with
-/// ``GenerationQueueError/waitInsideOpenSubmission(model:)``, because the
+/// ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``, because the
 /// pump of the session runs one answer at a time. A background body asks its
 /// own session and gets the answer of a later submission.
 public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
@@ -225,7 +225,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   answer that carried the prompt.
     /// - Throws: The error of a failed answer, `CancellationError` when the
     ///   message or its answer was cancelled, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)`` when
     ///   called in band from a tool of a submission of this session.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
@@ -330,7 +330,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   session has no record of the id, `CancellationError` when the
     ///   calling task is cancelled first, ``MailRefusal/closed`` when the
     ///   session closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)`` when
     ///   called in band from a tool of a submission of this session.
     func awaitTerminal(of id: MailID) async throws -> SessionEvent
 
@@ -382,7 +382,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   task is cancelled first, ``TerminalLookupError/unknownMail(_:)`` at
     ///   once when the session has no record of the id,
     ///   ``MailRefusal/closed`` when the session closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)`` when
     ///   called in band from a tool of a submission of this session.
     func awaitAnswer(of id: MailID) async throws -> SessionAnswer
 
@@ -405,7 +405,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   session has no record of the id, `CancellationError` when the
     ///   calling task is cancelled first, ``MailRefusal/closed`` when the
     ///   session closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``.
     func awaitTerminal(of id: SignalID) async throws -> SessionEvent
 
     /// Streams the ``SessionEvent``s of this *session*, for as long as the

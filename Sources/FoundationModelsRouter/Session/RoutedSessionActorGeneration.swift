@@ -37,7 +37,7 @@ extension RoutedSessionActor {
     /// - Returns: The model's complete text response.
     /// - Throws: The error of a failed answer, `CancellationError` when the
     ///   message was cancelled or the answer was cancelled, the refusal of
-    ///   ``mail(_:)``, or ``GenerationQueueError/waitInsideOpenSubmission(model:)``
+    ///   ``mail(_:)``, or ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``
     ///   when this call comes from an in-band tool body of an open submission
     ///   of this session.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
@@ -118,7 +118,7 @@ extension RoutedSessionActor {
     ///   session has no record of the id, `CancellationError` when the
     ///   calling task is cancelled first, ``MailRefusal/closed`` when the
     ///   session closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``.
     func awaitTerminal(of id: MailID) async throws -> SessionEvent {
         try await awaitMailTerminal(of: id).event
     }
@@ -134,7 +134,7 @@ extension RoutedSessionActor {
     ///   ``TerminalLookupError/unknownMail(_:)`` at once when the session
     ///   has no record of the id, ``MailRefusal/closed`` when the session
     ///   closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``.
     func awaitAnswer(of id: MailID) async throws -> SessionAnswer {
         try await awaitMailTerminal(of: id).answer()
     }
@@ -151,9 +151,9 @@ extension RoutedSessionActor {
     ///   id is not pending and not in the ledger, `CancellationError` when
     ///   the calling task is cancelled first, ``MailRefusal/closed`` when the
     ///   session closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``.
     private func awaitMailTerminal(of id: MailID) async throws -> SessionOutputHub.Terminal {
-        try refuseWaitInsideOpenSubmission()
+        try await refuseInBandWaitForOwnSession()
         return try await withTaskCancellationHandler {
             try await outputHub.awaitTerminal(of: .mail(id), orThrow: TerminalLookupError.unknownMail(id))
         } onCancel: {
@@ -173,9 +173,9 @@ extension RoutedSessionActor {
     ///   session has no record of the id, `CancellationError` when the
     ///   calling task is cancelled first, ``MailRefusal/closed`` when the
     ///   session closes first, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    ///   ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``.
     func awaitTerminal(of id: SignalID) async throws -> SessionEvent {
-        try refuseWaitInsideOpenSubmission()
+        try await refuseInBandWaitForOwnSession()
         return try await outputHub.awaitTerminal(
             of: .signal(id.description), orThrow: TerminalLookupError.unknownSignal(id)
         ).event
@@ -196,7 +196,7 @@ extension RoutedSessionActor {
     /// that ``respond(to:maxTokens:)`` and the stream methods are.
     ///
     /// The refusal of a wait that could never end comes first, on the task
-    /// of the stream (``refuseWaitInsideOpenSubmission()``). A cancel of the
+    /// of the stream (``refuseInBandWaitForOwnSession()``). A cancel of the
     /// reader cancels the mail while it is queued (``cancel(_:)``); it never
     /// stops an answer that runs.
     ///
@@ -208,7 +208,7 @@ extension RoutedSessionActor {
     ///   when the reader stops before the terminal event.
     private func streamEvents(of mail: Mail) -> AsyncThrowingStream<SessionEvent, Error> {
         Self.wrapAsyncStream { continuation in
-            try await self.refuseWaitInsideOpenSubmission()
+            try await self.refuseInBandWaitForOwnSession()
             // A reader that stopped before the send sends no mail, so no
             // pump can take the mail before the cancel below removes it.
             try Task.checkCancellation()
@@ -228,19 +228,30 @@ extension RoutedSessionActor {
     }
 
     /// Refuses a wait for an answer of this session that could never end: a
-    /// wait from an in-band tool body of an open submission of this session.
-    /// That submission waits for the tool body, and the pump of the session
-    /// runs one answer at a time, so the answer could come only after it.
+    /// wait from an in-band tool body of an open model call of this session
+    /// (``SessionCallMark``). That model call waits for the tool body, and the
+    /// pump of the session runs one answer at a time, so the answer could
+    /// come only after it. A wait for another session is never refused here.
     ///
-    /// A background body has a closed mark
-    /// (``ModelCallMark/withBackgroundRunMark(_:)``), so it is never refused:
-    /// its mail waits for a later submission.
+    /// A background run that a tool body of this session starts gets the mark
+    /// of the call from its task, but it is not in band: the call does not
+    /// wait for it, so its mail waits for a later answer. The Extras tool
+    /// hosting runs the body of a background run, so the router cannot clear
+    /// the mark there. The check therefore knows a background run by its
+    /// ambient ``ToolContext``: a background body runs with the completion
+    /// token of its run, and that run is open on the ``runPlane`` of this
+    /// session. Such a wait is not refused. When the call that started the
+    /// run ended, the mark is closed, so a later wait is not refused either.
     ///
-    /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
-    func refuseWaitInsideOpenSubmission() throws {
-        if ModelCallMark.current?.isOpenModelCall(of: id) == true {
-            throw GenerationQueueError.waitInsideOpenSubmission(model: model)
+    /// - Throws: ``RoutedSessionError/inBandWaitForOwnSession(sessionID:)``.
+    func refuseInBandWaitForOwnSession() async throws {
+        guard SessionCallMark.current?.isOpenCall(of: id) == true else { return }
+        if let token = ToolContext.current?.completionToken,
+            await runPlane.backgroundRuns().contains(where: { $0.completionToken == token })
+        {
+            return
         }
+        throw RoutedSessionError.inBandWaitForOwnSession(sessionID: id)
     }
 
     /// What one submission runs for the options of its batch.

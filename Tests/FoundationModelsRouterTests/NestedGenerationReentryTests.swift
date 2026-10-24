@@ -369,7 +369,7 @@ struct NestedGenerationReentryTests {
     /// is one, so a test can compare it.
     private enum AnswerOutcome: Sendable {
         case finished(String)
-        case failed(refusal: GenerationQueueError?, description: String)
+        case failed(refusal: RoutedSessionError?, description: String)
     }
 
     // MARK: - Fixtures
@@ -406,7 +406,7 @@ struct NestedGenerationReentryTests {
         do {
             return .finished(try await answer())
         } catch {
-            return .failed(refusal: error as? GenerationQueueError, description: String(describing: error))
+            return .failed(refusal: error as? RoutedSessionError, description: String(describing: error))
         }
     }
 
@@ -530,14 +530,14 @@ struct NestedGenerationReentryTests {
     ///   - expected: The refusal the call has to raise.
     ///   - call: What the refused call is called in the report.
     private static func expectRefused(
-        _ outcome: AnswerOutcome, with expected: GenerationQueueError, describing call: String
+        _ outcome: AnswerOutcome, with expected: RoutedSessionError, describing call: String
     ) {
         switch outcome {
         case .finished(let answer):
             Issue.record("The answer was \"\(answer)\" instead of a refusal of \(call).")
         case .failed(let refusal, let description):
             #expect(
-                refusal == expected, "The refusal did not name the model of this session: \(description)")
+                refusal == expected, "The refusal did not name this session: \(description)")
         }
     }
 
@@ -616,15 +616,14 @@ struct NestedGenerationReentryTests {
         // The tool waits for an answer of the very session whose submission
         // invoked it. That answer could come only after the submission, which
         // waits for the tool, so the wait could never end. It has to fail at
-        // once, with the wait-cycle error that names the model.
+        // once, with the wait-cycle error that names the session.
         target.set(caller)
-        let model = try #require(caller as? RoutedSessionActor).model
 
         // The refusal is the event: the answer ends with it, with no clock.
         let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
 
         Self.expectRefused(
-            outcome, with: .waitInsideOpenSubmission(model: model),
+            outcome, with: .inBandWaitForOwnSession(sessionID: caller.id),
             describing: "a tool body that generates on its own session")
 
         withExtendedLifetime(profile) {}
@@ -644,7 +643,7 @@ struct NestedGenerationReentryTests {
 
     /// Runs one answer whose in-band tool body sends a mail to its own
     /// session, and then waits for that mail with `wait`. Asserts that the
-    /// wait fails at once with the wait-cycle error that names the model.
+    /// wait fails at once with the wait-cycle error that names the session.
     ///
     /// The mail could be delivered only by a submission after the one that
     /// waits for the tool body, so the wait could never end.
@@ -661,13 +660,12 @@ struct NestedGenerationReentryTests {
         let caller = profile.standard.makeSession(tools: [MailWaitingTool(target: target, wait: wait)])
         defer { await caller.close() }
         target.set(caller)
-        let model = try #require(caller as? RoutedSessionActor).model
 
         // The refusal is the event: the answer ends with it, with no clock.
         let answer = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
 
         Self.expectRefused(
-            answer, with: .waitInsideOpenSubmission(model: model),
+            answer, with: .inBandWaitForOwnSession(sessionID: caller.id),
             describing: "a tool body that waits for a mail of its own session (\(wait))")
         withExtendedLifetime(profile) {}
     }
@@ -865,9 +863,10 @@ struct NestedGenerationReentryTests {
         let caller = harness.makeCallerSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
         defer { await harness.close([caller]) }
-        // The body asks the very session whose submission started it. Its
-        // mark is closed, so the message is not refused: it waits in the
-        // outbox for a later submission of the session.
+        // The body asks the very session whose submission started it. The
+        // body is a background run of that session, not an in-band tool body,
+        // so the message is not refused: it waits in the outbox for a later
+        // submission of the session.
         harness.target.set(caller)
 
         let answer = harness.startAnswer(on: caller)

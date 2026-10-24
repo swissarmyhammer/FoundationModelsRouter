@@ -44,13 +44,6 @@ struct ExtrasNameClashTests {
                 == (any FoundationModelsExtras.PooledEmbedding).self)
     }
 
-    /// The refusal name is the same type in both modules.
-    @Test("the refusal name of the router and Extras is one type")
-    func queueNamesAreOneType() {
-        #expect(
-            FoundationModelsRouter.GenerationQueueError.self == FoundationModelsExtras.GenerationQueueError.self)
-    }
-
     /// A file that imports both modules uses the unqualified model pool names
     /// with no ambiguity.
     @Test("a file that imports both modules uses the unqualified pool names")

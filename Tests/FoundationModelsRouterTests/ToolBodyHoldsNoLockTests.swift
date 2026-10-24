@@ -119,6 +119,133 @@ struct ToolBodyHoldsNoLockTests {
         }
     }
 
+    /// The session that a tool asks, set after the session exists: a tool
+    /// goes into `makeSession` before that call returns the session.
+    private final class SessionSlot: Sendable {
+        /// The session, or `nil` before the test sets it.
+        private let stored = Mutex<(any RoutedSession)?>(nil)
+
+        /// The session. The test sets it before any answer starts.
+        var session: any RoutedSession {
+            get throws { try #require(stored.withLock { $0 }) }
+        }
+
+        /// Keeps `session`.
+        ///
+        /// - Parameter session: The session that the tool asks.
+        func set(_ session: any RoutedSession) {
+            stored.withLock { $0 = session }
+        }
+    }
+
+    /// A tool whose body asks the session in `target`, its own session, for
+    /// a whole answer, in band. It keeps the error, and answers with a fixed
+    /// text.
+    private struct OwnSessionAnswerTool: Tool {
+        let name = "own_session_answer_tool"
+        let description = "asks its own session for an answer, and keeps the error it throws"
+
+        /// The session the body asks for an answer: its own session.
+        let target: SessionSlot
+
+        /// Where the body keeps the error.
+        let refusal: ErrorBox
+
+        func call(arguments: MountArguments) async throws -> String {
+            do {
+                return try await target.session.respond(to: ToolBodyHoldsNoLockTests.secondPrompt)
+            } catch {
+                refusal.store(error)
+                return ToolBodyHoldsNoLockTests.refusedAnswer
+            }
+        }
+    }
+
+    /// A declared background tool whose body waits on a latch, and then asks
+    /// the session in `target`, its own session, for a whole answer.
+    private struct BackgroundOwnSessionAnswerTool: Tool, BackgroundTool {
+        let name = "background_own_session_answer_tool"
+        let description = "in the background, waits for its latch, then asks its own session for an answer"
+
+        /// The session the body asks for an answer: its own session.
+        let target: SessionSlot
+
+        /// The latch the body waits on before it asks for the answer.
+        let start: RunLatch
+
+        /// Taken by the first call, which asks for the answer.
+        let firstCall = FirstCallFlag()
+
+        /// Every call goes to the background.
+        var mount: ToolMount? { ToolMount(mode: .background) }
+
+        /// See ``BackgroundChildAnswerTool/inlineSettleGrace``.
+        var inlineSettleGrace: TimeInterval { ToolBodyHoldsNoLockTests.laterCallSettleGrace }
+
+        func call(arguments: MountArguments) async throws -> String {
+            guard firstCall.take() else { return ToolBodyHoldsNoLockTests.nothingStarted }
+            await start.waitUntilOpen()
+            return try await target.session.respond(to: ToolBodyHoldsNoLockTests.secondPrompt)
+        }
+    }
+
+    /// What a tool body read of the task-locals of its model call.
+    private struct ReadBindings: Sendable, Equatable {
+        /// The session of the ambient ``ToolContext``.
+        let toolContextSession: ULID?
+
+        /// Whether ``SessionOwnWork/current`` names the session.
+        let ownWorkNamesTheSession: Bool
+
+        /// Whether ``SessionCallMark/current`` is the open mark of the
+        /// session.
+        let callMarkIsOpen: Bool
+
+        /// The session of ``SubagentQuestionHost/session``.
+        let questionHostSession: ULID?
+    }
+
+    /// Keeps what one tool body read, so the test reads it after the answer
+    /// ends.
+    private final class BindingsBox: Sendable {
+        /// What the body read, or `nil` while no body ran.
+        private let stored = Mutex<ReadBindings?>(nil)
+
+        /// What the body read, or `nil` while no body ran.
+        var read: ReadBindings? { stored.withLock { $0 } }
+
+        /// Keeps `bindings`.
+        ///
+        /// - Parameter bindings: What the body read.
+        func store(_ bindings: ReadBindings) {
+            stored.withLock { $0 = bindings }
+        }
+    }
+
+    /// A tool whose body reads the task-locals of its model call for the
+    /// session in `target`, and keeps them.
+    private struct BindingReadingTool: Tool {
+        let name = "binding_reading_tool"
+        let description = "reads the task-locals of its model call"
+
+        /// The session of the model call.
+        let target: SessionSlot
+
+        /// Where the body keeps what it read.
+        let bindings: BindingsBox
+
+        func call(arguments: MountArguments) async throws -> String {
+            let id = try target.session.id
+            let bindings = ReadBindings(
+                toolContextSession: ToolContext.current?.sessionID,
+                ownWorkNamesTheSession: SessionOwnWork.current.contains(id),
+                callMarkIsOpen: SessionCallMark.current?.isOpenCall(of: id) == true,
+                questionHostSession: SubagentQuestionHost.session?.id)
+            self.bindings.store(bindings)
+            return arguments.value
+        }
+    }
+
     /// How long a call of ``BackgroundChildAnswerTool`` waits for its run to
     /// settle inline. Long enough for a run that starts nothing, and short.
     private static let laterCallSettleGrace: TimeInterval = 0.5
@@ -362,6 +489,99 @@ struct ToolBodyHoldsNoLockTests {
         let deliveryPrompt = try #require(prompts.dropFirst(Self.passesBeforeDelivery).first)
         #expect(deliveryPrompt.contains(PassObservingModel.answer(to: Self.secondPrompt)))
         #expect(deliveryPrompt.contains(RoutedSessionActor.settledRunDeliveryPrompt))
+        withExtendedLifetime(resolved) {}
+    }
+
+    @Test("an in-band tool body that waits for an answer of its own session is refused with the error of the session")
+    func anInBandWaitForItsOwnSessionIsRefused() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture(toolRounds: 1)
+        await fixture.latch.open()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let refusal = ErrorBox()
+        let target = SessionSlot()
+        let session = resolved.profile.standard.makeSession(tools: [OwnSessionAnswerTool(target: target, refusal: refusal)])
+        defer { await SessionFixtureLifecycle.close([session]) }
+        target.set(session)
+
+        // The pump of the session runs one answer at a time, so the answer the
+        // tool body waits for could start only after the answer of the tool
+        // body. The refusal ends the wait at once.
+        let answer = try await BoundedWait.value(of: Task { try await session.respond(to: Self.firstPrompt) })
+
+        let refused = try #require(refusal.error as? RoutedSessionError)
+        #expect(refused == .inBandWaitForOwnSession(sessionID: session.id))
+        #expect(refused.errorDescription?.contains(session.id.description) == true)
+        #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt])
+        #expect(answer == PassObservingModel.answer(to: Self.firstPrompt))
+        withExtendedLifetime(resolved) {}
+    }
+
+    @Test("a background run that waits for its own session after the answer that started it ended is not refused")
+    func aBackgroundRunWaitsForItsOwnSessionAfterItsAnswerEnded() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture(toolRounds: 1)
+        await fixture.latch.open()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let runStart = RunLatch()
+        let target = SessionSlot()
+        let session = resolved.profile.standard.makeSession(
+            tools: [BackgroundOwnSessionAnswerTool(target: target, start: runStart)])
+        // The run latch opens before the close, also when the test throws
+        // (rule T1): a close waits for the held background run.
+        defer { await SessionFixtureLifecycle.close([session], opening: [runStart]) }
+        target.set(session)
+
+        // The stream ends with its answer, and does not wait for the run. The
+        // run waits on its latch, so the answer ends before the run asks.
+        try await BoundedWait.run {
+            for try await _ in await session.streamEvents(to: Self.firstPrompt) {}
+        }
+        let runs = await session.runPlane.backgroundRuns()
+
+        await runStart.open()
+        #expect(runs.count == 1)
+        let token = try #require(runs.first?.completionToken)
+        let runPlane = session.runPlane
+        let outcome = try await BoundedWait.run { await runPlane.wait(completionToken: token, seconds: nil) }
+
+        var terminal: OperationEvent?
+        if case .settled(let settled) = outcome {
+            terminal = settled
+        }
+        #expect(terminal?.outcome == .succeeded)
+        // The progress report of the run is mail, so it rides the prompt of
+        // the answer in front of the run's own message.
+        let detail = try #require(terminal?.detail)
+        #expect(detail.hasPrefix(PassObservingModel.answerPrefix))
+        #expect(detail.hasSuffix(Self.secondPrompt))
+        withExtendedLifetime(resolved) {}
+    }
+
+    @Test("a tool body reads each task-local of its model call: the tool context, the own work, the call mark and the question host")
+    func aToolBodyReadsEachTaskLocalOfItsModelCall() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture(toolRounds: 1)
+        await fixture.latch.open()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let target = SessionSlot()
+        let bindings = BindingsBox()
+        let session = resolved.profile.standard.makeSession(
+            tools: [BindingReadingTool(target: target, bindings: bindings)])
+        defer { await SessionFixtureLifecycle.close([session]) }
+        target.set(session)
+
+        _ = try await BoundedWait.value(of: Task { try await session.respond(to: Self.firstPrompt) })
+
+        let read = try #require(bindings.read)
+        #expect(
+            read
+                == ReadBindings(
+                    toolContextSession: session.id, ownWorkNamesTheSession: true, callMarkIsOpen: true,
+                    questionHostSession: session.id))
         withExtendedLifetime(resolved) {}
     }
 }

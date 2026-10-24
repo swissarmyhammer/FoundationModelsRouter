@@ -101,7 +101,7 @@ extension RoutedSessionActor: SessionMailObserver {
     /// more cycle before it ends.
     ///
     /// The pump is a detached task: it inherits no task-local of the caller
-    /// that woke it. So a ``ModelCallMark`` of a tool body that sent mail
+    /// that woke it. So a ``SessionCallMark`` of a tool body that sent mail
     /// never reaches a submission of the pump.
     ///
     /// While a drain runs (``drainTask``), no pump starts. After ``close()``

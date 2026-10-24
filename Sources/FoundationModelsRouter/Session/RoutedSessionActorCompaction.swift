@@ -311,7 +311,7 @@ extension RoutedSessionActor {
         // a caller (a tool that asked for the compaction) would refuse its
         // summarizer submission.
         let compaction = Task {
-            await ModelCallMark.$current.withValue(nil) {
+            await SessionCallMark.$current.withValue(nil) {
                 await runCompaction(id, order)
             }
         }
@@ -433,8 +433,9 @@ extension RoutedSessionActor {
     /// The call is not a submission of an answer: it opens no submission,
     /// sends no event of its own, holds no ``inFlightModelCall``, and reads
     /// no state of the running answer. Thus it can run while an answer runs.
-    /// A cancel of the task of the compaction cancels the call. The call
-    /// binds the ``ModelCallMark`` of the call.
+    /// A cancel of the task of the compaction cancels the call. The call is
+    /// no answer, so it binds no ``SessionCallMark``: the summarizer backend
+    /// has no tools.
     ///
     /// - Parameters:
     ///   - composedPrompt: The prompt of the summarizer call.
@@ -447,11 +448,7 @@ extension RoutedSessionActor {
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         try Task.checkCancellation()
-        let mark = ModelCallMark(sessionID: id)
-        defer { mark.close() }
-        return try await ModelCallMark.$current.withValue(mark) {
-            try await body(composedPrompt)
-        }
+        return try await body(composedPrompt)
     }
 
     /// Opens one ``RouterTelemetry/SpanName/compact`` span around a whole
