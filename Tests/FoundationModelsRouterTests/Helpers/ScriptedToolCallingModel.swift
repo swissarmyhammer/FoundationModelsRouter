@@ -16,6 +16,9 @@ import Synchronization
 /// - every round spent: emit the final text answer, built from the tool output
 ///   text read back out of the transcript.
 ///
+/// A pass with no tools (the summarizer call of a compaction) emits the final
+/// text answer at once: it has no tool to call.
+///
 /// The final branch is the whole point of the fixture. The answer is composed
 /// from what the transcript actually carries, never from a canned string, so an
 /// answer whose tool outputs never reach generation cannot produce it.
@@ -162,7 +165,9 @@ struct ScriptedToolCallingModel: LanguageModel {
             let transcript = request.transcript
             let toolOutputs = Self.toolOutputTexts(in: transcript)
             let round = Self.roundCount(in: transcript)
-            guard round < configuration.script.rounds.count else {
+            // A pass with no tools (the summarizer call of a compaction) has
+            // no tool to call, so it gives the final answer.
+            guard round < configuration.script.rounds.count, !request.enabledToolDefinitions.isEmpty else {
                 configuration.log.recordAnswer(
                     requestedCalls: Self.requestedCalls(in: transcript),
                     deliveredToolOutputs: toolOutputs)

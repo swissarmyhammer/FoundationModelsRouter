@@ -237,6 +237,22 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// `transcript` gives a blank-slate backend.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
 
+    /// ``replacingTranscript(_:)``, with `tools` in place of the tools of
+    /// this backend. The summarizer call of a compaction on the own model
+    /// uses it with no tools, so that a tool call of the model runs no tool
+    /// body in the compaction.
+    ///
+    /// The default ignores `tools` and forwards to
+    /// ``replacingTranscript(_:)``.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the new backend from.
+    ///   - tools: The tools of the model-facing session of the new backend.
+    /// - Returns: The new backend.
+    func replacingTranscript(
+        _ transcript: FoundationModels.Transcript, tools: [any Tool]
+    ) -> any LanguageModelSessionBackend
+
     /// The work queue of the model of this backend, or `nil` when the backend
     /// has none (`generation-queue.md`, section 5.3).
     ///
@@ -343,5 +359,13 @@ extension LanguageModelSessionBackend {
         _ transcript: FoundationModels.Transcript
     ) -> any LanguageModelSessionBackend {
         makeFork()
+    }
+
+    /// Default ``replacingTranscript(_:tools:)``: ignores `tools` and
+    /// forwards to ``replacingTranscript(_:)``.
+    public func replacingTranscript(
+        _ transcript: FoundationModels.Transcript, tools: [any Tool]
+    ) -> any LanguageModelSessionBackend {
+        replacingTranscript(transcript)
     }
 }

@@ -383,7 +383,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// The call is ``respond(to:maxTokens:)`` under a
     /// ``ReasoningOffRequest``, so the reasoning level comes from the one
     /// place that states it for each call (``prepareCall(includingSchema:)``).
-    /// The call has no tools, so its one pass is its first pass.
+    /// The summarizer call of a compaction is the one caller. On each tier,
+    /// it runs on a backend with no tools
+    /// (``LanguageModelSessionBackend/replacingTranscript(_:tools:)``), so its
+    /// one pass is its first pass.
     func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
         try await ReasoningOffRequest.$isRequested.withValue(true) {
             try await respond(to: prompt, maxTokens: maxTokens)
@@ -833,6 +836,15 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// backend's ``tools``. Its session runs over a new per-session wrapper,
     /// and it names the same queue.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
+        replacingTranscript(transcript, tools: tools)
+    }
+
+    /// Makes a new backend over ``model`` seeded from `transcript`, with
+    /// `tools` in place of this backend's ``tools``. Its session runs over a
+    /// new per-session wrapper, and it names the same queue.
+    func replacingTranscript(
+        _ transcript: FoundationModels.Transcript, tools: [any FoundationModels.Tool]
+    ) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
             model: model, generationQueue: generationQueue, contextWindow: contextWindow,
             transcript: transcript, tools: tools, samplingMode: samplingMode)

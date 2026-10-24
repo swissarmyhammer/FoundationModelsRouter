@@ -267,4 +267,15 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
     func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
         HookLayeredSessionBackend(wrapping: wrapped.replacingTranscript(transcript))
     }
+
+    /// A backend of the wrapped backend seeded from `transcript`, with
+    /// `tools` in place of the tools that it has.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the backend from.
+    ///   - tools: The tools of the new backend.
+    /// - Returns: The backend, in this decorator.
+    func replacingTranscript(_ transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
+        HookLayeredSessionBackend(wrapping: wrapped.replacingTranscript(transcript, tools: tools))
+    }
 }

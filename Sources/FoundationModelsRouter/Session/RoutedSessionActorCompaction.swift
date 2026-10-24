@@ -8,10 +8,16 @@ import Logging
 /// Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``.
 ///
 /// Each ``summarize(_:maxTokens:)`` call runs on a fresh, blank-slate backend
-/// (``LanguageModelSessionBackend/replacingTranscript(_:)`` with an empty
-/// transcript), never on the live backend. The live backend holds the live
-/// context that the call summarizes, and the call must not enter the
+/// (``LanguageModelSessionBackend/replacingTranscript(_:tools:)`` with an
+/// empty transcript), never on the live backend. The live backend holds the
+/// live context that the call summarizes, and the call must not enter the
 /// conversation history.
+///
+/// The blank-slate backend has no tools. The backend of the own-model tier
+/// is the live backend of the session, which has the tools of the session.
+/// A tool call of the model in a summarizer call thus runs no tool body: the
+/// SDK ends the call as it ends a call with an unknown tool, and the tier
+/// fails.
 ///
 /// The call turns the model's reasoning off
 /// (``LanguageModelSessionBackend/respondWithoutReasoning(to:maxTokens:)``).
@@ -29,7 +35,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
     let backend: any LanguageModelSessionBackend
 
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        let blank = backend.replacingTranscript(Transcript(entries: []))
+        let blank = backend.replacingTranscript(Transcript(entries: []), tools: [])
         // Before the call: the executor of the blank backend reads the scope
         // at each pass. A backend with no executor seam keeps no cache of
         // the fork, so it has nothing to set.
