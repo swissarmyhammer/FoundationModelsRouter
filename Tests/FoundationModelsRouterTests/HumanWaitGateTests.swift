@@ -31,13 +31,6 @@ import Testing
 /// after it puts the message in the queue. No wait here ends on a wall
 /// clock, so a loaded machine makes these tests slower and never red. Each
 /// wait ends on its event.
-///
-/// The complementary claim — that the order of submissions does not change
-/// when no tool waits for a person — is covered where it already was:
-/// `ForkConcurrencyTests.generationQueueSerializesSubmissionsAndIsFIFO` (four
-/// callers over one model never overlap and run FIFO) and
-/// `MultiMessageSessionTests.forkDoesNotWaitForARunningSubmission` (a fork does
-/// not wait for a running submission; it reads the settled transcript).
 @Suite("A human wait in a tool holds the model, and the session keeps its answer running")
 struct HumanWaitGateTests {
     // MARK: - Failures raised from inside a human wait
@@ -82,8 +75,8 @@ struct HumanWaitGateTests {
     /// whole call of this backend to that queue, as over a live container.
     ///
     /// Properly `Sendable`, like ``StubSessionBackend``: each mutable field is
-    /// behind a ``Mutex``. A test reads ``lastFork`` and ``entries`` from its
-    /// own task while the session drives the calls of this backend.
+    /// behind a ``Mutex``. A test reads ``entries`` from its own task while
+    /// the session drives the calls of this backend.
     private final class HookedSessionBackend: LanguageModelSessionBackend {
         private let hook: AnswerHook
         private let observer: AnswerObserver
@@ -98,20 +91,6 @@ struct HumanWaitGateTests {
 
         /// This backend's synthetic transcript, as of this read.
         var entries: [Transcript.Entry] { transcript.withLock { $0 } }
-
-        /// The most recent fork this backend produced, or `nil` when
-        /// ``makeFork(tools:)`` has never been called.
-        private let newestFork = Mutex<HookedSessionBackend?>(nil)
-
-        /// The most recent fork this backend produced, or `nil` if
-        /// ``makeFork(tools:)`` has never been called — the observation point
-        /// proving *when* a concurrent fork read this backend's transcript.
-        var lastFork: HookedSessionBackend? { newestFork.withLock { $0 } }
-
-        /// Sent when this backend makes its first fork, so a test waits for
-        /// the fork on the event rather than reading ``lastFork`` again and
-        /// again.
-        let forkMade = AwaitedEvent()
 
         init(hook: AnswerHook, observer: AnswerObserver, generationQueue: GenerationQueue?, entries: [Transcript.Entry] = []) {
             self.hook = hook
@@ -169,49 +148,24 @@ struct HumanWaitGateTests {
             nil
         }
 
+        /// A copy of this backend, seeded from ``entries`` as of this call.
         func makeFork() -> any LanguageModelSessionBackend {
-            makeFork(tools: [])
-        }
-
-        /// Snapshots ``entries`` as of this call into the child, through
-        /// ``makeFork(tools:seededFrom:)``.
-        func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-            makeFork(tools: tools, seededFrom: Transcript(entries: entries))
-        }
-
-        /// Seeds the child from `transcript` and records the child into
-        /// ``lastFork``, so a test can assert both *that* a fork was made and
-        /// *what* it was seeded with. The session passes its settled
-        /// transcript here, not the live ``entries``.
-        func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
-            let fork = HookedSessionBackend(
-                hook: hook, observer: observer, generationQueue: generationQueue, entries: Array(transcript))
-            newestFork.withLock { $0 = fork }
-            forkMade.signal()
-            return fork
+            HookedSessionBackend(hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
         }
     }
 
     /// A ``LoadedLLMContainer`` vending ``HookedSessionBackend``s wired to one
-    /// shared hook and observer, retaining every one it manufactured so a test
-    /// can reach a specific session's backend by creation order. Like a live
-    /// container, it owns one ``GenerationQueue`` that every backend declares.
+    /// shared hook and observer. Like a live container, it owns one
+    /// ``GenerationQueue`` that every backend declares.
     ///
-    /// Properly `Sendable`: the list of vended backends is behind a
-    /// ``Mutex``, so a test can read ``backends`` while a session vends one.
+    /// Properly `Sendable`: each stored property is a constant of a
+    /// `Sendable` type.
     private final class HookedLLMContainer: LoadedLLMContainer {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
         private let hook: AnswerHook
         private let observer: AnswerObserver
-
-        /// Every backend this container vended, in creation order.
-        private let vended = Mutex<[HookedSessionBackend]>([])
-
-        /// Every backend this container vended, in creation order, as of
-        /// this read.
-        var backends: [HookedSessionBackend] { vended.withLock { $0 } }
 
         /// The queue every backend of this container declares.
         let generationQueue = GenerationQueue()
@@ -230,10 +184,7 @@ struct HumanWaitGateTests {
         }
 
         private func makeHookedBackend(entries: [Transcript.Entry]) -> HookedSessionBackend {
-            let backend = HookedSessionBackend(
-                hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
-            vended.withLock { $0.append(backend) }
-            return backend
+            HookedSessionBackend(hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
         }
     }
 
@@ -480,13 +431,6 @@ struct HumanWaitGateTests {
         "ok-\(prompt)"
     }
 
-    /// Whether `entry` is a `.response` — how a test tells a whole recorded
-    /// submission from one torn open at the prompt.
-    private static func isResponse(entry: Transcript.Entry?) -> Bool {
-        guard case .response = entry else { return false }
-        return true
-    }
-
     /// The one live model handle every session in a test is vended from, plus the
     /// container, observer, and hook wired behind it — the fixture every test in
     /// this suite starts from.
@@ -616,63 +560,6 @@ struct HumanWaitGateTests {
         #expect(try await second.value() == Self.reply(to: "second"))
         #expect(await fixture.observer.entered == ["first", "second"])
         #expect(await fixture.observer.maxActive == 1)
-    }
-
-    @Test("a fork racing a submission whose tool body waits for a person returns at once, from the settled transcript, never a half-appended one")
-    @MainActor
-    func forkRacingAHumanWaitReadsTheSettledTranscript() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = fixture.model.makeSession()
-        defer { await session.close() }
-        let backend = try #require(fixture.container.backends.first)
-
-        let humanGate = AsyncSemaphore(value: 0)
-        // The release of the gate, also when the test throws before it (rule
-        // T1). A second release does no harm.
-        defer { humanGate.signal() }
-        let waitStarted = AwaitedEvent()
-        fixture.hook.midAnswer = { prompt in
-            guard prompt == "answer" else { return }
-            waitStarted.signal()
-            await humanGate.wait()
-        }
-
-        // The submission suspends mid-transcript: its `.prompt` entry is
-        // appended, its `.response` entry is not. Anything that reads the live
-        // transcript now reads a torn submission.
-        let answer = ObservedRun { try await session.respond(to: "answer") }
-        try await answer.wait(for: waitStarted)
-        #expect(Self.isResponse(entry: backend.transcriptEntries().last) == false)
-
-        // The fork reads the settled transcript of the session, so it does not
-        // wait for the submission (task ^dpn2ytt). It makes its child while the
-        // human wait is still open: the test waits for the child before it
-        // ends the wait, so a fork that waited for the submission would never
-        // make it.
-        let fork = ObservedRun { try await session.fork(workingDirectory: nil) }
-        // The child closes also when the test throws before it reads the
-        // child (rule T1). The gate opens first, so a fork that waits for the
-        // submission also ends.
-        defer {
-            humanGate.signal()
-            if let child = try? await fork.value() {
-                await child.close()
-            }
-        }
-        try await fork.wait(for: backend.forkMade)
-
-        humanGate.signal()
-        #expect(try await answer.value() == Self.reply(to: "answer"))
-        let child = try await fork.value()
-
-        let childBackend = try #require(backend.lastFork)
-        // No submission of the session had settled when the fork read it, so
-        // the child holds nothing of the torn submission.
-        #expect(childBackend.transcriptEntries().isEmpty)
-        #expect(child.parentId == session.id)
     }
 
     // MARK: - The failure paths strand nothing

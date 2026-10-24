@@ -119,24 +119,4 @@ struct RouterTelemetryLoggingTests {
             containing: "from a pump job",
             metadata: [RouterTelemetry.LogMetadataKey.category: RouterTelemetry.LogCategory.recording.rawValue])
     }
-
-    @Test("a fork starts with the explicit logger of its parent")
-    func forkKeepsTheExplicitLogger() async throws {
-        let logs = try await Self.withSession { session in
-            try await TelemetryCapture.run(forbidding: []) { context in
-                await session.useCaptureLogger(for: context.logger)
-                let fork = try await session.fork(workingDirectory: nil)
-                defer { await fork.close() }
-                let child = try #require(fork as? RoutedSessionActor)
-                // A detached task gets no capture of its own, so only the explicit
-                // logger of the child can bring this record to the capture.
-                await Task.detached {
-                    await child.sessionLogger(.generation).warning("from the child")
-                }.value
-                return context
-            }
-        }
-
-        logs.expectLogged(containing: "from the child")
-    }
 }

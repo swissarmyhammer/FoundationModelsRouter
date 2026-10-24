@@ -13,8 +13,8 @@ import Testing
 /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:deliveredMail:onEvent:)``.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, canned/variable LLM
-/// containers, and either a ``JSONLRecorder`` writing into a temp directory or
-/// an ``InMemoryRecorder`` — so the suite needs no network and no GPU.
+/// containers, and an ``InMemoryRecorder`` — so the suite needs no network
+/// and no GPU.
 @Suite("Snapshot-diff persistence: real transcript entries")
 struct TranscriptFidelityTests {
     // MARK: - Stub containers
@@ -271,57 +271,6 @@ struct TranscriptFidelityTests {
 
         // seq is contiguous across the whole session, not for each answer.
         #expect(allEvents.map(\.seq) == Array(0..<allEvents.count))
-    }
-
-    // MARK: - Fork baseline: child sees only its own delta
-
-    @Test("a fork after answer 1 records only its own delta; parent/child answers never leak across files")
-    @MainActor
-    func forkRecordsOnlyItsOwnDelta() async throws {
-        let dir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: dir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Router(
-            cacheDir: dir,
-            recordingsDir: recordingsDir,
-            recorder: JSONLRecorder(directory: recordingsDir),
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-            metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: StubModelLoader(container: CannedLLMContainer(text: Self.cannedText), dimension: Self.stubDimension),
-            pool: ModelPool()
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile.standard.makeSession()
-        defer { await root.close() }
-        _ = try await root.respond(to: "root message 1")
-
-        let child = try await root.fork(workingDirectory: nil)
-        defer { await child.close() }
-        _ = try await child.respond(to: "child message")
-
-        // The child's file holds only its own delta: a session meta line plus
-        // the prompt/response of its own answer — nothing from the parent's
-        // answer 1, which the child's backend started already holding as
-        // inherited (unrecorded-by-the-child) history.
-        let childEvents = try Self.events(in: child.recordingDirectory)
-        #expect(childEvents.map(\.kind) == [.session, .prompt, .response])
-        #expect(childEvents.first { $0.kind == .prompt }?.text == "child message")
-
-        // A further parent answer after the fork does not leak into the
-        // child's file, and the child's answer does not leak into the parent's.
-        _ = try await root.respond(to: "root message 2")
-
-        let rootEvents = try Self.events(in: root.recordingDirectory)
-        #expect(rootEvents.map(\.kind) == [.session, .prompt, .response, .prompt, .response])
-        #expect(rootEvents.filter { $0.kind == .prompt }.map(\.text) == ["root message 1", "root message 2"])
-
-        let childEventsAfter = try Self.events(in: child.recordingDirectory)
-        #expect(childEventsAfter.count == childEvents.count)
     }
 
     // MARK: - Streaming matches non-streaming
@@ -890,13 +839,5 @@ struct TranscriptFidelityTests {
         #expect(responseEvent.entry != nil)
         #expect(responseEvent.text == "got this far")
         #expect(responseEvent.ms != nil)
-    }
-
-    // MARK: - Helpers
-
-    /// Decodes every event from a session directory's `transcript.jsonl`.
-    private static func events(in directory: URL) throws -> [TranscriptEvent] {
-        let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        return try JSONLFile(url: fileURL).records(as: TranscriptEvent.self).withoutMailRecords
     }
 }

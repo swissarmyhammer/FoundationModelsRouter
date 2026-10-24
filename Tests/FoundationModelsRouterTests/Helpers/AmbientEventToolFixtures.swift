@@ -91,38 +91,3 @@ final class AmbientNonStringOutputTool: Tool, Sendable {
         return NonStringToolOutput(text: ToolContext.current?.completionToken ?? "unbound")
     }
 }
-
-/// A `Tool` that both forks and posts through the ambient ``ToolContext``,
-/// so the fork suites can prove ``ForkableTool/forked()`` runs before the
-/// child's own mount layer wraps the result. `generation` proves
-/// `forked()` is actually invoked (incremented on every fork) rather than
-/// the original being shared unchanged.
-final class ForkableAmbientTool: Tool, ForkableTool, Sendable {
-    let name = "forkable-ambient"
-    let description =
-        "test-only tool that forks into a new generation and posts through the ambient ToolContext"
-
-    /// How many `forked()` derivations separate this instance from the
-    /// original (which starts at `0`).
-    let generation: Int
-
-    /// Creates the fixture at a given fork generation.
-    ///
-    /// - Parameter generation: The instance's fork generation. Defaults to
-    ///   `0`, the original.
-    init(generation: Int = 0) {
-        self.generation = generation
-    }
-
-    /// Derives a child session's instance, marked with the next generation.
-    ///
-    /// - Returns: A fresh instance one generation deeper.
-    func forked() -> any Tool {
-        ForkableAmbientTool(generation: generation + 1)
-    }
-
-    func call(arguments: AmbientToolArguments) async throws -> String {
-        await postAmbientCompletedEvent(detail: arguments.value)
-        return "handled: \(arguments.value)"
-    }
-}

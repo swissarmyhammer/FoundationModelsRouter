@@ -6,13 +6,13 @@ import Tracing
 @testable import FoundationModelsRouter
 
 /// Exercises card ^zgwmhd0: a session holds the tracer its ``RoutedModel``
-/// carries, however the session came into existence — vended, forked, or
-/// restored from disk.
+/// carries, however the session came into existence — vended, or restored
+/// from disk.
 ///
-/// All three shapes go through the one shared `makeRoutedSessionActor` factory,
-/// and each is measured here: wiring only the vending site would leave a fork
-/// and a restored node holding nothing, so the spans the dependent cards add
-/// would go missing on exactly the sessions a long task runs on.
+/// Both shapes go through the one shared `makeRoutedSessionActor` factory,
+/// and each is measured here: wiring only the vending site would leave a
+/// restored node holding nothing, so the spans the dependent cards add would
+/// go missing on exactly the sessions a long task runs on.
 ///
 /// Everything runs over stub hardware, a stub loader and a stub backend, so the
 /// suite needs no network, no GPU and no bootstrapped tracing backend.
@@ -93,23 +93,6 @@ struct SessionTracerWiringTests {
         defer { await root.close() }
 
         #expect(Self.isSameTracer(root.sessionTracer, as: tracer, probeName: "probe-root"))
-    }
-
-    @Test("a forked child holds the same tracer as its parent")
-    func forkedChildHoldsTheParentsTracer() async throws {
-        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
-        defer { workspace.remove() }
-
-        let tracer = InMemoryTracer()
-        let router = Self.makeRouter(workspace: workspace, tracer: tracer)
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let root = profile.standard.makeSession()
-        defer { await root.close() }
-        let child = try await root.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        #expect(Self.isSameTracer(child.sessionTracer, as: tracer, probeName: "probe-fork"))
     }
 
     @Test("a restored session holds the tracer of the handle that restored it")

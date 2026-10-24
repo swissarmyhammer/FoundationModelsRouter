@@ -45,7 +45,7 @@ import Tracing
 ///
 /// The rule is proved, not merely stated: `TelemetryContentSafetyTests` drives
 /// a submission, a tool call, a compaction, a compaction shortfall, an embed,
-/// a rejected tool call retry, and a session, compact, fork, submission and
+/// a rejected tool call retry, and a session, compact, submission and
 /// embed span whose work throws an error that holds content, inside the
 /// `TelemetryCapture` of FoundationModelsExtras. It reads each span name and
 /// attribute, each recorded error and status message of a span, each log
@@ -96,16 +96,13 @@ enum RouterTelemetry {
         /// One model load into residency, inside a resolve.
         static let load = prefix + "load"
 
-        /// One ``RoutedSession/fork(workingDirectory:)`` call.
-        static let fork = prefix + "fork"
-
         /// One session coming into existence: a session vended over a
-        /// resident model, a session restored from disk, or a forked child.
+        /// resident model, or a session restored from disk.
         ///
         /// The span covers the construction, and on the restore path the
         /// transcript-tree read the construction is built from. What the
-        /// session then goes on to do is measured by its own ``submission``,
-        /// ``compact`` and ``fork`` spans. Which of the three shapes made the
+        /// session then goes on to do is measured by its own ``submission``
+        /// and ``compact`` spans. Which of the two shapes made the
         /// session is written on the span as
         /// ``RouterTelemetry/AttributeKey/sessionOrigin``.
         static let session = prefix + "session"
@@ -124,7 +121,7 @@ enum RouterTelemetry {
         static let modelRef = "model.ref"
 
         /// The type name of the error that ended the work of a span: the
-        /// attempt of a submission, or the work of a session, compact, fork or
+        /// attempt of a submission, or the work of a session, compact or
         /// embed span. ``RouterTelemetry/recordFailure(of:on:)`` writes it.
         /// Never the description of the error: a description can hold the
         /// caller's content.
@@ -150,19 +147,7 @@ enum RouterTelemetry {
         }
 
         /// The span id of the session the work runs on.
-        ///
-        /// On a fork span this names the *parent* — the session the fork was
-        /// asked of. The child the fork produced is named by
-        /// ``forkChildSessionId``.
         static let sessionId = "session.id"
-
-        /// The span id of the child session one fork produced.
-        ///
-        /// Written only once the child exists, so a fork that failed carries
-        /// no such key. Read beside ``sessionId``, the two
-        /// keys of a fork span say which session was forked and which session
-        /// came out of it.
-        static let forkChildSessionId = "fork.child_session_id"
 
         /// The span id of the session a new session was made from, on the
         /// session span of the new session.
@@ -170,10 +155,6 @@ enum RouterTelemetry {
         /// Written only when there is a parent, so a vended root names none.
         /// Read beside ``sessionId``, the two keys of a session span say which
         /// session was made and which session it came out of.
-        ///
-        /// Distinct from ``forkChildSessionId`` because the two look at one
-        /// fork from opposite ends: the fork span names the child it produced,
-        /// and the child's own session span names the parent it came from.
         static let parentSessionId = "session.parent_id"
 
         /// How the session came into existence. See
@@ -325,7 +306,7 @@ enum RouterTelemetry {
     /// The value ``AttributeKey/sessionOrigin`` carries: how a session came
     /// into existence.
     ///
-    /// All three shapes are built by one factory and open one span, so the
+    /// Both shapes are built by one factory and open one span, so the
     /// span alone cannot say which shape opened it. This attribute says so,
     /// and it lets a query separate the cost of reassembling a session from
     /// disk from the cost of vending a fresh one.
@@ -338,10 +319,6 @@ enum RouterTelemetry {
         /// One node of a tree rebuilt from what is on disk, through
         /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
         case restored
-
-        /// A child taken from a live session, through
-        /// ``RoutedSession/fork(workingDirectory:)``.
-        case forked
     }
 
     /// The tracer a call opens its span through.

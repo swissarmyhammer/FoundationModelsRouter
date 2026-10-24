@@ -26,8 +26,8 @@ import Testing
 /// in-band tool body that asks its own session for an answer is refused at
 /// once, because that answer could come only after the submission that waits
 /// for the tool body. A declared background body asks its own session and
-/// gets an answer from a later submission. A fork or a transcript read that a
-/// tool body asks of its own session is served at once, from the settled
+/// gets an answer from a later submission. A transcript read that a tool
+/// body asks of its own session is served at once, from the settled
 /// transcript of that session (task ^dpn2ytt). Over a container with a
 /// queue, an in-band tool body that waits for a session on the same model is
 /// refused at once (task ^1psqdm9, `GenerationQueueSubmissionTests`).
@@ -72,7 +72,7 @@ struct NestedGenerationReentryTests {
         }
     }
 
-    /// The session a tool body generates on, forks, or reads, set after the
+    /// The session a tool body generates on, sends to, or reads, set after the
     /// session exists.
     private typealias NestedTarget = ThreadSafeBox<any RoutedSession>
 
@@ -186,41 +186,6 @@ struct NestedGenerationReentryTests {
             case .answer:
                 return try await session.awaitAnswer(of: id).reply
             }
-        }
-    }
-
-    /// A tool whose body forks a routed session — the shape a host has
-    /// whenever a tool spawns a sub-agent from the conversation it runs
-    /// inside.
-    ///
-    /// It reports the child's ``RoutedSession/parentId``, so a passing answer
-    /// names the session the fork really came off. ``mount`` chooses between
-    /// an in-band body and a declared background one, as on
-    /// ``NestedGeneratingTool``.
-    private struct ForkingTool: Tool, BackgroundTool {
-        let name = "fork-probe"
-        let description = "test-only tool that forks a routed session"
-
-        /// The session this body forks.
-        let target: NestedTarget
-
-        /// The mount this tool declares for itself, or `nil` to declare none.
-        var mount: ToolMount?
-
-        /// The output a call produces when no target session was named, so a
-        /// misbuilt fixture reads as a wrong answer rather than as a pass.
-        static let noTargetOutput = "no target session"
-
-        /// The output a call produces when the child it made names no parent.
-        static let noParentOutput = "no parent"
-
-        func call(arguments: ReentryToolArguments) async throws -> String {
-            guard let session = target.value else { return Self.noTargetOutput }
-            let child = try await session.fork(workingDirectory: nil)
-            // The body reads only the parent id of the child, so the child
-            // closes when the body returns (rule T1).
-            defer { await child.close() }
-            return child.parentId?.description ?? Self.noParentOutput
         }
     }
 
@@ -749,54 +714,6 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(profile) {}
     }
 
-    // MARK: - Forking from inside a tool body
-
-    @Test("a tool body that forks its own session gets a child at once, rather than a refusal or a wait")
-    func aToolBodyThatForksItsOwnSessionGetsAChildAtOnce() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let target = NestedTarget()
-        let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-
-        let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
-        defer { await caller.close() }
-        // The tool forks the very session whose submission invoked it. The
-        // fork reads the settled transcript of that session, so it waits for
-        // nothing the submission holds (task ^dpn2ytt).
-        target.set(caller)
-
-        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
-
-        // The child names the session it came off.
-        Self.expectFinished(
-            outcome, is: caller.id.description, describing: "The answer that forks its own session")
-
-        withExtendedLifetime(profile) {}
-    }
-
-    @Test("a tool body forks a second session over the same resident container while its own submission runs")
-    func aToolBodyForksASecondSessionOverTheSameContainer() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let target = NestedTarget()
-        let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-
-        let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
-        let forked = profile.standard.makeSession()
-        defer { await SessionFixtureLifecycle.close([caller, forked]) }
-        target.set(forked)
-
-        let outcome = await Self.outcome(of: { try await caller.respond(to: Self.outerPrompt) })
-
-        // The child names the session it came off, so the refusal above reaches
-        // the caller's own session and no other.
-        Self.expectFinished(
-            outcome, is: forked.id.description, describing: "The forking answer")
-        withExtendedLifetime(profile) {}
-    }
-
     // MARK: - Reading the transcript from inside a tool body
 
     @Test("a tool body reads its own session's transcript while its submission runs, and gets the settled transcript at once")
@@ -969,32 +886,6 @@ struct NestedGenerationReentryTests {
         let detail = try #require(terminal?.detail)
         #expect(detail.hasPrefix("caller" + NestedGeneratingTool.labelSeparator + ToolCallingBackend.answerPrefix))
         #expect(detail.hasSuffix(Self.nestedPrompt))
-        withExtendedLifetime(harness) {}
-    }
-
-    @Test("a declared background body that forks the session that started it does not wait for the submission")
-    @MainActor
-    func aBackgroundBodyThatForksItsOwnSessionDoesNotWaitForTheSubmission() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let harness = try await BackgroundHarness.make(dir: dir)
-        let caller = harness.makeCallerSession(
-            tools: [ForkingTool(target: harness.target, mount: Self.backgroundMount)])
-        defer { await harness.close([caller]) }
-        harness.target.set(caller)
-
-        let answer = harness.startAnswer(on: caller)
-        let token = try #require(
-            try await Self.handedBackToken(from: harness.handedBack, endingOnEndOf: answer))
-        // The submission that started the run is still open. The fork reads
-        // the settled transcript, so the run settles all the same, and its
-        // child names the session it forked (task ^dpn2ytt).
-        let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The forking run")
-        #expect(terminal?.outcome == .succeeded)
-        #expect(terminal?.detail == caller.id.description)
-
-        #expect(Self.finishedAnswer(await harness.endAnswer(answer), describing: "The forking answer") != nil)
         withExtendedLifetime(harness) {}
     }
 

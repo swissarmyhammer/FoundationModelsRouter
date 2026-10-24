@@ -104,7 +104,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     let routerId: ULID
     /// The span id of the session this event belongs to.
     public let sessionId: ULID
-    /// The span id of the session that forked this one, or `nil` for a root.
+    /// The span id of the parent of this session in its recorded fork tree, or
+    /// `nil` for a root.
     public let parentId: ULID?
     /// The model slot this event was routed through, when applicable.
     public let slot: ModelSlot?
@@ -169,7 +170,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let entry: TranscriptEntryPayload?
     /// The parent session and tool call that spawned this event's session.
     /// Set only on the ``Kind/session`` event of a session made with an
-    /// `agentSpawn`. `nil` for a root session, for a fork, on every other
+    /// `agentSpawn`. `nil` for a root session, for a recorded fork, on every other
     /// kind, and on a recording made before this key existed. The value
     /// matches ``SessionRecord/agentSpawn`` in the session's `index.md`.
     /// A live sink sees it when the first submission of the session begins,
@@ -261,7 +262,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         public let routerId: ULID
         /// The session span id.
         public let sessionId: ULID
-        /// The forking session's span id, or `nil` for a root.
+        /// The span id of the parent in the recorded fork tree, or `nil` for a
+        /// root.
         public let parentId: ULID?
         /// The routed model slot, or `nil`.
         public let slot: ModelSlot?

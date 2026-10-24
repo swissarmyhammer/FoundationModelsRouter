@@ -31,7 +31,7 @@ handle holds its profile weakly.
 
 To constrain every answer of a conversation rather than one answer, vend a session
 with ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
-The session carries its ``Grammar`` for its whole life, and a fork inherits it.
+The session carries its ``Grammar`` for its whole life.
 
 ## The supported schema subset
 

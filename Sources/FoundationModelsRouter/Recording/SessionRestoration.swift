@@ -46,8 +46,8 @@ extension RestoredSession {
     /// not hold.
     ///
     /// The phrase names the whole restored session, and every word of it is
-    /// true. The supplied string reaches the session actor, the `index.md` of
-    /// any later fork, and the transcript the model itself reads. See
+    /// true. The supplied string reaches the session actor and the transcript
+    /// the model itself reads. See
     /// ``TranscriptDiffer/replacingLeadingInstructions(of:with:)``.
     ///
     /// This constant is public because the grep target is a contract. A
@@ -133,8 +133,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     host that resumes an interactive session with no user gives
     ///     ``UserPresence/headless`` here, and the reverse. The supplied value
     ///     also replaces the recorded value on each recorded fork. The
-    ///     session's `index.md` on disk does not change. A fork that the restored
-    ///     session makes later records the supplied value. See
+    ///     session's `index.md` on disk does not change. See
     ///     ``SessionConfiguration/userPresence``.
     ///   - hookSessionKey: The key of the hook lineage of the restored
     ///     session, or `nil` (the default) to give it its own id as its key,

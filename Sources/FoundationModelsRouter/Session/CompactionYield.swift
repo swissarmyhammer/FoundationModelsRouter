@@ -240,8 +240,7 @@ enum InFlightTranscript {
     ///
     /// With no ids from before the attempt, every entry is an entry of the
     /// attempt, so the rule applies to the last `.toolCalls` entry of the
-    /// whole transcript. A fork uses it that way on the settled transcript
-    /// (``SettledTranscript/removingUnansweredCalls()``).
+    /// whole transcript.
     ///
     /// - Parameters:
     ///   - entries: The entries with the outputs.

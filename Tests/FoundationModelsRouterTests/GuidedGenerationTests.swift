@@ -611,7 +611,7 @@ struct GuidedGenerationTests {
         #expect(collected.answers.map(\.reply) == [Self.autoCompactionCannedText])
     }
 
-    @Test("the grammar travels with the session so a milestone-9 fork inherits it")
+    @Test("the grammar travels with the session")
     @MainActor
     func grammarTravelsWithSession() async throws {
         let dir = Self.makeTempDir()

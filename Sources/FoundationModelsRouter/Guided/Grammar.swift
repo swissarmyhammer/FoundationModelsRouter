@@ -13,8 +13,8 @@ import Foundation
 /// - ``ebnf(_:)`` — a GBNF/EBNF grammar source string, compiled through xgrammar's
 ///   EBNF path, for shapes a JSON schema cannot express.
 ///
-/// A `Grammar` is a plain value: it travels with a guided ``RoutedSession`` (so a
-/// milestone-9 fork inherits it) and is recorded onto the
+/// A `Grammar` is a plain value: it travels with a guided ``RoutedSession`` and
+/// is recorded onto the
 /// ``TranscriptEvent/grammar`` of each guided submission.
 public enum Grammar: Sendable, Equatable, Codable {
     /// A JSON Schema source string constraining the output to schema-valid JSON.

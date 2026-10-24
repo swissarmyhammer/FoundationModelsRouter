@@ -53,7 +53,7 @@ struct StubGenerationCall: Sendable, Equatable {
 }
 
 /// A generation log shared by a ``StubSessionBackend`` and every clone it
-/// produces (``StubSessionBackend/makeFork(tools:)``,
+/// produces (``StubSessionBackend/makeFork()``,
 /// ``StubSessionBackend/replacingTranscript(_:)``).
 ///
 /// A compaction's summarizer never calls the backend a container handed the session:
@@ -87,7 +87,7 @@ final class StubGenerationLog: @unchecked Sendable {
 
 /// A registry of every ``StubSessionBackend`` one lineage creates — the
 /// initial backend a container vends, plus every clone born through
-/// ``StubSessionBackend/makeFork(tools:)`` and
+/// ``StubSessionBackend/makeFork()`` and
 /// ``StubSessionBackend/replacingTranscript(_:)``.
 ///
 /// A compaction swaps a session's backend through `replacingTranscript(_:)`
@@ -184,9 +184,6 @@ final class StubSessionBackend: LanguageModelSessionBackend {
         /// ``usageIncrement`` on every successful call. See
         /// ``StubSessionBackend/usageTokenCounts()``.
         var cumulativeUsage: (input: Int, output: Int) = (0, 0)
-
-        /// See ``StubSessionBackend/lastForkTools``.
-        var lastForkTools: [any Tool] = []
     }
 
     /// The one lock every mutable field lives behind. See the type's own
@@ -256,16 +253,6 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// themselves into at creation, or `nil` (the default) to register
     /// nowhere. See ``StubBackendRegistry``.
     let registry: StubBackendRegistry?
-
-    /// The tools most recently passed to ``makeFork(tools:)``, or empty if
-    /// never called with any.
-    ///
-    /// The test-only introspection point proving which tool list
-    /// ``RoutedSessionActor/fork(workingDirectory:)`` actually threads into a
-    /// fork's model-facing backend — mirroring how the live
-    /// `MLXFoundationModelsSessionBackend.makeFork(tools:)` threads its own
-    /// `tools:` argument into a forked `LanguageModelSession`.
-    var lastForkTools: [any Tool] { state.withLock { $0.lastForkTools } }
 
     /// Creates a stub backend.
     ///
@@ -366,44 +353,14 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// ``receivedPrompts`` and ``entries`` as of this call, sharing this
     /// backend's ``responseText``/``shouldThrow`` configuration.
     ///
-    /// Delegates to ``makeFork(tools:)`` with no tools, mirroring how the
-    /// live `MLXFoundationModelsSessionBackend.makeFork()` delegates to its
-    /// own `tools:` overload with its own stored tools.
+    /// The copy also has the running usage of this backend as of this call.
     func makeFork() -> any LanguageModelSessionBackend {
-        makeFork(tools: [])
-    }
-
-    /// Returns a new ``StubSessionBackend`` pre-seeded the same way as
-    /// ``makeFork()``, additionally recording `tools` into ``lastForkTools``
-    /// so a test can assert which tool list
-    /// ``RoutedSessionActor/fork(workingDirectory:)`` actually passed.
-    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-        makeFork(tools: tools, seededFrom: Transcript(entries: entries))
-    }
-
-    /// Returns a new ``StubSessionBackend`` seeded from `transcript`'s
-    /// entries, with a copy of ``receivedPrompts`` and the running usage as
-    /// of this call, and records `tools` into ``lastForkTools``.
-    ///
-    /// ``RoutedSessionActor/fork(workingDirectory:)`` calls it with the
-    /// settled transcript of the session, the way the live
-    /// `MLXFoundationModelsSessionBackend.makeFork(tools:seededFrom:)` seeds a
-    /// forked `LanguageModelSession`.
-    ///
-    /// - Parameters:
-    ///   - tools: The tools the fork's session would mount.
-    ///   - transcript: The transcript to seed the fork from.
-    /// - Returns: The fork.
-    func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
-        let snapshot = state.withLock { state in
-            state.lastForkTools = tools
-            return state
-        }
+        let snapshot = state.withLock { $0 }
         let fork = StubSessionBackend(
             responseText: snapshot.responseText,
             shouldThrow: snapshot.shouldThrow,
             receivedPrompts: snapshot.receivedPrompts,
-            entries: Array(transcript),
+            entries: snapshot.entries,
             usageIncrement: snapshot.usageIncrement,
             generationLog: generationLog,
             registry: registry

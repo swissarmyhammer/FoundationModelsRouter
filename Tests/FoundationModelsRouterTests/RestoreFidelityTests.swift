@@ -5,10 +5,10 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ^810gdjj: restore fidelity for rich content, repeated
-/// compactions, and driven forks — always-run, no GPU, no gated suites.
+/// Exercises task ^810gdjj: restore fidelity for rich content and repeated
+/// compactions — always-run, no GPU, no gated suites.
 ///
-/// Three gaps close here, each against a real `Router` recording through a
+/// Two gaps close here, each against a real `Router` recording through a
 /// `JSONLRecorder` into a temp directory:
 ///
 /// 1. **Rich content through the full disk path.** A scripted tool answer —
@@ -23,9 +23,6 @@ import Testing
 ///    and the restored transcript must equal the live
 ///    post-second-compaction transcript — both through ``TranscriptTree`` and
 ///    through a fresh-process `restoreSessionTree(root:)`.
-/// 3. **Driven restored forks.** A restored fork answers a new message with
-///    content that exists only in an entry it inherited from its parent, so
-///    semantic continuity is proven without the integration gate.
 ///
 /// The warm-up answers and the compaction-budget floor come from the shared
 /// compaction fixtures in `Helpers/CompactionFixtures.swift` —
@@ -33,7 +30,7 @@ import Testing
 /// recording root comes from
 /// ``RouterTestFixtures/routerDirectory(routerId:recordingsDir:)``, so the
 /// path rule and the compaction math live in exactly one place each.
-@Suite("Restore fidelity: rich content, multi-compaction, driven forks (task ^810gdjj)")
+@Suite("Restore fidelity: rich content, multi-compaction (task ^810gdjj)")
 struct RestoreFidelityTests {
     // MARK: - Fixtures
 
@@ -42,8 +39,7 @@ struct RestoreFidelityTests {
 
     /// A long-ish canned response, repeated across every stub answer, so six
     /// answers' worth of transcript carries a real byte-size estimate for the
-    /// compaction-budget derivation — the same shape
-    /// `ForkAfterCompactionRestorationTests` uses.
+    /// compaction-budget derivation.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
@@ -281,98 +277,5 @@ struct RestoreFidelityTests {
         #expect(restored.root.id == root.id)
         let restoredBackend = try #require(registry2.created.last)
         #expect(restoredBackend.transcriptEntries() == live)
-    }
-
-    // MARK: - 3. Drive a restored fork whose reply depends on inherited entries
-
-    @Test("a restored fork's new answer holds content that exists only in an entry inherited from its parent")
-    @MainActor
-    func restoredForkAnswersFromInheritedParentEntries() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        // The parent's answer calls the marker tool once; the fixture's
-        // scripted model composes every answer from the tool outputs the
-        // transcript carries, never from a canned string.
-        let script = ScriptedAnswerScript(
-            rounds: [
-                [
-                    ScriptedToolCall(
-                        id: "call-one",
-                        toolName: MarkerEmittingTool.toolName,
-                        argument: .literal(ScriptedToolFixture.firstStepName)
-                    )
-                ]
-            ]
-        )
-        let inheritedAnswer = ScriptedToolFixture.answer(
-            fromToolOutputs: [ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)])
-
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let container1 = ScriptedToolCallingContainer(
-            model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()))
-        let router1 = RouterTestFixtures.makeRouter(
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir,
-            recorder: recorder,
-            loader: StubModelLoader(container: container1, dimension: RouterTestFixtures.stubDimension)
-        )
-        let profile1 = try await router1.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-
-        let parent = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
-        defer { await parent.close() }
-        let parentReply = try await parent.respond(to: ScriptedToolFixture.prompt)
-        #expect(parentReply == inheritedAnswer)
-
-        let fork = try await parent.fork(workingDirectory: nil)
-        defer { await fork.close() }
-
-        // The marker lives only in the parent's recorded span: the fork's
-        // own file records no tool output at all, so a reply carrying the
-        // marker can only come from inherited entries.
-        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-        let forkOwnEvents = try TranscriptTree.load(under: routerDirectory)
-            .events(forSession: fork.id)
-        #expect(!forkOwnEvents.contains { $0.kind == .toolOutput })
-
-        // A fresh process restores the tree. The restored fork's transcript
-        // already carries the parent's one tool-calling round, so the
-        // scripted model's very next generation pass is the answering pass —
-        // composed from whatever `.toolOutput` entries the restored session
-        // was actually seeded with.
-        let log2 = ScriptedAnswerLog()
-        let container2 = ScriptedToolCallingContainer(
-            model: ScriptedToolCallingModel(script: script, log: log2))
-        let router2 = RouterTestFixtures.makeRouter(
-            id: router1.id,
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir,
-            recorder: recorder,
-            loader: StubModelLoader(container: container2, dimension: RouterTestFixtures.stubDimension)
-        )
-        let profile2 = try await router2.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let restored = try await profile2.standard.restoreSessionTree(root: parent.id)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
-        let restoredFork = try #require(restored.session(fork.id))
-
-        let reply = try await restoredFork.respond(to: "tell me what the tool told you earlier")
-        #expect(reply == inheritedAnswer)
-
-        // And the answering generation really read the inherited output out
-        // of the transcript it was handed — semantic continuity, not a
-        // coincidence of canned text.
-        #expect(
-            log2.deliveredToolOutputs == [
-                ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)
-            ])
     }
 }

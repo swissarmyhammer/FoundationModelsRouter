@@ -142,10 +142,6 @@ struct SubmissionBoundaryToolTests {
             inner.makeFork()
         }
 
-        func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-            inner.makeFork(tools: tools)
-        }
-
         func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
             inner.replacingTranscript(transcript)
         }

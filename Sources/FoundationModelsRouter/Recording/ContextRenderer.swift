@@ -95,8 +95,8 @@ enum ContextRenderer {
     /// (``OperationEventSegment/removingRelayedQuestions(from:)``), rule R5:
     /// a relayed question is not model input. The journal keeps the
     /// question, and each other run event stays in the context. A restore
-    /// and a fork both seed from this render, so neither gives the question
-    /// to the model.
+    /// seeds from this render, so it does not give the question to the
+    /// model.
     ///
     /// - Parameter events: The effective events of the session, in `seq`
     ///   order, with the ``TranscriptEvent/Kind/repeatedPartRemoval`` events.

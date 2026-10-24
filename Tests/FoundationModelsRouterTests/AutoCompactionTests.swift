@@ -212,32 +212,6 @@ struct AutoCompactionTests {
         #expect(!events.contains { if case .compaction = $0 { return true }; return false })
     }
 
-    // MARK: - Fork inherits the opt-in
-
-    @Test("a fork inherits its parent's auto-compaction budget and compacts on its own first answer if inherited fill is already at trigger")
-    @MainActor
-    func forkInheritsAutoCompactionBudget() async throws {
-        let fixture = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
-        defer { await fixture.end() }
-        let session = fixture.session
-        #expect(await session.contextFill == 0.9)
-
-        let forked = try await session.fork(workingDirectory: nil)
-        defer { await forked.close() }
-        // The fork inherits the parent's measured fill as of fork time
-        // (already at/above trigger), so its very first answer should compact
-        // proactively before running, with no warm-up of its own.
-        #expect(await forked.contextFill == 0.9)
-
-        let events = eventsInsideAnswerFrame(try await collectEvents(forked, prompt: "fork message"))
-
-        guard let result = events.leadingCompaction else {
-            Issue.record("expected the fork to open with one compaction, got \(Array(events.prefix(2)))")
-            return
-        }
-        #expect(result.stagesApplied.contains("Summarization"))
-    }
-
     // MARK: - Reactive retry-once on context overflow
 
     /// A backend that throws `LanguageModelError.contextSizeExceeded` for

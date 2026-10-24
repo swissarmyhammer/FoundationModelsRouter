@@ -141,7 +141,7 @@ public actor Router {
     ///     fresh ``ModelPool`` for a router that must not share residents.
     ///   - hooks: The hook dispatcher that each session of this router sends
     ///     its hook events to, or `nil` (the default) for no hooks. Each
-    ///     session sends `SessionStart` when it is made, forked or restored,
+    ///     session sends `SessionStart` when it is made or restored,
     ///     and `SessionEnd` when it closes. When the value is `nil`, or when
     ///     the dispatcher has no visitor, no session sends an event.
     public init(

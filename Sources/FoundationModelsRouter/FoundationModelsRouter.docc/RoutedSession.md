@@ -284,7 +284,7 @@ the reason `RunPlane.noUserPresentReason`. The session sends no
 ``SessionEvent/elicitationRequested(_:)`` and no
 ``SessionEvent/elicitationEnded(_:)`` for it, and the run continues with the
 cancel. The default is ``UserPresence/interactive``. The session's `index.md` records the
-value, a restore applies it again, and a fork inherits it.
+value, and a restore applies it again.
 
 An accepted URL-mode question whose flow completes gets one
 ``SessionEvent/elicitationCompleted(_:)`` with the id of its
@@ -308,7 +308,7 @@ level one time, and the client answers it with the one id:
 
 - The relayed question is on the feed and in the journal of each level, but it
   makes no run mail: only the level whose own run asked it puts it in the
-  prompt of its model. A restore or a fork of a relaying level also gives its
+  prompt of its model. A restore of a relaying level also gives its
   model a context with no relayed question, and the journal keeps the
   question. Its origin at a relaying level is ``Origin-enum/system``.
 - An answer goes down level by level to the run that asked. Only that level
@@ -359,14 +359,14 @@ resumes. Use ``awaitTerminal(of:)-(SignalID)`` to wait for the result. Only
 - ``compact(prompt:budget:)``
 - ``CompactionReason``
 
-### Lifecycle and forking
+### Lifecycle
 
 ``awaitIdle()`` returns when the session has no work. Each session owns one
 `WorkRegistry`, and its work is the set of the open leases of that registry:
 an answer that runs, each queued mail that can start an answer, a requested
 compaction, and each lease of the tooling (a background run, a pending shell
-command, an inner call, a notice, an MCP call, a child session). A fork, a
-restored session and a child session own a registry of their own, so their
+command, an inner call, a notice, an MCP call, a child session). A restored
+session and a child session own a registry of their own, so their
 work never makes the parent busy. A background run that
 waits only for the user is no work, also a run whose subagent waits only for
 the user: the ``SubagentQuestionRelay`` of that run reads the work events of the
@@ -380,6 +380,5 @@ work while it had none, and ``SessionEvent/workEnded``, the no-work event,
 comes when it has no work any more. Both have the origin ``Origin-enum/system``, and they come in turns,
 in order with the other outputs.
 
-- ``fork(workingDirectory:)``
 - ``awaitIdle()``
 - ``close()``

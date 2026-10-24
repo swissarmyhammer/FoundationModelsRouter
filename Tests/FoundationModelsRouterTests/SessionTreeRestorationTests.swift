@@ -197,96 +197,6 @@ struct SessionTreeRestorationTests {
         )
     }
 
-    // MARK: - Tree shape restoration
-
-    @Test(
-        "restoring a 4-node tree by root id reproduces its shape and per-node effective entry counts")
-    @MainActor
-    func restoringReproducesTreeShapeAndEntryCounts() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile1.standard.makeSession()
-        defer { await root.close() }
-        _ = try await root.respond(to: "remember 42")
-        let forkA = try await root.fork(workingDirectory: nil)
-        defer { await forkA.close() }
-        _ = try await forkA.respond(to: "forkA message")
-        let forkB = try await root.fork(workingDirectory: nil)
-        defer { await forkB.close() }
-        let grandfork = try await forkA.fork(workingDirectory: nil)
-        defer { await grandfork.close() }
-        _ = try await grandfork.respond(to: "grandfork message")
-
-        // "Tear down": nothing below reaches back into router1/profile1
-        // except reading the ids already captured above — a fresh router
-        // simulates a new process continuing the same recording root. The
-        // restored leaf below must *write*, and a recording root admits one
-        // live writer, so the continuation router shares router1's still-live
-        // recorder rather than standing up a second writer on the same root.
-
-        let router2 = Self.makeRouter(
-            id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer {
-            await restored.root.close()
-            await restored.session(forkA.id)?.close()
-            await restored.session(forkB.id)?.close()
-            await restored.session(grandfork.id)?.close()
-        }
-
-        #expect(restored.root.id == root.id)
-        #expect(restored.root.parentId == nil)
-        // Each restored session owns a work registry of its own, under its
-        // own id.
-        let restoredRegistries = [root.id, forkA.id, forkB.id, grandfork.id].compactMap {
-            restored.session($0)?.runPlane.workRegistry
-        }
-        #expect(restoredRegistries.map(\.sessionID) == [root.id, forkA.id, forkB.id, grandfork.id])
-        #expect(Set(restoredRegistries.map(ObjectIdentifier.init)).count == restoredRegistries.count)
-
-        let childIds = Set(restored.children(of: root.id).map(\.id))
-        #expect(childIds == [forkA.id, forkB.id])
-        #expect(restored.children(of: forkA.id).map(\.id) == [grandfork.id])
-        #expect(restored.children(of: forkB.id).isEmpty)
-
-        // Per-node effective entry counts, verified independently through
-        // `TranscriptTree` rather than any private actor state:
-        // root: 1 answer (prompt+response) == 2.
-        // forkA: root's 2 inherited + its own 1 answer == 4.
-        // forkB: root's 2 inherited + no own answer == 2.
-        // grandfork: forkA's 4 inherited + its own 1 answer == 6.
-        let routerDirectory = RouterTestFixtures.routerDirectory(
-            routerId: router1.id, recordingsDir: recordingsDir)
-        let tree = try TranscriptTree.load(under: routerDirectory)
-        #expect(try tree.effectiveEntryEvents(forSession: root.id).count == 2)
-        #expect(try tree.effectiveEntryEvents(forSession: forkA.id).count == 4)
-        #expect(try tree.effectiveEntryEvents(forSession: forkB.id).count == 2)
-        #expect(try tree.effectiveEntryEvents(forSession: grandfork.id).count == 6)
-
-        // A new answer on a restored leaf that never generated before persists
-        // only its own new delta: its transcript.jsonl did not exist at all
-        // before restoration, so the restored session's persistedEntryCount
-        // must have started at its reconstructed count (2, inherited from
-        // root), not 0 — else this answer would re-persist the two inherited
-        // entries on top of its own.
-        let restoredForkB = try #require(restored.session(forkB.id))
-        _ = try await restoredForkB.respond(to: "forkB's first message, post-restore")
-
-        let reloadedTree = try TranscriptTree.load(under: routerDirectory)
-        #expect(try reloadedTree.effectiveEntryEvents(forSession: forkB.id).count == 4)
-    }
-
     // MARK: - Durable working directory survives restoration (task 6j4bven)
 
     @Test(
@@ -328,11 +238,10 @@ struct SessionTreeRestorationTests {
 
     // MARK: - Index files untouched by restoration
 
-    /// A restore does not rewrite the root's `index.md`, and a fork taken
-    /// later from a restored session writes its own `index.md`.
-    @Test("restoreSessionTree does not rewrite the root's index.md; a later fork of a restored session writes its own index.md")
+    /// A restore does not rewrite the root's `index.md`.
+    @Test("restoreSessionTree does not rewrite the root's index.md")
     @MainActor
-    func restorationLeavesTheIndexButLaterForkWritesOne() async throws {
+    func restorationLeavesTheIndex() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -346,9 +255,6 @@ struct SessionTreeRestorationTests {
         let root = profile1.standard.makeSession()
         defer { await root.close() }
         _ = try await root.respond(to: "hello")
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        _ = fork
 
         // Restoring a session must not rewrite the index.md already sitting
         // in its directory — byte-for-byte.
@@ -359,62 +265,13 @@ struct SessionTreeRestorationTests {
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
+        defer { await restored.root.close() }
 
         #expect(try Data(contentsOf: rootIndexURL) == bytesBeforeRestore)
-        #expect(
-            try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir) == [
-                root.id, fork.id,
-            ])
-
-        // A brand-new fork taken *from a restored session* writes its own
-        // index.md normally, exactly like any other fork.
-        let newFork = try await restored.root.fork(workingDirectory: nil)
-        defer { await newFork.close() }
-
-        #expect(
-            try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir)
-                == [root.id, fork.id, newFork.id]
-        )
-        let newForkNode = try #require(
-            try TranscriptTree.load(
-                under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-            )
-            .session(newFork.id)
-        )
-        #expect(newForkNode.parentId == root.id)
+        #expect(try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir) == [root.id])
     }
 
     // MARK: - Typed errors
-
-    @Test("restoring by a non-root session id throws notARootSession")
-    @MainActor
-    func restoringNonRootIdThrowsNotARootSession() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let root = profile1.standard.makeSession()
-        defer { await root.close() }
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        await #expect(throws: SessionTreeRestorationError.notARootSession(fork.id)) {
-            // A restore that does not throw fails the test; its root closes.
-            try await profile2.standard.restoreSessionTree(root: fork.id).root.close()
-        }
-    }
 
     /// A root whose `index.md` record names a schema version newer than this
     /// reader fails the restore with the typed newer-router error.
@@ -507,7 +364,7 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Fabricate a root session's directory and index.md directly,
-        // bypassing the normal makeSession/fork vending paths, with a slot no
+        // bypassing the normal makeSession vending path, with a slot no
         // generation handle exists for.
         let fabricatedId = ULID.generate()
         let fabricatedDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
@@ -883,28 +740,17 @@ struct SessionTreeRestorationTests {
         )
         defer { await root.close() }
         _ = try await root.respond(to: "hello")
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(
             root: root.id, tools: [AmbientEventPostingTool()])
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
+        defer { await restored.root.close() }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.autoCompactionBudget == budget)
         #expect(restoredRoot.autoCompactionPrompt == prompt)
         #expect(restoredRoot.discoveryPriming == priming)
-
-        // A fork's own index.md carries its own envelope — the configuration a
-        // fork inherits at fork time — so a restored fork re-applies it too.
-        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
-        #expect(restoredFork.autoCompactionBudget == budget)
-        #expect(restoredFork.discoveryPriming == priming)
 
         // Every recorded tool name matched a supplied tool, so nothing is
         // reported missing.
@@ -944,22 +790,22 @@ struct SessionTreeRestorationTests {
         #expect(!restored.configurationReport.isComplete)
     }
 
-    /// Makes a root session with `configuration`, forks it, and restores the
-    /// tree on a second router with the same id. Expects that the fork, the
-    /// restored root and the restored fork each keep `expected`.
+    /// Makes a root session with `configuration`, and restores the tree on a
+    /// second router with the same id. Expects that the restored root keeps
+    /// `expected`.
     ///
     /// After its checks, also when a step throws, it closes each session that
-    /// it made: the root, the fork and each restored session.
+    /// it made: the root and the restored root.
     ///
     /// - Parameters:
-    ///   - expected: The value of the setting that each session must keep.
+    ///   - expected: The value of the setting that the restored root must keep.
     ///   - configuration: The configuration of the root session.
     ///   - setting: Reads the setting from a session.
     ///   - sourceLocation: The location that each failed expectation reports.
-    /// - Throws: What the resolve, the answer, the fork or the restore throws,
-    ///   or a failed `#require` when a session is not a ``RoutedSessionActor``.
+    /// - Throws: What the resolve, the answer or the restore throws, or a
+    ///   failed `#require` when a session is not a ``RoutedSessionActor``.
     @MainActor
-    private static func expectForkAndRestoreKeep<Setting: Equatable>(
+    private static func expectRestoreKeeps<Setting: Equatable>(
         _ expected: Setting,
         madeWith configuration: SessionConfiguration,
         readBy setting: (RoutedSessionActor) -> Setting,
@@ -978,55 +824,45 @@ struct SessionTreeRestorationTests {
         let root = profile1.standard.makeSession(configuration: configuration)
         defer { await root.close() }
         _ = try await root.respond(to: "hello")
-        let forked = try await root.fork(workingDirectory: nil)
-        defer { await forked.close() }
-        let fork = try #require(forked as? RoutedSessionActor, sourceLocation: sourceLocation)
-        #expect(setting(fork) == expected, sourceLocation: sourceLocation)
 
         let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
+        defer { await restored.root.close() }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor, sourceLocation: sourceLocation)
         #expect(setting(restoredRoot) == expected, sourceLocation: sourceLocation)
-        let restoredFork = try #require(
-            restored.session(fork.id) as? RoutedSessionActor, sourceLocation: sourceLocation)
-        #expect(setting(restoredFork) == expected, sourceLocation: sourceLocation)
     }
 
-    @Test("a session made with a repetition detection keeps it in a fork and after a restore (task ^1hcwaqy)")
+    @Test("a session made with a repetition detection keeps it after a restore (task ^1hcwaqy)")
     @MainActor
     func restoredTreeReappliesRecordedRepetitionDetection() async throws {
         let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerAnswer: 1)
-        try await Self.expectForkAndRestoreKeep(
+        try await Self.expectRestoreKeeps(
             detection,
             madeWith: SessionConfiguration(repetitionDetection: detection),
             readBy: \.repetitionDetection)
     }
 
-    @Test("a session made with a mail-only answer limit keeps it in a fork and after a restore (task ^9bxas0w)")
+    @Test("a session made with a mail-only answer limit keeps it after a restore (task ^9bxas0w)")
     @MainActor
     func restoredTreeReappliesRecordedMailOnlyAnswerLimit() async throws {
         // A value that is not the default, so the restore cannot pass by
         // falling back to the default.
         let limit = SessionConfiguration.defaultMailOnlyAnswerLimit + 1
-        try await Self.expectForkAndRestoreKeep(
+        try await Self.expectRestoreKeeps(
             limit,
             madeWith: SessionConfiguration(mailOnlyAnswerLimit: limit),
             readBy: \.mailOnlyAnswerLimit)
     }
 
-    @Test("a session made with a settle period keeps it in a fork and after a restore")
+    @Test("a session made with a settle period keeps it after a restore")
     @MainActor
     func restoredTreeReappliesRecordedInlineSettleGrace() async throws {
-        // A value that is not the default, so the fork and the restore cannot
-        // pass by falling back to the default.
+        // A value that is not the default, so the restore cannot pass by
+        // falling back to the default.
         let grace = ToolMount.defaultInlineSettleGrace / 4
-        try await Self.expectForkAndRestoreKeep(
+        try await Self.expectRestoreKeeps(
             grace,
             madeWith: SessionConfiguration(inlineSettleGrace: grace),
             readBy: \.inlineSettleGrace)
@@ -1035,12 +871,12 @@ struct SessionTreeRestorationTests {
     /// The production change that makes this test fail: a record that does
     /// not hold the user presence, or a restore that does not give it to
     /// the run plane. The restored session is then interactive.
-    @Test("a headless session keeps its user presence in a fork and after a restore (task ^0hps8jg)")
+    @Test("a headless session keeps its user presence after a restore (task ^0hps8jg)")
     @MainActor
     func restoredTreeReappliesRecordedUserPresence() async throws {
-        // Not the default, so the fork and the restore cannot pass by
-        // falling back to the default.
-        try await Self.expectForkAndRestoreKeep(
+        // Not the default, so the restore cannot pass by falling back to the
+        // default.
+        try await Self.expectRestoreKeeps(
             UserPresence.headless,
             madeWith: SessionConfiguration(userPresence: .headless),
             readBy: \.runPlane.userPresence)
@@ -1085,34 +921,23 @@ struct SessionTreeRestorationTests {
 
     // MARK: - User presence given to a restore (task ^58gn0mt)
 
-    /// The user presence of the run plane of a restored root and of its
-    /// restored fork.
-    private struct RestoredUserPresences: Equatable {
-        /// The user presence of the restored root.
-        let root: UserPresence
-
-        /// The user presence of the restored fork of the root.
-        let fork: UserPresence
-    }
-
-    /// Makes a root session with `recorded` as its user presence, forks it,
-    /// and restores the tree on a second router with the same id. The
-    /// restore gives `override` as its user presence.
+    /// Makes a root session with `recorded` as its user presence, and
+    /// restores the tree on a second router with the same id. The restore
+    /// gives `override` as its user presence.
     ///
     /// After its reads, also when a step throws, it closes each session that
-    /// it made: the root, the fork and each restored session.
+    /// it made: the root and the restored root.
     ///
     /// - Parameters:
-    ///   - recorded: The user presence that the records hold.
+    ///   - recorded: The user presence that the record holds.
     ///   - override: The user presence that the restore gets, or `nil`.
-    /// - Returns: The user presence of the restored root and of the restored
-    ///   fork.
-    /// - Throws: What the resolve, the answer, the fork or the restore throws,
-    ///   or a failed `#require` when a session is not a ``RoutedSessionActor``.
+    /// - Returns: The user presence of the run plane of the restored root.
+    /// - Throws: What the resolve, the answer or the restore throws, or a
+    ///   failed `#require` when a session is not a ``RoutedSessionActor``.
     @MainActor
-    private static func restoredUserPresences(
+    private static func restoredUserPresence(
         recorded: UserPresence, override: UserPresence?
-    ) async throws -> RestoredUserPresences {
+    ) async throws -> UserPresence {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -1125,54 +950,47 @@ struct SessionTreeRestorationTests {
         let root = profile1.standard.makeSession(configuration: SessionConfiguration(userPresence: recorded))
         defer { await root.close() }
         _ = try await root.respond(to: "hello")
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
 
         let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: override)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
+        defer { await restored.root.close() }
 
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
-        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
-        return RestoredUserPresences(
-            root: restoredRoot.runPlane.userPresence, fork: restoredFork.runPlane.userPresence)
+        return restoredRoot.runPlane.userPresence
     }
 
     /// The production change that makes this test fail: a restore that does
     /// not give its user presence to the run plane of each node. The restored
-    /// sessions are then interactive, as the records hold.
-    @Test("a restore with a headless user presence makes a recorded interactive root and fork headless")
+    /// session is then interactive, as the record holds.
+    @Test("a restore with a headless user presence makes a recorded interactive root headless")
     @MainActor
     func restoreWithHeadlessOverridesRecordedInteractive() async throws {
-        let presences = try await Self.restoredUserPresences(recorded: .interactive, override: .headless)
+        let presence = try await Self.restoredUserPresence(recorded: .interactive, override: .headless)
 
-        #expect(presences == RestoredUserPresences(root: .headless, fork: .headless))
+        #expect(presence == .headless)
     }
 
     /// The production change that makes this test fail: a restore that does
     /// not give its user presence to the run plane of each node. The restored
-    /// sessions are then headless, as the records hold.
-    @Test("a restore with an interactive user presence makes a recorded headless root and fork interactive")
+    /// session is then headless, as the record holds.
+    @Test("a restore with an interactive user presence makes a recorded headless root interactive")
     @MainActor
     func restoreWithInteractiveOverridesRecordedHeadless() async throws {
-        let presences = try await Self.restoredUserPresences(recorded: .headless, override: .interactive)
+        let presence = try await Self.restoredUserPresence(recorded: .headless, override: .interactive)
 
-        #expect(presences == RestoredUserPresences(root: .interactive, fork: .interactive))
+        #expect(presence == .interactive)
     }
 
     /// The production change that makes this test fail: a restore that reads
-    /// `nil` as interactive. The recorded headless sessions then restore
+    /// `nil` as interactive. The recorded headless session then restores
     /// interactive.
-    @Test("a restore with no user presence keeps the recorded user presence of the root and the fork")
+    @Test("a restore with no user presence keeps the recorded user presence of the root")
     @MainActor
     func restoreWithNoUserPresenceKeepsRecordedValue() async throws {
-        let presences = try await Self.restoredUserPresences(recorded: .headless, override: nil)
+        let presence = try await Self.restoredUserPresence(recorded: .headless, override: nil)
 
-        #expect(presences == RestoredUserPresences(root: .headless, fork: .headless))
+        #expect(presence == .headless)
     }
 
     /// The production change that makes this test fail: a public restore that
@@ -1200,56 +1018,6 @@ struct SessionTreeRestorationTests {
 
         let restoredRoot = try #require(restored.session as? RoutedSessionActor)
         #expect(restoredRoot.runPlane.userPresence == .headless)
-    }
-
-    /// A restore does not change the configuration that the root's
-    /// `index.md` holds, so a later restore with no user presence gives the
-    /// root the value that its record held first. A fork that the restored
-    /// root makes writes a new `index.md` with the user presence of the run
-    /// plane, which is the override.
-    ///
-    /// The production change that makes this test fail: a restore that does
-    /// not give its user presence to the run plane, or a fork that does not
-    /// record the user presence of the run plane.
-    @Test("a fork of a session restored with a user presence records that user presence")
-    @MainActor
-    func forkOfOverriddenRestoreRecordsTheOverride() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let root = profile1.standard.makeSession()
-        defer { await root.close() }
-        _ = try await root.respond(to: "hello")
-
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let overridden = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: .headless)
-        defer { await overridden.root.close() }
-        let laterFork = try await overridden.root.fork(workingDirectory: nil)
-        defer { await laterFork.close() }
-
-        let router3 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile3 = try await router3.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let restoredAgain = try await profile3.standard.restoreSessionTree(root: root.id)
-        defer {
-            await restoredAgain.root.close()
-            await restoredAgain.session(laterFork.id)?.close()
-        }
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
-        let forkRecord = try #require(tree.session(laterFork.id)?.record)
-        #expect(forkRecord.configuration?.restoredUserPresence == .headless)
-        let rootAgain = try #require(restoredAgain.root as? RoutedSessionActor)
-        #expect(rootAgain.runPlane.userPresence == .interactive)
-        let forkAgain = try #require(restoredAgain.session(laterFork.id) as? RoutedSessionActor)
-        #expect(forkAgain.runPlane.userPresence == .headless)
     }
 
     /// The line of the configuration envelope in the `index.md` of a

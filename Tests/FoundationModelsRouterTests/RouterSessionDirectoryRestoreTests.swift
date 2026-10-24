@@ -4,13 +4,12 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The other vend points of a session register in its router's directory
-/// too (ROUTER-3): a fork, a restored root and each restored fork. A closed
-/// session leaves the live list while a host still holds it.
+/// A restored root registers in its router's directory too (ROUTER-3). A
+/// closed session leaves the live list while a host still holds it.
 ///
 /// Each test records under a durable root of its own, so a restore reads
 /// back a recording the same test made.
-@Suite struct RouterSessionDirectoryForkRestoreTests {
+@Suite struct RouterSessionDirectoryRestoreTests {
     /// Runs `body` with a resolved profile over a durable recording root, and
     /// the session directory of the router that resolved it.
     ///
@@ -18,7 +17,7 @@ import Testing
     private static func withRecordingProfile(
         _ body: (LanguageModelProfile, RouterSessionDirectory) async throws -> Void
     ) async throws {
-        try await SessionFactsFixtures.withRecordingProfile(prefix: "RouterSessionDirectoryForkRestoreTests") {
+        try await SessionFactsFixtures.withRecordingProfile(prefix: "RouterSessionDirectoryRestoreTests") {
             profile in
             let directory = try #require(profile.standard.sessionDirectory)
             try await body(profile, directory)
@@ -29,23 +28,6 @@ import Testing
     private static func close(_ sessions: [any RoutedSession]) async {
         for session in sessions {
             await session.close()
-        }
-    }
-
-    // MARK: - Fork
-
-    /// A fork is in the directory with the kind `fork` and its source as
-    /// parent, right after `fork(workingDirectory:)` returns.
-    @Test func aForkIsInTheDirectoryAsAForkOfItsSource() async throws {
-        try await Self.withRecordingProfile { profile, directory in
-            let source = profile.standard.makeSession(configuration: SessionConfiguration())
-            let fork = try await source.fork(workingDirectory: nil)
-
-            let summary = try await SessionDirectorySummaries.summary(of: fork.id, in: directory)
-
-            #expect(summary.kind == .fork)
-            #expect(summary.parentID == source.id)
-            await Self.close([fork, source])
         }
     }
 
@@ -82,24 +64,6 @@ import Testing
             #expect(summary.kind == .subagent)
             #expect(summary.parentID == spawningSessionId)
             await Self.close([restored.session])
-        }
-    }
-
-    /// Each recorded fork of a restored root is in the directory, with the
-    /// kind `fork` and its source as parent, while the tree holds it.
-    @Test func aRestoredForkIsInTheDirectoryAsAForkOfItsSource() async throws {
-        try await Self.withRecordingProfile { profile, directory in
-            let source = profile.standard.makeSession(configuration: SessionConfiguration())
-            let fork = try await source.fork(workingDirectory: nil)
-            await Self.close([fork, source])
-
-            let tree = try await profile.standard.restoreSessionTree(root: source.id)
-            let restoredFork = try #require(tree.session(fork.id))
-            let summary = try await SessionDirectorySummaries.summary(of: restoredFork.id, in: directory)
-
-            #expect(summary.kind == .fork)
-            #expect(summary.parentID == source.id)
-            await Self.close([restoredFork, tree.root])
         }
     }
 

@@ -20,8 +20,8 @@ public struct CompactionSettings: Sendable {
     /// session keeps word for word, or `nil` to protect nothing.
     ///
     /// A closure, so the session's `index.md` does not record it. A host gives it again
-    /// when it restores the session, as it gives the tools. A fork inherits
-    /// it. See ``ToolOutputProtection``.
+    /// when it restores the session, as it gives the tools. See
+    /// ``ToolOutputProtection``.
     public var toolOutputProtection: ToolOutputProtection?
 
     /// Creates the compaction settings of a session. Each parameter defaults

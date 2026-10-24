@@ -104,10 +104,6 @@ struct RoutedSessionToolContextBindingTests {
             inner.makeFork()
         }
 
-        func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-            inner.makeFork(tools: tools)
-        }
-
         func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
             inner.replacingTranscript(transcript)
         }
@@ -273,10 +269,6 @@ struct RoutedSessionToolContextBindingTests {
 
         func makeFork() -> any LanguageModelSessionBackend {
             inner.makeFork()
-        }
-
-        func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-            inner.makeFork(tools: tools)
         }
 
         func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {

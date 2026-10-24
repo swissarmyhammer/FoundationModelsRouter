@@ -54,7 +54,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// This session's span id.
     nonisolated var id: ULID { get }
 
-    /// The span id of the session that forked this one, or `nil` for a root session.
+    /// The span id of the parent of this session in its recorded fork tree, or
+    /// `nil` for a root session.
     nonisolated var parentId: ULID? { get }
 
     /// The directory this session's transcript is recorded under.
@@ -68,7 +69,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// for an unconstrained session.
     ///
     /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
-    /// sets it, and ``fork(workingDirectory:)`` inherits it. A guided session
+    /// sets it. A guided session
     /// never streams: a user message in stream mode runs as a reply under
     /// the grammar, sends no ``SessionEvent/textDelta(_:)``, and gives its
     /// text only in its terminal event.
@@ -559,26 +560,6 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     @discardableResult
     nonisolated func replace(_ id: MailID, with body: MailBody) -> SignalID
 
-    /// Forks a child session over the same resident model.
-    ///
-    /// The child takes a fresh id with ``parentId`` set to this session's id,
-    /// a ``recordingDirectory`` nested under the parent's, and the parent's
-    /// ``grammar``. Its backend is seeded from the settled transcript of this
-    /// session (see ``transcript``) through
-    /// ``LanguageModelSessionBackend/makeFork(tools:seededFrom:)``. When that
-    /// transcript ends in a round of tool calls with no output, the fork
-    /// removes those calls, so the child starts from a valid transcript.
-    /// Forks are not counted: any number of forks over one model can exist at
-    /// once.
-    ///
-    /// The fork returns at once, from any task: it waits for no submission of
-    /// this session. A tool body of this session's own submission can fork it.
-    ///
-    /// - Parameter workingDirectory: The child's working directory, or `nil` for its recording directory.
-    /// - Throws: Nothing now. The requirement keeps `throws`, so a later
-    ///   version can refuse a fork without a change of the API.
-    func fork(workingDirectory: URL?) async throws -> any RoutedSession
-
     /// Installs how long a model call on this session may run with no
     /// observable progress before it reports
     /// ``SessionEvent/generationStalled(_:)``. The change takes effect on the
@@ -589,7 +570,6 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///
     /// Stall reports are off until the host calls this. The session has no
     /// interval of its own: the host that shows the report names the interval.
-    /// A ``fork(workingDirectory:)`` child starts with this session's interval.
     ///
     /// - Parameter interval: The interval to install. A non-positive interval
     ///   turns reporting off for later calls.
@@ -603,8 +583,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///
     /// The session is idle when it has no work. The work of a session is the
     /// set of the open leases of its own work registry (`WorkRegistry`): one
-    /// registry for each session, also for each fork, each restored session
-    /// and each child session. The session is idle when no lease is open:
+    /// registry for each session, also for each restored session and each
+    /// child session. The session is idle when no lease is open:
     ///
     /// 1. Nothing is queued to generate: no answer runs (a generation lease),
     ///    and no requested compaction waits or runs.
@@ -625,7 +605,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///    question. So a session whose subagents wait only for the user is
     ///    idle, level by level up to the root.
     ///
-    /// The work of a fork or of a child session is in the registry of that
+    /// The work of a child session is in the registry of that
     /// session, never in the registry of its parent.
     ///
     /// A run that settles inside the answer that runs can ride that answer,
@@ -676,8 +656,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Close also finishes every ``streamSessionEvents()`` subscription,
     /// finishes each mail subscription that is left, ends each wait for a
     /// terminal event with ``MailRefusal/closed``, and releases the prompt
-    /// cache that the model keeps for this session. A fork has a cache of its
-    /// own, so the close of a fork does not release the cache of its parent.
+    /// cache that the model keeps for this session. Each session has a cache
+    /// of its own, so the close of one session does not release the cache of
+    /// another.
     /// Before it waits for the end of all work, close ends each
     /// ``awaitIdle()`` wait with `false`.
     ///
@@ -704,8 +685,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///
     /// Mail carries the own work of its sender into the answer that delivers
     /// it. When a tool or a run body of this session sends mail to another
-    /// session (for example with `respond(to:)` or `send(_:)` on a
-    /// ``fork(workingDirectory:)`` child), each tool and each run body of the
+    /// session (for example with `respond(to:)` or `send(_:)` on a child
+    /// session), each tool and each run body of the
     /// answer of the other session is also the own work of this session. So
     /// a close of this session from such a tool also returns before the close
     /// ends: the tool of this session waits for that answer, so a close that
@@ -720,8 +701,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// returns, the session is closed. A close from outside also waits for a
     /// close that the own work of the session started. A tool or a run body
     /// of another session that no mail of this session started is outside
-    /// this session, also a tool of a ``fork(workingDirectory:)`` child of
-    /// this session that a host asked.
+    /// this session, also a tool of a child session of this session that a
+    /// host asked.
     ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.

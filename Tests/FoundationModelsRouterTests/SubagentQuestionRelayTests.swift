@@ -10,8 +10,9 @@ import Testing
 /// answer goes down to the run that asked, and an end with no answer ends
 /// the question one time at each level.
 ///
-/// Each test runs a root session whose ``SubagentJobTool`` run forks the
-/// root, relays the questions of the fork, and mails the fork one message.
+/// Each test runs a root session whose ``SubagentJobTool`` run makes a child
+/// session, relays the questions of the child, and mails the child one
+/// message.
 /// The same tool asks the question in the leaf, or relays again in a middle
 /// level (``SubagentRelayBox``). Everything runs against the scripted
 /// ``BackgroundingBackend``, so the suite needs no network and no GPU. The
@@ -267,35 +268,6 @@ struct SubagentQuestionRelayTests {
         let waitingQuestions = await level.root.pendingMessages().filter { $0.runEvent?.kind == .elicitation }
         #expect(rootOrigin == .system)
         #expect(waitingQuestions.isEmpty)
-    }
-
-    /// The production change that makes this test fail: a relay that starts
-    /// for a target whose session is headless. No user can answer at that
-    /// level, so the relay has nothing to send up, and the child of a
-    /// headless target is headless too (``SubagentQuestionTarget/userPresence``).
-    @Test("a relay does not start for a headless target, and the target session records no relay")
-    func aRelayDoesNotStartForAHeadlessTarget() async throws {
-        let fixture = try await SubagentRelayFixture.make(
-            root: SubagentRelayStep(agentName: Self.reviewer), children: [], userPresence: .headless)
-
-        try await fixture.runThenEnd {
-            let root = try fixture.sessionActor()
-            let target = SubagentQuestionTarget(
-                session: root, context: PendingElicitationFixtures.makeContext(for: root))
-            let child = try await root.fork(workingDirectory: nil)
-            defer { await child.close() }
-            let relay: SubagentQuestionRelay? = await SubagentQuestionRelay.start(
-                child: child, agentName: Self.reviewer, target: target)
-            let relayCount = await root.relayChildren.count
-            // The test closes the child before it finishes the relay. The
-            // `defer` closes the child also when the test throws (rule T1).
-            await child.close()
-            await relay?.finish()
-
-            #expect(target.userPresence == .headless)
-            #expect(relay == nil)
-            #expect(relayCount == 0)
-        }
     }
 
     // MARK: - The answer goes down

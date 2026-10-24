@@ -391,7 +391,7 @@ struct ExamplesTests {
         #expect(raw == #"{"intent":"bugfix"}"#)
 
         // Reusable: `makeGuidedSession` applies the grammar to every answer, and the
-        // grammar travels with the session (so a fork inherits it).
+        // grammar travels with the session.
         let session = profile.standard.makeGuidedSession(grammar: grammar)
         defer { await session.close() }
         #expect(session.grammar == grammar)
@@ -432,51 +432,6 @@ struct ExamplesTests {
                 "confident": .bool(true),
             ])
         )
-    }
-
-    // MARK: - Subagent fan-out
-
-    @Test("Fan out N short-lived subagents by forking one session")
-    @MainActor
-    func subagentFanOutByForking() async throws {
-        let (router, cacheDir) = ExampleHarness.makeRouter(cannedResponse: "done")
-        defer { try? FileManager.default.removeItem(at: cacheDir) }
-        let coding = ProfileDefinition(
-            name: "coding",
-            description: "Local coding assistant.",
-            standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
-            flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
-        )
-        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
-
-        // A planner session establishes shared context once; each subagent is a
-        // fork that inherits its cached prefix and then diverges independently.
-        let planner = profile.standard.makeSession(instructions: "You are the planner.")
-        defer { await planner.close() }
-
-        let subagentCount = 4
-        var subagents: [any RoutedSession] = []
-        // Close each fork when the fan-out ends, before the planner closes.
-        defer {
-            for subagent in subagents {
-                await subagent.close()
-            }
-        }
-        for _ in 0..<subagentCount {
-            subagents.append(try await planner.fork(workingDirectory: nil))
-        }
-
-        // Each fork is a distinct child nested under the planner.
-        #expect(subagents.count == subagentCount)
-        #expect(subagents.allSatisfy { $0.parentId == planner.id })
-        #expect(Set(subagents.map(\.id)).count == subagentCount)
-
-        // Every subagent responds on its own.
-        for subagent in subagents {
-            let reply = try await subagent.respond(to: "Do your part.")
-            #expect(reply == "done")
-        }
     }
 
     // MARK: - Residency lifecycle

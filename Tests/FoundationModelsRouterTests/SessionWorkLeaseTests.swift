@@ -203,28 +203,6 @@ struct SessionWorkLeaseTests {
         #expect(Self.workEvents(of: outputs) == Self.onePair)
     }
 
-    /// The production change that makes this test fail: a relay that opens
-    /// with a working child and notes no start of work. The session then
-    /// has work with no work-start event.
-    @Test("a relay whose child works at its open holds one lease until the child stops")
-    func aRelayWithAWorkingChildHoldsALease() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { await fixture.end() }
-        let session = try fixture.sessionActor()
-        let child = try await fixture.session.fork(workingDirectory: nil)
-        defer { await child.close() }
-        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-
-        let relay = await session.openRelay(child: child, childWorks: true)
-        let openWhileTheChildWorks = Self.openKinds(of: fixture.session)
-        await session.noteChild(of: relay, works: false)
-        await session.closeRelay(relay)
-        let outputs = await Self.outputsToTheClose(of: fixture.session, feed: &feed)
-
-        #expect(openWhileTheChildWorks == [WorkKind("relayedChild")])
-        #expect(Self.workEvents(of: outputs) == Self.onePair)
-    }
-
     // MARK: - The sequence of a background run that settles inside an answer
 
     /// The sequence of a bench run: the answer to a prompt starts a
@@ -257,52 +235,5 @@ struct SessionWorkLeaseTests {
         #expect(answers.count == 2)
         #expect(answers.last == outputs.count - 2)
         #expect(fixture.backend.receivedPrompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
-    }
-
-    // MARK: - One registry for each session
-
-    /// The production change that makes this test fail: work events that do
-    /// not come from the registry of the session, or a fork that shares the
-    /// registry of its parent.
-    @Test("a lease of a fork never makes its parent busy, and each session gives its own work events")
-    func aForkLeaseNeverMakesItsParentBusy() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { await fixture.end() }
-        let child = try await fixture.session.fork(workingDirectory: nil)
-        defer { await child.close() }
-        var parentFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
-        var childFeed = await child.streamSessionEvents().makeAsyncIterator()
-
-        let childLease = child.runPlane.workRegistry.begin(.shellCommand, id: "a child command")
-        let parentHadWork = fixture.session.runPlane.workRegistry.hasWork
-        childLease.end()
-        _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let childOutputs = await Self.outputsToTheClose(of: child, feed: &childFeed)
-        let parentOutputs = await Self.outputsToTheClose(of: fixture.session, feed: &parentFeed)
-
-        #expect(parentHadWork == false)
-        #expect(Self.workEvents(of: childOutputs) == Self.onePair)
-        #expect(Self.workEvents(of: parentOutputs) == Self.onePair)
-    }
-
-    /// The production change that makes this test fail: a background run of
-    /// a fork whose lease goes into the registry of the parent.
-    @Test("a background run of a fork holds its lease in the registry of the fork only")
-    func aRunOfAForkHoldsItsLeaseInTheFork() async throws {
-        let fixture = try await Self.makeFixture()
-        let gate = RunLatch()
-        defer { await fixture.end(opening: [gate]) }
-        let child = try await fixture.session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let token = await trackFakeRun(on: child.runPlane, latch: gate)
-        let childKinds = Self.openKinds(of: child)
-        let parentKinds = Self.openKinds(of: fixture.session)
-        await gate.open()
-        _ = try await MountFixtures.settledTerminal(of: token, in: child.runPlane)
-
-        #expect(childKinds == [.backgroundRun])
-        #expect(parentKinds.isEmpty)
-        #expect(Self.openKinds(of: child).isEmpty)
     }
 }

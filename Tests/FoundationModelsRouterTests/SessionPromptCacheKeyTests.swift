@@ -20,14 +20,8 @@ struct SessionPromptCacheKeyTests {
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "SessionPromptCacheKeyTests"
 
-    /// The first prompt of the parent session.
-    private static let parentPrompt = "parent first"
-
-    /// The prompt of the parent after its fork.
-    private static let parentAfterForkPrompt = "parent after the fork"
-
-    /// The prompt of the fork.
-    private static let forkPrompt = "fork first"
+    /// The first prompt of a session.
+    private static let firstPrompt = "session first"
 
     /// The prompt of the answer after the compaction.
     private static let afterCompactionPrompt = "after the compaction"
@@ -76,28 +70,6 @@ struct SessionPromptCacheKeyTests {
         .session(session.id.description)
     }
 
-    /// The production change that makes this test fail: a wrapper that binds
-    /// no scope (each pass then sees `nil`), or a fork that runs with the id
-    /// of its parent.
-    @Test("a fork and its parent put their passes under two different keys")
-    func aForkAndItsParentUseTwoKeys() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let parent = fixture.profile.standard.makeSession()
-        defer { await parent.close() }
-
-        _ = try await parent.respond(to: Self.parentPrompt)
-        let fork = try await parent.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        _ = try await fork.respond(to: Self.forkPrompt)
-        _ = try await parent.respond(to: Self.parentAfterForkPrompt)
-
-        #expect(parent.id != fork.id)
-        #expect(fixture.log.scopes(servingPrompt: Self.parentPrompt) == [Self.scope(of: parent)])
-        #expect(fixture.log.scopes(servingPrompt: Self.parentAfterForkPrompt) == [Self.scope(of: parent)])
-        #expect(fixture.log.scopes(servingPrompt: Self.forkPrompt) == [Self.scope(of: fork)])
-    }
-
     /// The production change that makes this test fail: a `close()` that
     /// releases no key, or releases a key other than the session id.
     @Test("a closed session releases its key on the model it used")
@@ -106,31 +78,11 @@ struct SessionPromptCacheKeyTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()
         defer { await session.close() }
-        _ = try await session.respond(to: Self.parentPrompt)
+        _ = try await session.respond(to: Self.firstPrompt)
 
         await session.close()
 
         #expect(fixture.log.releasedSessionIDs == [session.id.description])
-    }
-
-    /// The production change that makes this test fail: a fork whose close
-    /// releases the key of its parent (for example a fork that keeps the id
-    /// of its parent).
-    @Test("the close of a fork releases the key of the fork and not the key of its open parent")
-    func closingAForkDoesNotReleaseItsParentsKey() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let parent = fixture.profile.standard.makeSession()
-        // The parent stays open until the test reads the released keys.
-        defer { await parent.close() }
-        _ = try await parent.respond(to: Self.parentPrompt)
-        let fork = try await parent.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        _ = try await fork.respond(to: Self.forkPrompt)
-
-        await fork.close()
-
-        #expect(fixture.log.releasedSessionIDs == [fork.id.description])
     }
 
     /// The production change that makes this test fail: a release that

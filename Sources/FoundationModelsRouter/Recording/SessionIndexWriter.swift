@@ -50,7 +50,7 @@ package struct SessionIndexWriter: Sendable {
 /// Where the first ``SessionRecord`` of a ``RoutedSessionActor`` comes from.
 /// Each builder of a session states which case applies.
 enum SessionRecordSource: Sendable {
-    /// The session is new: vended or forked. It makes its first record from
+    /// The session is new: vended. It makes its first record from
     /// these first facts and its own construction values, and
     /// `makeRoutedSessionActor` writes that record as its first `index.md`.
     case new(SessionFacts)

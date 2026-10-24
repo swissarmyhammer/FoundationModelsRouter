@@ -7,8 +7,7 @@ import Testing
 
 /// Exercises the run plane of a real ``RoutedSession``: the sweep that
 /// ``RoutedSession/close()`` runs, which journals one terminal event for each
-/// background run, the restore of a closed session, and the new run plane of
-/// a fork.
+/// background run, and the restore of a closed session.
 ///
 /// The tests of the run plane alone moved to FoundationModelsExtras with the
 /// `RunPlane` type (its `RunPlaneActorTests`). These tests stay here because
@@ -17,7 +16,7 @@ import Testing
 /// Each test runs over stubs: fake background runs, a plain
 /// ``StubSessionBackend``, and an ``InMemoryRecorder`` or a
 /// ``JSONLRecorder``. The suite needs no network and no GPU.
-@Suite("Session run plane: close()-driven sweep, restore, and fork")
+@Suite("Session run plane: close()-driven sweep and restore")
 struct SessionRunPlaneTests {
     /// The prefix of the temp directories of this suite.
     private static let tempDirPrefix = "SessionRunPlaneTests"
@@ -234,29 +233,5 @@ struct SessionRunPlaneTests {
         #expect(restoredTerminals.map(\.correlationID) == [token])
         #expect(restoredTerminals.first?.kind == .completed)
         #expect(restoredTerminals.first?.outcome == .cancelled)
-    }
-
-    // MARK: - Fork gets a fresh run plane
-
-    @Test("a fork has its own new run plane. The parent and the fork do not share a run plane")
-    @MainActor
-    func forkGetsFreshRunPlane() async throws {
-        let recorder = InMemoryRecorder()
-        let latch = RunLatch()
-        let fixture = try await Self.makeSession(recorder: recorder)
-        defer { await fixture.end(opening: [latch]) }
-        let session = fixture.session
-
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-        #expect(session.runPlane !== child.runPlane)
-
-        // Tracking on the parent never leaks into the child's run plane.
-        let token = await trackFakeRun(on: session.runPlane, latch: latch)
-        #expect(await session.runPlane.backgroundRuns().count == 1)
-        #expect(await child.runPlane.backgroundRuns().isEmpty)
-
-        await latch.open()
-        _ = await session.runPlane.wait(completionToken: token, seconds: nil)
     }
 }

@@ -5,8 +5,8 @@
 /// and releases that key when it closes. The key is the id of the session,
 /// not the id of the first transcript entry:
 ///
-/// - A fork is a new session with its own ULID, so a fork and its parent have
-///   two keys, and neither takes the cache of the other.
+/// - Each session has its own ULID, so two sessions have two keys, and
+///   neither takes the cache of the other.
 /// - A compaction, a repetition rebuild and discovery priming replace
 ///   ``backend``, and the session installs the same ULID on the new backend.
 ///   So the key does not change when the first entry goes, and there is

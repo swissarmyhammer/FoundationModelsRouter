@@ -14,17 +14,14 @@ import Testing
 /// every non-String-output tool in the binding-only ``ContextBindingTool``
 /// (task ^6htgvw2) — either way the ambient ``ToolContext`` posts the tool's
 /// events to the session's own ``RoutedSession/outbox``, with **no explicit
-/// wiring call anywhere** in these tests — and
-/// ``RoutedSessionActor/fork(workingDirectory:)``'s fork-then-mount
-/// composition (``ForkableTool/forked()`` then the child's own mount
-/// layer) building the child's tool list from the parent's true originals.
+/// wiring call anywhere** in these tests.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU. Real
 /// `LanguageModelSession(tools:)` wiring lives in the live
 /// ``MLXFoundationModelsContainer``/``MLXFoundationModelsSessionBackend``
 /// (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`),
 /// exercised end to end only by the gated integration suite.
-@Suite("makeSession(tools:): per-session composition + fork-then-mount")
+@Suite("makeSession(tools:): per-session composition")
 struct SessionOutboxToolWiringTests {
     // MARK: - Test tools
 
@@ -35,11 +32,10 @@ struct SessionOutboxToolWiringTests {
 
     /// A plain `Tool` with no `ForkableTool` conformance and no ambient
     /// posting at all — proves a mixed tool list works: this one just passes
-    /// through into its own mount wrapper untouched, both at
-    /// construction and at fork.
+    /// through into its own mount wrapper untouched.
     private struct PlainTool: Tool {
         let name = "plain"
-        let description = "a tool with no event-emitting or forking capability"
+        let description = "a tool with no event-emitting capability"
 
         func call(arguments: FakeToolArguments) async throws -> String {
             "plain: \(arguments.value)"
@@ -154,11 +150,9 @@ struct SessionOutboxToolWiringTests {
 
         /// The ``StubSessionBackend`` most recently vended by
         /// `makeSession(instructions:tools:)`, so a test can hold a reference
-        /// to the *root* session's own backend and, after forking, inspect
-        /// what ``RoutedSessionActor/fork(workingDirectory:)`` passed to its
-        /// `makeFork(tools:)` (see ``StubSessionBackend/lastForkTools``) —
-        /// without needing any test-only accessor onto the private `backend`
-        /// a `RoutedSession`/`RoutedSessionActor` holds.
+        /// to the session's own backend without needing any test-only accessor
+        /// onto the private `backend` a `RoutedSession`/`RoutedSessionActor`
+        /// holds.
         private(set) var lastBackend: StubSessionBackend?
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
@@ -315,10 +309,6 @@ struct SessionOutboxToolWiringTests {
 
         func makeFork() -> any LanguageModelSessionBackend {
             inner.makeFork()
-        }
-
-        func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-            inner.makeFork(tools: tools)
         }
 
         func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -684,305 +674,6 @@ struct SessionOutboxToolWiringTests {
         #expect(session.outbox.queue.pending.isEmpty)
     }
 
-    // MARK: - Fork behavior: fresh-per-session outbox, fork-then-mount tool composition
-
-    @Test("a fork gets its own fresh SessionOutbox, distinct from its parent's")
-    @MainActor
-    func forkGetsFreshOutbox() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        #expect(session.outbox !== child.outbox)
-    }
-
-    @Test(
-        "after fork, the parent's composed tool posts to the parent's outbox and the fork's to the fork's — concurrently, over one shared underlying instance"
-    )
-    @MainActor
-    func parentAndForkComposedToolsPostToTheirOwnOutboxesConcurrently() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let emitter = AmbientEventPostingTool()
-        let session = profile.standard.makeSession(tools: [emitter])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let parentActor = try #require(session as? RoutedSessionActor)
-        let childActor = try #require(child as? RoutedSessionActor)
-        let parentMounted = try #require(
-            failureDeliveryPeeled(parentActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>)
-        let childMounted = try #require(
-            failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>)
-        // Both sessions share the very same underlying tool instance —
-        // per-session isolation lives entirely in each session's own
-        // mount wrapper and the ambient context it binds per call.
-        #expect(mountWrapped(parentMounted) as? AmbientEventPostingTool === emitter)
-        #expect(mountWrapped(childMounted) as? AmbientEventPostingTool === emitter)
-
-        // Concurrently call through each session's own composed wrapper —
-        // event delivery must never migrate between the two outboxes.
-        async let parentCall = parentMounted.call(arguments: AmbientToolArguments(value: "from-parent"))
-        async let childCall = childMounted.call(arguments: AmbientToolArguments(value: "from-child"))
-        _ = try await (parentCall, childCall)
-
-        let parentPending = await session.outbox.pending()
-        let childPending = await child.outbox.pending()
-        #expect(parentPending.events.map(\.event.detail) == ["from-parent"])
-        #expect(childPending.events.map(\.event.detail) == ["from-child"])
-    }
-
-    @Test(
-        "a non-String-output tool forked into a child gets the child's own ContextBindingTool, posting to the fork's outbox with its own identity"
-    )
-    @MainActor
-    func forkComposedNonStringOutputToolPostsToForkOutbox() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let emitter = AmbientNonStringOutputTool()
-        let session = profile.standard.makeSession(tools: [emitter])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let (parentBound, childBound) = try Self.boundPair(of: session, and: child)
-        // Both sessions share the very same underlying tool instance —
-        // per-session isolation lives entirely in each session's own
-        // binding wrapper and the ambient context it binds per call.
-        #expect(mountWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
-        #expect(mountWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
-
-        let parentOutput = try await parentBound.call(arguments: AmbientToolArguments(value: "from-parent"))
-        let childOutput = try await childBound.call(arguments: AmbientToolArguments(value: "from-child"))
-
-        // Each session's composed wrapper posts to that session's own
-        // outbox — never the other's — with the tool's own identity and
-        // that call's own freshly minted correlationID.
-        let parentEvents = await session.outbox.pending().events.map(\.event)
-        let childEvents = await child.outbox.pending().events.map(\.event)
-        #expect(parentEvents.map(\.detail) == ["from-parent"])
-        #expect(childEvents.map(\.detail) == ["from-child"])
-        #expect(parentEvents.map(\.tool) == [emitter.name])
-        #expect(childEvents.map(\.tool) == [emitter.name])
-        #expect(parentEvents.map(\.correlationID) == [parentOutput.text])
-        #expect(childEvents.map(\.correlationID) == [childOutput.text])
-        #expect(parentOutput.text != childOutput.text)
-    }
-
-    @Test(
-        "after fork, the parent's and the fork's non-String-output binding wrappers post concurrently to their own outboxes, each call under its own fresh token"
-    )
-    @MainActor
-    func parentAndForkNonStringOutputToolsPostToTheirOwnOutboxesConcurrently() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let emitter = AmbientNonStringOutputTool()
-        let session = profile.standard.makeSession(tools: [emitter])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let (parentBound, childBound) = try Self.boundPair(of: session, and: child)
-        // Both sessions share the very same underlying tool instance —
-        // per-session isolation lives entirely in each session's own
-        // binding wrapper and the ambient context it binds per call.
-        #expect(mountWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
-        #expect(mountWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
-
-        // Concurrently call through each session's own binding wrapper —
-        // event delivery must never migrate between the two outboxes, and
-        // each concurrent call must run under its own freshly minted token.
-        async let parentCall = parentBound.call(arguments: AmbientToolArguments(value: "from-parent"))
-        async let childCall = childBound.call(arguments: AmbientToolArguments(value: "from-child"))
-        let (parentOutput, childOutput) = try await (parentCall, childCall)
-
-        let parentEvents = await session.outbox.pending().events.map(\.event)
-        let childEvents = await child.outbox.pending().events.map(\.event)
-        #expect(parentEvents.map(\.detail) == ["from-parent"])
-        #expect(childEvents.map(\.detail) == ["from-child"])
-        #expect(parentEvents.map(\.tool) == [emitter.name])
-        #expect(childEvents.map(\.tool) == [emitter.name])
-        // Each event's correlationID is exactly its own call's token — the
-        // concurrent bindings never bled into each other.
-        #expect(parentEvents.map(\.correlationID) == [parentOutput.text])
-        #expect(childEvents.map(\.correlationID) == [childOutput.text])
-        #expect(parentOutput.text != childOutput.text)
-    }
-
-    /// The binding-only wrapper of the first tool of the parent and of the
-    /// fork, the shape that both fork tests over
-    /// ``AmbientNonStringOutputTool`` read.
-    ///
-    /// - Parameters:
-    ///   - parent: The parent session.
-    ///   - child: The fork of `parent`.
-    /// - Returns: The wrapper of the parent and the wrapper of the fork.
-    /// - Throws: When a session is not a ``RoutedSessionActor``, or when its
-    ///   first tool is not a ``ContextBindingTool``.
-    private static func boundPair(
-        of parent: any RoutedSession, and child: any RoutedSession
-    ) throws -> (
-        parent: ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
-        child: ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
-    ) {
-        let parentActor = try #require(parent as? RoutedSessionActor)
-        let childActor = try #require(child as? RoutedSessionActor)
-        let parentBound = try #require(
-            failureDeliveryPeeled(parentActor.tools.first)
-                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
-        let childBound = try #require(
-            failureDeliveryPeeled(childActor.tools.first)
-                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
-        return (parentBound, childBound)
-    }
-
-    @Test("a composed tool captured before the fork keeps posting to the parent after forking")
-    @MainActor
-    func composedToolCapturedBeforeForkKeepsPostingToParentAfterFork() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let emitter = AmbientEventPostingTool()
-        let session = profile.standard.makeSession(tools: [emitter])
-        defer { await session.close() }
-
-        let parentActor = try #require(session as? RoutedSessionActor)
-        let capturedMounted = try #require(
-            failureDeliveryPeeled(parentActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>)
-
-        // Stands in for a background task that captured the composed tool at
-        // operation start, before any fork happened.
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        _ = try await capturedMounted.call(arguments: AmbientToolArguments(value: "captured-before-fork"))
-        let parentPending = await session.outbox.pending()
-        #expect(parentPending.events.map(\.event.detail) == ["captured-before-fork"])
-        let childPending = await child.outbox.pending()
-        #expect(childPending.events.isEmpty)
-    }
-
-    @Test(
-        "at fork, a ForkableTool fixture's forked() is invoked and its result lands in the child's tool list; a plain tool passes through shared"
-    )
-    @MainActor
-    func forkAppliesForkedAndSharesPlainToolsUnchanged() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let forkable = ForkableAmbientTool()
-        let plain = PlainTool()
-        let session = profile.standard.makeSession(tools: [forkable, plain])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let parentActor = try #require(session as? RoutedSessionActor)
-        let childActor = try #require(child as? RoutedSessionActor)
-
-        let parentInnerTools = parentActor.tools.compactMap(mountWrapped)
-        let childInnerTools = childActor.tools.compactMap(mountWrapped)
-        let parentForkable = try #require(
-            parentInnerTools.first(where: { $0 is ForkableAmbientTool }) as? ForkableAmbientTool)
-        let childForkable = try #require(
-            childInnerTools.first(where: { $0 is ForkableAmbientTool }) as? ForkableAmbientTool)
-        // The parent's own instance is untouched; the child's is the result
-        // of `forked()` — a distinct, incremented-generation instance, not
-        // the original passed to `makeSession(tools:)`.
-        #expect(parentForkable.generation == 0)
-        #expect(childForkable.generation == 1)
-        #expect(childForkable !== forkable)
-
-        // Calling the forked tool through the child's own mount wrapper
-        // posts to the child's own outbox.
-        let childForkableMounted = try #require(
-            failureDeliveryPeeled(childActor.tools.first(where: {
-                mountWrapped($0) is ForkableAmbientTool
-            })) as? RunToCompletionRunner<AmbientToolArguments>)
-        _ = try await childForkableMounted.call(arguments: AmbientToolArguments(value: "from-forked-tool"))
-        let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == ["from-forked-tool"])
-
-        // The plain tool has no `ForkableTool` conformance at all — it passes
-        // through shared, unchanged, into the child's tool list.
-        let childPlain = try #require(childInnerTools.first(where: { $0 is PlainTool }) as? PlainTool)
-        let output = try await childPlain.call(arguments: FakeToolArguments(value: "y"))
-        #expect(output == "plain: y")
-    }
-
-    @Test(
-        "fork threads the child's fork-then-mount composed tools into the backend's makeFork(tools:) — the model-facing session, not just the actor's own bookkeeping list"
-    )
-    @MainActor
-    func forkThreadsChildToolsIntoBackendMakeFork() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let emitter = AmbientEventPostingTool()
-        let session = profile.standard.makeSession(tools: [emitter])
-        defer { await session.close() }
-        let rootBackend = try #require(container.lastBackend)
-
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        // `rootBackend` is the actual backend `RoutedSessionActor.fork()` calls
-        // `makeFork(tools:)` on — asserting on `lastForkTools` here proves the
-        // child's fork-then-mount composed tool list is what actually
-        // reached the model-facing backend construction seam, not just the
-        // fork's own actor-level bookkeeping array.
-        #expect(rootBackend.lastForkTools.count == 1)
-        let forkedMountedAtBackend = try #require(
-            failureDeliveryPeeled(rootBackend.lastForkTools.first) as? RunToCompletionRunner<AmbientToolArguments>)
-        #expect(mountWrapped(forkedMountedAtBackend) as? AmbientEventPostingTool === emitter)
-
-        // Calling through the exact wrapper the backend received posts to
-        // the child's own outbox — confirming it is genuinely the
-        // child-composed wrapper, not a passthrough of the parent's.
-        _ = try await forkedMountedAtBackend.call(
-            arguments: AmbientToolArguments(value: "from-backend-threaded-tool"))
-        let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == ["from-backend-threaded-tool"])
-        let parentPending = await session.outbox.pending()
-        #expect(parentPending.events.isEmpty)
-    }
-
     // MARK: - Mount layer: per-site chain order (task ^k4nygqa)
 
     @Test("makeSession composes mount → cap: capping outermost, mount layer inside it, the original tool innermost")
@@ -1040,69 +731,6 @@ struct SessionOutboxToolWiringTests {
         #expect(pending.events.map(\.event.detail) == ["uncapped-chain-inner"])
     }
 
-    @Test("fork composes fork → mount → cap: capping outermost, mount layer inside, the forked instance innermost")
-    @MainActor
-    func forkComposesForkMountCap() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let forkable = ForkableAmbientTool()
-        let session = profile.standard.makeSession(
-            tools: [forkable],
-            budget: Self.budgetWithSmallToolOutputCap
-        )
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let childActor = try #require(child as? RoutedSessionActor)
-        let capping = try #require(
-            failureDeliveryPeeled(childActor.tools.first) as? TokenCappingTool<AmbientToolArguments>)
-        let mounting = try #require(capping.wrapped as? RunToCompletionRunner<AmbientToolArguments>)
-        let forkedInner = try #require(mounting.wrapped as? ForkableAmbientTool)
-        // `forked()` ran before the child's mount layer wrapped it: the
-        // innermost instance is the next generation.
-        #expect(forkedInner.generation == 1)
-        _ = try await capping.call(arguments: AmbientToolArguments(value: "fork-chain-inner"))
-        let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == ["fork-chain-inner"])
-    }
-
-    @Test("fork without a budget composes fork → mount: mount layer outermost, no capping layer")
-    @MainActor
-    func forkWithoutBudgetComposesForkMountOnly() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let forkable = ForkableAmbientTool()
-        let session = profile.standard.makeSession(tools: [forkable])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let childActor = try #require(child as? RoutedSessionActor)
-        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<AmbientToolArguments>))
-        let mounting = try #require(
-            failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>)
-        let forkedInner = try #require(mounting.wrapped as? ForkableAmbientTool)
-        // `forked()` ran before the child's mount layer wrapped it: the
-        // innermost instance is the next generation — the same fork →
-        // mount order as the with-budget case, just with no cap layer
-        // anywhere in the chain.
-        #expect(forkedInner.generation == 1)
-        _ = try await mounting.call(arguments: AmbientToolArguments(value: "uncapped-fork-chain-inner"))
-        let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == ["uncapped-fork-chain-inner"])
-    }
-
     /// Shared body of the with-/without-budget makeSession bind-only pins:
     /// composes a session over ``AmbientNonStringOutputTool`` under `budget`
     /// and asserts the container-boundary chain is bind(tool) — never capped
@@ -1154,64 +782,6 @@ struct SessionOutboxToolWiringTests {
             budget: Self.budgetWithSmallToolOutputCap, detail: "budgeted-bind-inner")
     }
 
-    /// Shared body of the with-/without-budget fork bind-only pins: forks a
-    /// session over ``AmbientNonStringOutputTool`` composed under `budget`
-    /// and asserts the child's chain is bind(tool) — never capped, the very
-    /// same shared instance innermost — with the ambient event routed to the
-    /// child's own outbox and the parent's left untouched.
-    ///
-    /// - Parameters:
-    ///   - budget: The session budget to compose under, or `nil` for none.
-    ///   - detail: The event detail the asserted post carries.
-    @MainActor
-    private func assertForkComposesBindOnlyForNonStringOutput(
-        budget: TokenBudget?, detail: String
-    ) async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let emitter = AmbientNonStringOutputTool()
-        let session = profile.standard.makeSession(tools: [emitter], budget: budget)
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        let childActor = try #require(child as? RoutedSessionActor)
-        // The same bind-only chain as the root site at every budget level:
-        // capping has no String output to truncate, and the fixture is not
-        // ForkableTool, so the very same instance passes through shared
-        // into the child's own binding layer.
-        // The no-cap check below is type-guaranteed for a non-String
-        // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
-        // — it documents the shape; the load-bearing chain proof is
-        // `wrapped` being the original instance directly.
-        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<AmbientToolArguments>))
-        let childBound = try #require(
-            failureDeliveryPeeled(childActor.tools.first)
-                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
-        let childInner = try #require(childBound.wrapped as? AmbientNonStringOutputTool)
-        #expect(childInner === emitter)
-
-        _ = try await childBound.call(arguments: AmbientToolArguments(value: detail))
-        let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == [detail])
-        let parentPending = await session.outbox.pending()
-        #expect(parentPending.events.isEmpty)
-    }
-
-    @Test(
-        "fork with a budget composes a non-String-output tool as bind only in the child: shared instance innermost, no cap layer"
-    )
-    @MainActor
-    func forkWithBudgetComposesBindOnlyForNonStringOutput() async throws {
-        try await assertForkComposesBindOnlyForNonStringOutput(
-            budget: Self.budgetWithSmallToolOutputCap, detail: "budgeted-fork-bind-inner")
-    }
-
     @Test(
         "makeSession without a budget composes a non-String-output tool as bind only: the same bind(tool) chain as the with-budget case"
     )
@@ -1219,15 +789,6 @@ struct SessionOutboxToolWiringTests {
     func makeSessionWithoutBudgetComposesBindOnlyForNonStringOutput() async throws {
         try await assertMakeSessionComposesBindOnlyForNonStringOutput(
             budget: nil, detail: "uncapped-bind-inner")
-    }
-
-    @Test(
-        "fork without a budget composes a non-String-output tool as bind only in the child: shared instance innermost, no cap layer"
-    )
-    @MainActor
-    func forkWithoutBudgetComposesBindOnlyForNonStringOutput() async throws {
-        try await assertForkComposesBindOnlyForNonStringOutput(
-            budget: nil, detail: "uncapped-fork-bind-inner")
     }
 
     // MARK: - Background-run behavior through a session's composed tool list
@@ -1286,42 +847,6 @@ struct SessionOutboxToolWiringTests {
         // public reader gives its run event.
         let journaled = promptEvent.operationEvents
         #expect(journaled.contains { $0.kind == .completed && $0.correlationID == envelope.completionToken })
-    }
-
-    @Test("a fork's tracked background run lives in the fork's own run plane. The run plane of the parent does not change")
-    @MainActor
-    func forkBackgroundRunLivesInForkRunPlane() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let gate = RunLatch()
-        let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        // The held run is on the fork, so the gate opens before the close of
-        // the fork: a close waits for the held run.
-        defer { await SessionFixtureLifecycle.close(child, opening: [gate]) }
-
-        let childActor = try #require(child as? RoutedSessionActor)
-        let childMounted = try #require(
-            failureDeliveryPeeled(childActor.tools.first) as? BackgroundToolRunner<FakeToolArguments>)
-
-        let rendered = try await childMounted.call(arguments: FakeToolArguments(value: "forked"))
-        let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
-        #expect(envelope.pending)
-
-        let childTokens = await child.runPlane.backgroundRuns().map(\.completionToken)
-        #expect(childTokens == [envelope.completionToken])
-        let parentRuns = await session.runPlane.backgroundRuns()
-        #expect(parentRuns.isEmpty)
-
-        // Settle the background run so no background work outlives the test.
-        await gate.open()
-        _ = try await MountFixtures.settledTerminal(of: envelope.completionToken, in: child.runPlane)
     }
 
     @Test("a pending envelope survives the outer capping layer intact, even under a cap smaller than the envelope itself")

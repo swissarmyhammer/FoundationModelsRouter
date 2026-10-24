@@ -385,8 +385,8 @@ public enum SessionEvent: Sendable, Equatable {
     /// ``workEnded`` come in turns, and ``workStarted`` comes first. A
     /// session that has no work when a feed starts sends nothing until work
     /// starts. A consumer needs no clock and no poll to know the work state.
-    /// Each session sends its own events: the work of a fork or of a child
-    /// session never makes its parent send one.
+    /// Each session sends its own events: the work of a child session never
+    /// makes its parent send one.
     ///
     /// After ``RoutedSession/close()`` starts, the session sends no work
     /// event. The feed ends when the close finishes it.

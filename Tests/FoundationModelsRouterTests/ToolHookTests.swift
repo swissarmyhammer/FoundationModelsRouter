@@ -393,22 +393,6 @@ struct ToolHookTests {
         }
     }
 
-    /// The production change that makes this test fail: a fork whose tool
-    /// body sees the hook session of its parent, or none.
-    @Test("inside a tool body of a fork HookSession.current is the hook session of the fork")
-    func aToolBodyOfAForkSeesTheHookSessionOfTheFork() async throws {
-        let probe = HookSessionProbeTool()
-        try await Self.withHookedSession(calling: HookSessionProbeTool.toolName, mounting: [probe]) { hooked in
-            let fork = try await hooked.session.fork(workingDirectory: nil)
-            _ = try await collectEvents(fork, prompt: ScriptedToolFixture.prompt)
-            let forkSession = try Self.hookSession(of: fork)
-            await fork.close()
-
-            #expect(forkSession != (try Self.hookSession(of: hooked.session)))
-            #expect(probe.seenSessions == [forkSession])
-        }
-    }
-
     // MARK: - Sub-agent
 
     /// Runs one scripted answer on a sub-agent of the session of `hooked`,

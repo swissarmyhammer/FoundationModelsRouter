@@ -223,8 +223,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     presence belongs to the current client, not to the recording, and
     ///     one client owns the whole restored tree. Thus a supplied value
     ///     replaces the recorded value on the root and on each recorded
-    ///     fork. The recorded `index.md` files on disk do not change. A fork that a
-    ///     restored node makes later records the supplied value.
+    ///     fork. The recorded `index.md` files on disk do not change.
     ///   - hookSessionKey: The key of the hook lineage of the root node, or
     ///     `nil` (the default) to give the root its recorded id as its key.
     ///     A recorded fork under the root keeps the fork rule against its
@@ -336,7 +335,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // and `effectiveEntryEvents` re-read this node's own and every
             // ancestor's `transcript.jsonl` from disk, and that read is what a
             // restore really costs. `withSessionSpan` is the one helper all
-            // three shapes open their span through, and its own doc comment
+            // shapes open their span through, and its own doc comment
             // says why the factory below opens no span here.
             let session = try await withSessionSpan(
                 routerId: routedLLM.routerId,
@@ -430,12 +429,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ``RoutedSessionActor/runPlane``).
             // This site's chain is mount only, plus capping when the
             // node's recorded budget carries a `toolOutputLimit` —
-            // deliberately no fork (restoration re-instances from the
-            // caller's originals, it never derives one live session from
-            // another) — mirroring the root site's mount → cap; the fork
-            // site is fork → mount → cap (task ^k4nygqa; see
-            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
-            // and ``RoutedSessionActor/fork(workingDirectory:)``).
+            // restoration re-instances from the caller's originals, and it
+            // never derives one live session from another. This mirrors the
+            // root site's mount → cap (task ^k4nygqa; see
+            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``).
             // The run plane gets the user presence that this call supplies
             // (task ^58gn0mt), on each node, because one client owns the
             // whole restored tree. With no supplied value, the run plane
@@ -473,9 +470,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ancestor-inclusive, not scoped to this node's own file alone: a
             // freshly restored fork with no submissions of its own yet should
             // inherit its parent's last known fill rather than report
-            // unknown, mirroring live `fork()`'s own choice to inherit
-            // `usageState` from the session it forked from (see
-            // ``RoutedSessionActor/fork(workingDirectory:)``).
+            // unknown.
             let usageState = TranscriptTree.restoredUsageState(
                 in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: .generationCall))
             let effectiveEvents = try tree.effectiveEntryEvents(forSession: node.id)
@@ -526,10 +521,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 grammar: grammar,
                 // The per-node instanced tool list threaded to `backend`
                 // above; `originalTools` retains the true, un-instanced
-                // originals (this call's own `tools` parameter) so a later
-                // `fork(workingDirectory:)` off this restored node can still
-                // build its own fork-then-mount composed tool list, exactly
-                // as it would from a freshly vended root session.
+                // originals (this call's own `tools` parameter). The record
+                // of the session names its tools from them, as a freshly
+                // vended root session does.
                 tools: instancedTools,
                 originalTools: tools,
                 outbox: outbox,
@@ -546,8 +540,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // ``RoutedSessionActor/historyOrdinal``).
                 historyOrdinal: effectiveEvents.count,
                 // The run-level writer of the restoring handle: a later
-                // change of this session rewrites its `index.md`, and a fork
-                // taken from it writes its own.
+                // change of this session rewrites its `index.md`.
                 indexWriter: routedLLM.durableRecording?.indexWriter,
                 // Rebuilt from disk, so this node's span is the one
                 // `restore(_:)` opened around the read above rather than one
@@ -610,9 +603,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
         /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``
-        /// releases those forks anyway. A live fork taken later from the
-        /// restored root does inherit the override, because it inherits both
-        /// the backend transcript and ``RoutedSessionActor/instructions``.
+        /// releases those forks anyway.
         ///
         /// The model reads its instructions from the leading `.instructions`
         /// entry of the transcript its backend is seeded with.

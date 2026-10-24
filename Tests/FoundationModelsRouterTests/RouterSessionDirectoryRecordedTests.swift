@@ -111,29 +111,13 @@ import Testing
         #expect(found.map(\.id) == [kept.id])
     }
 
-    /// A fork lives in the folder of its root, so the recording root lists
-    /// only the root.
-    @Test func aForkIsNotListedAsARecordedRoot() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { fixture.remove() }
-        let root = fixture.recordingProfile.standard.makeSession(configuration: SessionConfiguration())
-        let fork = try await root.fork(workingDirectory: nil)
-        await fork.close()
-        await root.close()
-        await fixture.useRoot(of: root.recordingDirectory)
-
-        let found = try await fixture.directory.sessions(matching: SessionQuery(includesRecorded: true))
-
-        #expect(found.map(\.id) == [root.id])
-    }
-
     // MARK: - The records of a recording root
 
     /// `recordedSessions(in:)` gives one record for each recorded root
     /// session folder, newest first: the id is the folder name, and the
     /// record holds the working folder, the facts and no first activity for
-    /// a session that never had a prompt. A fork nested in the folder of its
-    /// root is no entry, and a folder with no `index.md` is passed over.
+    /// a session that never had a prompt. A folder with no `index.md` is
+    /// passed over.
     @Test func recordedSessionsGivesOneRecordPerRootSessionFolderNewestFirst() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
@@ -141,10 +125,7 @@ import Testing
         let starter = ULID.generate()
         var configuration = SessionFactsFixtures.configuration(startedBy: starter)
         configuration.workingDirectory = folder
-        let first = fixture.recordingProfile.standard.makeSession(configuration: configuration)
-        let fork = try await first.fork(workingDirectory: nil)
-        await fork.close()
-        await first.close()
+        let first = await fixture.recordClosedRoot(configuration)
         let second = await fixture.recordClosedRoot(configuration)
         let root = second.recordingDirectory.deletingLastPathComponent()
         try FileManager.default.createDirectory(

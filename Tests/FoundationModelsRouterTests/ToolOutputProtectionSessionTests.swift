@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises a host ``ToolOutputProtection`` rule through a real
-/// ``RoutedSession``: the vended session, its fork, and its restore.
+/// ``RoutedSession``: the vended session and its restore.
 ///
 /// Each session starts with a transcript that holds one protected tool output
 /// (a loaded skill body) and one unprotected tool output (a search result),
@@ -19,7 +19,7 @@ import Testing
 ///
 /// The warm-up answers come from ``driveAnswers(_:on:)``, a helper in
 /// `Helpers/CompactionFixtures.swift` that other compaction suites also use.
-@Suite("Tool output protection through a session, its fork, and its restore")
+@Suite("Tool output protection through a session and its restore")
 struct ToolOutputProtectionSessionTests {
     /// The fixtures every test here reads.
     private typealias Fixtures = ProtectedToolOutputFixtures
@@ -155,26 +155,6 @@ struct ToolOutputProtectionSessionTests {
         #expect(result.protectedTokens == 0)
         let transcript = await session.transcript
         #expect(Fixtures.outputText(in: Array(transcript), id: Fixtures.skillCallId) == nil)
-    }
-
-    // MARK: - The fork
-
-    @Test("a fork inherits the rule and keeps the protected output through its own compaction")
-    func forkInheritsTheRule() async throws {
-        let directories = TestDirectories(prefix: Self.tempDirPrefix)
-        defer { directories.remove() }
-        let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
-        defer { await session.close() }
-        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
-        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
-
-        let fork = try await session.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        try await Self.compact(session: fork)
-
-        Self.expectProtectedOnly(in: await fork.transcript)
     }
 
     // MARK: - The restore

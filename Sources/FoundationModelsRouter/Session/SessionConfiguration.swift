@@ -30,7 +30,7 @@ public struct SessionConfiguration: Sendable {
     /// ``persistable`` records the budget and the prompt in flat keys. It
     /// does not hold the tool output protection, because that is a closure.
     /// A host gives it again when it restores the session, as it gives the
-    /// tools. A fork inherits it. See ``CompactionSettings``.
+    /// tools. See ``CompactionSettings``.
     public var compaction: CompactionSettings
 
     /// The parent session/tool-call the session was spawned from, or `nil`.
@@ -45,8 +45,8 @@ public struct SessionConfiguration: Sendable {
 
     /// The settings of the detector that stops a generate call that repeats
     /// itself. The default is on, with the named defaults of
-    /// ``RepetitionDetection``. The session's `index.md` records it, a restore applies it
-    /// again, and a fork inherits it.
+    /// ``RepetitionDetection``. The session's `index.md` records it, and a
+    /// restore applies it again.
     public var repetitionDetection: RepetitionDetection
 
     /// The default of ``mailOnlyAnswerLimit``: 100 answers that start a new
@@ -80,8 +80,8 @@ public struct SessionConfiguration: Sendable {
     /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
     ///
     /// `0` holds all run mail for the next user-type mail. A negative value acts
-    /// as `0`. The session's `index.md` records the value, a restore applies it again, and
-    /// a fork inherits it.
+    /// as `0`. The session's `index.md` records the value, and a restore
+    /// applies it again.
     public var mailOnlyAnswerLimit: Int
 
     /// How long a background tool call waits for its own run before it
@@ -96,8 +96,8 @@ public struct SessionConfiguration: Sendable {
     /// The default is `ToolMount.defaultInlineSettleGrace`. `0` answers with
     /// the pending envelope at once. A negative value acts as `0`. A tool
     /// that states its own `BackgroundTool.inlineSettleGrace` uses its own
-    /// value. The session's `index.md` records the value, a restore applies it again, and
-    /// a fork inherits it.
+    /// value. The session's `index.md` records the value, and a restore
+    /// applies it again.
     public var inlineSettleGrace: TimeInterval
 
     /// The default of ``isNoOpToolCall``: no tool call is a no-op, so the
@@ -114,7 +114,7 @@ public struct SessionConfiguration: Sendable {
     /// starts the model. See ``NoOpToolCallCheck``.
     ///
     /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
-    /// ``persistable`` does not record it. A fork inherits it. A restore gets
+    /// ``persistable`` does not record it. A restore gets
     /// it again from the host, through the `isNoOpToolCall` argument of
     /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
     public var isNoOpToolCall: NoOpToolCallCheck
@@ -134,8 +134,8 @@ public struct SessionConfiguration: Sendable {
     ///   question. The run continues with the cancel, and the session sends
     ///   ``SessionEvent/workEnded`` as usual.
     ///
-    /// The session's `index.md` records the value, a restore applies it again, and a fork
-    /// inherits it.
+    /// The session's `index.md` records the value, and a restore applies it
+    /// again.
     public var userPresence: UserPresence
 
     /// The context of the tool call that starts this session as a child
@@ -153,7 +153,7 @@ public struct SessionConfiguration: Sendable {
     /// settle period of the session is ``inlineSettleGrace``.
     ///
     /// The value is a live context, thus ``persistable`` does not record it.
-    /// ``agentSpawn`` records the lineage. A restore and a fork give a root
+    /// ``agentSpawn`` records the lineage. A restore gives a root
     /// session.
     public var parentCall: ToolContext?
 
@@ -183,8 +183,7 @@ public struct SessionConfiguration: Sendable {
     /// The default is `AgentDelegationHint()`. The hint needs an original
     /// tool that is an `AgentLaunching` tool, so a session without one gets
     /// no hint. A child session gets no hint. The value holds no live state,
-    /// but ``persistable`` does not record it: a fork and a restore give no
-    /// hint.
+    /// but ``persistable`` does not record it: a restore gives no hint.
     public var agentDelegationHint: AgentDelegationHint?
 
     /// The resolved id of the agent of the session (D71): a catalog id

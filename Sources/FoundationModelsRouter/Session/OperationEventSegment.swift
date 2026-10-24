@@ -154,8 +154,7 @@ extension OperationEventSegment {
     /// a `.toolOutput` entry (``RoutedSessionActor/record(event:origin:)``),
     /// so a restore and a replay of the events still find it. The question is
     /// not model input of the parent: it makes no run mail, and this read
-    /// takes it out of the context that a restore or a fork gives to the
-    /// model.
+    /// takes it out of the context that a restore gives to the model.
     ///
     /// A segment is a relayed question when it is an
     /// ``OperationEventSegment`` of an `.elicitation` event whose request has

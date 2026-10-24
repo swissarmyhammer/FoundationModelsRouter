@@ -120,15 +120,31 @@ final class SubagentRelayBox: Sendable {
     ///   - childRoles: The role of each child, in the order the children
     ///     come.
     ///   - makeChild: Makes each child from the session of the relaying run.
-    ///     The default forks that session.
+    ///     The default is ``subagentChild(of:)``.
     init(
         childRoles: [SubagentRole],
         makeChild: @escaping @Sendable (any RoutedSession) async throws -> any RoutedSession = {
-            try await $0.fork(workingDirectory: nil)
+            try SubagentRelayBox.subagentChild(of: $0)
         }
     ) {
         state = Mutex(State(childRoles: childRoles))
         self.makeChild = makeChild
+    }
+
+    /// Makes a subagent session of `parent`: a new session of the model of
+    /// `parent`, with the tools and the user presence of `parent`. The
+    /// parent call of the child is the current tool call
+    /// (``ToolContext/current``), which is the relaying run.
+    ///
+    /// - Parameter parent: The session of the relaying run.
+    /// - Returns: The child.
+    /// - Throws: When `parent` is not a ``RoutedSessionActor``.
+    static func subagentChild(of parent: any RoutedSession) throws -> any RoutedSession {
+        let parent = try #require(parent as? RoutedSessionActor)
+        return parent.profile.standard.makeSession(
+            configuration: SessionConfiguration(
+                tools: parent.originalTools, userPresence: parent.runPlane.userPresence,
+                parentCall: ToolContext.current))
     }
 
     /// Records `session` with `role`.
@@ -456,7 +472,7 @@ struct SubagentRelayFixture: Sendable {
     ///   - container: The container that vends the backends.
     ///   - userPresence: The user presence of the root session.
     ///   - makeChild: Makes each child from the session of the relaying
-    ///     run. `nil` forks that session.
+    ///     run. `nil` uses ``SubagentRelayBox/subagentChild(of:)``.
     ///   - recordingsDir: The durable transcripts root of the router, or
     ///     `nil` (the default) for a router that records only in memory.
     /// - Returns: The fixture.

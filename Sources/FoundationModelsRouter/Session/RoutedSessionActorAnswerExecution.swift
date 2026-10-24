@@ -61,8 +61,7 @@ extension RoutedSessionActor {
     /// calls it for the first submission of an answer, before the proactive
     /// compaction, so an answer that fails before the model call still made
     /// the hook call. ``runSubmission(grammar:deliveredMail:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
-    /// calls it for each continuation submission. A fork's hook fires only on
-    /// the fork's own tools (``ForkableTool`` composition).
+    /// calls it for each continuation submission.
     func notifySubmissionBoundaryTools() async {
         for tool in tools {
             guard let boundaryTool = tool as? any SubmissionBoundaryTool else { continue }

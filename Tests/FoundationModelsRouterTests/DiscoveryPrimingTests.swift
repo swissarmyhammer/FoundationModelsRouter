@@ -188,10 +188,6 @@ struct DiscoveryPrimingTests {
         }
 
         func makeFork() -> any LanguageModelSessionBackend {
-            makeFork(tools: [])
-        }
-
-        func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
             PrimingObservingBackend(
                 log: log,
                 inner: StubSessionBackend(entries: inner.transcriptEntries())
@@ -583,25 +579,6 @@ struct DiscoveryPrimingTests {
         // The synthetic discovery prompt carries no event and no mail record.
         #expect(seedPrompt.operationEvents.isEmpty)
         #expect(seedPrompt.mailRecords.isEmpty)
-    }
-
-    @Test("a fork inherits its parent's priming opt-in")
-    @MainActor
-    func forkInheritsPriming() async throws {
-        let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
-        let fixture = try await Self.makeFixture(
-            tools: [tool],
-            priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
-        )
-        defer { await fixture.end() }
-
-        let forked = try await fixture.session.fork(workingDirectory: nil)
-        defer { await forked.close() }
-        _ = try await forked.respond(to: Self.prompt)
-
-        #expect(tool.queries == [Self.prompt])
-        let seeded = try #require(fixture.log.entriesAtGeneration.first)
-        #expect(seeded.map { TranscriptEntryMapper.event(from: $0).kind } == [.prompt, .toolCalls, .toolOutput])
     }
 
     @Test("an instructed session seeds after its leading instructions entry, never in place of it")

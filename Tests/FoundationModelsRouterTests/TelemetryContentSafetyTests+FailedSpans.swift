@@ -89,21 +89,6 @@ extension TelemetryContentSafetyTests {
         }
     }
 
-    @Test("a fork span whose work throws records the error type and no content")
-    func failedForkSpanRecordsOnlyTheErrorType() async throws {
-        try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
-            try await Self.withFailingSpanSession(in: context) { session in
-                await #expect(throws: ContentBearingError.self) {
-                    try await session.withForkSpan { throw Self.contentBearingError }
-                }
-
-                #expect(
-                    Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.fork, in: context)
-                        == ["\(ContentBearingError.self)"])
-            }
-        }
-    }
-
     @Test("a submission span whose attempt throws records the error type and no content")
     func failedSubmissionSpanRecordsOnlyTheErrorType() async throws {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in

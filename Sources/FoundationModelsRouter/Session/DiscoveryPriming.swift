@@ -23,9 +23,8 @@ import FoundationModelsExtras
 /// diffed and restored by the ordinary machinery with no special case.
 ///
 /// Off by default. A host opts one session in when it vends it
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``),
-/// and a fork inherits its parent's opt-in. With it off, the transcript
-/// construction of an answer is untouched.
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``).
+/// With it off, the transcript construction of an answer is untouched.
 ///
 /// Nothing is specific to one tool: any discovery tool whose arguments carry a
 /// single string-valued query property can be primed.

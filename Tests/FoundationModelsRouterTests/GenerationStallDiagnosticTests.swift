@@ -635,21 +635,6 @@ struct GenerationStallDiagnosticTests {
         #expect(stall.timeWithoutProgress == reportInterval)
     }
 
-    @Test("a fork starts with the stall report interval of its parent")
-    @MainActor
-    func aForkStartsWithTheIntervalOfItsParent() async throws {
-        let reportInterval: Duration = .seconds(1)
-        let (session, _, dir) = try await Self.makeSession(
-            over: StallingLLMContainer(fragmentsBeforeStall: 0), reportInterval: reportInterval)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        defer { await session.close() }
-
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        #expect(await child.installedGenerationStallReportInterval == reportInterval)
-    }
-
     // MARK: - The log a consumer with no subscription still sees
 
     @Test("a stall is logged, so a consumer that subscribed to nothing still sees it")

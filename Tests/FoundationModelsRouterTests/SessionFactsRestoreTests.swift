@@ -4,9 +4,8 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The facts of a session survive a restore, a fork writes its own facts in
-/// its own `index.md`, and a restored session rewrites its `index.md` with
-/// the body a host wrote kept (ROUTER-1).
+/// The facts of a session survive a restore, and a restored session rewrites
+/// its `index.md` with the body a host wrote kept (ROUTER-1).
 @Suite struct SessionFactsRestoreTests {
     /// The text a host writes below the frontmatter of an `index.md`.
     private static let hostBody = "\n# Notes\nhost text\n"
@@ -46,49 +45,6 @@ import Testing
 
             #expect(restoredFacts == written)
             #expect(restoredFacts.agentID == SessionFactsFixtures.agentID)
-        }
-    }
-
-    /// A fork writes its own facts in its own `index.md`: the agent id, the
-    /// agent name and the tags of its source, origin `fork`, and no title
-    /// and no `startedBy`.
-    @Test func aForkWritesItsOwnFacts() async throws {
-        try await Self.withProfile { profile in
-            let source = Self.makeRecordedSession(in: profile)
-            let fork = try await source.fork(workingDirectory: nil)
-            let written = try #require(try SessionIndexFile.read(in: fork.recordingDirectory)).facts
-            let held = fork.facts
-            await fork.close()
-            await source.close()
-
-            let expected = SessionFacts(
-                agentID: SessionFactsFixtures.agentID,
-                agentName: SessionFactsFixtures.agentName,
-                tags: SessionFactsFixtures.tags,
-                origin: .fork)
-            #expect(written == expected)
-            #expect(held == expected)
-        }
-    }
-
-    /// A restored recorded fork, a node of its source's restored tree, reads
-    /// its own facts back.
-    @Test func aRestoredForkReadsItsFactsBack() async throws {
-        try await Self.withProfile { profile in
-            let source = Self.makeRecordedSession(in: profile)
-            let fork = try await source.fork(workingDirectory: nil)
-            let written = fork.facts
-            await fork.close()
-            await source.close()
-
-            let tree = try await profile.standard.restoreSessionTree(root: source.id)
-            let restoredFork = try #require(tree.session(fork.id))
-            let restoredFacts = restoredFork.facts
-            await restoredFork.close()
-            await tree.root.close()
-
-            #expect(restoredFacts == written)
-            #expect(restoredFacts.origin == .fork)
         }
     }
 

@@ -21,10 +21,10 @@ struct TranscriptReconstructionTests {
     /// Tracks every ``TrackedStubBackend`` this suite's stub containers
     /// create — via `makeSession(instructions:)` and via
     /// ``TrackedStubBackend/makeFork()`` — in creation order, so a test that
-    /// calls `profile.standard.makeSession()` then `.fork(workingDirectory:)`
-    /// a known number of times can correlate each call's resulting
-    /// ``RoutedSession`` to its own backend purely by call order, since
-    /// ``RoutedSession`` exposes no backend accessor.
+    /// calls `profile.standard.makeSession()` a known number of times can
+    /// correlate each call's resulting ``RoutedSession`` to its own backend
+    /// purely by call order, since ``RoutedSession`` exposes no backend
+    /// accessor.
     /// `@unchecked Sendable` is safe here because every access is sequential:
     /// `record(_:)` fires only from a `TrackedStubBackend` initializer or
     /// ``TrackedStubBackend/makeFork()``, and both are driven one call at a
@@ -417,59 +417,6 @@ struct TranscriptReconstructionTests {
         let backend = try #require(registry.created.first)
         #expect(Array(reconstructed) == backend.transcriptEntries())
         #expect(Array(reconstructed).map { TranscriptEntryMapper.event(from: $0).kind } == [.prompt, .response, .prompt, .response])
-    }
-
-    // MARK: - 3-level fork tree
-
-    @Test("a 3-level fork tree: each node's reconstructed effective transcript matches its own backend's accumulated entries")
-    @MainActor
-    func reconstructsWholeForkTreeMatchingEachNodesBackend() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let registry = BackendRegistry()
-        let container = TrackedLLMContainer(text: Self.cannedText, registry: registry)
-        let router = Self.makeRouter(
-            container: container,
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile.standard.makeSession()
-        defer { await root.close() }
-        _ = try await root.respond(to: "root-message-1")
-        let rootBackend = try #require(registry.created.first)
-
-        let forkA = try await root.fork(workingDirectory: nil)
-        defer { await forkA.close() }
-        let forkABackend = try #require(registry.created.last)
-        let forkB = try await root.fork(workingDirectory: nil)
-        defer { await forkB.close() }
-        let forkBBackend = try #require(registry.created.last)
-
-        _ = try await forkA.respond(to: "forkA-message-1")
-        let grandfork = try await forkA.fork(workingDirectory: nil)
-        defer { await grandfork.close() }
-        let grandforkBackend = try #require(registry.created.last)
-        _ = try await grandfork.respond(to: "grandfork-message-1")
-        _ = try await forkB.respond(to: "forkB-message-1")
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-
-        for (session, backend) in [
-            (root, rootBackend), (forkA, forkABackend), (forkB, forkBBackend),
-            (grandfork, grandforkBackend),
-        ] {
-            let reconstructed = try tree.effectiveTranscript(forSession: session.id)
-            #expect(Array(reconstructed) == backend.transcriptEntries())
-        }
     }
 
     // MARK: - Structured segments: round-trip with no caller setup

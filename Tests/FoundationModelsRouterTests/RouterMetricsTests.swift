@@ -497,38 +497,6 @@ struct RouterMetricsTests {
         #expect(values.contains(1), "the waiting counts of \(modelRef) are \(values)")
         #expect(values.allSatisfy { $0 >= 0 })
     }
-
-    // MARK: - The explicit factory of a session
-
-    @Test("a fork starts with the explicit metrics factory of its parent")
-    func forkKeepsTheExplicitMetricsFactory() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(
-                container: CannedLLMContainer(ref: "org/std-a"), dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession()
-        defer { await session.close() }
-
-        let factory = try await TelemetryCapture.run(forbidding: []) { context in
-            await session.useCaptureMetrics(for: context.metricsFactory)
-            let fork = try await session.fork(workingDirectory: nil)
-            defer { await fork.close() }
-            let child = try #require(fork as? RoutedSessionActor)
-            // A detached task gets no capture of its own, so only the explicit
-            // factory of the child can bring this metric to the capture.
-            await Task.detached {
-                child.sessionMetrics.recordCompaction(trigger: .caller)
-            }.value
-            return context.metricsFactory
-        }
-
-        let count = try factory.expectCounter(
-            "FoundationModelsRouter.compaction.count", [("compaction.trigger", "caller")])
-        #expect(count.totalValue == 1)
-    }
 }
 
 /// A metrics factory that makes each metric through the `TestMetrics` of a

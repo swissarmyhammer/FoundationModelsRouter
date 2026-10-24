@@ -11,14 +11,14 @@ import Testing
 /// A child session asks a question q, and a ``SubagentQuestionRelay`` sends q
 /// up to the relaying session P. The journal of P keeps q, so a restore and
 /// a replay of the events still find it. The context of the model of P does
-/// not hold q: not live, not after a restore of P, and not after a fork of P.
+/// not hold q: not live, and not after a restore of P.
 ///
 /// Each test records P to disk and restores it with a second router over the
 /// same recording root, as a new process does. The steps have a fixed order,
 /// and each wait ends on the question or on the settle of the relaying run.
 /// Everything runs against the scripted ``BackgroundingBackend``, so the suite
 /// needs no network and no GPU.
-@Suite("A relayed question is not model input, also after a restore and after a fork")
+@Suite("A relayed question is not model input, also after a restore")
 struct RelayedQuestionContextTests {
     // MARK: - Constants
 
@@ -28,15 +28,10 @@ struct RelayedQuestionContextTests {
     /// The agent name of the child of the root.
     private static let reviewer = "reviewer"
 
-    /// The prompt of the second answer of the root. That answer settles the
-    /// transcript of the root after its journal recorded the question, so the
-    /// cut of a fork that comes next is after the question.
-    private static let promptAfterTheQuestion = "continue after the question"
-
     // MARK: - Helpers
 
     /// Makes a root session that records under `recordingsDir`, whose
-    /// relaying run forks one child that asks one form question.
+    /// relaying run starts one child that asks one form question.
     ///
     /// - Parameters:
     ///   - rootStep: The relaying level of the root.
@@ -97,17 +92,19 @@ struct RelayedQuestionContextTests {
         }
     }
 
-    /// Restores the session tree of the root of `fixture` with a second
-    /// router over the same recording root, runs `body`, and then closes
+    /// Restores the session tree of the root `rootID` with a second router
+    /// over the recording root of `fixture`, runs `body`, and then closes
     /// each restored session. The close comes also when `body` throws.
     ///
     /// - Parameters:
-    ///   - fixture: The closed root session.
+    ///   - rootID: The id of the recorded root session to restore.
+    ///   - fixture: The fixture whose router recorded the root.
     ///   - recordingsDir: The durable transcripts root.
     ///   - body: The checks of the test.
     /// - Throws: What the resolve, the restore or `body` throws.
     private static func withRestoredTree(
-        of fixture: SubagentRelayFixture, recordingsDir: URL, _ body: (RestoredSessionTree) async throws -> Void
+        root rootID: ULID, of fixture: SubagentRelayFixture, recordingsDir: URL,
+        _ body: (RestoredSessionTree) async throws -> Void
     ) async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: cacheDir) }
@@ -116,7 +113,7 @@ struct RelayedQuestionContextTests {
             recorder: await fixture.base.router.recorder,
             loader: StubModelLoader(container: BackgroundingLLMContainer(), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let tree = try await profile.standard.restoreSessionTree(root: fixture.session.id)
+        let tree = try await profile.standard.restoreSessionTree(root: rootID)
         // The router stays alive until each restored session closed.
         defer {
             await SessionFixtureLifecycle.close(tree)
@@ -147,52 +144,17 @@ struct RelayedQuestionContextTests {
         let question = try #require(asked)
         let childID = try #require(fixture.box.children.first).session.id
 
-        try await Self.withRestoredTree(of: fixture, recordingsDir: recordingsDir) { tree in
+        try await Self.withRestoredTree(root: fixture.session.id, of: fixture, recordingsDir: recordingsDir) { tree in
             let root = try #require(tree.session(fixture.session.id))
             let rootContext = await root.transcript
             #expect(try Self.holds(question, in: rootContext) == false)
             #expect(Self.holdsTerminal(ofRun: question.correlationID, in: rootContext))
-            // The child asked the question itself, so its context keeps it.
+        }
+        // The child is a root session of its own. It asked the question
+        // itself, so its context keeps it.
+        try await Self.withRestoredTree(root: childID, of: fixture, recordingsDir: recordingsDir) { tree in
             let child = try #require(tree.session(childID))
             #expect(try Self.holds(question, in: await child.transcript))
-        }
-    }
-
-    // MARK: - Fork
-
-    /// The production change that makes this test fail: a fork whose
-    /// restored context inherits the journal entry of a relayed question
-    /// from the relaying level, or a live fork of a restored relaying level
-    /// that copies that entry from the restored context.
-    @Test("a fork of the relaying level holds no relayed question, after a restore and as a live fork of the restored level")
-    func aForkOfTheRelayingLevelLeavesTheQuestionOutOfTheContext() async throws {
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: recordingsDir) }
-        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
-        let fixture = try await Self.makeFixture(rootStep: rootStep, recordingsDir: recordingsDir)
-        var asked: OperationEvent?
-        var forkID: ULID?
-        try await fixture.base.endingAfter(opening: [rootStep.gate]) {
-            let question = try await Self.relayedQuestion(of: fixture)
-            asked = question
-            _ = try await fixture.session.respond(to: Self.promptAfterTheQuestion)
-            let prompt = try #require(fixture.base.backend.receivedPrompts.last)
-            #expect(prompt.contains(try #require(question.elicitation).message) == false)
-            let fork = try await fixture.session.fork(workingDirectory: nil)
-            defer { await fork.close() }
-            forkID = fork.id
-        }
-        let question = try #require(asked)
-        let restoredForkID = try #require(forkID)
-
-        try await Self.withRestoredTree(of: fixture, recordingsDir: recordingsDir) { tree in
-            let restoredFork = try #require(tree.session(restoredForkID))
-            #expect(try Self.holds(question, in: await restoredFork.transcript) == false)
-            let root = try #require(tree.session(fixture.session.id))
-            let liveFork = try await root.fork(workingDirectory: nil)
-            defer { await liveFork.close() }
-            let liveForkContext = await liveFork.transcript
-            #expect(try Self.holds(question, in: liveForkContext) == false)
         }
     }
 }

@@ -18,10 +18,8 @@ import FoundationModelsRouter
 /// This container gives each tool of each session the layers of the live
 /// backend, through the same code path: the no-op check and the repetition
 /// check outermost, then the hook layer, then the failure delivery of the
-/// mount. It does the same for the tools of each fork of a session, as the
-/// live backend does. A block on `PreToolUse` thus does not run the tool
-/// body, and a tool body that throws gives `PostToolUse` with
-/// `succeeded: false`.
+/// mount. A block on `PreToolUse` thus does not run the tool body, and a
+/// tool body that throws gives `PostToolUse` with `succeeded: false`.
 ///
 /// Wrap only a container whose backends call the tools that they get. Do not
 /// wrap a container whose backends put the layer on by themselves (a live
@@ -54,7 +52,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     /// A backend of the wrapped container with no tools.
     ///
     /// - Parameter instructions: The session instructions, or `nil`.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
         HookLayeredSessionBackend(wrapping: wrapped.makeSession(instructions: instructions))
     }
@@ -64,7 +62,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     /// - Parameters:
     ///   - instructions: The session instructions, or `nil`.
     ///   - tools: The tools of the session.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         HookLayeredSessionBackend(
             wrapping: wrapped.makeSession(instructions: instructions, tools: SessionToolLayers.checked(tools)))
@@ -73,7 +71,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     /// A restored backend of the wrapped container with no tools.
     ///
     /// - Parameter transcript: The transcript of the restored session.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
         HookLayeredSessionBackend(wrapping: wrapped.makeSession(transcript: transcript))
     }
@@ -84,7 +82,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     /// - Parameters:
     ///   - transcript: The transcript of the restored session.
     ///   - tools: The tools of the session.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         HookLayeredSessionBackend(
             wrapping: wrapped.makeSession(transcript: transcript, tools: SessionToolLayers.checked(tools)))
@@ -97,7 +95,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     ///   - instructions: The session instructions, or `nil`.
     ///   - samplingMode: The decoding strategy, or `nil` for the default of
     ///     the wrapped container.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(
         instructions: String?, samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
@@ -112,7 +110,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     ///   - tools: The tools of the session.
     ///   - samplingMode: The decoding strategy, or `nil` for the default of
     ///     the wrapped container.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(
         instructions: String?, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
@@ -129,7 +127,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     ///   - transcript: The transcript of the restored session.
     ///   - samplingMode: The decoding strategy, or `nil` for the default of
     ///     the wrapped container.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(
         transcript: Transcript, samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
@@ -144,7 +142,7 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     ///   - tools: The tools of the session.
     ///   - samplingMode: The decoding strategy, or `nil` for the default of
     ///     the wrapped container.
-    /// - Returns: The backend, which puts the layer on the tools of each fork.
+    /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(
         transcript: Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
@@ -155,14 +153,12 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
 }
 
 /// A backend of a ``HookLayeredLLMContainer``: the backend of the wrapped
-/// container, which puts the tool hook layer on the tools of each fork.
+/// container, in a decorator.
 ///
-/// A session forks its backend with the tools of the fork
-/// (`makeFork(tools:seededFrom:)`), and the live backend puts the layer on
-/// those tools. This backend does the same. Each other call goes to the
-/// wrapped backend. Each backend that a call makes (a fork, a replaced
-/// transcript) is in this decorator too, so a fork of a fork also gets the
-/// layer.
+/// The container puts the tool hook layer on the tools of a session before
+/// the wrapped container makes the backend. Each call of this backend goes
+/// to the wrapped backend. Each backend that a call makes (a copy, a
+/// replaced transcript) is in this decorator too.
 final class HookLayeredSessionBackend: LanguageModelSessionBackend {
     /// The backend of the wrapped container.
     private let wrapped: any LanguageModelSessionBackend
@@ -206,26 +202,6 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
     /// A fork of the wrapped backend, with the tools that it has.
     func makeFork() -> any LanguageModelSessionBackend {
         HookLayeredSessionBackend(wrapping: wrapped.makeFork())
-    }
-
-    /// A fork of the wrapped backend whose tools have the layer.
-    ///
-    /// - Parameter tools: The tools of the fork.
-    /// - Returns: The fork, in this decorator.
-    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(wrapping: wrapped.makeFork(tools: SessionToolLayers.checked(tools)))
-    }
-
-    /// A fork of the wrapped backend, seeded from `transcript`, whose tools
-    /// have the layer.
-    ///
-    /// - Parameters:
-    ///   - tools: The tools of the fork.
-    ///   - transcript: The transcript to seed the fork from.
-    /// - Returns: The fork, in this decorator.
-    func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(
-            wrapping: wrapped.makeFork(tools: SessionToolLayers.checked(tools), seededFrom: transcript))
     }
 
     /// The transcript of the wrapped backend.

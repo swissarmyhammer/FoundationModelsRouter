@@ -10,7 +10,7 @@ import Testing
 /// Exercises the work registry of each session: each session owns one
 /// `WorkRegistry` under its own id. Its run plane and the mount site of each
 /// of its tools hold that registry, so each lease of a tool of the session
-/// goes into it. A fork and a restored session own a registry of their own,
+/// goes into it. A restored session owns a registry of its own,
 /// and the registry of a session is never shared. ``RoutedSession/close()``
 /// closes it.
 ///
@@ -46,17 +46,6 @@ struct SessionWorkRegistryTests {
 
         #expect(Self.registry(of: fixture.session).sessionID == fixture.session.id)
         #expect(Self.registry(of: fixture.session).hasWork == false)
-    }
-
-    @Test("a fork owns a registry of its own under its own id, not the registry of its parent")
-    func aForkOwnsARegistryOfItsOwn() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { await fixture.end() }
-        let child = try await fixture.session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        #expect(Self.registry(of: child).sessionID == child.id)
-        #expect(Self.registry(of: child) !== Self.registry(of: fixture.session))
     }
 
     @Test("a lease of a tool call goes into the registry of the session of the call")

@@ -37,8 +37,8 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         let blank = backend.replacingTranscript(Transcript(entries: []), tools: [])
         // Before the call: the executor of the blank backend reads the scope
-        // at each pass. A backend with no executor seam keeps no cache of
-        // the fork, so it has nothing to set.
+        // at each pass. A backend with no executor seam keeps no prompt
+        // cache, so it has nothing to set.
         (blank as? any SessionPromptCacheScoping)?.keepNoPromptCache()
         // The compaction's own ceiling, passed down to the generation path rather
         // than left to resolve to its generic default for each submission — see
@@ -629,7 +629,7 @@ extension RoutedSessionActor {
             // ``QueuedCompactionSummarizer``).
             summarizers: summarizerTiers().map { $0.slot(for: self) },
             pendingRuns: pendingRuns,
-            // The host rule this session was vended, forked or restored with,
+            // The host rule this session was vended or restored with,
             // so no compaction removes a protected tool output.
             protection: toolOutputProtection,
             // This session's explicit logger, so the record of a shortfall

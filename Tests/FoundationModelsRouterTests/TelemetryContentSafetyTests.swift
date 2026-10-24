@@ -30,7 +30,7 @@ import Testing
 /// with no edit to this file.
 ///
 /// The extension in `TelemetryContentSafetyTests+FailedSpans.swift` adds the
-/// failure half: a session, compact, fork, submission and embed span whose
+/// failure half: a session, compact, submission and embed span whose
 /// work throws an error with content records the error type and none of
 /// the content.
 ///

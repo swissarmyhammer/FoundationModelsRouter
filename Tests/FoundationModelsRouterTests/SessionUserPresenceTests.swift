@@ -163,20 +163,4 @@ struct SessionUserPresenceTests {
         let question = try firstQuestion(in: asking)
         #expect(question.kind == .elicitation)
     }
-
-    /// The production change that makes this test fail: a fork that makes
-    /// its run plane with no user presence. The fork is then interactive.
-    @Test("a fork of a headless session is headless")
-    func aForkOfAHeadlessSessionIsHeadless() async throws {
-        let fixture = try await BackgroundingSessionFixture.make(
-            prefix: Self.prefix, tools: [], userPresence: .headless)
-        defer { await fixture.end() }
-
-        let fork = try #require(try await fixture.session.fork(workingDirectory: nil) as? RoutedSessionActor)
-        // The defers run in reverse order: the fork closes before the end of
-        // the fixture.
-        defer { await fork.close() }
-
-        #expect(fork.runPlane.userPresence == .headless)
-    }
 }

@@ -29,8 +29,7 @@ enum ToolOutputCapping {
     }
 
     /// Wraps `tool` in a ``TokenCappingTool``, discovered dynamically rather
-    /// than requiring the tool to opt in — the same "no cooperation needed"
-    /// contract ``ForkableTool`` has.
+    /// than requiring the tool to opt in. The tool does not have to help.
     ///
     /// The check is a runtime existential cast against `Tool`'s own primary
     /// associated types (`any Tool<Arguments, Output>`). A tool whose `Output`
@@ -150,8 +149,6 @@ extension ToolMounting {
     /// their events, and `tokenCounter` counts each capped result the way the
     /// session's model counts it.
     ///
-    /// ``RoutedSessionActor/fork(workingDirectory:)`` forks each tool first and
-    /// hands the forked copy here;
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
     /// is the root and restore site.
     ///

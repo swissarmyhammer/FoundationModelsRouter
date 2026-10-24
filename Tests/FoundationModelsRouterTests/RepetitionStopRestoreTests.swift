@@ -351,30 +351,6 @@ struct RepetitionStopRestoreTests {
         #expect(restoredUsage == liveUsage)
     }
 
-    @Test("a restored fork of a session that had a stop holds the render the live fork held")
-    func restoredForkRenderEqualsTheLiveForkRender() async throws {
-        let directories = TestDirectories(prefix: Self.tempDirPrefix)
-        defer { directories.remove() }
-        let stopped = try await Self.runStoppedAnswer(directories: directories)
-        defer { await stopped.session.close() }
-        let forked = try await stopped.session.fork(workingDirectory: nil)
-        defer { await forked.close() }
-        let fork = try #require(forked as? RoutedSessionActor)
-        let liveForkRender = await fork.backend.transcriptEntries()
-        #expect(Self.reasoningText(of: Transcript(entries: liveForkRender)) == [Self.keptReasoning])
-
-        let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
-        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
-        let restoredForkRender = await restoredFork.backend.transcriptEntries()
-        withExtendedLifetime(profile) {}
-
-        #expect(Self.renderLines(of: restoredForkRender) == Self.renderLines(of: liveForkRender))
-    }
-
     @Test("the cut record travels under the schema name that an earlier build wrote, and its payload decodes back to the segment")
     func cutRecordKeepsItsSchemaNameAndRoundTrips() throws {
         let segment = RepeatedPartRemovalSegment(content: .init(keptUTF8Lengths: ["entry-1": 42]))

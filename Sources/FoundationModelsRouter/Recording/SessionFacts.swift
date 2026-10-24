@@ -64,12 +64,4 @@ public struct SessionFacts: Sendable, Equatable {
         self.origin = origin
         self.archivedAt = archivedAt
     }
-
-    /// The first facts of a fork taken from a session with these facts: the
-    /// agent id, the agent name and the tags of the source, origin
-    /// ``FoundationModelsExtras/SessionDirectoryOrigin/fork``, and no title,
-    /// no `startedBy` and no archive date.
-    var forFork: SessionFacts {
-        SessionFacts(agentID: agentID, agentName: agentName, tags: tags, origin: .fork)
-    }
 }

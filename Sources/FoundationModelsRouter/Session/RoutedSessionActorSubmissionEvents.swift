@@ -72,8 +72,7 @@ extension RoutedSessionActor {
     /// Writes the attributes that name this session on `span`: the router
     /// id, the session id and the model reference.
     ///
-    /// The submission span and the fork span of a session carry these three
-    /// attributes, so one method writes them for both.
+    /// The submission span of a session carries these three attributes.
     ///
     /// - Parameter span: The span of work that runs on this session.
     func describeSession(on span: any Span) {

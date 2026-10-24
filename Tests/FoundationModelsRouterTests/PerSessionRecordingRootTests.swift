@@ -14,8 +14,7 @@ import Testing
 /// project directories needs each session's transcript to land under a
 /// *caller-chosen* root instead, with no opaque per-process routerId
 /// directory in between. This suite locks in: the override writes a flat
-/// `<root>/<sessionId>/` layout (including for a fork taken from that root,
-/// nested one level deeper under it); omitting it reproduces today's nested
+/// `<root>/<sessionId>/` layout; omitting it reproduces today's nested
 /// `<recordingsDir>/<routerId>/<sessionId>/` layout byte-for-byte; two
 /// sessions from the same Router with different roots never leak into each
 /// other; and
@@ -188,45 +187,6 @@ struct PerSessionRecordingRootTests {
         #expect(
             !FileManager.default.fileExists(
                 atPath: customRoot.appendingPathComponent(router.id.description).path))
-    }
-
-    /// A fork of a flat-layout root nests under the root's folder, with no
-    /// router id segment, and writes its own `index.md` there.
-    @Test("a fork of a flat-layout root session nests under it with no routerId segment, and lands its own index.md")
-    @MainActor
-    func forkOfFlatLayoutRootNestsWithNoRouterIdSegment() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        let customRoot = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-            try? FileManager.default.removeItem(at: customRoot)
-        }
-
-        let router = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile.standard.makeSession(recordingRoot: customRoot)
-        defer { await root.close() }
-        _ = try await root.respond(to: "hello")
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-
-        // The fork nests directly under the flat root's own directory —
-        // still no routerId segment anywhere in the path.
-        let expectedForkDirectory = customRoot
-            .appendingPathComponent(root.id.description, isDirectory: true)
-            .appendingPathComponent(fork.id.description, isDirectory: true)
-        #expect(fork.recordingDirectory == expectedForkDirectory)
-        #expect(
-            FileManager.default.fileExists(
-                atPath: RouterTestFixtures.indexURL(inSessionDirectory: expectedForkDirectory).path))
-
-        // The whole tree is still reachable by loading the custom root
-        // directly (the flat, no-routerId-segment layout).
-        let tree = try TranscriptTree.load(under: customRoot)
-        #expect(tree.children(of: root.id).map(\.id) == [fork.id])
     }
 
     @Test("omitting recordingRoot reproduces today's nested <recordingsDir>/<routerId>/<sessionId>/ layout byte-for-byte")

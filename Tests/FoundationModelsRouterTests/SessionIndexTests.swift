@@ -10,7 +10,7 @@ import Testing
 /// `index.md` in its own folder, written before its first transcript event.
 /// The record holds the `slot`, the `model`, the resolved `context`, the
 /// `instructions`, the `grammar`, the `recordingLevel`, the working folder,
-/// the agent spawn, the resolved profile of a root and, for a fork, its cut.
+/// the agent spawn and the resolved profile of a root.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, a canned LLM
 /// container backed by ``StubSessionBackend``, and a ``JSONLRecorder`` writing
@@ -29,20 +29,9 @@ struct SessionIndexTests {
     /// The prefix of each temporary directory of the suite.
     private static let tempPrefix = "SessionIndexTests"
 
-    /// The cut of a fork of a session that has answered nothing: the parent
-    /// backend transcript holds no entry.
-    private static let cutOfAForkOfAFreshSession = 0
-
     /// The entry count and history ordinal of a new session, whose
     /// transcript holds no entry yet.
     private static let emptyTranscriptEntryCount = 0
-
-    /// The cut of a fork of an uninstructed session that answered once: one
-    /// `.prompt` entry and one `.response` entry.
-    private static let cutAfterOneAnswer = 2
-
-    /// The number of forks the concurrency test takes at once.
-    private static let concurrentForkCount = 20
 
     /// The tool-call id of the agent spawn of the on-disk spawn test.
     private static let firstSpawnToolCallId = "agents-tool-call-1"
@@ -150,41 +139,20 @@ struct SessionIndexTests {
         Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
     }
 
-    // MARK: - Root + forks write one index.md each, nesting the lineage
+    // MARK: - A root writes one index.md
 
-    /// A root, two forks and a grandfork each write one `index.md` in their
-    /// own nested folder: the root has no cut, each fork has the cut of a
-    /// fresh parent, and the slot, model, context and recording level are
-    /// the ones of the vending handle.
-    @Test("root + two forks + grandfork each write one index.md into their own nested folder")
+    /// A root writes one `index.md` in its own folder: it has no cut, and the
+    /// slot, model, context and recording level are the ones of the vending
+    /// handle.
+    @Test("a root session writes one index.md into its own folder")
     @MainActor
-    func rootTwoForksAndGrandforkEachWriteOneIndex() async throws {
+    func rootWritesOneIndex() async throws {
         try await Self.withRouter { fixture in
             let root = fixture.profile.standard.makeSession()
             defer { await root.close() }
-            let forkA = try await root.fork(workingDirectory: nil)
-            defer { await forkA.close() }
-            let forkB = try await root.fork(workingDirectory: nil)
-            defer { await forkB.close() }
-            let grandfork = try await forkA.fork(workingDirectory: nil)
-            defer { await grandfork.close() }
 
-            let rootDir = fixture.directory(of: root.id)
-            let forkADir = fixture.directory(of: root.id, forkA.id)
-            let forkBDir = fixture.directory(of: root.id, forkB.id)
-            let grandforkDir = fixture.directory(of: root.id, forkA.id, grandfork.id)
-
-            for directory in [rootDir, forkADir, forkBDir, grandforkDir] {
-                _ = try #require(try SessionIndexFile.read(in: directory))
-            }
-
-            #expect(try SessionIndexFile.read(in: rootDir)?.forkedAtEntryCount == nil)
-            #expect(try SessionIndexFile.read(in: forkADir)?.forkedAtEntryCount == Self.cutOfAForkOfAFreshSession)
-            #expect(try SessionIndexFile.read(in: forkBDir)?.forkedAtEntryCount == Self.cutOfAForkOfAFreshSession)
-            #expect(
-                try SessionIndexFile.read(in: grandforkDir)?.forkedAtEntryCount == Self.cutOfAForkOfAFreshSession)
-
-            let rootRecord = try #require(try SessionIndexFile.read(in: rootDir))
+            let rootRecord = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id)))
+            #expect(rootRecord.forkedAtEntryCount == nil)
             #expect(rootRecord.slot == .standard)
             #expect(rootRecord.model == fixture.profile.standard.chosen)
             #expect(rootRecord.context == fixture.profile.standard.resolution.contextTokens)
@@ -193,55 +161,28 @@ struct SessionIndexTests {
     }
 
     /// A run's whole recording tree holds only one folder per session, and
-    /// each session folder holds only its `index.md`, its `transcript.jsonl`
-    /// and the folders of its forks.
-    @Test("a run's whole recording tree holds only index.md, transcript.jsonl and fork folders")
+    /// each session folder holds only its `index.md` and its
+    /// `transcript.jsonl`.
+    @Test("a run's whole recording tree holds only index.md and transcript.jsonl")
     @MainActor
     func aRunWritesOnlyIndexesAndTranscripts() async throws {
         try await Self.withRouter { fixture in
             let root = fixture.profile.standard.makeSession()
             defer { await root.close() }
             _ = try await root.respond(to: "hello")
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
-            _ = try await fork.respond(to: "hi")
 
             #expect(try Self.fileNames(directlyIn: fixture.routerDirectory) == [root.id.description])
             #expect(
                 try Self.fileNames(directlyIn: fixture.directory(of: root.id)) == [
-                    SessionIndexFile.fileName, transcriptFileName, fork.id.description,
-                ])
-            #expect(
-                try Self.fileNames(directlyIn: fixture.directory(of: root.id, fork.id)) == [
                     SessionIndexFile.fileName, transcriptFileName,
                 ])
-        }
-    }
-
-    // MARK: - The cut point is the diff baseline
-
-    /// A fork of an uninstructed session taken after one answer records the
-    /// cut of that answer, and its parent.
-    @Test("an uninstructed session's fork taken after one answer records forkedAtEntryCount == 2")
-    @MainActor
-    func uninstructedForkAfterOneAnswerRecordsForkedAtEntryCountOfTwo() async throws {
-        try await Self.withRouter { fixture in
-            let root = fixture.profile.standard.makeSession()
-            defer { await root.close() }
-            _ = try await root.respond(to: "hello")
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
-
-            let record = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id, fork.id)))
-            #expect(record.forkedAtEntryCount == Self.cutAfterOneAnswer)
-            #expect(record.forkParentId == root.id)
         }
     }
 
     // MARK: - Ordering: the index.md precedes any transcript event
 
     /// The `index.md` of a session is on disk when the first event of its
-    /// transcript is appended, for a root and for a fork.
+    /// transcript is appended.
     @Test("a session's index.md exists before its transcript's first event is recorded")
     @MainActor
     func theIndexExistsBeforeTheFirstTranscriptEvent() async throws {
@@ -254,13 +195,10 @@ struct SessionIndexTests {
             let root = fixture.profile.standard.makeSession()
             defer { await root.close() }
             _ = try await root.respond(to: "hello")
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
-            _ = try await fork.respond(to: "hi")
 
             let observed = try #require(observing)
             let indexPresence = await observed.indexPresentAtFirstAppend
-            #expect(indexPresence == [true, true])
+            #expect(indexPresence == [true])
         }
     }
 
@@ -354,42 +292,33 @@ struct SessionIndexTests {
 
     // MARK: - Grammar and instructions
 
-    /// A guided session records its grammar source and its instructions, and
-    /// a fork of it records both again.
-    @Test("a guided session's index.md carries its grammar source and instructions; forks inherit both")
+    /// A guided session records its grammar source and its instructions.
+    @Test("a guided session's index.md carries its grammar source and instructions")
     @MainActor
-    func guidedSessionRecordsGrammarAndInstructionsAndForkInheritsThem() async throws {
+    func guidedSessionRecordsGrammarAndInstructions() async throws {
         try await Self.withRouter { fixture in
             let grammarSource = #"{"type":"object"}"#
             let instructions = "You are a terse assistant."
             let root = fixture.profile.standard.makeGuidedSession(
                 grammar: .jsonSchema(grammarSource), instructions: instructions)
             defer { await root.close() }
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
 
             let rootRecord = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id)))
-            let forkRecord = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id, fork.id)))
 
             #expect(rootRecord.grammar == grammarSource)
-            #expect(forkRecord.grammar == grammarSource)
             #expect(rootRecord.instructions == instructions)
-            #expect(forkRecord.instructions == instructions)
         }
     }
 
     // MARK: - The resolved profile
 
-    /// A root records the resolved profile of the run; a fork does not repeat
-    /// it.
-    @Test("a root session's index.md carries the resolved profile; a fork's does not repeat it")
+    /// A root records the resolved profile of the run.
+    @Test("a root session's index.md carries the resolved profile")
     @MainActor
-    func rootIndexCarriesResolvedProfileAndForkDoesNot() async throws {
+    func rootIndexCarriesResolvedProfile() async throws {
         try await Self.withRouter { fixture in
             let root = fixture.profile.standard.makeSession()
             defer { await root.close() }
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
 
             let resolved = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id))?.profile)
             #expect(resolved.definitionName == Self.profile.name)
@@ -397,71 +326,49 @@ struct SessionIndexTests {
             #expect(resolved.flash == fixture.profile.flash.chosen)
             #expect(resolved.embedding == fixture.profile.embedding.chosen)
             #expect(resolved.context == fixture.profile.standard.resolution.contextTokens)
-
-            let forkRecord = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id, fork.id)))
-            #expect(forkRecord.profile == nil)
         }
     }
 
     // MARK: - Working folder
 
-    /// A root records its default working folder, its own session folder; a
-    /// fork with an override records the override as given.
-    @Test(
-        "a root's index.md records its default working directory; a fork's override records verbatim"
-    )
+    /// A root records its default working folder, its own session folder.
+    @Test("a root's index.md records its default working directory")
     @MainActor
-    func indexRecordsEachSessionsOwnWorkingDirectory() async throws {
-        let overrideDir = RouterTestFixtures.makeTempDir(prefix: Self.tempPrefix)
-        defer { try? FileManager.default.removeItem(at: overrideDir) }
-
+    func indexRecordsTheRootsOwnWorkingDirectory() async throws {
         try await Self.withRouter { fixture in
             let root = fixture.profile.standard.makeSession()
             defer { await root.close() }
             let rootDir = fixture.directory(of: root.id)
             #expect(root.workingDirectory == rootDir)
-            #expect(try SessionIndexFile.read(in: rootDir)?.workingDirectory == rootDir)
-
-            let fork = try await root.fork(workingDirectory: overrideDir)
-            defer { await fork.close() }
-            #expect(fork.workingDirectory == overrideDir)
-            #expect(
-                try SessionIndexFile.read(in: fixture.directory(of: root.id, fork.id))?.workingDirectory
-                    == overrideDir)
+            let index = try SessionIndexFile.read(in: rootDir)
+            #expect(index?.workingDirectory == rootDir)
         }
     }
 
     // MARK: - Agent spawn
 
-    /// A root vended with an agent spawn records it in its `index.md`; a fork
-    /// of it records none, since its lineage is stated by the nesting.
-    @Test("a session vended with an agentSpawn records it on its root index.md only, not on a fork")
+    /// A root vended with an agent spawn records it in its `index.md`.
+    @Test("a session vended with an agentSpawn records it on its root index.md")
     @MainActor
-    func sessionVendedWithAgentSpawnRecordsItOnRootOnlyNotOnAFork() async throws {
+    func sessionVendedWithAgentSpawnRecordsItOnRoot() async throws {
         try await Self.withRouter { fixture in
             let spawningSessionId = ULID.generate()
             let spawn = SessionRecord.AgentSpawn(
                 parentSessionId: spawningSessionId, parentToolCallId: Self.firstSpawnToolCallId)
             let root = fixture.profile.standard.makeSession(agentSpawn: spawn)
             defer { await root.close() }
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
 
             let rootSpawn = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id))?.agentSpawn)
             #expect(rootSpawn.parentSessionId == spawningSessionId)
             #expect(rootSpawn.parentToolCallId == Self.firstSpawnToolCallId)
-            let forkRecord = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id, fork.id)))
-            #expect(forkRecord.agentSpawn == nil)
         }
     }
 
     /// A root vended with an agent spawn stamps it on its recorded `.session`
-    /// event and keeps it in its `index.md`; a fork of it stamps none.
-    @Test(
-        "a session vended with an agentSpawn stamps it on its .session event and keeps it in index.md; a fork stamps nil"
-    )
+    /// event and keeps it in its `index.md`.
+    @Test("a session vended with an agentSpawn stamps it on its .session event and keeps it in index.md")
     @MainActor
-    func sessionVendedWithAgentSpawnStampsItOnTheSessionEventNotOnAFork() async throws {
+    func sessionVendedWithAgentSpawnStampsItOnTheSessionEvent() async throws {
         let recorder = InMemoryRecorder()
         try await Self.withRouter(recorder: { _ in recorder }) { fixture in
             let spawn = SessionRecord.AgentSpawn(
@@ -469,19 +376,12 @@ struct SessionIndexTests {
             let root = fixture.profile.standard.makeSession(agentSpawn: spawn)
             defer { await root.close() }
             _ = try await root.respond(to: "hello")
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
-            _ = try await fork.respond(to: "hello again")
 
             let events = await recorder.events
             let rootFirst = try #require(events.first)
             #expect(rootFirst.sessionId == root.id)
             #expect(rootFirst.kind == .session)
             #expect(rootFirst.agentSpawn == spawn)
-
-            let forkFirst = try #require(events.first { $0.sessionId == fork.id })
-            #expect(forkFirst.kind == .session)
-            #expect(forkFirst.agentSpawn == nil)
 
             #expect(try SessionIndexFile.read(in: fixture.directory(of: root.id))?.agentSpawn == spawn)
         }
@@ -518,9 +418,6 @@ struct SessionIndexTests {
             let root = fixture.profile.standard.makeSession()
             defer { await root.close() }
             _ = try await root.respond(to: "hello")
-            let fork = try await root.fork(workingDirectory: nil)
-            defer { await fork.close() }
-            _ = try await fork.respond(to: "hi")
 
             #expect(!FileManager.default.fileExists(atPath: fixture.routerDirectory.path))
         }
@@ -530,10 +427,10 @@ struct SessionIndexTests {
 
     /// A recordings root that is a regular file makes every write under it
     /// fail, the `index.md` and the transcript alike. The failure is best
-    /// effort and never reaches `fork()` or `respond()`.
-    @Test("a session whose index.md can never be written still forks and generates normally")
+    /// effort and never reaches `respond()`.
+    @Test("a session whose index.md can never be written still generates normally")
     @MainActor
-    func sessionWithUnwritableIndexStillForksAndGenerates() async throws {
+    func sessionWithUnwritableIndexStillGenerates() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempPrefix)
         let recordingsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(Self.tempPrefix)-blocker-\(UUID().uuidString)", isDirectory: false)
@@ -553,55 +450,6 @@ struct SessionIndexTests {
         let root = profile.standard.makeSession()
         defer { await root.close() }
         #expect(try await root.respond(to: "hello") == Self.cannedText)
-
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        #expect(try await fork.respond(to: "hi") == Self.cannedText)
-    }
-
-    // MARK: - Concurrent forks
-
-    /// Each of many forks taken at once writes its own `index.md` in its own
-    /// folder.
-    @Test("every one of many concurrent forks writes its own index.md into its own folder")
-    @MainActor
-    func concurrentForksEachWriteTheirOwnIndex() async throws {
-        try await Self.withRouter { fixture in
-            let root = fixture.profile.standard.makeSession()
-            defer { await root.close() }
-            // Each task gives its result and does not throw, so the group keeps
-            // each fork that it made, also when a different fork throws.
-            let outcomes = await withTaskGroup(of: Result<any RoutedSession, any Error>.self) {
-                group -> [Result<any RoutedSession, any Error>] in
-                for _ in 0..<Self.concurrentForkCount {
-                    group.addTask {
-                        do {
-                            return .success(try await root.fork(workingDirectory: nil))
-                        } catch {
-                            return .failure(error)
-                        }
-                    }
-                }
-                var outcomes: [Result<any RoutedSession, any Error>] = []
-                for await outcome in group {
-                    outcomes.append(outcome)
-                }
-                return outcomes
-            }
-            let forks = outcomes.compactMap { try? $0.get() }
-            defer {
-                for fork in forks {
-                    await fork.close()
-                }
-            }
-            let forkIds = try outcomes.map { try $0.get().id }
-
-            #expect(Set(forkIds).count == Self.concurrentForkCount)
-            for id in forkIds {
-                let record = try #require(try SessionIndexFile.read(in: fixture.directory(of: root.id, id)))
-                #expect(record.sessionId == id)
-                #expect(record.forkParentId == root.id)
-            }
-        }
+        #expect(try await root.respond(to: "hi") == Self.cannedText)
     }
 }

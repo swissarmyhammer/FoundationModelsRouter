@@ -20,7 +20,7 @@ import FoundationModels
 ///
 /// A host sets the rule on ``CompactionSettings/toolOutputProtection``. The
 /// rule is a closure, so the session does not record it: a host gives it again
-/// when it restores a session, as it gives the tools. A fork inherits it.
+/// when it restores a session, as it gives the tools.
 ///
 /// - Parameters:
 ///   - call: The tool call that made `output`.

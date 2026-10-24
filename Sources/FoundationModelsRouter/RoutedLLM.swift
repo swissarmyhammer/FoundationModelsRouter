@@ -204,9 +204,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``
         // for the fresh outbox and run plane scope rule and the mount → cap
         // chain this site applies (task
-        // ^k4nygqa; the fork and restore sites each have their own
-        // deliberately distinct chain — see
-        // ``RoutedSessionActor/fork(workingDirectory:)`` and
+        // ^k4nygqa; the restore site has its own distinct chain — see
         // `restoreSessionTree`). Because this runs before
         // `container.makeSession` below, the model-facing tool list the
         // backend actually receives is these composed wrappers — each
@@ -251,10 +249,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             instructions: instructions,
             grammar: grammar,
             tools: instancedTools,
-            // The true originals, retained only so a fork can later build its
-            // own tool list via fork-then-mount composition, sourced from
-            // these rather than from `instancedTools` (see
-            // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
+            // The true originals, before per-session instancing. The record
+            // of the session names its tools from these, never from
+            // `instancedTools`.
             originalTools: tools,
             outbox: outbox,
             runPlane: runPlane,
@@ -270,8 +267,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // behalf (see ``RoutedSessionActor/writeFirstIndex()``).
             indexWriter: durableRecording?.indexWriter,
             // Vended over a resident model, so the session span this factory
-            // opens reports the cost of vending rather than of a restore or a
-            // fork (see ``RouterTelemetry/SessionOrigin``).
+            // opens reports the cost of vending rather than of a restore
+            // (see ``RouterTelemetry/SessionOrigin``).
             origin: .new,
             // This slot's resolved working context — ``contextFill``'s
             // denominator. A brand-new root has

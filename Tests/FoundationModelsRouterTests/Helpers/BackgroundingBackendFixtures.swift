@@ -78,10 +78,6 @@ extension Array where Element == any Tool {
 /// ``answerPrefix`` plus the prompt it was given, so an answer grounded in
 /// settled results is provable by reading the answer.
 ///
-/// A fork with tools (``makeFork(tools:)``) is a new backend of this kind
-/// over the tools of the child, with the same holds, so the first call of
-/// the child calls the tools of the child.
-///
 /// Every mutable field is behind one `Mutex`. The pump of the owning session
 /// drives one backend method at a time, but it delivers a settled run in a
 /// submission of its own, with no caller call (task ^3qx0mpt), so a test can
@@ -195,15 +191,6 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
 
     func makeFork() -> any LanguageModelSessionBackend {
         inner.makeFork()
-    }
-
-    /// A new backend of this kind over `tools`, the tools of the child, with
-    /// the holds of this backend.
-    ///
-    /// - Parameter tools: The composed tool list of the child.
-    /// - Returns: The backend of the child.
-    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-        BackgroundingBackend(tools: tools, holdFirstAnswer: holdFirstAnswer, holdLaterAnswers: holdLaterAnswers)
     }
 
     func transcriptEntries() -> [Transcript.Entry] {

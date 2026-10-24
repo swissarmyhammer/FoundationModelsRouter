@@ -264,9 +264,9 @@ struct RestoredRenderCounterTests {
 
     // MARK: - Restore from disk
 
-    @Test("a restored root and its restored fork each report the live counter, and a later call of the root is not read")
+    @Test("a restored root reports the live counter, and a later call of the root is not read")
     @MainActor
-    func restoredRootAndForkReportTheLiveCounter() async throws {
+    func restoredRootReportsTheLiveCounter() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer {
@@ -285,8 +285,6 @@ struct RestoredRenderCounterTests {
         let root = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
         defer { await root.close() }
         _ = try await root.respond(to: Self.prompt)
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
         let liveFill = await root.contextFill
         #expect(liveFill == Double(Self.lastCallContext) / Double(Self.contextTokens))
 
@@ -298,14 +296,9 @@ struct RestoredRenderCounterTests {
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(context: Self.contextTokens), reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer {
-            await restored.root.close()
-            await restored.session(fork.id)?.close()
-        }
+        defer { await restored.root.close() }
 
         #expect(await restored.root.contextFill == liveFill)
-        let restoredFork = try #require(restored.session(fork.id))
-        #expect(await restoredFork.contextFill == liveFill)
     }
 
     /// Appends to the recorded transcript of `sessionId` one call of a later

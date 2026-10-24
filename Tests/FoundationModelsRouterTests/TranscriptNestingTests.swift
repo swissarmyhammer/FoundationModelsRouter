@@ -6,10 +6,10 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises milestone 10a: the core recording behavior over the substrate —
-/// lineage-nested transcript directories that mirror the fork tree, rich
-/// provenance events at the `generate` chokepoint (a first-line `session` meta
-/// event plus `prompt`/`response`), a globally monotonic `seq` across concurrent
-/// appends from many sessions/forks, and the router manifest.
+/// lineage-nested transcript directories, rich provenance events at the
+/// `generate` chokepoint (a first-line `session` meta event plus
+/// `prompt`/`response`), a globally monotonic `seq` across concurrent appends
+/// from many sessions, and the router manifest.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, a canned LLM
 /// container that returns fixed text, and either a ``JSONLRecorder`` writing into
@@ -194,10 +194,9 @@ struct TranscriptNestingTests {
 
     // MARK: - Lineage-nested directories
 
-    @Test(
-        "a fork's transcript is physically nested under its parent's; depth mirrors the fork lineage")
+    @Test("a root session's transcript is in <recordingsDir>/<routerId>/<rootId>")
     @MainActor
-    func forkTranscriptsNestUnderParent() async throws {
+    func rootTranscriptNestsUnderTheRouter() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -214,77 +213,17 @@ struct TranscriptNestingTests {
 
         let root = profile.standard.makeSession()
         defer { await root.close() }
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        let grandfork = try await fork.fork(workingDirectory: nil)
-        defer { await grandfork.close() }
-
-        // The parentId chain mirrors the lineage.
         #expect(root.parentId == nil)
-        #expect(fork.parentId == root.id)
-        #expect(grandfork.parentId == fork.id)
 
-        // The root nests under <recordingsDir>/<routerId>/<rootId>.
         let expectedRoot = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)
             .appendingPathComponent(root.id.description, isDirectory: true)
         #expect(root.recordingDirectory.standardizedFileURL == expectedRoot.standardizedFileURL)
 
-        // Each fork nests one level deeper, directly under its parent's directory.
-        #expect(
-            fork.recordingDirectory.standardizedFileURL
-                == root.recordingDirectory.appendingPathComponent(fork.id.description, isDirectory: true).standardizedFileURL
-        )
-        #expect(
-            grandfork.recordingDirectory.standardizedFileURL
-                == fork.recordingDirectory.appendingPathComponent(grandfork.id.description, isDirectory: true).standardizedFileURL
-        )
-
-        // Each session writes its own transcript.jsonl at its nested path.
+        // The session writes its own transcript.jsonl at its nested path.
         _ = try await root.respond(to: "root")
-        _ = try await fork.respond(to: "fork")
-        _ = try await grandfork.respond(to: "grandfork")
-
-        for session in [root, fork, grandfork] {
-            let fileURL = session.recordingDirectory.appendingPathComponent(
-                "transcript.jsonl", isDirectory: false)
-            #expect(FileManager.default.fileExists(atPath: fileURL.path))
-        }
-    }
-
-    @Test("overriding workingDirectory does not move the transcript out of the lineage nesting")
-    @MainActor
-    func workingDirectoryOverrideDoesNotMoveTranscript() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile.standard.makeSession()
-        defer { await root.close() }
-        let custom = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: custom) }
-
-        let fork = try await root.fork(workingDirectory: custom)
-        defer { await fork.close() }
-
-        // The override sets the working directory but does not move the transcript,
-        // which stays nested under the parent regardless.
-        #expect(fork.workingDirectory.standardizedFileURL == custom.standardizedFileURL)
-        #expect(
-            fork.recordingDirectory.standardizedFileURL
-                == root.recordingDirectory.appendingPathComponent(fork.id.description, isDirectory: true).standardizedFileURL
-        )
-        #expect(fork.recordingDirectory.standardizedFileURL != custom.standardizedFileURL)
+        let fileURL = root.recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        #expect(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
     // MARK: - Event emission
@@ -324,14 +263,6 @@ struct TranscriptNestingTests {
         // records too.
         let allRecorded = try events(in: root.recordingDirectory, includingMailRecords: true)
         #expect(allRecorded.map(\.seq) == Array(0..<allRecorded.count))
-
-        // A fork's first line carries the parentId lineage.
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        _ = try await fork.respond(to: "child")
-        let childRecorded = try events(in: fork.recordingDirectory)
-        #expect(childRecorded.first?.kind == .session)
-        #expect(childRecorded.allSatisfy { $0.parentId == root.id })
     }
 
     @Test("a streaming session's first line is also the session meta event, then prompt and response")
@@ -488,7 +419,7 @@ struct TranscriptNestingTests {
 
     // MARK: - Monotonic seq
 
-    @Test("seq is monotonic across concurrent appends from multiple sessions and forks")
+    @Test("seq is monotonic across concurrent appends from multiple sessions")
     @MainActor
     func seqMonotonicAcrossConcurrentSessions() async throws {
         let cacheDir = Self.makeTempDir()
@@ -506,19 +437,12 @@ struct TranscriptNestingTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // A root and three forks — four sessions sharing one recorder.
-        let root = profile.standard.makeSession()
-        defer { await root.close() }
-        let fork1 = try await root.fork(workingDirectory: nil)
-        defer { await fork1.close() }
-        let fork2 = try await root.fork(workingDirectory: nil)
-        defer { await fork2.close() }
-        let fork3 = try await root.fork(workingDirectory: nil)
-        defer { await fork3.close() }
-        let sessions: [any RoutedSession] = [root, fork1, fork2, fork3]
+        // Four sessions share one recorder.
+        let sessions: [any RoutedSession] = (0..<4).map { _ in profile.standard.makeSession() }
+        defer { await SessionFixtureLifecycle.close(sessions) }
 
         // Each session concurrently appends many events to the shared recorder,
-        // each routed to its own lineage-nested directory.
+        // each routed to its own directory.
         let perSession = 100
         await withTaskGroup(of: Void.self) { group in
             for session in sessions {

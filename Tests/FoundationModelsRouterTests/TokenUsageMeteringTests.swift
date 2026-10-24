@@ -380,45 +380,4 @@ struct TokenUsageMeteringTests {
         defer { await restored.root.close() }
         #expect(await restored.root.contextFill == 0.15)
     }
-
-    // MARK: - Restored fork inherits the parent's stamp
-
-    @Test("a restored fork with no answers of its own inherits the parent's stamped fill up to the fork's cut point")
-    @MainActor
-    func restoredForkInheritsParentStamp() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router1 = Self.makeDurableRouter(
-            usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
-        let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
-
-        let root = profile1.standard.makeSession()
-        defer { await root.close() }
-        _ = try await root.respond(to: "first")
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        let rootId = root.id
-        let forkId = fork.id
-
-        let router2 = Self.makeDurableRouter(
-            id: router1.id, usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
-        let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
-
-        let restored = try await profile2.standard.restoreSessionTree(root: rootId)
-        defer {
-            await restored.root.close()
-            await restored.session(forkId)?.close()
-        }
-        let restoredFork = try #require(restored.session(forkId))
-        // The fork itself never ran a submission, so it has no stamp of its own;
-        // it inherits the root's 150/1000 = 0.15 up to its fork cut point,
-        // mirroring live `fork()`'s own choice to inherit `usageState`
-        // rather than starting the restored fork at an unknown/zero fill.
-        #expect(await restoredFork.contextFill == 0.15)
-    }
 }

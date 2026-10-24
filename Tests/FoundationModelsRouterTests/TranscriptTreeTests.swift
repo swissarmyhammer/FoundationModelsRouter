@@ -4,10 +4,11 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises `TranscriptTree`: the queryable read-side of the fork hierarchy —
-/// fetch any session's transcript directly by its `ULID`, and inspect the tree
-/// as data, no caller-side directory walking (see plan.md's "Transcript
-/// fidelity" section, "Retrieval & the fork hierarchy as first-class data").
+/// Exercises `TranscriptTree`: the queryable read-side of the session
+/// hierarchy — fetch any session's transcript directly by its `ULID`, and
+/// inspect the tree as data, no caller-side directory walking (see plan.md's
+/// "Transcript fidelity" section, "Retrieval & the fork hierarchy as
+/// first-class data").
 ///
 /// Everything runs against stubs — a stub `ModelLoader`, a canned LLM
 /// container backed by `StubSessionBackend`, and a `JSONLRecorder` writing
@@ -149,295 +150,7 @@ struct TranscriptTreeTests {
         )
     }
 
-    // MARK: - Reusable branching-tree fixture
-
-    /// Builds a 3-level branching tree on disk: a root session, two of its
-    /// forks (`forkA`, `forkB`), and one of forkA's own forks (`grandfork`) —
-    /// the shape the later restore task's mandated integration test also
-    /// needs, so this is written to be reusable beyond this suite.
-    ///
-    /// Each session generates the requested number of answers *before* any
-    /// of its own children fork from it (so a child's `forkedAtEntryCount`
-    /// baseline lands exactly where the plan of answers intends), then the
-    /// requested number *after* — exercising "an ancestor keeps generating
-    /// after a child forks from it" without disturbing the already-taken
-    /// fork's baseline. The prompt of every answer is a distinct, greppable
-    /// string (`"<session>-message-<n>"`) so a test can identify exactly which
-    /// answers survived a truncation.
-    ///
-    /// - Parameters:
-    ///   - profile: The resolved profile to vend sessions from.
-    ///   - rootAnswersBeforeForks: Answers `root` gives before `forkA`/`forkB` fork.
-    ///   - rootAnswersAfterForks: Answers `root` gives after forking, invisible to
-    ///     both forks' effective transcripts.
-    ///   - forkAAnswersBeforeGrandfork: Answers `forkA` gives before `grandfork`
-    ///     forks from it.
-    ///   - forkAAnswersAfterGrandfork: Answers `forkA` gives after `grandfork`
-    ///     forks, invisible to `grandfork`'s effective transcript.
-    ///   - forkBAnswers: Answers `forkB` gives (`forkB` has no children).
-    ///   - grandforkAnswers: Answers `grandfork` gives.
-    /// - Returns: The four vended sessions. The caller closes them with
-    ///   ``close(_:)``. When a step throws, each session that the helper made
-    ///   closes before the error goes to the caller.
-    private static func buildBranchingTree(
-        profile: LanguageModelProfile,
-        rootAnswersBeforeForks: Int = 1,
-        rootAnswersAfterForks: Int = 0,
-        forkAAnswersBeforeGrandfork: Int = 1,
-        forkAAnswersAfterGrandfork: Int = 0,
-        forkBAnswers: Int = 1,
-        grandforkAnswers: Int = 1
-    ) async throws -> BranchingTree {
-        let root = profile.standard.makeSession()
-        var made: [any RoutedSession] = [root]
-        do {
-            if rootAnswersBeforeForks > 0 {
-                for answer in 1...rootAnswersBeforeForks {
-                    _ = try await root.respond(to: "root-message-\(answer)")
-                }
-            }
-
-            let forkA = try await root.fork(workingDirectory: nil)
-            made.append(forkA)
-            let forkB = try await root.fork(workingDirectory: nil)
-            made.append(forkB)
-
-            if rootAnswersAfterForks > 0 {
-                for answer in 1...rootAnswersAfterForks {
-                    _ = try await root.respond(to: "root-message-\(rootAnswersBeforeForks + answer)")
-                }
-            }
-
-            if forkAAnswersBeforeGrandfork > 0 {
-                for answer in 1...forkAAnswersBeforeGrandfork {
-                    _ = try await forkA.respond(to: "forkA-message-\(answer)")
-                }
-            }
-
-            let grandfork = try await forkA.fork(workingDirectory: nil)
-            made.append(grandfork)
-
-            if forkAAnswersAfterGrandfork > 0 {
-                for answer in 1...forkAAnswersAfterGrandfork {
-                    _ = try await forkA.respond(to: "forkA-message-\(forkAAnswersBeforeGrandfork + answer)")
-                }
-            }
-
-            if forkBAnswers > 0 {
-                for answer in 1...forkBAnswers {
-                    _ = try await forkB.respond(to: "forkB-message-\(answer)")
-                }
-            }
-
-            if grandforkAnswers > 0 {
-                for answer in 1...grandforkAnswers {
-                    _ = try await grandfork.respond(to: "grandfork-message-\(answer)")
-                }
-            }
-
-            return (root, forkA, forkB, grandfork)
-        } catch {
-            for session in made.reversed() {
-                await session.close()
-            }
-            throw error
-        }
-    }
-
-    /// The four sessions of ``buildBranchingTree(profile:rootAnswersBeforeForks:rootAnswersAfterForks:forkAAnswersBeforeGrandfork:forkAAnswersAfterGrandfork:forkBAnswers:grandforkAnswers:)``.
-    private typealias BranchingTree = (
-        root: any RoutedSession, forkA: any RoutedSession, forkB: any RoutedSession, grandfork: any RoutedSession
-    )
-
-    /// Closes each session of `tree`, each fork before its parent.
-    ///
-    /// - Parameter tree: The sessions to close.
-    private static func close(_ tree: BranchingTree) async {
-        await tree.grandfork.close()
-        await tree.forkB.close()
-        await tree.forkA.close()
-        await tree.root.close()
-    }
-
-    // MARK: - Lookup by ULID
-
-    @Test("looks up every session in a branching tree by id alone, with no directory path")
-    @MainActor
-    func looksUpEverySessionByIdAlone() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let sessions = try await Self.buildBranchingTree(profile: profile)
-        defer { await Self.close(sessions) }
-        let (root, forkA, forkB, grandfork) = sessions
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-
-        #expect(tree.session(root.id)?.id == root.id)
-        #expect(tree.session(forkA.id)?.id == forkA.id)
-        #expect(tree.session(forkB.id)?.id == forkB.id)
-        #expect(tree.session(grandfork.id)?.id == grandfork.id)
-        #expect(tree.session(.generate()) == nil)
-    }
-
-    // MARK: - Tree shape and children ordering
-
-    @Test("the tree's roots, children, and parent links match the index")
-    @MainActor
-    func treeShapeMatchesIndex() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let sessions = try await Self.buildBranchingTree(profile: profile)
-        defer { await Self.close(sessions) }
-        let (root, forkA, forkB, grandfork) = sessions
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-
-        #expect(tree.roots.map(\.id) == [root.id])
-        let rootNode = try #require(tree.roots.first)
-        #expect(rootNode.parentId == nil)
-
-        // Children are ordered by ULID (creation order) — assert the *set*
-        // matches, then assert the returned order already equals the
-        // id-sorted order, so the test does not itself assume forkA was
-        // necessarily created before forkB in wall-clock terms.
-        let rootChildren = tree.children(of: root.id)
-        #expect(Set(rootChildren.map(\.id)) == Set([forkA.id, forkB.id]))
-        #expect(rootChildren.map(\.id) == rootChildren.map(\.id).sorted())
-
-        let forkANode = try #require(tree.session(forkA.id))
-        #expect(forkANode.parentId == root.id)
-        #expect(forkANode.children.map(\.id) == [grandfork.id])
-
-        let forkBNode = try #require(tree.session(forkB.id))
-        #expect(forkBNode.parentId == root.id)
-        #expect(forkBNode.children.isEmpty)
-
-        let grandforkNode = try #require(tree.session(grandfork.id))
-        #expect(grandforkNode.parentId == forkA.id)
-        #expect(grandforkNode.children.isEmpty)
-        #expect(tree.children(of: grandfork.id).isEmpty)
-    }
-
-    // MARK: - events(forSession:) is that session's own delta only
-
-    @Test("events(forSession:) decodes only that session's own transcript.jsonl")
-    @MainActor
-    func eventsForSessionIsOwnDeltaOnly() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let sessions = try await Self.buildBranchingTree(profile: profile)
-        defer { await Self.close(sessions) }
-        let (root, forkA, _, grandfork) = sessions
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-
-        let forkAEvents = try tree.events(forSession: forkA.id).withoutMailRecords
-        // forkA's own file: one session-meta line, plus one prompt/response
-        // pair for its single answer — never root's or grandfork's entries.
-        #expect(forkAEvents.map(\.kind) == [.session, .prompt, .response])
-        #expect(forkAEvents.first { $0.kind == .prompt }?.text == "forkA-message-1")
-        #expect(!forkAEvents.contains { $0.text == "root-message-1" })
-        #expect(!forkAEvents.contains { $0.text == "grandfork-message-1" })
-
-        let rootEvents = try tree.events(forSession: root.id).withoutMailRecords
-        #expect(rootEvents.map(\.kind) == [.session, .prompt, .response])
-
-        _ = grandfork
-    }
-
-    // MARK: - Effective entries: grandfork cut correctly, ancestors keep generating
-
-    @Test("effectiveEntryEvents for a grandfork is root-up-to-fork1 + child-up-to-fork2 + grandfork's own, even when ancestors kept generating after the forks")
-    @MainActor
-    func effectiveEntryEventsCutsCorrectlyForGrandfork() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        // root gives a second answer *after* forkA/forkB fork; forkA gives a
-        // second answer *after* grandfork forks — both must be invisible to
-        // grandfork's effective transcript.
-        let sessions = try await Self.buildBranchingTree(
-            profile: profile,
-            rootAnswersBeforeForks: 1,
-            rootAnswersAfterForks: 1,
-            forkAAnswersBeforeGrandfork: 1,
-            forkAAnswersAfterGrandfork: 1,
-            forkBAnswers: 0,
-            grandforkAnswers: 1
-        )
-        defer { await Self.close(sessions) }
-        let (root, forkA, _, grandfork) = sessions
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-
-        // Uninstructed answers: one prompt + one response entry each, so
-        // forkA's baseline is 2 (root's one prior answer) and grandfork's
-        // baseline is 4 (root's 2 inherited + forkA's own 1 answer == 2 more).
-        let forkANode = try #require(tree.session(forkA.id))
-        #expect(forkANode.record.forkedAtEntryCount == 2)
-        let grandforkNode = try #require(tree.session(grandfork.id))
-        #expect(grandforkNode.record.forkedAtEntryCount == 4)
-
-        let effective = try tree.effectiveEntryEvents(forSession: grandfork.id)
-
-        let prompts = effective.filter { $0.kind == .prompt }.map(\.text)
-        #expect(prompts == ["root-message-1", "forkA-message-1", "grandfork-message-1"])
-        #expect(effective.map(\.kind) == [.prompt, .response, .prompt, .response, .prompt, .response])
-        // Never the router-only session meta, and never the answers that
-        // happened after either fork point.
-        #expect(!effective.contains { $0.kind == .session })
-        #expect(!effective.contains { $0.text == "root-message-2" })
-        #expect(!effective.contains { $0.text == "forkA-message-2" })
-
-        _ = root
-    }
+    // MARK: - Effective entries of a root
 
     @Test("effectiveEntryEvents for a root is just its own entry-kind events")
     @MainActor
@@ -455,9 +168,9 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let sessions = try await Self.buildBranchingTree(profile: profile)
-        defer { await Self.close(sessions) }
-        let root = sessions.root
+        let root = profile.standard.makeSession()
+        defer { await root.close() }
+        _ = try await root.respond(to: "root-message-1")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -466,146 +179,7 @@ struct TranscriptTreeTests {
         #expect(effective.first?.text == "root-message-1")
     }
 
-    // MARK: - A parent that never generated
-
-    @Test("a fork whose root never generated still reconstructs: the root's index.md identifies it with no transcript.jsonl of its own")
-    @MainActor
-    func forkWhoseRootNeverGeneratedStillReconstructs() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        // root never calls respond(), so it never writes a session-meta line
-        // and therefore never gets a transcript.jsonl at all. Its index.md is
-        // still written at vending, so — unlike the transcript-only discovery
-        // this replaced — it is a fully identified node in the loaded tree.
-        let root = profile.standard.makeSession()
-        defer { await root.close() }
-        let fork = try await root.fork(workingDirectory: nil)
-        defer { await fork.close() }
-        _ = try await fork.respond(to: "fork-message-1")
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-
-        let rootNode = try #require(tree.session(root.id))
-        #expect(rootNode.parentId == nil)
-        #expect(tree.roots.map(\.id) == [root.id])
-        #expect(try tree.events(forSession: root.id).isEmpty)
-
-        let forkNode = try #require(tree.session(fork.id))
-        #expect(forkNode.parentId == root.id)
-        #expect(forkNode.record.forkedAtEntryCount == 0)
-
-        // The fork's whole conversation reconstructs: its root contributed
-        // nothing, which is different from its root being unknown.
-        let effective = try tree.effectiveEntryEvents(forSession: fork.id)
-        #expect(effective.map(\.kind) == [.prompt, .response])
-        #expect(effective.first?.text == "fork-message-1")
-    }
-
-    // MARK: - A deleted index.md fails loudly
-
-    /// A parent whose `index.md` is gone fails the load with `indexMissing`
-    /// naming its directory, instead of promoting its fork to a root.
-    @Test("deleting a parent's index.md throws indexMissing naming that directory, rather than silently truncating its fork's conversation")
-    @MainActor
-    func deletingAParentIndexThrowsNamingItsDirectory() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let sessions = try await Self.buildBranchingTree(profile: profile)
-        defer { await Self.close(sessions) }
-        let (root, forkA, _, _) = sessions
-
-        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
-        // Sanity: the tree loads, with the shape we expect, before the delete.
-        #expect(try TranscriptTree.load(under: routerDir).roots.map(\.id) == [root.id])
-
-        let rootDirectory = try #require(TranscriptTree.load(under: routerDir).session(root.id))
-            .directory
-        try FileManager.default.removeItem(
-            at: RouterTestFixtures.indexURL(inSessionDirectory: rootDirectory)
-        )
-
-        // Loud, and specific about which directory is unreadable: silently
-        // promoting forkA to a root would make its truncated conversation read
-        // as its whole one.
-        #expect(throws: TranscriptTreeError.indexMissing(directory: rootDirectory)) {
-            _ = try TranscriptTree.load(under: routerDir)
-        }
-        _ = forkA
-    }
-
-    /// A deleted child session folder leaves nothing to detect, so the tree
-    /// loads clean without it and the parent reconstructs whole.
-    @Test(
-        "deleting a whole child session directory is invisible: the tree loads clean without it, unlike a deleted parent index.md, which is loud"
-    )
-    @MainActor
-    func deletingAChildDirectoryLoadsCleanWithoutIt() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let sessions = try await Self.buildBranchingTree(profile: profile)
-        defer { await Self.close(sessions) }
-        let (root, forkA, forkB, _) = sessions
-
-        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
-        // Sanity: both forks load, and the root reconstructs, before the delete.
-        let before = try TranscriptTree.load(under: routerDir)
-        // The *set* of children, not their order: two forks minted in the
-        // same millisecond share a ULID timestamp and sort by their random
-        // bits, so creation order is not guaranteed — the same convention
-        // `treeShapeMatchesIndex` above states for its own children check.
-        #expect(Set(before.children(of: root.id).map(\.id)) == Set([forkA.id, forkB.id]))
-        let rootEntryCountBefore = try before.effectiveEntryEvents(forSession: root.id).count
-
-        // Delete forkB's whole directory. The layout is the only structure
-        // on disk, so a deleted child directory is byte-identical to a child
-        // that never existed — nothing detectable remains, and the load has
-        // nothing to be loud about (contrast
-        // `deletingAParentIndexThrowsNamingItsDirectory`, where the
-        // orphaned child's own directory still points at the gone parent).
-        let forkBDirectory = try #require(before.session(forkB.id)).directory
-        try FileManager.default.removeItem(at: forkBDirectory)
-
-        let after = try TranscriptTree.load(under: routerDir)
-        #expect(after.session(forkB.id) == nil)
-        #expect(after.children(of: root.id).map(\.id) == [forkA.id])
-        // The parent is untouched: its own conversation reconstructs whole.
-        #expect(try after.effectiveEntryEvents(forSession: root.id).count == rootEntryCountBefore)
-    }
+    // MARK: - An unreadable index.md fails loudly
 
     /// An `index.md` that holds no frontmatter holds no record, so the load
     /// fails with `indexUnreadable` naming its directory.
@@ -759,7 +333,7 @@ struct TranscriptTreeTests {
         }
     }
 
-    // MARK: - A fork whose record holds no cut point
+    // MARK: - A recorded fork whose record holds no cut point
 
     /// A nested session whose record holds no fork cut cannot say how much
     /// of its parent it inherits, so `effectiveEntryEvents` throws
@@ -776,8 +350,7 @@ struct TranscriptTreeTests {
             childId.description, isDirectory: true)
         try SessionRecordFixtures.writePlaceholder(in: rootDirectory)
         // Nested under a parent, so it inherits — yet records no cut point
-        // saying how much. Only a hand-built tree can be in this state; a
-        // vended fork always records one.
+        // saying how much. Only a hand-built tree can be in this state.
         try SessionRecordFixtures.writePlaceholder(in: childDirectory)
 
         let tree = try TranscriptTree.load(under: dir)

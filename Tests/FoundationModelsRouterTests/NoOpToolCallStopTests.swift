@@ -128,41 +128,6 @@ struct NoOpToolCallStopTests {
         #expect(Self.runCodeCalls(lastRender).compactMap(Self.snippet(of:)) == [Self.realCode])
     }
 
-    /// Takes a fork of the session of `fixture`, expects that the check of
-    /// the child marks the no-op arguments as a no-op, then ends the child
-    /// and the fixture. The ends come also when this helper throws: the
-    /// child closes first, and then the fixture ends.
-    ///
-    /// - Parameter fixture: The fixture whose session has the check.
-    /// - Throws: Whatever the fork throws, or the failure of `#require` when
-    ///   the child is not a ``RoutedSessionActor``.
-    private static func expectAForkKeepsTheCheck(of fixture: NoOpToolCallSessionFixture) async throws {
-        defer { await fixture.end() }
-        let noOpArguments = GeneratedContent(properties: ["code": NoOpToolCallSessionFixture.noOpCode])
-
-        let child = try #require(try await fixture.session.fork(workingDirectory: nil) as? RoutedSessionActor)
-        defer { await child.close() }
-
-        #expect(child.isNoOpToolCall(CountingRunCodeTool.toolName, noOpArguments))
-    }
-
-    @Test("a fork keeps the no-op check of its parent")
-    func aForkKeepsTheCheck() async throws {
-        let fixture = try await NoOpToolCallSessionFixture.make(
-            startsJob: false, codes: [NoOpToolCallSessionFixture.noOpCode], tempDirPrefix: Self.tempDirPrefix)
-
-        try await Self.expectAForkKeepsTheCheck(of: fixture)
-    }
-
-    @Test("a fork of a session restored with the check keeps the check")
-    func aForkOfARestoredSessionKeepsTheCheck() async throws {
-        let fixture = try await NoOpToolCallSessionFixture.makeRestored(
-            startsJob: false, codes: [NoOpToolCallSessionFixture.noOpCode],
-            restoreCheck: NoOpToolCallSessionFixture.isNoOp(toolName:arguments:), tempDirPrefix: Self.tempDirPrefix)
-
-        try await Self.expectAForkKeepsTheCheck(of: fixture)
-    }
-
     @Test("a session restored with the check stops at a no-op call while a job is pending")
     func aRestoredSessionWithTheCheckStopsAtANoOpCall() async throws {
         let fixture = try await NoOpToolCallSessionFixture.makeRestored(

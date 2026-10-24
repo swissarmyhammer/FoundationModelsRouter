@@ -6,7 +6,7 @@ import Foundation
 /// recording, because "off" is the no-op ``NoneRecorder`` sink, not `nil`. Every
 /// conforming sink shares one call path: ``append(_:to:)`` takes a
 /// ``TranscriptEvent/Partial`` and the recorder — an actor — stamps `seq` and
-/// `ts` atomically as it appends, so concurrent appends from forked sessions
+/// `ts` atomically as it appends, so concurrent appends from many sessions
 /// collapse into a single totally-ordered log.
 ///
 /// Recording is best-effort: ``append(_:to:)`` is non-throwing, so a sink that
@@ -28,7 +28,7 @@ public protocol TranscriptRecorder: Sendable {
     ///
     /// A single recorder assigns `seq` and `ts` across *all* directories it is
     /// asked to write, so the sequence is one globally monotonic total order even
-    /// when concurrent sessions and forks append into their own lineage-nested
+    /// when concurrent sessions append into their own lineage-nested
     /// transcript files. The `directory` selects *where* the event is persisted —
     /// a session passes its ``RoutedSession/recordingDirectory`` — while `seq`
     /// stays global; a sink that keeps no on-disk layout (in-memory, no-op) simply

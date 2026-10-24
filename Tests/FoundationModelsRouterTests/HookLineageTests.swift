@@ -16,7 +16,8 @@ import Testing
 /// arrives on a task of the dispatcher.
 ///
 /// The suite also holds the one lineage function (``HookLineage``) directly,
-/// for the comparison of the working directories of a fork.
+/// for the comparison of the working directories of a restored fork node of a
+/// recording.
 @Suite("Hook lineage: the router gives each session its hook session")
 struct HookLineageTests {
     // MARK: - Fixtures
@@ -231,43 +232,6 @@ struct HookLineageTests {
         }
     }
 
-    // MARK: - Fork
-
-    @Test("a fork in the working directory of its parent gets the key of its parent")
-    func aForkInTheSameDirectoryGetsTheKeyOfItsParent() async throws {
-        try await Self.withHookedProfile { hooked in
-            let parent = hooked.profile.standard.makeSession(
-                configuration: SessionConfiguration(
-                    workingDirectory: hooked.directory, hookSessionKey: Self.replacementKey))
-            let fork = try await parent.fork(workingDirectory: hooked.directory)
-            await hooked.dispatcher.drain()
-
-            let start = try Self.start(of: fork.id, in: hooked.visitor)
-            #expect(start.origin == .forked)
-            #expect(start.session.sessionKey == Self.replacementKey)
-            #expect(start.session.parentSessionID == parent.id.description)
-            await fork.close()
-            await parent.close()
-        }
-    }
-
-    @Test("a fork in another working directory gets its own id as its key")
-    func aForkInAnotherDirectoryGetsItsOwnKey() async throws {
-        try await Self.withHookedProfile { hooked in
-            let parent = hooked.profile.standard.makeSession(workingDirectory: hooked.directory)
-            let otherDirectory = hooked.directory.appendingPathComponent("other", isDirectory: true)
-            let fork = try await parent.fork(workingDirectory: otherDirectory)
-            await hooked.dispatcher.drain()
-
-            let start = try Self.start(of: fork.id, in: hooked.visitor)
-            #expect(start.origin == .forked)
-            #expect(start.session.sessionKey == fork.id.description)
-            #expect(start.session.parentSessionID == parent.id.description)
-            await fork.close()
-            await parent.close()
-        }
-    }
-
     // MARK: - Child session
 
     @Test("a child session gets the subagent origin, the key of its parent and the id of its parent")
@@ -309,26 +273,6 @@ struct HookLineageTests {
         }
     }
 
-    @Test("restoreSessionTree gives one resumed SessionStart for each restored session")
-    func restoreSessionTreeGivesOneResumedStartForEachSession() async throws {
-        try await Self.withHookedProfile { hooked in
-            let root = hooked.profile.standard.makeSession()
-            let fork = try await root.fork(workingDirectory: nil)
-            await fork.close()
-            await root.close()
-
-            let tree = try await hooked.profile.standard.restoreSessionTree(root: root.id)
-            await hooked.dispatcher.drain()
-
-            let resumed = Self.resumedSessions(in: hooked.visitor.events)
-            #expect(resumed.map(\.sessionID).sorted() == [root.id.description, fork.id.description].sorted())
-            let restoredFork = try #require(resumed.first { $0.sessionID == fork.id.description })
-            #expect(restoredFork.parentSessionID == root.id.description)
-            await tree.session(fork.id)?.close()
-            await tree.root.close()
-        }
-    }
-
     @Test("restoreSession with a hook key gives the restored session that key")
     func restoreSessionWithAHookKeyGivesThatKey() async throws {
         try await Self.withHookedProfile { hooked in
@@ -346,29 +290,6 @@ struct HookLineageTests {
             #expect(session.sessionKey == Self.replacementKey)
             #expect(session.parentSessionID == nil)
             await restored.session.close()
-        }
-    }
-
-    @Test("restoreSessionTree with a hook key gives it to the root and to a fork in the root's directory")
-    func restoreSessionTreeWithAHookKeyGivesItToTheRootAndASameDirectoryFork() async throws {
-        try await Self.withHookedProfile { hooked in
-            let root = hooked.profile.standard.makeSession(workingDirectory: hooked.directory)
-            let fork = try await root.fork(workingDirectory: hooked.directory)
-            await fork.close()
-            await root.close()
-
-            let tree = try await hooked.profile.standard.restoreSessionTree(
-                root: root.id, hookSessionKey: Self.replacementKey)
-            await hooked.dispatcher.drain()
-
-            let resumed = Self.resumedSessions(in: hooked.visitor.events)
-            let restoredRoot = try #require(resumed.first { $0.sessionID == root.id.description })
-            let restoredFork = try #require(resumed.first { $0.sessionID == fork.id.description })
-            #expect(restoredRoot.sessionKey == Self.replacementKey)
-            #expect(restoredFork.sessionKey == Self.replacementKey)
-            #expect(restoredFork.parentSessionID == root.id.description)
-            await tree.session(fork.id)?.close()
-            await tree.root.close()
         }
     }
 
@@ -400,8 +321,8 @@ struct HookLineageTests {
 
     // MARK: - The lineage function
 
-    @Test("a fork whose directory differs only in its form gets the key of its parent")
-    func aForkInTheSameDirectoryInAnotherFormGetsTheKeyOfItsParent() {
+    @Test("a restored fork node whose directory differs only in its form gets the key of its parent")
+    func aRestoredForkNodeInTheSameDirectoryInAnotherFormGetsTheKeyOfItsParent() {
         let directory = URL(fileURLWithPath: "/tmp/hook-lineage/work", isDirectory: true)
         let sameDirectory = URL(fileURLWithPath: "/tmp/hook-lineage/other/../work", isDirectory: false)
         let parent = HookParent.fork(

@@ -9,7 +9,7 @@ import Tracing
 /// Writes one session's identity onto its ``RouterTelemetry/SpanName/session``
 /// span.
 ///
-/// One writer for all three shapes, so every session span carries the same
+/// One writer for both shapes, so every session span carries the same
 /// keys however the session was made. The parent key is written only when
 /// there is a parent, so a vended root names none.
 ///
@@ -49,12 +49,11 @@ private let sessionSpanKind: SpanKind = .internal
 /// brings a session into existence, and writes that session's identity onto
 /// it.
 ///
-/// Every session span the package opens comes from here — the vended root, the
-/// forked child and the restored node alike — so the span's name, its kind and
-/// its attributes are written in one place and all three shapes report the
-/// same way.
+/// Every session span the package opens comes from here — the vended root and
+/// the restored node alike — so the span's name, its kind and its attributes
+/// are written in one place and both shapes report the same way.
 ///
-/// Which of the three calls this helper, and when, follows from where the cost
+/// Which of the two calls this helper, and when, follows from where the cost
 /// sits. A restored node is the one shape whose cost is not the construction:
 /// before it can build anything it re-reads its own and its ancestors'
 /// transcript files from disk
@@ -62,9 +61,9 @@ private let sessionSpanKind: SpanKind = .internal
 /// exactly the work this span was added to make visible. So the restore path
 /// calls this helper itself, around that read *and* the rebuild that follows
 /// it, and `makeRoutedSessionActor` opens no second span for a
-/// ``RouterTelemetry/SessionOrigin/restored`` session. The other two shapes have
+/// ``RouterTelemetry/SessionOrigin/restored`` session. The vended root has
 /// nothing to measure before the construction, so the factory calls this
-/// helper for them.
+/// helper for it.
 ///
 /// - Parameters:
 ///   - routerId: The recording root id of the router the session belongs to.
@@ -155,20 +154,12 @@ func withSessionSpan<Result, Failure: Error>(
 /// ``RouterTelemetry/SpanName/session`` span. Each parameter but `origin`
 /// forwards unchanged to the ``RoutedSessionActor`` initializer.
 ///
-/// Every session comes into existence through this one factory — vended,
-/// forked, or restored from disk — so a parameter added here reaches all three
-/// shapes at once. `tracer` carries no default for that reason: a site that
-/// forgot it would leave its sessions silent, and the compiler says so.
-/// `origin` carries none for the same reason: a shape that cannot say how it
-/// was made would leave its span unreadable.
-///
-/// **A forked child carries two spans, and they are not two costs.** The
-/// enclosing ``RouterTelemetry/SpanName/fork`` span measures the whole fork;
-/// the session span opened here measures only the construction inside it.
-/// The session span is a child of the fork span — the fork opened its own
-/// before it reached this factory, and the task-local `ServiceContext`
-/// carries it here — so a reader sees one nested inside the other and never
-/// adds the two together.
+/// Every session comes into existence through this one factory — vended, or
+/// restored from disk — so a parameter added here reaches both shapes at
+/// once. `tracer` carries no default for that reason: a site that forgot it
+/// would leave its sessions silent, and the compiler says so. `origin`
+/// carries none for the same reason: a shape that cannot say how it was made
+/// would leave its span unreadable.
 ///
 /// A ``RouterTelemetry/SessionOrigin/restored`` session gets no span from this
 /// factory: its span is already open around the transcript read that precedes
@@ -283,7 +274,7 @@ func makeRoutedSessionActor(
         session.writeFirstIndex()
     }
     // The session exists now, so its `SessionStart` goes out. Each shape
-    // (vended, forked, restored) comes through here.
+    // (vended, restored) comes through here.
     hooks?.start()
     return session
 }
@@ -310,7 +301,7 @@ actor RoutedSessionActor: RoutedSession {
     /// See ``RoutedSession/workingDirectory``.
     nonisolated let workingDirectory: URL
 
-    /// The backend every generation and fork runs through. Never vended to
+    /// The backend every generation runs through. Never vended to
     /// callers. ``compact(prompt:budget:)`` replaces it after a compaction.
     /// Each replacement reports its passes to ``generationPassObserver``, and
     /// keys the prompt cache by ``promptCacheSessionID`` (``adopt(_:)``). Each
@@ -343,8 +334,8 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The transcript as of the last settled point, with the recording cut
     /// of that point (`generation-queue.md`, section 5.8). Each transcript
-    /// read and each fork is served from it, so neither waits for a
-    /// submission. ``settleTranscript()`` updates it.
+    /// read is served from it, so a read waits for no submission.
+    /// ``settleTranscript()`` updates it.
     var settledTranscript: SettledTranscript
 
     /// Takes the transcript of ``backend`` as the new settled point, with the
@@ -356,8 +347,7 @@ actor RoutedSessionActor: RoutedSession {
     /// model call (``noteToolResult(_:)``).
     func settleTranscript() {
         settledTranscript = SettledTranscript(
-            entries: backend.transcriptEntries(), recordedEntryCount: persistedEntryCount,
-            historyOrdinal: historyOrdinal)
+            entries: backend.transcriptEntries(), recordedEntryCount: persistedEntryCount)
     }
 
     /// The slot this session's model fills, stamped onto recorded events.
@@ -372,22 +362,21 @@ actor RoutedSessionActor: RoutedSession {
     /// The tracer this session opens its spans through, or `nil` to read
     /// `InstrumentationSystem.tracer` at call time.
     ///
-    /// Carried from the ``RoutedModel`` the session came off, and handed on to
-    /// every fork this session takes, so a fork and a restored node report to
-    /// the same backend as the handle that owns them. See
+    /// Carried from the ``RoutedModel`` the session came off, so a session and
+    /// a restored node report to the same backend as the handle that owns
+    /// them. See
     /// ``RouterTelemetry/tracer(explicit:)`` for the resolution rule, and
     /// ``RouterTelemetry`` for the rule that keeps content off a span.
     nonisolated let tracer: (any Tracer)?
 
-    /// The session's system instructions. A forked child inherits them.
+    /// The session's system instructions.
     nonisolated let instructions: String?
 
-    /// The grammar constraining every ``respond(to:)``, or `nil`. A fork
-    /// inherits it.
+    /// The grammar constraining every ``respond(to:)``, or `nil`.
     nonisolated let grammar: Grammar?
 
     /// The tools this session was constructed with, before per-session
-    /// instancing. ``fork(workingDirectory:)`` builds the child's tools from these.
+    /// instancing. The record of the session names its tools from these.
     nonisolated let originalTools: [any Tool]
 
     /// This session's own instanced tool list, as threaded to the backend.
@@ -406,8 +395,8 @@ actor RoutedSessionActor: RoutedSession {
     /// its work (`WorkRegistry`). The run plane holds it, so each background
     /// run of the session and each lease of a tool of the session go into
     /// it, and the session puts the leases of its own work into it too. A
-    /// fork, a restored session and a child session each own a registry of
-    /// their own. ``close()`` closes it.
+    /// restored session and a child session each own a registry of their
+    /// own. ``close()`` closes it.
     nonisolated var workRegistry: WorkRegistry {
         runPlane.workRegistry
     }
@@ -683,26 +672,26 @@ actor RoutedSessionActor: RoutedSession {
     /// See ``runWatchedModelCall(composedPrompt:_:)``.
     var repetitionWatch = RepetitionWatchState()
 
-    /// The settings of the repetition watch this session was vended,
-    /// forked or restored with. A fork carries it forward, and the session's
-    /// `index.md` records it. See ``RepetitionDetection``.
+    /// The settings of the repetition watch this session was vended or
+    /// restored with. The session's `index.md` records it. See
+    /// ``RepetitionDetection``.
     nonisolated let repetitionDetection: RepetitionDetection
 
     /// The most answers that mail alone starts and that start a new
-    /// background run, which this session was vended, forked or restored
-    /// with. A fork carries it forward, and the session's `index.md` records it. See
+    /// background run, which this session was vended or restored with. The
+    /// session's `index.md` records it. See
     /// ``SessionConfiguration/mailOnlyAnswerLimit``.
     nonisolated let mailOnlyAnswerLimit: Int
 
     /// How long each background tool call of this session waits for its own
-    /// run, in seconds, which this session was vended, forked or restored
-    /// with. Never negative. The mount site of each tool of the session holds
-    /// it. A fork carries it forward, and the session's `index.md` records it. See
+    /// run, in seconds, which this session was vended or restored with.
+    /// Never negative. The mount site of each tool of the session holds it.
+    /// The session's `index.md` records it. See
     /// ``SessionConfiguration/inlineSettleGrace``.
     nonisolated let inlineSettleGrace: TimeInterval
 
     /// The host check that marks a tool call as a no-op, which this session
-    /// was vended or forked with. A fork carries it forward. The session's
+    /// was vended or restored with. The session's
     /// `index.md` never records it, because it is a closure. See ``NoOpToolCallCheck`` and
     /// ``checkToolCallForNoOp(toolName:arguments:)``.
     nonisolated let isNoOpToolCall: NoOpToolCallCheck
@@ -755,8 +744,7 @@ actor RoutedSessionActor: RoutedSession {
     /// How long a model call may run with no observable progress before it
     /// reports a ``GenerationStall``. It is `.zero`, which means off, until the
     /// host installs an interval through
-    /// ``setGenerationStallReportInterval(_:)``. A fork starts with its
-    /// parent's interval.
+    /// ``setGenerationStallReportInterval(_:)``.
     var generationStallReportInterval: Duration = .zero
 
     /// The explicit logger of this session, or `nil` for the loggers of the
@@ -765,8 +753,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The pump is a `Task.detached` and inherits no task-local of the
     /// caller, so a task-local logging context never reaches its records. A
     /// test or a host gives an explicit logger so that each record of the
-    /// session, also a record of the pump, goes to it. A fork starts with the
-    /// explicit logger of its parent. The pump also binds it as
+    /// session, also a record of the pump, goes to it. The pump also binds it as
     /// ``RouterTelemetry/pumpJobLogger`` around each job
     /// (``withSessionLogger(_:)``), so a log call that the job reaches and
     /// that has no session to ask, for example a log call of the transcript
@@ -780,8 +767,7 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// The same reason as for ``explicitLogger``: the pump is a
     /// `Task.detached`, so the task-local factory of a caller never reaches
-    /// its metrics. A fork starts with the explicit factory of its parent.
-    /// The pump also binds it as the task-local factory around each job
+    /// its metrics. The pump also binds it as the task-local factory around each job
     /// (``withSessionMetricsFactory(_:)``), so the metrics of a dependency,
     /// for example the tool-call metrics of FoundationModelsExtras, go to it.
     ///
@@ -809,7 +795,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The positional diff baseline against the current ``backend`` transcript:
     /// how many entries are already persisted or inherited. `0` for a root, the
-    /// parent's entry count at fork time for a fork. A compaction rewinds it to the
+    /// recorded count of the seed for a restore. A compaction rewinds it to the
     /// compacted window's count, so it is not the session's position in its own
     /// recorded history. That coordinate is ``historyOrdinal``.
     var persistedEntryCount: Int
@@ -820,19 +806,18 @@ actor RoutedSessionActor: RoutedSession {
     /// (``TranscriptDiffer/divergence(from:in:)``) and takes the whole
     /// current transcript as the next baseline after every recorded diff.
     /// Set at construction from the backend's own prefix, so an identity
-    /// exists before the first submission: empty for a root, the parent's
-    /// entries for a fork, the seed transcript for a restore.
+    /// exists before the first submission: empty for a root, the seed
+    /// transcript for a restore.
     var persistedBaseline: TranscriptDiffer.Baseline
 
     /// This session's position in its own append-only recorded history: how
     /// many entry-kind events its effective recorded stream holds. Starts at
-    /// `0` for a root, at the parent's ordinal at fork time for a fork, and at
-    /// the reconstructed count for a restored session. It never rewinds.
+    /// `0` for a root, and at the reconstructed count for a restored session.
+    /// It never rewinds.
     var historyOrdinal: Int
 
     /// The run-level facts of this session's `index.md`, or `nil` for a
-    /// session that records nothing durably. Handed on to every fork taken
-    /// from this session. See ``persistsIndex``.
+    /// session that records nothing durably. See ``persistsIndex``.
     nonisolated let indexWriter: SessionIndexWriter?
 
     /// The resolved working context, in tokens, that ``contextFill`` divides
@@ -854,7 +839,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The auto-compaction opt-in, or `nil` for manual-only compaction. When
     /// set, an answer compacts automatically at ``TokenBudget/triggerTokens``,
     /// and a submission that overflows mid-generation is compacted harder and
-    /// retried once. A fork carries it forward.
+    /// retried once.
     nonisolated let autoCompactionBudget: TokenBudget?
 
     /// The compaction prompt auto-compaction's own compactions send to the
@@ -864,32 +849,29 @@ actor RoutedSessionActor: RoutedSession {
     /// The pre-discovery seeding opt-in, or `nil`. When set, each answer runs
     /// the named tool host-side over its prompt and reseeds ``backend``
     /// before generation (see ``primeDiscoveryIfConfigured(prompt:emit:)``).
-    /// A fork carries it forward.
     nonisolated let discoveryPriming: DiscoveryPriming?
 
     /// The host rule whose protected tool outputs every compaction on this session
-    /// keeps word for word, or `nil` to protect nothing. A fork carries it
-    /// forward. The session's `index.md` never records it, because it is a closure; a
+    /// keeps word for word, or `nil` to protect nothing. The session's `index.md` never records it, because it is a closure; a
     /// restore takes it from the host again. See ``ToolOutputProtection``.
     nonisolated let toolOutputProtection: ToolOutputProtection?
 
     /// The counter that counts tokens the way this session's model counts
     /// them, backed by the tokenizer of the loaded container. Every
     /// compaction on this session measures with it, and so does the capping
-    /// layer of its tools. A fork carries it forward; a restore takes it from
+    /// layer of its tools. A restore takes it from
     /// the container again. See ``TokenCounter``.
     nonisolated let tokenCounter: any TokenCounter
 
     /// The parent session and tool call that spawned this session, or `nil`.
     /// Stamped on this session's `session` meta event
     /// (``TranscriptEvent/agentSpawn``) and written to its record
-    /// (``SessionRecord/agentSpawn``). A fork's is always `nil`.
+    /// (``SessionRecord/agentSpawn``).
     nonisolated let agentSpawn: SessionRecord.AgentSpawn?
 
     /// The hooks of this session, or `nil` when the router has no hook
     /// dispatcher. The session factory starts them (`SessionStart`), and
-    /// ``close()`` ends them (`SessionEnd`, one time only). A fork takes its
-    /// own hooks from them (``SessionHooks/makeForkHooks(sessionID:workingDirectory:)``).
+    /// ``close()`` ends them (`SessionEnd`, one time only).
     nonisolated let hooks: SessionHooks?
 
     /// The lock and the value of ``record``. A lock keeps them, so a
@@ -949,13 +931,8 @@ actor RoutedSessionActor: RoutedSession {
         case .restored(let restored):
             self.recordState = Mutex(restored)
         case .new(let facts):
-            // A session with no parent is a root and carries no cut point; a
-            // fork records both coordinates of its cut, each read from the
-            // one stored value it equals at construction: the positional
-            // `forkedAtEntryCount` is its diff baseline
-            // (`persistedEntryCount`), and the append-only
-            // `forkedAtHistoryOrdinal` is its starting `historyOrdinal`. The
-            // run's resolved profile is stated once, on the root.
+            // A session with no parent is a root and carries no cut point.
+            // The run's resolved profile is stated once, on the root.
             self.recordState = Mutex(
                 SessionRecord(
                     sessionId: id,
@@ -975,8 +952,8 @@ actor RoutedSessionActor: RoutedSession {
                     profile: parentId == nil ? indexWriter?.profile : nil,
                     agentSpawn: agentSpawn,
                     // The configuration envelope (task ^ne5g9jn), assembled
-                    // from this session's own effective values so a root and
-                    // a fork alike record what they actually run with —
+                    // from this session's own effective values so a session
+                    // records what it actually runs with —
                     // `originalTools` supplies the by-name tool list, never
                     // the instanced wrappers. Built through
                     // `SessionConfiguration` so create time and restore time
@@ -1029,7 +1006,7 @@ actor RoutedSessionActor: RoutedSession {
             transcript: Transcript(entries: seedEntries.prefix(persistedEntryCount)))
         self.historyOrdinal = historyOrdinal
         self.settledTranscript = SettledTranscript(
-            entries: seedEntries, recordedEntryCount: persistedEntryCount, historyOrdinal: historyOrdinal)
+            entries: seedEntries, recordedEntryCount: persistedEntryCount)
         self.indexWriter = indexWriter
         self.contextTokens = contextTokens
         self.usageState = usageState

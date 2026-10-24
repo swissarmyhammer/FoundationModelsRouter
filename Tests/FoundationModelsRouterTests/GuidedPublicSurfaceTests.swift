@@ -139,9 +139,9 @@ struct GuidedPublicSurfaceTests {
     /// A session backend that writes only the members
     /// ``LanguageModelSessionBackend`` still requires of a conformer.
     ///
-    /// It names no `streamResponseFragments(to:maxTokens:)`, no
-    /// `makeFork(tools:)` and no `replacingTranscript(_:)`. Each of those three
-    /// has a `public` default the protocol supplies, so this type inherits it.
+    /// It names no `streamResponseFragments(to:maxTokens:)` and no
+    /// `replacingTranscript(_:)`. Each of those two has a `public` default the
+    /// protocol supplies, so this type inherits it.
     /// Were one of them to lose `public`, this file's plain import would stop
     /// seeing it and the compiler would reject the conformance.
     ///

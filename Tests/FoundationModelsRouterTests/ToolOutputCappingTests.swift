@@ -8,12 +8,11 @@ import Testing
 
 /// Exercises task 1334fk3: ``TokenBudget/toolOutputLimit`` and the capping it
 /// drives in Router's own tool-instancing pipeline
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``/
-/// ``RoutedSessionActor/fork(workingDirectory:)``) — ``ToolOutputCapping``'s
-/// truncation rule and dynamic wrapping, plus the wiring that threads a
-/// capped tool to the model-facing container/backend boundary exactly the
-/// way `SessionOutboxToolWiringTests` proves for the mount layer and
-/// `ForkableTool`.
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``)
+/// — ``ToolOutputCapping``'s truncation rule and dynamic wrapping, plus the
+/// wiring that threads a capped tool to the model-facing container/backend
+/// boundary exactly the way `SessionOutboxToolWiringTests` proves for the
+/// mount layer.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU.
 @Suite("TokenBudget.toolOutputLimit: ToolOutputCapping truncation and tool-instancing wiring")
@@ -246,8 +245,8 @@ struct ToolOutputCappingTests {
     /// from `RoutedSessionActor`'s isolation — a different context from the
     /// `@MainActor` test body — and this class would need real
     /// synchronization. No test in this suite does that: every test here
-    /// only calls `makeSession(tools:budget:)`/`fork(workingDirectory:)`,
-    /// both of which drive `makeSession(instructions:tools:)` synchronously
+    /// only calls `makeSession(tools:budget:)`, which drives
+    /// `makeSession(instructions:tools:)` synchronously
     /// from the `@MainActor` test method, and reads `lastTools`
     /// only afterward, from that same method — so every write and every read
     /// this suite actually performs land on the same thread, never
@@ -477,89 +476,5 @@ struct ToolOutputCappingTests {
         // mount layer.
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["through-capped-wrapper"])
-    }
-
-    // MARK: - fork() wiring
-
-    @Test("fork() with an inherited toolOutputLimit caps the child's own tool list too")
-    @MainActor
-    func forkInheritsToolOutputLimitCapping() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let longText = String(repeating: "g", count: 40)
-        let tool = StringOutputTool(output: longText)
-        let session = profile.standard.makeSession(
-            tools: [tool],
-            budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
-        )
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        guard let childActor = child as? RoutedSessionActor,
-            let capping = failureDeliveryPeeled(childActor.tools.first) as? TokenCappingTool<FakeToolArguments>,
-            capping.wrapped is RunToCompletionRunner<FakeToolArguments>
-        else {
-            Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping a RunToCompletionRunner")
-            return
-        }
-        let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
-        #expect(result == "\(String(repeating: "g", count: 5))… [truncated: 5 of 40 tokens]")
-    }
-
-    @Test("fork() with an inherited budget but no toolOutputLimit set applies no capping layer to the child's tool list — only the mount layer wraps it")
-    @MainActor
-    func forkWithNoToolOutputLimitLeavesChildToolsUnwrapped() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let tool = StringOutputTool(output: "unchanged")
-        let session = profile.standard.makeSession(
-            tools: [tool],
-            budget: TokenBudget(limit: 4096)
-        )
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        guard let childActor = child as? RoutedSessionActor else {
-            Issue.record("expected the fork to be a RoutedSessionActor")
-            return
-        }
-        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<FakeToolArguments>))
-        #expect((failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
-    }
-
-    @Test("fork() with no budget at all applies no capping layer to the child's tool list — only the mount layer wraps it")
-    @MainActor
-    func forkWithNoBudgetLeavesChildToolsUnwrapped() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = ToolCapturingLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let tool = StringOutputTool(output: "unchanged")
-        let session = profile.standard.makeSession(tools: [tool])
-        defer { await session.close() }
-        let child = try await session.fork(workingDirectory: nil)
-        defer { await child.close() }
-
-        guard let childActor = child as? RoutedSessionActor else {
-            Issue.record("expected the fork to be a RoutedSessionActor")
-            return
-        }
-        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<FakeToolArguments>))
-        #expect((failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 }

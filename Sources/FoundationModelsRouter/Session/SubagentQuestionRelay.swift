@@ -73,7 +73,7 @@ public struct SubagentQuestionTarget: Sendable {
 ///   ``SessionEvent/elicitationRequested(_:)``. The relayed question makes no
 ///   run mail in the parent, so the model of the parent does not see it. The
 ///   journal of the parent keeps the question, and the context that a
-///   restore or a fork of the parent gives to the model leaves it out
+///   restore of the parent gives to the model leaves it out
 ///   (``ContextRenderer/context(of:)``, rule R5). The relay reads the next
 ///   event of the child only after the parent recorded the question.
 /// - An answer of the user at the parent goes down to the child

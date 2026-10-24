@@ -138,7 +138,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
     // sah:allow duplication a frozen public thin alias (^pckk91c, kept undeprecated for the six call sites) whose body only forwards its parameters plus the grammar into a SessionConfiguration and on to makeSession(configuration:); the plain makeSession forwards the same nine plus its toolOutputProtection, and neither body holds logic that can drift
     /// Vends a guided session whose every ``RoutedSession/respond(to:)`` is
-    /// constrained to `grammar`. A fork inherits the grammar.
+    /// constrained to `grammar`.
     ///
     /// - Parameters:
     ///   - grammar: The grammar that constrains every `respond` on the session.

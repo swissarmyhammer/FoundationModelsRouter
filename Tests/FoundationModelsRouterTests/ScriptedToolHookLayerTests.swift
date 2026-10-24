@@ -198,29 +198,6 @@ struct ScriptedToolHookLayerTests {
         }
     }
 
-    // MARK: - A fork
-
-    /// The production change that makes this test fail: a container that
-    /// puts the hook layer on the tools of a session but not on the tools of
-    /// its fork. The live backend puts the layer on the tools of each fork.
-    @Test("a tool call of a fork through the container gives the three events with the hook session of the fork")
-    func aToolCallOfAForkGivesTheThreeEvents() async throws {
-        try await Self.withSession(calling: MarkerEmittingTool()) { harness in
-            let fork = try await harness.session.fork(workingDirectory: nil)
-            // A throw of the answer still closes the fork.
-            defer { await fork.close() }
-            let answer = try await fork.respond(to: Self.prompt)
-            await fork.close()
-            await harness.closeAndDrain()
-
-            #expect(answer == Self.markerOutput)
-            #expect(harness.visitor.recorder.events.count == 3)
-            #expect(
-                harness.visitor.recorder.sessions.map(\.sessionID)
-                    == Array(repeating: fork.id.description, count: 3))
-        }
-    }
-
     // MARK: - The scripted container alone
 
     /// The production change that makes this test fail: a scripted container
