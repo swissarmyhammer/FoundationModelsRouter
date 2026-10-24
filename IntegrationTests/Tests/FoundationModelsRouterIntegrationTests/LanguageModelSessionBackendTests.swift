@@ -119,7 +119,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// stated on each answer's `GenerationOptions`, because every test here drives
     /// ``MLXFoundationModelsSessionBackend``, and that backend is the one type
     /// that reads the decoding the call that made it named. The container
-    /// stores no mode (`model-pool.md` §2.5). A suite that drives a raw
+    /// stores no mode. A suite that drives a raw
     /// `LanguageModelSession` needs the other pin; this one does not.
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 

@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Pins the cross-router rules of `model-pool.md` §2.7 and §3: two routers
+/// Pins the cross-router rules: two routers
 /// over one ``ModelPool`` share, price, and evict together, and two routers
 /// over two pools do not.
 ///
@@ -274,7 +274,7 @@ struct CrossRouterResidencyTests {
 
     // MARK: - Each router passes its own sampling mode to the shared container.
 
-    /// `model-pool.md` §2.5: the sampling mode is a decode option of the
+    /// The sampling mode is a decode option of the
     /// router, not a property of the shared weights. Two routers over one
     /// container each pass their own mode into every backend they make, so
     /// the second router never inherits the first router's mode.

@@ -182,7 +182,7 @@ public final class SessionObserver {
             // No row yet: the row comes with the ``SessionEvent/compaction(_:)``
             // that completes the compaction.
             phase = .compacting
-        case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
+        case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .repetitionStopped,
             .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay,
             .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered, .signalDone, .workStarted,
             .workEnded, .elicitationEnded, .elicitationCompleted:
@@ -201,9 +201,9 @@ public final class SessionObserver {
             // submission does (see ``SessionEvent/discoveryPrimingFailed(_:)``).
             // A stall report bounds nothing: the submission still runs and
             // still gives its output (see ``SessionEvent/generationStalled(_:)``).
-            // A wait of a submission for the worker of its model changes no
-            // entry and no counter: the submission gives the same output after
-            // the wait. A repetition stop report and a reasoning stop report
+            // A wait of a pass for the lock of its model changes no entry
+            // and no counter: the submission gives the same output after the
+            // wait. A repetition stop report and a reasoning stop report
             // come with the recorded entries of the stopped attempt, and the
             // ``SessionEvent/submissionEnded(_:)`` of that attempt names the
             // stop. A tool call

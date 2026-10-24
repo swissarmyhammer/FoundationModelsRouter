@@ -3,8 +3,8 @@ import Foundation
 /// A report that the session held new mail and started no answer for it,
 /// carried by ``SessionEvent/mailDeliveryPaused(_:)`` (task ^9bxas0w).
 ///
-/// Run mail causes the next submission of a session with no caller call
-/// (`generation-queue.md`, section 5.4). A model that starts one more
+/// Run mail causes the next submission of a session with no caller call.
+/// A model that starts one more
 /// background run in each answer thus gets one more answer for each run, with
 /// no end. When ``SessionConfiguration/mailOnlyAnswerLimit`` answers that only
 /// run mail started each started a new background run, with no user-type mail

@@ -35,6 +35,7 @@ enum UnloadableMLXModel {
     /// - Returns: The container.
     static func liveContainer(repo: String) -> MLXFoundationModelsContainer {
         MLXFoundationModelsContainer(
-            model: make(repo: repo), contextWindow: contextWindow, tokenCounter: CharacterTokenCounter())
+            model: make(repo: repo), ref: ModelRef(repo: repo), contextWindow: contextWindow,
+            tokenCounter: CharacterTokenCounter())
     }
 }

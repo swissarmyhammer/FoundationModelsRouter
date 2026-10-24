@@ -23,7 +23,7 @@ import MLXLMCommon
 ///
 /// ## Why the value carries the mode
 ///
-/// The container stores no decoding strategy (`model-pool.md` §2.5, step B).
+/// The container stores no decoding strategy.
 /// The mode belongs to the router, and each `makeSession(...samplingMode:)`
 /// call names it. Thus this value keeps the mode that the tier gave to
 /// ``load(ref:context:samplingMode:unexpectedContainerType:)``. A runner that
@@ -109,11 +109,7 @@ struct CompactionEvalRealModelContainer: Sendable {
             context: context,
             reporting: { _ in }
         )
-        // The tier uses the container outside the model pool, so this queue
-        // stands in for the queue of the pool entry. Each backend of the
-        // container submits to it.
-        let queued = loaded.submitting(to: GenerationQueue())
-        guard let container = queued as? MLXFoundationModelsContainer else {
+        guard let container = loaded as? MLXFoundationModelsContainer else {
             throw unexpectedContainerType
         }
         CompactionEvalProgressLog.emit(

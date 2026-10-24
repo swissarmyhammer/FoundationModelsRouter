@@ -70,7 +70,7 @@ struct GenerationCallOutputBufferedTests {
 
     @Test("a pass with one output event is buffered, with no time to first token")
     func oneOutputEventIsBuffered() {
-        let timing = Self.timing { _ in [.firstOutputEvent] }
+        let timing = Self.timing { startedAt in [.firstOutputEvent(at: startedAt)] }
 
         #expect(timing.outputBuffered)
         #expect(timing.timeToFirstToken == nil)
@@ -80,7 +80,7 @@ struct GenerationCallOutputBufferedTests {
     @Test("a streamed pass is not buffered, and has its time to first token")
     func streamedPassIsNotBuffered() {
         let timing = Self.timing { startedAt in
-            [.firstOutputEvent, .firstOutput(at: startedAt + Self.prefill)]
+            [.firstOutputEvent(at: startedAt), .firstOutput(at: startedAt + Self.prefill)]
         }
 
         #expect(!timing.outputBuffered)
@@ -98,7 +98,7 @@ struct GenerationCallOutputBufferedTests {
 
     @Test("the start of the next pass clears the mark of the last one")
     func nextPassStartClearsTheMark() {
-        let timing = Self.timing { startedAt in [.firstOutputEvent, .passStarted(at: startedAt)] }
+        let timing = Self.timing { startedAt in [.firstOutputEvent(at: startedAt), .passStarted(at: startedAt)] }
 
         #expect(!timing.outputBuffered)
     }

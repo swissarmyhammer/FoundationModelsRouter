@@ -6,7 +6,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ^dpn2ytt (`generation-queue.md`, section 5.8): a transcript
+/// Exercises task ^dpn2ytt: a transcript
 /// read uses the settled transcript of the session, and never waits for a
 /// submission that runs.
 ///

@@ -20,7 +20,7 @@ import Testing
 /// answer: its mail gets ``SessionEvent/answerFailed(_:)`` at once.
 ///
 /// A sent message needs no driver: the pump starts a submission for it by
-/// itself (`generation-queue.md`, section 5.4). Everything runs against stubs
+/// itself. Everything runs against stubs
 /// — no MLX, no network, no GPU.
 @Suite("Mail queue of a session: send, inspect, edit, cancel")
 struct SessionMailQueueTests {

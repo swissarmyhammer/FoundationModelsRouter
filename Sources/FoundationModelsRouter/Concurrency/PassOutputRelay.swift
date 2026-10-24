@@ -4,7 +4,7 @@ import Synchronization
 /// The relay of the executor channel of one pass (task ^0m997jr): it gives the
 /// wrapped executor a channel of its own, forwards each event to the channel
 /// of the SDK unchanged and in order, and reports the first output event
-/// (``GenerationPassObserver/passSentFirstOutputEvent()``) and the first
+/// (``GenerationPassObserver/passSentFirstOutputEvent(at:)``) and the first
 /// streamed output (``GenerationPassObserver/passProducedOutput(at:)``) of
 /// the pass to the pass observer of the session.
 ///
@@ -72,8 +72,9 @@ enum PassOutputRelay {
         /// What one output event of the pass reports to the observer.
         private enum Report {
             /// The first output event of the pass
-            /// (``GenerationPassObserver/passSentFirstOutputEvent()``).
-            case firstOutputEvent
+            /// (``GenerationPassObserver/passSentFirstOutputEvent(at:)``), which
+            /// came at `at`.
+            case firstOutputEvent(at: ContinuousClock.Instant)
 
             /// The first token of the pass, which the first output event
             /// gave at `at` (``GenerationPassObserver/passProducedOutput(at:)``).
@@ -95,15 +96,15 @@ enum PassOutputRelay {
             let report: Report? = seen.withLock { seen in
                 guard let firstAt = seen.firstAt else {
                     seen.firstAt = now
-                    return .firstOutputEvent
+                    return .firstOutputEvent(at: now)
                 }
                 guard !seen.reported else { return nil }
                 seen.reported = true
                 return .firstToken(at: firstAt)
             }
             switch report {
-            case .firstOutputEvent:
-                observer.passSentFirstOutputEvent()
+            case .firstOutputEvent(let firstAt):
+                observer.passSentFirstOutputEvent(at: firstAt)
             case .firstToken(let firstAt):
                 observer.passProducedOutput(at: firstAt)
             case nil:

@@ -66,7 +66,7 @@ private final class AdjustableWorkingSetProbe: MachineProbe {
     }
 }
 
-/// Gated real-model coverage for `generation-queue.md` section 3: the pool
+/// Gated real-model coverage for the prompt-cache memory budget: the pool
 /// sizes the prompt-cache memory budget of the fork, with two generation
 /// models resident.
 ///

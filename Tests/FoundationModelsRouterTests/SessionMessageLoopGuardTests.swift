@@ -5,10 +5,9 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The loop guards of ``RouterSessionDirectory/send(_:)`` (ROUTER-5, the
-/// guard table of session.md section 5.7): the chain depth, the sends of one
-/// turn, the targets of one tag send and the length of a message, for a
-/// session sender and a UI sender alike.
+/// The loop guards of ``RouterSessionDirectory/send(_:)`` (ROUTER-5): the chain
+/// depth, the sends of one turn, the targets of one tag send and the length of
+/// a message, for a session sender and a UI sender alike.
 ///
 /// A session sends from inside its turn through a ``DirectorySendTool`` that
 /// a ``ScriptedRoundsModel`` calls in each turn, as the `sessions` tool of

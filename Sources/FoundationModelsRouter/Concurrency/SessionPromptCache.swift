@@ -1,7 +1,7 @@
 import MLXFoundationModels
 
 /// A raw model that keeps a prompt cache for each session, and can release
-/// the cache of one session (`generation-queue.md`, section 3).
+/// the cache of one session.
 ///
 /// `MLXLanguageModel` conforms: its `releasePromptCache(sessionID:)` removes
 /// the entry of the session from memory, from the spill queue and from disk.
@@ -17,8 +17,7 @@ protocol SessionPromptCacheReleasing: Sendable {
 extension MLXLanguageModel: SessionPromptCacheReleasing {}
 
 /// A session backend whose passes key the prompt cache of its model by the
-/// id of the session that owns the backend (`generation-queue.md`,
-/// section 3).
+/// id of the session that owns the backend.
 ///
 /// ``MLXFoundationModelsSessionBackend`` conforms: it runs its
 /// `LanguageModelSession` over a per-session ``SessionLanguageModel``, whose

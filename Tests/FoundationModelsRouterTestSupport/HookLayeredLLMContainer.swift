@@ -40,15 +40,6 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     /// The counter of the wrapped container.
     public var tokenCounter: any TokenCounter { wrapped.tokenCounter }
 
-    /// This container over the copy of the wrapped container whose backends
-    /// name `queue`.
-    ///
-    /// - Parameter queue: The work queue of the pool entry of the model.
-    /// - Returns: The container over the copy.
-    public func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer {
-        HookLayeredLLMContainer(wrapping: wrapped.submitting(to: queue))
-    }
-
     /// A backend of the wrapped container with no tools.
     ///
     /// - Parameter instructions: The session instructions, or `nil`.
@@ -169,9 +160,6 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
     init(wrapping wrapped: any LanguageModelSessionBackend) {
         self.wrapped = wrapped
     }
-
-    /// The work queue of the wrapped backend.
-    var generationQueue: GenerationQueue? { wrapped.generationQueue }
 
     /// Generates a complete text response through the wrapped backend.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {

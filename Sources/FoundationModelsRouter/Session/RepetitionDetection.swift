@@ -144,7 +144,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
 
     /// The keys of the stored form. Each key is the name of its property,
     /// except ``recoveriesPerAnswer``: its key stays `recoveriesPerTurn`, and
-    /// the schema version does not change (`generation-queue.md`, section 5.6).
+    /// the schema version does not change.
     private enum CodingKeys: String, CodingKey {
         case isEnabled
         case windowTokens

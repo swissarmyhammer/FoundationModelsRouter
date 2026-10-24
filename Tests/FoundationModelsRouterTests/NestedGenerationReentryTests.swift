@@ -20,17 +20,17 @@ import Testing
 /// hand-built ``RoutedLLM``, so each session is the shape a consumer holds.
 ///
 /// A session has no lock: one pump for each session submits its messages
-/// (task ^3qx0mpt). The stub container of these tests has no
-/// ``GenerationQueue``, so a tool body that generates on another session over
-/// it runs that model call directly and holds nothing that session needs. An
+/// (task ^3qx0mpt). The router puts no lock around a model call, so a tool
+/// body that generates on another session over the same container runs that
+/// model call directly and holds nothing that session needs. An
 /// in-band tool body that asks its own session for an answer is refused at
 /// once, because that answer could come only after the submission that waits
 /// for the tool body. A declared background body asks its own session and
 /// gets an answer from a later submission. A transcript read that a tool
 /// body asks of its own session is served at once, from the settled
-/// transcript of that session (task ^dpn2ytt). Over a container with a
-/// queue, an in-band tool body that waits for a session on the same model is
-/// refused at once (task ^1psqdm9, `GenerationQueueSubmissionTests`).
+/// transcript of that session (task ^dpn2ytt). Over a model whose passes
+/// hold a FIFO lock, an in-band tool body that waits for a session on the
+/// same model gets its answer (task ^qhgfajc, `ToolBodyHoldsNoLockTests`).
 @Suite("Nested generation from inside a tool body")
 struct NestedGenerationReentryTests {
     // MARK: - Test tool
@@ -915,14 +915,13 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(harness) {}
     }
 
-    // MARK: - An answer whose submission waits for the worker
+    // MARK: - An answer whose pass waits for the lock of the model
 
-    /// The prompt of the session whose submission waits behind the cancelled
-    /// one.
+    /// The prompt of the session whose pass waits behind the cancelled one.
     private static let nextPrompt = "summarize the ranking"
 
     @Test(
-        "cancelAll() on a session whose submission waits removes it at once, and the worker then runs the next item"
+        "cancelAll() on a session whose pass waits for the lock of the model ends its answer at once, and the next pass then runs"
     )
     func cancelOnASessionWhoseSubmissionWaitsRemovesItAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
@@ -930,7 +929,7 @@ struct NestedGenerationReentryTests {
 
         let fixture = PassObservingFixture()
         let profile = try await Self.makeProfile(container: fixture.container, dir: dir)
-        let queue = try #require(profile.standard.backendQueue)
+        let lock = fixture.lock
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
@@ -939,61 +938,48 @@ struct NestedGenerationReentryTests {
         // three sessions closes, also when the test throws (rule T1).
         defer { await SessionFixtureLifecycle.close([holder, waiter, next], opening: [fixture.latch]) }
         let waiterFeed = await waiter.streamSessionEvents()
-        // Second subscriptions, for the waits on `submissionQueued`. The
-        // ledger below reads `waiterFeed` whole.
-        let waiterQueue = await SessionEventLog.watch(waiter)
-        let nextQueue = await SessionEventLog.watch(next)
-        defer {
-            waiterQueue.drain.cancel()
-            nextQueue.drain.cancel()
+
+        // The holder's pass holds the lock of the model, and stays inside
+        // the model until the latch opens. Each wait also ends when its
+        // answer ended (rule T1): the latch holds the holder in the model and
+        // the other passes in the lock, so in a test that passes no answer
+        // ends first.
+        let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
+        try await BoundedWait.run {
+            try await RecordedWaitResult.wait(
+                for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
         }
 
-        // The holder's submission runs on the worker, and its pass stays
-        // inside the model until the latch opens.
-        // Each wait also ends when its answer ended (rule T1): the latch
-        // holds the holder in the model and the other answers in the queue,
-        // so in a test that passes no answer ends first.
-        let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
-        try await RecordedWaitResult.wait(
-            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
-
-        // The pump of the waiter runs its answer, which has an identity; only
-        // its submission waits, in the queue of the model.
+        // The pump of the waiter runs its answer, which has an identity; its
+        // pass waits for the lock of the model.
         let waiterAnswer = Task { try await waiter.respond(to: Self.nestedPrompt) }
-        let waiterLog = waiterQueue.log
-        try await RecordedWaitResult.wait(
-            for: { try await waiterLog.waitForQueuedSubmissions(1) }, endingOnEndOf: waiterAnswer)
-        // A third submission joins the queue behind the waiter's.
+        try await BoundedWait.run { try await lock.waitForWaiters(1) }
+        // A third pass waits for the lock behind the waiter's.
         let nextAnswer = Task { try await next.respond(to: Self.nextPrompt) }
-        let nextLog = nextQueue.log
-        try await RecordedWaitResult.wait(
-            for: { try await nextLog.waitForQueuedSubmissions(1) }, endingOnEndOf: nextAnswer)
-        #expect(await queue.waitingCount == 2)
+        try await BoundedWait.run { try await lock.waitForWaiters(2) }
 
-        // The cancelAll() signal stops the running answer of the waiter. So
-        // the request reaches the waiting item, and the answer ends at once,
-        // while the holder still runs on the worker: the latch is still
-        // closed, so the end of the cancelled answer comes before the holder
-        // can end. The signal does not wait for the pump, so the test waits
-        // for the end of the pump of the waiter. That pump ends before the
-        // holder ends, because the cancel removes the waiting item from the
-        // queue of the model.
+        // The cancelAll() signal stops the running answer of the waiter. The
+        // cancel does not wait for the lock, so the answer ends at once,
+        // while the holder still holds the lock: the latch is still closed,
+        // so the end of the cancelled answer comes before the holder can
+        // end. The signal does not wait for the pump, so the test waits for
+        // the end of the pump of the waiter. The abandoned pass keeps its
+        // place in the lock, as a pass of MLX does, and leaves at its turn.
         let stop = waiter.cancelAll()
-        #expect(try await waiter.awaitTerminal(of: stop) == .signalDone(stop))
-        await #expect(throws: CancellationError.self) { try await waiterAnswer.value }
+        #expect(try await BoundedWait.run { try await waiter.awaitTerminal(of: stop) } == .signalDone(stop))
+        await #expect(throws: CancellationError.self) { try await BoundedWait.value(of: waiterAnswer) }
         #expect(await waiter.isIdleOnceThePumpEnds())
-        #expect(await queue.waitingCount == 1)
+        #expect(await lock.waitingCount == 2)
 
         await fixture.latch.open()
-        #expect(try await holderAnswer.value == PassObservingModel.answer(to: Self.outerPrompt))
-        // The worker ran the next item after the holder, and never the
-        // cancelled one.
-        #expect(try await nextAnswer.value == PassObservingModel.answer(to: Self.nextPrompt))
+        #expect(try await BoundedWait.value(of: holderAnswer) == PassObservingModel.answer(to: Self.outerPrompt))
+        // The next pass ran after the holder, and the cancelled one never
+        // ran.
+        #expect(try await BoundedWait.value(of: nextAnswer) == PassObservingModel.answer(to: Self.nextPrompt))
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.outerPrompt, Self.nextPrompt])
-        #expect(await queue.isRunning == false)
-        #expect(await queue.waitingCount == 0)
+        #expect(await lock.waitingCount == 0)
 
-        // The cancelled session still generates: its pump and the queue are
+        // The cancelled session still generates: its pump and the lock are
         // both free.
         let followUp = await Self.outcome(of: { try await waiter.respond(to: Self.outerPrompt) })
         Self.expectFinished(

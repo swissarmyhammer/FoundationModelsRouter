@@ -1,5 +1,5 @@
 /// The loop guards that ``RouterSessionDirectory/send(_:)`` applies to each
-/// message (ROUTER-5, the guard table of session.md section 5.7). A session
+/// message (ROUTER-5). A session
 /// sender and a UI sender get the same guards, so the `sessions` tool and
 /// the `sessions` graph get the same rules.
 ///

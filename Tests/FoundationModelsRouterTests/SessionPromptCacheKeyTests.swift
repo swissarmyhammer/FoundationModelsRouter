@@ -7,8 +7,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Task ^cc2tezn: the prompt cache of the fork is keyed by the Router session
-/// id, and a session releases its key when it closes (`generation-queue.md`,
-/// sections 2 and 3).
+/// id, and a session releases its key when it closes.
 ///
 /// Each session runs over the production backend and a real
 /// `LanguageModelSession` over a ``PromptCacheScopeRecordingModel``, so each

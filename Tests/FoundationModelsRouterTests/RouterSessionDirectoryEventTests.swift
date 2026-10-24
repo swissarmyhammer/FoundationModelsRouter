@@ -216,7 +216,7 @@ import Testing
     /// How many events the buffer test sends to a stream nobody reads.
     private static let unreadEventCount = 300
 
-    /// How many events one stream buffers (session.md section 7, rule 1).
+    /// How many events one stream buffers.
     private static let bufferedEventCount = 256
 
     /// The type name of the change log of the Extras GraphQL toolkit.

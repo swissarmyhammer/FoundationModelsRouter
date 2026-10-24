@@ -89,7 +89,7 @@ struct SessionStateTracking: Sendable {
             lastSummary = String(answer.reply.prefix(Self.lastSummaryLength))
         case .textDelta, .textReset, .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
             .toolDisplay, .entryRecorded, .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed,
-            .generationStalled, .submissionQueued, .submissionStarted, .submissionEnded, .answerFailed,
+            .generationStalled, .submissionStarted, .submissionEnded, .answerFailed,
             .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress, .generationCall,
             .mailDeliveryPaused, .mailDelivered, .cancelled, .signalDone, .lost:
             // The work events frame the work of the session, so none of

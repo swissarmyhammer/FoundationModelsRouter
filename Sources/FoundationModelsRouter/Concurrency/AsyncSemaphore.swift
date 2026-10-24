@@ -12,13 +12,12 @@ import Synchronization
 /// acquire, because a cancelled waiter that walked away from the queue would
 /// leave a count that no later release ever balances. A session takes no
 /// acquire of this type: its pump submits its messages one at a time, with
-/// no lock (`generation-queue.md`, section 5.4).
+/// no lock.
 ///
 /// ``waitUnlessCancelled()`` throws `CancellationError` instead, and a caller
 /// the user cancels leaves the queue at once: a waiter that holds nothing yet
-/// can be abandoned safely. The ``GenerationQueue`` and the admission queue of
-/// the ``ModelPool`` are work queues, not semaphores, and take no acquire of
-/// this type.
+/// can be abandoned safely. The admission queue of the ``ModelPool`` is a
+/// work queue, not a semaphore, and takes no acquire of this type.
 ///
 /// One arrival order serves both kinds of waiter, so the queue stays fair
 /// whichever acquire each caller took, and each continuation is resumed

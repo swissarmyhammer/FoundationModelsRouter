@@ -1,6 +1,5 @@
 /// The identity of one submission of a session: one SDK call of the chain
-/// that answers the messages of the session (`generation-queue.md`, sections
-/// 5.1 and 5.6).
+/// that answers the messages of the session.
 ///
 /// Minted by the session from a counter of its own, one for each submission,
 /// so the first submission of a session is `1`. Unique within its session and

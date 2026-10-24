@@ -136,8 +136,8 @@ public enum RealModelHarness {
     ///     ``RealModelHarnessTests`` prove this whole build with no model at all.
     ///   - samplingMode: The decoding strategy every session vended from the
     ///     profile passes to `makeSession`, or `nil` (the default) for the
-    ///     provider default. The container stores no mode (`model-pool.md`
-    ///     §2.5), so a gated suite that pinned one at load passes it here:
+    ///     provider default. The container stores no mode, so a gated suite
+    ///     that pinned one at load passes it here:
     ///     ``RealModelContainer/samplingMode``. A profile that does not carry
     ///     the mode decodes with the provider default, and the suite loses its
     ///     pin.

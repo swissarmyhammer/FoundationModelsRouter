@@ -3,8 +3,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ^x7cxsg3: the events of a submission and of an answer
-/// (`generation-queue.md`, section 5.6).
+/// Exercises task ^x7cxsg3: the events of a submission and of an answer.
 ///
 /// A submission is one SDK call of the chain that answers the messages of a
 /// session. It opens with ``SessionEvent/submissionStarted(_:)`` and closes

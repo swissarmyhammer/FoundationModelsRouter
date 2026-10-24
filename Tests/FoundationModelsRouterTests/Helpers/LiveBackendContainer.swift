@@ -10,19 +10,18 @@ import FoundationModelsRouterTestSupport
 /// It is generic over the model, so a suite that brings a new scripted model
 /// does not write one more copy of the four factory methods.
 ///
-/// Like the live container, it makes no ``GenerationQueue``. A resolve gives
-/// it the queue of the pool entry through ``submitting(to:)``, and a test
-/// that uses the container outside a pool can give a queue of its own. Each
-/// backend it vends runs over its own ``SessionLanguageModel`` and declares
-/// that queue. A routed session thus submits each whole scripted SDK call,
-/// tool loop included, as one item of the queue, with no MLX.
+/// Like the live container, it holds no queue and no lock. Each backend it
+/// vends runs over its own ``SessionLanguageModel``, so each pass is one call
+/// into the scripted model through `PooledGeneration.run(ref:channel:_:)`. A
+/// scripted model that serializes its generations as MLX does holds a
+/// ``FIFOGenerationLock`` itself.
 struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMContainer {
     /// The scripted model every backend of this container runs over.
     let model: Model
 
-    /// The queue every backend of this container shares, or `nil` (the
-    /// default) before a resolve or the test gives one.
-    var generationQueue: GenerationQueue?
+    /// The model reference that each pass names in the in-flight meter. A
+    /// fixed test reference by default.
+    var ref: ModelRef = LiveBackendContainerReference.ref
 
     /// The window of ``model``, in tokens. Each backend sends it as the
     /// ceiling of a call that names none. The fixture window by default.
@@ -30,17 +29,6 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
 
     /// The scripted counter of this container: one token per `Character`.
     let tokenCounter: any TokenCounter = CharacterTokenCounter()
-
-    /// Gives a copy of this container whose backends name `queue`, the work
-    /// queue of the pool entry.
-    ///
-    /// - Parameter queue: The work queue of the pool entry.
-    /// - Returns: The copy.
-    func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer {
-        var copy = self
-        copy.generationQueue = queue
-        return copy
-    }
 
     /// Vends a backend over a fresh session carrying `instructions`, with no
     /// tools mounted.
@@ -61,7 +49,7 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
             model: model,
-            generationQueue: generationQueue,
+            ref: ref,
             contextWindow: contextWindow,
             instructions: instructions,
             tools: tools
@@ -87,10 +75,17 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
     func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
             model: model,
-            generationQueue: generationQueue,
+            ref: ref,
             contextWindow: contextWindow,
             transcript: transcript,
             tools: tools
         )
     }
+}
+
+/// The model reference of a ``LiveBackendContainer`` that names none. A
+/// generic type has no stored static property, so the reference lives here.
+enum LiveBackendContainerReference {
+    /// The fixed test reference.
+    static let ref = ModelRef(repo: "test/live-backend-container")
 }

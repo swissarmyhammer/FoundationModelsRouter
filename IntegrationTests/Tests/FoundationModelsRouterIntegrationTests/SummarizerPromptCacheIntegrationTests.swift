@@ -44,8 +44,8 @@ private struct PromptCacheState: Equatable {
     let usage: PromptCacheUsage
 }
 
-/// Gated real-model coverage for task ^ptev9yy (`generation-queue.md`,
-/// section 3): the summarizer call of a compaction keeps no prompt cache.
+/// Gated real-model coverage for task ^ptev9yy: the summarizer call of a
+/// compaction keeps no prompt cache.
 ///
 /// ## What it proves
 ///

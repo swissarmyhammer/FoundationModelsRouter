@@ -304,14 +304,13 @@ actor RoutedSessionActor: RoutedSession {
     /// The backend every generation runs through. Never vended to
     /// callers. ``compact(prompt:budget:)`` replaces it after a compaction.
     /// Each replacement reports its passes to ``generationPassObserver``, and
-    /// keys the prompt cache by ``promptCacheSessionID`` (``adopt(_:)``). Each
-    /// model call of it is one submission to its ``LanguageModelSessionBackend/generationQueue``.
+    /// keys the prompt cache by ``promptCacheSessionID`` (``adopt(_:)``).
     var backend: any LanguageModelSessionBackend {
         didSet { adopt(backend) }
     }
 
     /// The observer every backend of this session reports its passes to, and
-    /// each submission of this session reports its wait and its start to
+    /// each submission of this session reports its start to
     /// (tasks ^ake8sax and ^1psqdm9). See ``drainGenerationPassPhases()``.
     ///
     /// It reads the clock of ``runPlane``, so one clock drives the stall
@@ -333,7 +332,7 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     /// The transcript as of the last settled point, with the recording cut
-    /// of that point (`generation-queue.md`, section 5.8). Each transcript
+    /// of that point. Each transcript
     /// read is served from it, so a read waits for no submission.
     /// ``settleTranscript()`` updates it.
     var settledTranscript: SettledTranscript
@@ -599,9 +598,9 @@ actor RoutedSessionActor: RoutedSession {
     /// The in-flight model call of the work the pump runs, the task
     /// ``requestCancelOfRunningWork()`` cancels, or `nil` when no model call
     /// is outstanding. Only the model call runs in this task; the recording
-    /// of its submission runs afterwards. A cancel of the task removes a
-    /// submission that waits for the worker, or cancels the running
-    /// submission.
+    /// of its submission runs afterwards. A cancel of the task cancels the
+    /// running submission at once, also while a pass of it waits for the
+    /// lock of the model.
     var inFlightModelCall: Task<String, Error>?
 
     /// The work a cancel has been requested for, or `nil`. A cancellation

@@ -5,9 +5,14 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Spike of task ^jdp02p (`generation-queue.md`, section 5, "Sessions as work
-/// queues"): the queue item is one submission to Foundation, and mail goes
-/// between two submissions.
+/// Spike of task ^jdp02p ("Sessions as work queues"): the queue item is one
+/// submission to Foundation, and mail goes between two submissions.
+///
+/// Task ^qhgfajc removed the per-model queue from the router: a lock now
+/// crosses only the call into the model, not a tool call. The spike keeps
+/// its own test model of a queue, so its facts about mail still hold: the
+/// result of a background child comes back as mail, and the mail causes the
+/// next submission of the parent.
 ///
 /// The user said on 2026-09-25: "going to Foundation to generate -- or call
 /// tools which might be multiple 'steps' inside Foundation -- that submission
@@ -156,8 +161,7 @@ struct SubmissionQueueSpikeTests {
     private static let nothingStarted = "nothing new started"
 
     /// How long a call of ``ChildStartingTool`` waits for its run to settle
-    /// inline. Long enough for a run that starts nothing, and short, because
-    /// the wait holds the model.
+    /// inline. Long enough for a run that starts nothing, and short.
     private static let laterCallSettleGrace: TimeInterval = 0.5
 
     /// The passes before the delivery submission of the parent: the two
@@ -200,18 +204,20 @@ struct SubmissionQueueSpikeTests {
         // The first submission of the parent. `streamEvents` ends with its SDK
         // call and does not wait for the background run, as a submission must
         // not wait. A tool that waits in its body keeps this wait open.
-        try await worker.submit(Self.parentLabel) {
-            for try await _ in await parent.streamEvents(to: Self.parentPrompt) {}
+        try await BoundedWait.run {
+            try await worker.submit(Self.parentLabel) {
+                for try await _ in await parent.streamEvents(to: Self.parentPrompt) {}
+            }
         }
 
         // The terminal of the background run comes after the submission of
         // the child. With no terminal, no mail wakes the pump, so the test
         // fails here, before it waits for the delivery (rule T1).
-        let terminal = try #require(await settledRun.value)
+        let terminal = try #require(try await BoundedWait.run { await settledRun.value })
 
         // The pump of the parent: the waiting mail causes the next submission,
         // with no caller call (task ^3qx0mpt).
-        try await fixture.passes.waitForPasses(Self.passesBeforeDelivery + 1)
+        try await BoundedWait.run { try await fixture.passes.waitForPasses(Self.passesBeforeDelivery + 1) }
         #expect(await parent.becomesIdle())
 
         let childAnswer = PassObservingModel.answer(to: Self.childPrompt)

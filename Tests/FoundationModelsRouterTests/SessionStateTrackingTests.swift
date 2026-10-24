@@ -130,7 +130,7 @@ struct SessionStateTrackingTests {
                 GenerationStall(
                     timeWithoutProgress: .seconds(1), timeInFlight: .seconds(1), visibility: .wholeAnswer,
                     lastProgress: .toolResult)),
-            .submissionQueued(SubmissionID(firstSubmissionNumber)), submissionStarted(number: firstSubmissionNumber),
+            submissionStarted(number: firstSubmissionNumber),
             submissionEnded(number: firstSubmissionNumber), answered(with: reply),
             .answerFailed(AnswerFailure(mailIds: [], reason: .cancelled)),
             .repetitionStopped(

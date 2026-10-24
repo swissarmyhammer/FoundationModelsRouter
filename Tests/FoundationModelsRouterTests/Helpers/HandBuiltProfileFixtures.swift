@@ -23,10 +23,8 @@ import Tracing
 enum HandBuiltProfileFixtures {
     /// Builds a profile whose three slots all name one model reference.
     ///
-    /// Both generation handles wrap the one `container`, so both share the
-    /// ``GenerationQueue`` that container owns, exactly as two handles over
-    /// one pool entry do. A container with no queue gives its handles no
-    /// generation gating, however the profile is built.
+    /// Both generation handles wrap the one `container`, exactly as two
+    /// handles over one pool entry do.
     ///
     /// The embedding slot wraps its own stub container.
     ///

@@ -1,8 +1,7 @@
 import Foundation
 import FoundationModelsExtras
 
-/// What a send does with the address of a message (ROUTER-4, the
-/// addressing table of session.md section 9): the live sessions that get the
+/// What a send does with the address of a message (ROUTER-4): the live sessions that get the
 /// message, a recorded session to restore first, an agent to start, or the
 /// reason and target of a refusal.
 ///
@@ -35,8 +34,7 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// `nil` when no session matched it.
     case refused(reason: String, target: ULID?)
 
-    /// The reason for a session id of an archived session (session.md
-    /// section 10.2).
+    /// The reason for a session id of an archived session.
     static let archivedReason = "archived"
 
     /// The reason for a folder with no live root session: a folder alone does
@@ -140,8 +138,7 @@ enum SessionAddressResolution: Sendable, Equatable {
 }
 
 extension SessionAddress {
-    /// The decision of a send to this address, by the rules of session.md
-    /// section 9.
+    /// The decision of a send to this address.
     ///
     /// - A session sender must be a live or recorded session, for each
     ///   address: an unknown one throws, and is never read as a user.

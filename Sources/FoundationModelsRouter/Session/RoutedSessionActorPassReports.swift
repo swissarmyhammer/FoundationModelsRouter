@@ -1,15 +1,15 @@
 /// ``RoutedSessionActor``'s side of the phase reports of its model calls
-/// (tasks ^ake8sax and ^1psqdm9, `generation-queue.md`, section 5.6).
+/// (tasks ^ake8sax and ^1psqdm9).
 ///
-/// The per-session ``SessionLanguageModel`` of the backend reports the start
-/// and the end of each pass to ``RoutedSessionActor/generationPassObserver``,
-/// and each submission reports its wait for the worker and its start there.
-/// The session turns each reported ``GenerationCallPhase`` into its own state:
-/// the stall watch of the model call in flight counts only the time inside a
-/// pass of the running submission, and the consumer sees the wait of each
-/// submission as ``SessionEvent/submissionQueued(_:)``. The start of each
-/// submission reaches the consumer as ``SessionEvent/submissionStarted(_:)``
-/// through `submissionDidStart()`, which applies the reported phases first.
+/// The per-session ``SessionLanguageModel`` of the backend reports the start,
+/// the first output and the end of each pass to
+/// ``RoutedSessionActor/generationPassObserver``, and each submission reports
+/// its start there. The session turns each reported ``GenerationCallPhase``
+/// into its own state: the stall watch of the model call in flight counts
+/// only the time from the first output of a pass to its end, and the ledger
+/// of the generation calls times each call. The start of each submission
+/// reaches the consumer as ``SessionEvent/submissionStarted(_:)`` through
+/// `submissionDidStart()`, which applies the reported phases first.
 extension RoutedSessionActor {
     /// Installs this session's pass observer on `backend`, when `backend`
     /// reports its passes. ``adopt(_:)`` calls it for the first backend and
@@ -54,19 +54,13 @@ extension RoutedSessionActor {
     }
 
     /// Applies each reported phase not yet applied, in the order of the
-    /// reports: to the stall watch of the model call in flight, to the
+    /// reports: to the stall watch of the model call in flight, and to the
     /// ledger of the generation calls of the attempt (the times of each
-    /// call, ``GenerationCallLedger/apply(_:)``), and as an event to the
-    /// consumer when the phase has one
-    /// (``GenerationCallPhase/sessionEvent(submission:)``). The event names
-    /// the running submission; a phase with no open submission gives none.
+    /// call, ``GenerationCallLedger/apply(_:)``).
     func drainGenerationPassPhases() {
         for phase in generationPassObserver.takePhases() {
             generationStallWatch?.apply(phase)
             generationCallLedger?.apply(phase)
-            if let event = phase.sessionEvent(submission: runningSubmission?.start.submissionId) {
-                deliverLive(event)
-            }
         }
     }
 }

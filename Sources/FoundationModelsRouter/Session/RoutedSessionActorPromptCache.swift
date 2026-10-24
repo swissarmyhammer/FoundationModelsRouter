@@ -1,5 +1,5 @@
 /// ``RoutedSessionActor``'s side of the prompt cache of its model (task
-/// ^cc2tezn, `generation-queue.md`, sections 2 and 3).
+/// ^cc2tezn).
 ///
 /// The session keys the prompt cache of each of its passes by its own ULID,
 /// and releases that key when it closes. The key is the id of the session,

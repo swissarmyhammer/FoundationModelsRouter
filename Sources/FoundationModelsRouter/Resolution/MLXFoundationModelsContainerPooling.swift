@@ -17,17 +17,18 @@ extension MLXFoundationModelsContainer {
     ///
     /// - Parameters:
     ///   - model: The model to wrap.
-    ///   - repo: The repository id of the model, which an error names.
-    /// - Returns: A container that names no queue. The router gives it the
-    ///   queue of the pool entry through ``submitting(to:)``.
+    ///   - ref: The model reference of `model`. An error names its
+    ///     repository id.
+    /// - Returns: The container.
     /// - Throws: The error of the load of the model, or of the read of its
     ///   window (``contextWindow(of:repo:)``).
-    package static func make(wrapping model: MLXLanguageModel, repo: String) async throws -> MLXFoundationModelsContainer {
+    package static func make(wrapping model: MLXLanguageModel, ref: ModelRef) async throws -> MLXFoundationModelsContainer {
         let loaded = try await model.loadContainer()
         let tokenizer = await loaded.tokenizer
-        let contextWindow = try await contextWindow(of: loaded, repo: repo)
+        let contextWindow = try await contextWindow(of: loaded, repo: ref.repo)
         return MLXFoundationModelsContainer(
-            model: model, contextWindow: contextWindow, tokenCounter: TokenizerTokenCounter(tokenizer: tokenizer))
+            model: model, ref: ref, contextWindow: contextWindow,
+            tokenCounter: TokenizerTokenCounter(tokenizer: tokenizer))
     }
 
     /// Reads the window of a loaded model: the native max context that the

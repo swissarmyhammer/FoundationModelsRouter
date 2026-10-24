@@ -37,7 +37,7 @@ public struct PromptCacheUsage: Sendable, Equatable {
     public var residentBytes: Int { memoryBytes + spillingBytes }
 }
 
-/// The memory budget of the prompt cache (`generation-queue.md`, section 3).
+/// The memory budget of the prompt cache.
 ///
 /// ## The budget
 ///
@@ -89,12 +89,11 @@ public struct PromptCacheUsage: Sendable, Equatable {
 /// The prompt cache of the fork is one store for the whole process, but each
 /// router sends a budget that counts only the resident models of its own
 /// ``ModelPool``. The budgets do not add: the last router that sends a budget
-/// sets it. A second pool is an isolated budget on purpose (`model-pool.md`,
-/// section 5), and it already prices its models against the whole working
-/// set. A process that has resident models in two pools can thus hold more
-/// than the working set, in weights and in prompt cache. One pool for each
-/// process, ``ModelPool/shared``, is the configuration this budget is correct
-/// for.
+/// sets it. A second pool is an isolated budget on purpose, and it already
+/// prices its models against the whole working set. A process that has resident
+/// models in two pools can thus hold more than the working set, in weights and
+/// in prompt cache. One pool for each process, ``ModelPool/shared``, is the
+/// configuration this budget is correct for.
 enum PromptCacheBudget {
     /// The most bytes the prompt-cache entries in memory may hold.
     ///

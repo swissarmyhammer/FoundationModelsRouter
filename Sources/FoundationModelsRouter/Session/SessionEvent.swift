@@ -2,8 +2,8 @@ import Foundation
 
 /// One element of the event stream ``RoutedSession/streamEvents(to:maxTokens:)`` produces.
 ///
-/// The events report each submission and each final answer
-/// (`generation-queue.md`, section 5.6). A submission is one SDK call of the
+/// The events report each submission and each final answer.
+/// A submission is one SDK call of the
 /// chain that answers the messages of the session: ``submissionStarted(_:)``
 /// opens it, and every event up to the ``submissionEnded(_:)`` with the same
 /// ``SubmissionID`` belongs to it. The chain ends with one ``answered(_:)``,
@@ -150,37 +150,22 @@ public enum SessionEvent: Sendable, Equatable {
     /// This is a report, not a bound. It repeats once per further interval without progress.
     /// ``GenerationStall/visibility`` says what the report can claim.
     ///
-    /// The session measures only the time inside a pass of the running
-    /// submission. A wait for the worker of the ``GenerationQueue`` of the
-    /// model (see ``submissionQueued(_:)``) and a tool body between two passes
-    /// give no report. For a backend that reports no pass, the time counts
-    /// from the start of the submission. ``GenerationStall`` states the
-    /// meaning of each field.
+    /// The session measures only the time inside a pass after its first
+    /// output. A wait for the lock of the model and a tool body between two
+    /// passes give no report. For a backend that reports no pass, the time
+    /// counts from the start of the submission. ``GenerationStall`` states
+    /// the meaning of each field.
     case generationStalled(GenerationStall)
 
-    /// A submission of the session waits in the ``GenerationQueue`` of its
-    /// model, because the worker of that queue runs a submission of another
-    /// session. A submission is one whole SDK call, with its passes and its
-    /// tool bodies. A consumer can show "waiting for the model".
-    ///
-    /// The session sends it only when the submission must wait. A submission
-    /// that finds the worker free sends none. ``submissionStarted(_:)``
-    /// with the same id follows when the worker starts the submission. A
-    /// cancelled wait sends no ``submissionStarted(_:)``: its
-    /// ``submissionEnded(_:)`` comes next. Only a backend that names a queue
-    /// (``LanguageModelSessionBackend/generationQueue``) submits to one, so a
-    /// backend with no queue never sends this event.
-    case submissionQueued(SubmissionID)
-
-    /// A submission of the session started, and it generates now: the worker
-    /// of the ``GenerationQueue`` of its model started it, or, for a backend
-    /// with no queue, its SDK call started. It comes after
-    /// ``submissionQueued(_:)`` when the submission had to wait, and before
-    /// any other event of the submission.
+    /// A submission of the session started: its SDK call started. It comes
+    /// before any other event of the submission. A submission is one whole
+    /// SDK call, with its passes and its tool bodies. A pass of it can wait
+    /// for the lock of a local model while an other session generates on
+    /// that model.
     ///
     /// A submission that never started sends none: the hard ceiling of the
-    /// ``TokenBudget`` refused it, or a cancel came before its call or during
-    /// its wait. Its ``submissionEnded(_:)`` still comes.
+    /// ``TokenBudget`` refused it, or a cancel came before its call. Its
+    /// ``submissionEnded(_:)`` still comes.
     case submissionStarted(SubmissionStart)
 
     /// A submission of the session ended, with its measured usage and its
@@ -335,7 +320,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// The session held new mail and started no answer for it, because
     /// ``SessionConfiguration/mailOnlyAnswerLimit`` answers that only run mail
     /// started each started a new background run, with no user-type mail
-    /// between them (`generation-queue.md`, section 5.4). The held mail
+    /// between them. The held mail
     /// waits in the queue of the session, and the next user-type mail
     /// carries it into its submission. Only
     /// ``RoutedSession/streamSessionEvents()`` carries this event, because no

@@ -76,8 +76,8 @@ extension RoutedSessionActor {
         modelCall.cancel()
     }
 
-    /// Takes the transcript as a settled point at a tool-result boundary
-    /// (`generation-queue.md`, section 5.8), when the call comes from a tool
+    /// Takes the transcript as a settled point at a tool-result boundary,
+    /// when the call comes from a tool
     /// call of this session's own open model call. There the SDK waits in the
     /// tool call, so no call writes the transcript. The calls of the open
     /// round have no output yet.

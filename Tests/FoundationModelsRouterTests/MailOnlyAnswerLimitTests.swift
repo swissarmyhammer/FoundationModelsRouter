@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^9bxas0w: the safety bound on a chain of answers that mail
-/// alone starts (`generation-queue.md`, section 5.4).
+/// alone starts.
 ///
 /// Mail causes the next submission of a session with no caller call. A model
 /// that starts one more background run in each submission thus gets one more

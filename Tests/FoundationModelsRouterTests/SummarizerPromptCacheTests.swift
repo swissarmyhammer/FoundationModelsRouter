@@ -7,7 +7,7 @@ import Testing
 
 /// Task ^ptev9yy: each summarizer call of a compaction binds the `.uncached`
 /// prompt-cache scope, so a compaction adds no key to the prompt cache of the
-/// fork (`generation-queue.md`, section 3).
+/// fork.
 ///
 /// Each session runs over the production backend and a real
 /// `LanguageModelSession` over a ``PromptCacheScopeRecordingModel``, so each

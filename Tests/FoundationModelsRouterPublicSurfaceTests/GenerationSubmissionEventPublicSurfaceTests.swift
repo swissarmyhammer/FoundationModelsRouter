@@ -4,17 +4,14 @@ import FoundationModelsRouter
 
 /// Holds the events of a submission and of an answer to the access level a
 /// consumer outside this package needs (tasks ^ake8sax, ^1psqdm9 and
-/// ^x7cxsg3). A consumer such as an agent host shows "waiting for the model"
-/// between ``SessionEvent/submissionQueued(_:)`` and
-/// ``SessionEvent/submissionStarted(_:)``, "generating" until
+/// ^x7cxsg3). A consumer such as an agent host shows "generating" from
+/// ``SessionEvent/submissionStarted(_:)`` until
 /// ``SessionEvent/submissionEnded(_:)``, and the end of the answer at
-/// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``. A
-/// submission that finds the worker free sends no
-/// ``SessionEvent/submissionQueued(_:)``.
+/// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
 ///
 /// The import is plain, with no `@testable`, so a case that loses `public`
 /// stops this file from compiling before a single test runs. A consumer
-/// cannot mint a ``SubmissionID``, so the three submission cases are proved by
+/// cannot mint a ``SubmissionID``, so the two submission cases are proved by
 /// the switch that compiles, and the two answer cases at run time.
 @Suite("SessionEvent submission and answer events over a plain import")
 struct GenerationSubmissionEventPublicSurfaceTests {
@@ -25,8 +22,6 @@ struct GenerationSubmissionEventPublicSurfaceTests {
     /// - Returns: The label.
     private static func submissionLabel(for event: SessionEvent) -> String? {
         switch event {
-        case .submissionQueued:
-            "waiting for the model"
         case .submissionStarted:
             "generating"
         case .submissionEnded:
@@ -47,8 +42,6 @@ struct GenerationSubmissionEventPublicSurfaceTests {
     /// - Returns: The id of the submission, or `nil` for another event.
     private static func submissionId(of event: SessionEvent) -> SubmissionID? {
         switch event {
-        case .submissionQueued(let id):
-            id
         case .submissionStarted(let start):
             start.submissionId
         case .submissionEnded(let end):

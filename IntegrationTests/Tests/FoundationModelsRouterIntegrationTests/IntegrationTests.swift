@@ -308,8 +308,8 @@ struct IntegrationTests {
             progress: progress
         )
         // The router carries the mode, not the loader: a loaded container
-        // serves every router in the pool, and the mode belongs to the router
-        // (`model-pool.md` §2.5). The pool is this test's own, never
+        // serves every router in the pool, and the mode belongs to the router.
+        // The pool is this test's own, never
         // `ModelPool.shared`: no other suite can hold a resident in it, and
         // dropping the profile when this test returns empties the pool it filled.
         let router = Router(

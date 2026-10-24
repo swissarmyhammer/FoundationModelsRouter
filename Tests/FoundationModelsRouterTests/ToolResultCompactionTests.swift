@@ -53,11 +53,6 @@ struct ToolResultCompactionTests {
 
         /// The temp directory the router cached into.
         let directory: URL
-
-        /// The queue of the pool entry of the model of the session. Every
-        /// call of the session and every own-model summarizer call is one
-        /// item of this queue.
-        let queue: GenerationQueue
     }
 
     /// The usage of a call that reports no count, as the engine does at the
@@ -91,10 +86,9 @@ struct ToolResultCompactionTests {
                 profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
             // The last step that can throw comes before the session, so no
             // throw leaves a session that the caller cannot close.
-            let queue = try #require(profile[keyPath: slot].backendQueue)
             let session = profile[keyPath: slot].makeSession(tools: [tool], budget: budget)
             return Fixture(
-                session: session, tool: tool, recorder: recorder, directory: directory, queue: queue)
+                session: session, tool: tool, recorder: recorder, directory: directory)
         }
     }
 
@@ -136,11 +130,11 @@ struct ToolResultCompactionTests {
     }
 
     /// Task ^6wqketz. The session is on the flash slot, so its compaction offers
-    /// the own-model tier only, and that summarizer call is one item on the
-    /// queue of the session's own model. The production change that makes this
-    /// test fail: a compaction that runs while the stopped submission still
-    /// holds the worker. The summarizer item then waits behind the submission
-    /// of its own session, and the answer never ends.
+    /// the own-model tier only, and that summarizer call runs on the session's
+    /// own model. The production change that makes this test fail: a
+    /// compaction that runs while the stopped submission still holds the
+    /// model. The summarizer call then waits behind the submission of its own
+    /// session, and the answer never ends.
     @Test("the own-model summarizer between two submissions of an answer completes, with no self-deadlock")
     func ownModelSummarizerBetweenTwoSubmissionsCompletes() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength, slot: \.flash)
@@ -150,12 +144,9 @@ struct ToolResultCompactionTests {
         let (log, answer) = SessionEventLog.collect(
             await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil))
         // The drain ends with the stream of the answer. A self-deadlock never
-        // ends the answer, so the test then stops here: a stack of the test
-        // process shows the summarizer item that waits behind the submission.
-        try await answer.value
-        // The pump submits each job of the answer and waits for it. A job
-        // leaves the count of the queue before its submitter resumes, so after
-        // the end of the pump the queue holds no job of this answer.
+        // ends the answer, so the test then stops here at the limit of the
+        // wait.
+        try await BoundedWait.value(of: answer)
         #expect(await fixture.session.pumpEnds())
 
         let events = await log.events
@@ -165,8 +156,6 @@ struct ToolResultCompactionTests {
         #expect(compaction.summaryEntryId != nil)
         #expect(events.submissionStarts.map(\.cause) == [.message, .continuation])
         #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
-        #expect(await fixture.queue.isRunning == false)
-        #expect(await fixture.queue.waitingCount == 0)
     }
 
     @Test("the record holds the stopped rounds, then the compaction boundary, then the continuation")

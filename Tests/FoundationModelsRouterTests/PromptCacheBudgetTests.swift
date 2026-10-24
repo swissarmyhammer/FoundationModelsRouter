@@ -171,13 +171,12 @@ private actor PromptCacheRecordingLoader: ModelLoader {
 /// The failure a load of ``PromptCacheBudgetTests`` throws on purpose.
 private struct DeliberateLoadFailure: Error {}
 
-/// Unit coverage of the prompt-cache memory budget (`generation-queue.md`
-/// section 3): the working set less the footprint of each resident model and
-/// less the bytes that are being written to disk. Inside its admission job, a
-/// resolve sends the budget to its loader before each acquire, and again after
-/// each acquire. The footprints task of each router sends the budget for each
-/// change of the pool that another caller makes: a load, a release, an
-/// eviction.
+/// Unit coverage of the prompt-cache memory budget: the working set less the
+/// footprint of each resident model and less the bytes that are being written
+/// to disk. Inside its admission job, a resolve sends the budget to its loader
+/// before each acquire, and again after each acquire. The footprints task of
+/// each router sends the budget for each change of the pool that another caller
+/// makes: a load, a release, an eviction.
 ///
 /// Each wait of this suite is on a real signal: a budget that the loader gets,
 /// or a load that starts.

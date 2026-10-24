@@ -34,7 +34,7 @@ import Testing
 ///   the whole model stays resident for the whole process.
 ///
 ///   Decoding is not a reason to reject a shared container. The mode is per
-///   call, not per container (`model-pool.md` §2.5). The container stores no
+///   call, not per container. The container stores no
 ///   `samplingMode`, and each `makeSession(...samplingMode:)` call names the
 ///   strategy of the backend that it makes. Thus one container can serve two
 ///   strategies at the same time. ``CompactionContinuityEvalRealSubjectRunner``

@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// The pure resolver that turns the address of a send into a decision
-/// (ROUTER-4, the addressing table of session.md section 9): the live
+/// (ROUTER-4): the live
 /// targets, a recorded session to restore, an agent to start, a refusal
 /// with its reason and target, or the `unknownSession` error of the
 /// FoundationModelsExtras send contract for an unknown sender or target.
@@ -13,7 +13,7 @@ import Testing
 /// Each test builds the summaries by hand: no session runs. Only the link
 /// test makes a real folder, because a symbolic link must exist on disk to
 /// resolve.
-@Suite("SessionAddressResolution: the address rules of session.md section 9")
+@Suite("SessionAddressResolution: the address rules")
 struct SessionAddressResolutionTests {
     /// The decision of the resolver, or the error that it throws.
     typealias Outcome = Result<SessionAddressResolution, SessionDirectoryError>

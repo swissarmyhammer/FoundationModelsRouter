@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the prompt text of a mailed agent message (``Mail/promptText``),
-/// the prompt-injection guard of section 10.1 of `session.md`.
+/// the prompt-injection guard.
 ///
 /// The text names the session id of the sender and, from the header that the
 /// session directory writes, the agent, title and folder of the sender and

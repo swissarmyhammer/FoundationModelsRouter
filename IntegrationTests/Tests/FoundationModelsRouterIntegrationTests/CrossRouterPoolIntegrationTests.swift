@@ -13,7 +13,7 @@ import Testing
 /// The decoding strategy both routers of this suite generate with.
 ///
 /// Argmax, the pin every other gated suite of this target states. The router
-/// carries the mode, not the container (`model-pool.md` §2.5). A container that
+/// carries the mode, not the container. A container that
 /// two routers share decodes with each router's own mode.
 private let crossRouterSamplingMode: GenerationOptions.SamplingMode = .greedy
 
@@ -164,7 +164,7 @@ private func answer(on session: any RoutedSession) async throws -> String {
 
 // MARK: - Suite
 
-/// Gated real-model coverage for `model-pool.md` §3: two routers over one
+/// Gated real-model coverage for two routers over one
 /// ``ModelPool`` load a real model one time.
 ///
 /// ## What it proves
@@ -188,8 +188,7 @@ private func answer(on session: any RoutedSession) async throws -> String {
 /// `Tests/FoundationModelsRouterTests/CrossRouterResidencyTests.swift` proves
 /// the same rules over stub loaders. Only a real ``LiveModelLoader`` proves
 /// that a real MLX container survives the first router's release, because the
-/// live loader's eviction reaches the MLX layer's own process-global cache
-/// (`model-pool.md` §1.4).
+/// live loader's eviction reaches the MLX layer's own process-global cache.
 ///
 /// ## Why the pool is explicit
 ///

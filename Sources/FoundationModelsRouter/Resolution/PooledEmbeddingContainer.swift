@@ -7,7 +7,8 @@ import FoundationModelsExtras
 /// the container of the hold can come from a loader that is not the router's
 /// (the registry, the multitool). The router therefore uses it through the
 /// Extras embed protocol only, never by a cast to ``LoadedEmbeddingContainer``.
-/// Each ``embed(texts:)`` call is one job in the work queue of the model.
+/// Each ``embed(texts:)`` call goes to the model directly. The model
+/// serializes its own calls.
 struct PooledEmbeddingContainer: LoadedEmbeddingContainer {
     /// The embedder over the hold.
     private let embedder: PooledEmbedder
@@ -25,7 +26,7 @@ struct PooledEmbeddingContainer: LoadedEmbeddingContainer {
     ///
     /// - Parameter texts: The texts.
     /// - Returns: One vector for each text.
-    /// - Throws: What the work queue or the model throws.
+    /// - Throws: What the model throws.
     func embed(texts: [String]) async throws -> [[Float]] {
         try await embedder.embed(texts: texts)
     }

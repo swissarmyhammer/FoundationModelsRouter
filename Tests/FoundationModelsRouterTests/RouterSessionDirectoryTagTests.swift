@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// The tag and title changes of ``RouterSessionDirectory`` (ROUTER-2 through
-/// ROUTER-3, session.md section 5.3): `addTags`, `removeTags` and `setTitle`
+/// ROUTER-3): `addTags`, `removeTags` and `setTitle`
 /// check the tags, rewrite the `index.md` of the session, and send one
 /// `factsChanged`. A call that changes nothing sends no event.
 ///

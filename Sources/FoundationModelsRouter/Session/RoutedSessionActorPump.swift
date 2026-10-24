@@ -4,9 +4,8 @@ import FoundationModelsExtras
 import Logging
 import Tracing
 
-/// The work that the pump of a session runs now (`generation-queue.md`,
-/// section 5.4). The pump runs one work at a time, so a session never has
-/// two SDK calls, and no caller waits on a lock.
+/// The work that the pump of a session runs now. The pump runs one work at a
+/// time, so a session never has two SDK calls, and no caller waits on a lock.
 struct PumpWork {
     /// What the work is.
     enum Kind {
@@ -32,7 +31,7 @@ struct PumpWork {
 }
 
 /// ``RoutedSessionActor``'s pump: the one task of the session that submits
-/// for it (`generation-queue.md`, section 5.4, and `mailbox.md`, section 5).
+/// for it (`mailbox.md`, section 5).
 ///
 /// The pump is event driven. New mail wakes it (``wakePump()``), and it ends
 /// when a take gives no mail. Each cycle takes one batch of the mail queue
@@ -389,8 +388,8 @@ extension RoutedSessionActor: SessionMailObserver {
     }
 
     /// Holds the mail of a batch that only run mail started, because
-    /// ``mailOnlyAnswersInARow`` reached ``mailOnlyAnswerLimit``
-    /// (`generation-queue.md`, section 5.4). The mail goes back into the
+    /// ``mailOnlyAnswersInARow`` reached ``mailOnlyAnswerLimit``.
+    /// The mail goes back into the
     /// queue, held, so it starts no submission by itself, and the next
     /// user-type mail carries it. The catalog-change mail of the batch goes
     /// back too. The session reports the hold with
@@ -447,8 +446,7 @@ extension RoutedSessionActor: SessionMailObserver {
 
     /// Takes what a continuation submission of the running answer carries:
     /// all queued run mail, and the user-type mail that the options of the
-    /// answer admit (`generation-queue.md`, section 5.5,
-    /// ``joinsRunningAnswer(_:options:isGuided:)``). The mail joins the open
+    /// answer admit (``joinsRunningAnswer(_:options:isGuided:)``). The mail joins the open
     /// answer, so the terminal event of the answer ends it. User-type mail
     /// that the options do not admit waits for the next answer. The take
     /// stops at the first screening mail (``takeScreenedMail(admitting:)``),
@@ -474,9 +472,9 @@ extension RoutedSessionActor: SessionMailObserver {
         cancelRequestedWorkId = nil
     }
 
-    /// Gives the answer that starts now fresh limits (`generation-queue.md`,
-    /// section 5.5). An answer is the chain of submissions from the first
-    /// delivery to the final answer, so its limits are for the whole chain:
+    /// Gives the answer that starts now fresh limits. An answer is the chain of
+    /// submissions from the first delivery to the final answer, so its limits
+    /// are for the whole chain:
     ///
     /// - ``compactionYieldsStopped``: a compaction inside the answer that
     ///   applied no summary stops the next ones of that answer only;

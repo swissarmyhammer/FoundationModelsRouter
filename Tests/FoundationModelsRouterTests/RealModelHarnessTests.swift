@@ -192,8 +192,8 @@ struct RealModelHarnessTests {
                 recordingsDir: recordingsDir
             )
 
-            // The mode belongs to the router, not to the container
-            // (`model-pool.md` §2.5). A gated suite states its pin here one
+            // The mode belongs to the router, not to the container.
+            // A gated suite states its pin here one
             // time, and each session the profile vends gives that pin to
             // `makeSession`. A container that stored the mode is gone, so a
             // handle that did not carry it would decode with the provider

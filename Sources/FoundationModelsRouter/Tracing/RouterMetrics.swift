@@ -44,8 +44,8 @@ struct RouterMetrics: Sendable {
     /// time, its prefill and decode times, and its decode rate.
     ///
     /// The rate is the generated tokens over the decode time alone (task
-    /// ^e5kyhwb): the prefill, the wait for the worker and the tool bodies
-    /// are not in it. Each call records its whole time (task ^0m997jr). A
+    /// ^e5kyhwb): the prefill, the wait for the lock of the model and the
+    /// tool bodies are not in it. Each call records its whole time (task ^0m997jr). A
     /// call whose first output token the session did not see records no
     /// prefill, no decode time and no rate, and a call with no decode time
     /// records no rate, because the rate of no time has no value. A call
@@ -191,22 +191,6 @@ struct RouterMetrics: Sendable {
     func recordCancelledMail(_ count: Int) {
         guard count > 0 else { return }
         Counter(label: RouterTelemetry.MetricName.mailCancelled, factory: factory).increment(by: count)
-    }
-
-    /// Sets the gauge of the submissions that wait in the generation queue of
-    /// a model.
-    ///
-    /// Each session over one model submits to the one queue of that model,
-    /// so each writer of one gauge reads the same queue.
-    ///
-    /// - Parameters:
-    ///   - waiting: The count of the waiting submissions.
-    ///   - model: The model of the queue.
-    func recordGenerationQueueWaiting(_ waiting: Int, model: ModelRef) {
-        Gauge(
-            label: RouterTelemetry.MetricName.generationQueueWaiting,
-            dimensions: [(RouterTelemetry.MetricDimension.modelRef, model.stringValue)], factory: factory
-        ).record(waiting)
     }
 
     /// Counts one compaction.

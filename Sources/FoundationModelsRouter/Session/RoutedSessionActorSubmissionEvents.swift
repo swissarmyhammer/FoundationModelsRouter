@@ -1,7 +1,7 @@
 import Tracing
 
 /// One submission of the running answer that the session opened and did not
-/// end yet (`generation-queue.md`, section 5.6).
+/// end yet.
 struct RunningSubmission {
     /// The start record of the submission.
     let start: SubmissionStart
@@ -15,8 +15,7 @@ struct RunningSubmission {
 }
 
 /// ``RoutedSessionActor``'s events of a submission and of an answer, and the
-/// span of each submission (task ^x7cxsg3, `generation-queue.md`, section
-/// 5.6).
+/// span of each submission (task ^x7cxsg3).
 ///
 /// A submission is one attempt of the chain that answers the messages of the
 /// session. ``beginSubmission(cause:mailIds:)`` opens it when the attempt
@@ -106,13 +105,10 @@ extension RoutedSessionActor {
         runningSubmission?.span.context ?? ServiceContext.current
     }
 
-    /// Reports that the SDK call of the running submission started: the
-    /// worker of its queue started it, or, with no queue, the call started.
+    /// Reports that the SDK call of the running submission started.
     ///
-    /// The reported phases apply first, so a ``SessionEvent/submissionQueued(_:)``
-    /// of the same submission always comes before its start. A second call
-    /// for the same submission, and a call with no open submission, send
-    /// nothing.
+    /// The reported phases apply first. A second call for the same
+    /// submission, and a call with no open submission, send nothing.
     func submissionDidStart() {
         drainGenerationPassPhases()
         guard var running = runningSubmission, !running.hasStarted else { return }

@@ -42,28 +42,26 @@ import Synchronization
 /// Extras `MLXModelLoader` makes and loads the model; the router makes no
 /// `MLXLanguageModel` itself (see ``make(wrapping:repo:)``).
 ///
-/// The container stores no decoding strategy. The mode belongs to the router
-/// (`model-pool.md` §2.5): each `makeSession(...samplingMode:)` call gives
+/// The container stores no decoding strategy. The mode belongs to the router:
+/// each `makeSession(...samplingMode:)` call gives
 /// the backend it makes the mode that call names, so two routers over one
 /// pooled container each decode with their own mode. A call that names no
 /// mode gets the provider default.
 ///
-/// The container makes no ``GenerationQueue``. The entry of the model in the
-/// Extras model pool owns the one queue of the model, and the router gives it
-/// through ``submitting(to:)``. Each backend of that copy runs over a new
-/// per-session ``SessionLanguageModel`` and names the queue, so its session
-/// submits each whole SDK call to it (`generation-queue.md`, section 5.3).
+/// The container holds no queue and no lock. Each backend runs over a new
+/// per-session ``SessionLanguageModel``, whose passes call the model through
+/// `PooledGeneration.run(ref:channel:_:)` of FoundationModelsExtras. The FIFO
+/// lock of the MLX model serializes the generations, one generation at a
+/// time, and no tool body runs under it.
 package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The raw `LanguageModel` conformance of this slot's resident MLX model.
     /// The eviction of the loader and the thinking control of a backend read
     /// it; generation runs over a ``SessionLanguageModel`` that wraps it.
     let model: MLXLanguageModel
 
-    /// The work queue of the pool entry that every backend of this container
-    /// names, or `nil` before the router gives one through
-    /// ``submitting(to:)``. It is a reference type, so each copy of this
-    /// container holds the same queue.
-    private(set) var generationQueue: GenerationQueue?
+    /// The model reference of ``model``. Each pass of each backend of this
+    /// container names it in the in-flight meter.
+    let ref: ModelRef
 
     /// The window of ``model``, in tokens: the native max context its
     /// `config.json` declares. Each backend this container makes sends it
@@ -74,28 +72,18 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// ``LoadedLLMContainer/tokenCounter``.
     package let tokenCounter: any TokenCounter
 
-    /// Makes a container that names no queue. The router gives it the queue
-    /// of the pool entry through ``submitting(to:)``.
+    /// Makes a container over a resident model.
     ///
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance of the resident model.
+    ///   - ref: The model reference of `model`.
     ///   - contextWindow: The window of `model`, in tokens.
     ///   - tokenCounter: The counter over the tokenizer of `model`.
-    init(model: MLXLanguageModel, contextWindow: Int, tokenCounter: any TokenCounter) {
+    init(model: MLXLanguageModel, ref: ModelRef, contextWindow: Int, tokenCounter: any TokenCounter) {
         self.model = model
+        self.ref = ref
         self.contextWindow = contextWindow
         self.tokenCounter = tokenCounter
-    }
-
-    /// Gives a copy of this container whose backends name `queue`, the work
-    /// queue of the pool entry of ``model``.
-    ///
-    /// - Parameter queue: The work queue of the pool entry.
-    /// - Returns: The copy.
-    package func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer {
-        var copy = self
-        copy.generationQueue = queue
-        return copy
     }
 
     /// Makes a live session backend over ``model`` that decodes with the
@@ -141,7 +129,7 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         instructions: String?, tools: [any FoundationModels.Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            model: model, ref: ref, contextWindow: contextWindow,
             instructions: instructions, tools: tools, samplingMode: samplingMode)
     }
 
@@ -164,7 +152,7 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            model: model, ref: ref, contextWindow: contextWindow,
             transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 }
@@ -196,11 +184,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// builds a new wrapper over it.
     private let model: any FoundationModels.LanguageModel
 
-    /// The work queue of the pool entry of ``model``, which the session of
-    /// this backend submits each generating call to, or `nil` when the
-    /// container got no queue. This backend, its forks and its replaced
-    /// transcripts name it.
-    let generationQueue: GenerationQueue?
+    /// The model reference of ``model``. Each pass of the session of this
+    /// backend names it in the in-flight meter. This backend, its forks and
+    /// its replaced transcripts name it.
+    let ref: ModelRef
 
     /// The live session every call on this backend runs through.
     private let liveSession: LanguageModelSession
@@ -279,8 +266,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance that the session's
     ///     wrapper wraps.
-    ///   - generationQueue: The work queue of the pool entry of `model`, or
-    ///     `nil` for no queue.
+    ///   - ref: The model reference of `model`.
     ///   - contextWindow: The window of `model`, in tokens. A call that names
     ///     no ceiling sends it as `maximumResponseTokens`.
     ///   - instructions: The system instructions of the session, or `nil`.
@@ -290,20 +276,20 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///     the new per-session wrapper it receives.
     private init(
         model: any FoundationModels.LanguageModel,
-        generationQueue: GenerationQueue?,
+        ref: ModelRef,
         contextWindow: Int,
         instructions: String?,
         tools: [any FoundationModels.Tool],
         samplingMode: GenerationOptions.SamplingMode?,
         makeSession: (SessionLanguageModel) -> LanguageModelSession
     ) {
-        let sessionModel = SessionLanguageModel(wrapping: model)
+        let sessionModel = SessionLanguageModel(wrapping: model, ref: ref)
         let liveSession = makeSession(sessionModel)
         let state = sessionModel.state
         self.liveSession = liveSession
         self.sessionModelState = state
         self.model = model
-        self.generationQueue = generationQueue
+        self.ref = ref
         self.contextWindow = contextWindow
         self.instructions = instructions
         self.tools = tools
@@ -315,8 +301,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance.
-    ///   - generationQueue: The work queue of the pool entry of `model`, or
-    ///     `nil` for no queue.
+    ///   - ref: The model reference of `model`.
     ///   - contextWindow: The window of `model`, in tokens. A call that names
     ///     no ceiling sends it as `maximumResponseTokens`.
     ///   - instructions: The system instructions of the session, or `nil`.
@@ -324,14 +309,14 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
     convenience init(
         model: any FoundationModels.LanguageModel,
-        generationQueue: GenerationQueue?,
+        ref: ModelRef,
         contextWindow: Int,
         instructions: String?,
         tools: [any FoundationModels.Tool],
         samplingMode: GenerationOptions.SamplingMode? = nil
     ) {
         self.init(
-            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            model: model, ref: ref, contextWindow: contextWindow,
             instructions: instructions, tools: tools, samplingMode: samplingMode
         ) { sessionModel in
             LanguageModelSession(model: sessionModel, tools: SessionToolLayers.checked(tools), instructions: instructions)
@@ -343,8 +328,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance.
-    ///   - generationQueue: The work queue of the pool entry of `model`, or
-    ///     `nil` for no queue.
+    ///   - ref: The model reference of `model`.
     ///   - contextWindow: The window of `model`, in tokens.
     ///   - transcript: The transcript to seed the session from.
     ///   - tools: The tools of the session.
@@ -355,7 +339,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///     used as given.
     convenience init(
         model: any FoundationModels.LanguageModel,
-        generationQueue: GenerationQueue?,
+        ref: ModelRef,
         contextWindow: Int,
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool],
@@ -363,7 +347,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         instructions: String?? = nil
     ) {
         self.init(
-            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            model: model, ref: ref, contextWindow: contextWindow,
             instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
             tools: tools, samplingMode: samplingMode
         ) { sessionModel in
@@ -804,11 +788,11 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// Makes a new backend seeded from the accumulated transcript of this
     /// session, with the same ``tools`` and ``instructions``. A fork is a
     /// new session, so its session runs over a new per-session wrapper, and
-    /// it names the same queue.
+    /// it names the same model reference.
     func makeFork() -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
             model: model,
-            generationQueue: generationQueue,
+            ref: ref,
             contextWindow: contextWindow,
             transcript: liveSession.transcript,
             tools: tools,
@@ -819,19 +803,19 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
 
     /// Makes a new backend over ``model`` seeded from `transcript`, with this
     /// backend's ``tools``. Its session runs over a new per-session wrapper,
-    /// and it names the same queue.
+    /// and it names the same model reference.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
         replacingTranscript(transcript, tools: tools)
     }
 
     /// Makes a new backend over ``model`` seeded from `transcript`, with
     /// `tools` in place of this backend's ``tools``. Its session runs over a
-    /// new per-session wrapper, and it names the same queue.
+    /// new per-session wrapper, and it names the same model reference.
     func replacingTranscript(
         _ transcript: FoundationModels.Transcript, tools: [any FoundationModels.Tool]
     ) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            model: model, ref: ref, contextWindow: contextWindow,
             transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 
@@ -998,8 +982,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// Creates a live loader. The init needs no ``Router``.
     ///
     /// The loader stores no decoding strategy. A container it vends serves
-    /// every router in the pool, and the mode belongs to the router
-    /// (`model-pool.md` §2.5): pass it to `Router.init(samplingMode:)`.
+    /// every router in the pool, and the mode belongs to the router:
+    /// pass it to `Router.init(samplingMode:)`.
     ///
     /// The cache folder holds only the models. The sizing metadata of a
     /// router is in a different folder: pass that folder to
@@ -1149,7 +1133,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
                 throw LiveModelLoaderError.notAnMLXLanguageModel(
                     key: key, containerType: String(describing: type(of: loaded)))
             }
-            return try await MLXFoundationModelsContainer.make(wrapping: model, repo: ref.repo)
+            return try await MLXFoundationModelsContainer.make(wrapping: model, ref: ref)
         } catch {
             await modelLoader.evict(loaded)
             throw error
@@ -1281,12 +1265,12 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// `IntegrationTests/`) resolve `stable` to
     /// `ffac55d4e9e0f75d30347c561cea042b674be831`.
     ///
-    /// The Router does not set the disk budget. It keeps the fork default:
-    /// one quarter of the free space of the volume of the spool folder, read
-    /// at the first use. The Router knows nothing about the disk that the fork
-    /// does not know, and a file on disk costs no memory. A read of a spilled
-    /// entry costs much less than the prefill it saves (`generation-queue.md`
-    /// section 3), so a larger disk budget than the default has no clear gain.
+    /// The Router does not set the disk budget. It keeps the fork default: one
+    /// quarter of the free space of the volume of the spool folder, read at the
+    /// first use. The Router knows nothing about the disk that the fork does
+    /// not know, and a file on disk costs no memory. A read of a spilled entry
+    /// costs much less than the prefill it saves, so a larger disk budget than
+    /// the default has no clear gain.
     ///
     /// - Parameter memoryBudgetBytes: The most bytes the prompt-cache entries
     ///   in memory may hold.

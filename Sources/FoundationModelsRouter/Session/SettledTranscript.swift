@@ -1,7 +1,7 @@
 import FoundationModels
 
 /// The transcript of a session as of its last settled point, with the
-/// recording cut of that same point (`generation-queue.md`, section 5.8).
+/// recording cut of that same point.
 ///
 /// A settled point is a moment when no SDK call writes the backend
 /// transcript: the end of a submission, after its recording diff; a

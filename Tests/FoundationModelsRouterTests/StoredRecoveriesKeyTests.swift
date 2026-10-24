@@ -4,10 +4,10 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Task ^5d0qx1b: the Swift property ``RepetitionDetection/recoveriesPerAnswer``
-/// keeps the key `recoveriesPerTurn` on disk (`generation-queue.md`, section
-/// 5.6). A recording written before the rename loads, and a session written
-/// now writes the same key.
+/// Task ^5d0qx1b: the Swift property
+/// ``RepetitionDetection/recoveriesPerAnswer`` keeps the key
+/// `recoveriesPerTurn` on disk. A recording written before the rename loads,
+/// and a session written now writes the same key.
 ///
 /// The fixture `Fixtures/PreRequestRenameRecording` is a recording that the
 /// router wrote before the work-queue change. The test target excludes

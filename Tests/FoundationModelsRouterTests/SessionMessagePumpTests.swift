@@ -8,7 +8,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^3qx0mpt: a session is a queue of messages with one pump,
-/// and no lock (`generation-queue.md`, section 5.4).
+/// and no lock.
 ///
 /// A caller prompt and the mail of a session wait in its ``SessionOutbox``.
 /// One pump task for each session is the only code that submits for that

@@ -6,7 +6,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The archive of a session (ROUTER-11, session.md section 5.8):
+/// The archive of a session (ROUTER-11):
 /// ``RouterSessionDirectory/archive(_:by:)`` stops a running turn, takes the
 /// session off the live list, writes `archivedAt` to its `index.md`, and
 /// sends one `archived`. A second archive gives the summary and sends no

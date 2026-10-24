@@ -36,7 +36,7 @@ import struct FoundationModelsExtras.MLXModelLoader
 ///
 /// ## Why the value carries the mode
 ///
-/// The container stores no decoding strategy (`model-pool.md` §2.5, step B).
+/// The container stores no decoding strategy.
 /// The mode belongs to the router, and each `makeSession(...samplingMode:)`
 /// call names it. A gated suite that calls `makeSession` on the bare
 /// ``container`` has no router. So this value keeps the mode the suite passed
@@ -175,11 +175,7 @@ public struct RealModelContainer: Sendable {
         }
         let loaded = try await makeLoader(chatTemplateDate: chatTemplateDate).loadLLM(
             ref: ref, slot: .standard, context: context, reporting: { _ in })
-        // A suite uses the container outside the model pool, so this queue
-        // stands in for the queue of the pool entry. Each backend of the
-        // container submits to it.
-        let queued = loaded.submitting(to: GenerationQueue())
-        let container = try #require(queued as? MLXFoundationModelsContainer)
+        let container = try #require(loaded as? MLXFoundationModelsContainer)
         return RealModelContainer(container: container, samplingMode: samplingMode)
     }
 

@@ -126,9 +126,7 @@ struct SlotPoolLoader: PooledModelLoader {
 }
 
 extension ModelHold {
-    /// The container of this hold as a generation container whose backends
-    /// name ``queue``, the one work queue of the pool entry. Thus each session
-    /// of each holder of the key submits to that queue.
+    /// The container of this hold as a generation container.
     ///
     /// The first loader of the key can be the Extras `MLXModelLoader` of a
     /// `PooledModel`, which gives a bare `MLXLanguageModel`. The router then
@@ -136,21 +134,20 @@ extension ModelHold {
     /// (``MLXFoundationModelsContainer/make(wrapping:repo:)``), so a
     /// `PooledModel` and a router share one resident model in either order.
     ///
-    /// - Returns: The container, given ``queue`` through
-    ///   ``LoadedLLMContainer/submitting(to:)``.
+    /// - Returns: The container.
     /// - Throws: ``PooledGenerationError/notAGenerationContainer(key:containerType:)``
     ///   when the first loader of the key gave a container that is neither a
     ///   ``LoadedLLMContainer`` nor an `MLXLanguageModel`, or the error of the
     ///   wrap of an `MLXLanguageModel`.
     func generationContainer() async throws -> any LoadedLLMContainer {
         if let generation = container as? any LoadedLLMContainer {
-            return generation.submitting(to: queue)
+            return generation
         }
         guard let model = container as? MLXLanguageModel else {
             throw PooledGenerationError.notAGenerationContainer(
                 key: key, containerType: String(describing: type(of: container)))
         }
-        return try await MLXFoundationModelsContainer.make(wrapping: model, repo: key.ref.repo).submitting(to: queue)
+        return try await MLXFoundationModelsContainer.make(wrapping: model, ref: key.ref)
     }
 }
 

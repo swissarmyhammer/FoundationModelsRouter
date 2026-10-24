@@ -186,8 +186,7 @@ chain.
 
 ### Session-scoped events
 
-Each submission sends ``SessionEvent/submissionQueued(_:)`` (only when it must
-wait for the worker of its model), ``SessionEvent/submissionStarted(_:)`` and
+Each submission sends ``SessionEvent/submissionStarted(_:)`` and
 ``SessionEvent/submissionEnded(_:)``. Each chain of submissions ends with
 ``SessionEvent/answered(_:)``, or with ``SessionEvent/answerFailed(_:)`` when
 it gives no answer.

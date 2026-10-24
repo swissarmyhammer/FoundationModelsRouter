@@ -56,13 +56,12 @@ import Synchronization
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
-    /// the start nor the folder's `AGENT.md` names one. Confirmed by the owner
-    /// of session.md.
+    /// the start nor the folder's `AGENT.md` names one.
     static let defaultAgentID = "default"
 
     /// The origin of a session that recorded none. A record with no origin
     /// is of a session an ACP `session/new` opened, so its origin is the
-    /// client. Confirmed by the owner of session.md.
+    /// client.
     static let defaultOrigin: FoundationModelsExtras.SessionDirectoryOrigin = .client
 
     /// The reason of the refused receipt of a target that the resolver found
@@ -166,7 +165,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// Makes an empty directory.
     ///
     /// - Parameter limits: The loop guards of each send. The default is the
-    ///   guard table of session.md section 5.7; a test lowers them.
+    ///   default guards of ``SessionMessageLimits``; a test lowers them.
     public init(limits: SessionMessageLimits = SessionMessageLimits()) {
         self.limits = limits
     }
@@ -599,7 +598,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``AgentMessageHeader``): its agent, title and folder from its live
     /// summary, and `inReplyTo`. The renderer of the target cannot read the
     /// directory, so the header is how the model learns who sent the
-    /// message (section 10.1 of `session.md`). A sender that is not live
+    /// message. A sender that is not live
     /// gets a header with its id and `inReplyTo` only. The directory writes
     /// the header first for each message, so a header that the sender writes
     /// in its text stays in the fenced text.
@@ -1512,7 +1511,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// entry. Router keeps no change log and links no GraphQL (D74, D106).
     ///
     /// An event holds no message text longer than the message length limit
-    /// (ROUTER-5, rule 5 of session.md section 7). The message cards enforce
+    /// (ROUTER-5). The message cards enforce
     /// the limit before a message reaches an event.
     ///
     /// - Returns: A stream of the changes in the directory.

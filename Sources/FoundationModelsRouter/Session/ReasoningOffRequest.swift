@@ -30,8 +30,8 @@ protocol ReasoningSwitchable {
 /// count, as any other stop does.
 ///
 /// The session binds the request around the model work of the recovery
-/// attempt (``requested(around:)``). The queue of the model runs that work on
-/// a task of its own, and the binding goes with the work. The backend reads
+/// attempt (``requested(around:)``). The model call runs that work on a task
+/// of its own, and the binding goes with the work. The backend reads
 /// ``isRequested`` when it starts the call, and states the level for the
 /// first pass of the call only
 /// (``SessionLanguageModelState/setFirstPassReasoningLevel(_:)``).

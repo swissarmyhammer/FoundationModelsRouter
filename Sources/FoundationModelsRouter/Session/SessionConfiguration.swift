@@ -60,8 +60,7 @@ public struct SessionConfiguration: Sendable {
     public static let defaultMailOnlyAnswerLimit = 100
 
     /// The most answers that run mail alone starts and that start a new
-    /// background run, with no user-type mail between them
-    /// (`generation-queue.md`, section 5.4).
+    /// background run, with no user-type mail between them.
     ///
     /// Run mail causes the next submission of the session with no caller call.
     /// So a model that starts one more background run in each answer gets one

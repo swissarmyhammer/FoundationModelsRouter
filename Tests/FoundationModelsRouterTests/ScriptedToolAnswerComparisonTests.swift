@@ -125,7 +125,7 @@ struct ScriptedToolAnswerComparisonTests {
                 failedIds.append(id)
             case .toolStatus, .toolInvocation, .toolCallReport, .toolDisplay, .reasoningDelta, .entryRecorded,
                 .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
-                .submissionQueued, .submissionStarted, .submissionEnded, .answered, .answerFailed,
+                .submissionStarted, .submissionEnded, .answered, .answerFailed,
                 .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress, .elicitationRequested,
                 .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone, .workStarted,
                 .workEnded, .elicitationEnded, .elicitationCompleted:

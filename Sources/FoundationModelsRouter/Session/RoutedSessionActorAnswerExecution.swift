@@ -733,66 +733,33 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs one attempt's model call as one submission of ``backend`` to the
-    /// queue of its model, in a task this session can cancel from outside the
-    /// pump, and awaits its result.
+    /// Runs one attempt's model call in a task this session can cancel from
+    /// outside the pump, and awaits its result.
     ///
-    /// The queue and the model are ``ownSubmissionTarget``. See
-    /// ``runCancellableModelCall(composedPrompt:submittingTo:_:)``.
+    /// The model call is `body` itself: one whole SDK call, with all of its
+    /// passes and tool bodies. No lock and no queue is around it. Each pass
+    /// of the call is one call into the model (``SessionLanguageModel``), and
+    /// only an MLX model holds a lock, for that one generation. Thus a tool
+    /// body of the call holds nothing, and a session over the same model
+    /// generates while the tool body runs.
+    ///
+    /// The task of the call binds the task-locals of the model call (see
+    /// ``submission(of:composedPrompt:mark:boundary:checks:context:serviceContext:origin:callerWork:session:)``).
+    /// The SDK gives them to each tool body that it runs inside the call.
+    ///
+    /// Cancelling ``inFlightModelCall`` unwinds `body` and every in-band tool
+    /// call under it. A background run keeps running in the session's
+    /// ``runPlane``. The recording of the call runs after this returns or
+    /// throws and is never cancelled.
     ///
     /// - Parameters:
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
     ///   - body: The model work to run: one whole SDK call.
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, `CancellationError` when this work
-    ///   was already cancelled before its model call started, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    /// - Throws: Whatever `body` throws, or `CancellationError` when this
+    ///   work was already cancelled before its model call started.
     internal func runCancellableModelCall(
         composedPrompt: String,
-        _ body: @escaping @Sendable (String) async throws -> String
-    ) async throws -> String {
-        try await runCancellableModelCall(composedPrompt: composedPrompt, submittingTo: ownSubmissionTarget, body)
-    }
-
-    /// The queue that each model call of ``backend`` is one submission to, and
-    /// this session's model, or `nil` when the backend names no queue.
-    var ownSubmissionTarget: SubmissionTarget? {
-        backend.generationQueue.map { SubmissionTarget(queue: $0, model: model) }
-    }
-
-    /// Runs one model call as one submission to the queue of `target`, in a
-    /// task this session can cancel from outside the pump, and awaits its
-    /// result (`generation-queue.md`, section 5.3).
-    ///
-    /// The submission is `body` itself: one whole SDK call, with all of its
-    /// passes and tool bodies. The worker of the queue runs it on a task of
-    /// its own, which inherits no task-local of this call, so the submission
-    /// binds the task-locals of the model call itself (see
-    /// ``submission(of:composedPrompt:mark:boundary:checks:context:serviceContext:origin:callerWork:session:)``).
-    /// Any other task-local of the caller does not reach the tool bodies of a
-    /// queued call. With no `target`, the call runs directly, on a task of
-    /// its own.
-    ///
-    /// Cancelling ``inFlightModelCall`` removes a submission that still waits
-    /// for the worker, or unwinds `body` and every in-band tool call under it.
-    /// A background run keeps running in the session's ``runPlane``. The
-    /// recording of the submission runs after this returns or throws and is
-    /// never cancelled.
-    ///
-    /// - Parameters:
-    ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
-    ///   - target: The queue the call is one submission to, and its model, or
-    ///     `nil` to run the call directly.
-    ///   - body: The model work to run.
-    /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, `CancellationError` when this work
-    ///   was already cancelled before its model call started or while its
-    ///   submission waited, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when this
-    ///   call comes from inside an open submission on the same queue.
-    internal func runCancellableModelCall(
-        composedPrompt: String,
-        submittingTo target: SubmissionTarget?,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         // A cancellation that landed while this work held no model call —
@@ -829,16 +796,15 @@ extension RoutedSessionActor {
         )
         // The mark of this model call, published for exactly this call. A tool
         // the model invokes from inside the call reads it, so a wait for an
-        // answer of this same session, or a submission to the same queue, is
-        // refused at once rather than parked behind this submission, which
-        // waits for the tool. Closed in the `defer` below, so a task that
-        // outlives the call is in no model call of this session. See
-        // ``ModelCallMark``.
-        let modelCallMark = ModelCallMark(sessionID: id, submission: target)
+        // answer of this same session is refused at once rather than parked
+        // behind this call, which waits for the tool. Closed in the `defer`
+        // below, so a task that outlives the call is in no model call of
+        // this session. See ``ModelCallMark``.
+        let modelCallMark = ModelCallMark(sessionID: id)
         defer { modelCallMark.close() }
-        // The origin of the work that makes this call. The worker task of the
-        // queue inherits no task-local, so the submission and the report of
-        // its start bind it again, and each event of the call keeps it.
+        // The origin of the work that makes this call. The submission and the
+        // report of its start bind it again, and each event of the call
+        // keeps it.
         let origin = OriginContext.current
         // The stall watch (task ^z6xcmnh), opened before the call and closed
         // by its own `defer`. It bounds nothing: the watchdog only reports a
@@ -847,14 +813,13 @@ extension RoutedSessionActor {
         // while it is still running instead of only when it finally ends. See
         // ``RoutedSessionActor/reportGenerationStall(id:)``. The phase reports
         // of this call (tasks ^ake8sax and ^1psqdm9) feed the same watch, so
-        // it counts only the time inside a pass of the running submission, and
-        // they tell the consumer about the wait and the start of the
-        // submission. They close first, so the last reports reach the watch
-        // and the answer before the watch ends. The watchdog and the reader
+        // it counts only the time from the first output of a pass to its end.
+        // They close first, so the last reports reach the watch and the
+        // answer before the watch ends. The watchdog and the reader
         // of the reports are helper tasks (``helperTasks``): the call cancels
         // them and does not wait, and the drain of ``close()`` waits until
         // they ended.
-        let stallWatchId = beginGenerationStallWatch(submitsToQueue: target != nil)
+        let stallWatchId = beginGenerationStallWatch()
         let passReports = openGenerationPassReports(callID: stallWatchId)
         let stallWatchdog = helperTasks.start { await self.watchGenerationForStalls(id: stallWatchId) }
         defer {
@@ -887,10 +852,9 @@ extension RoutedSessionActor {
             callerWork: openAnswerCallerWork,
             session: self)
         let observer = generationPassObserver
-        let metrics = sessionMetrics
         let modelCall = Task {
             try await Self.run(
-                submission, on: target, reportingTo: observer, metrics: metrics,
+                submission, reportingTo: observer,
                 onStart: { await OriginContext.$current.withValue(origin) { await self.submissionDidStart() } })
         }
         cancellationProbe.bind(to: modelCall)
@@ -912,9 +876,8 @@ extension RoutedSessionActor {
     /// The submission of one model call: `body` over `composedPrompt`, with
     /// the task-locals of the call bound around it.
     ///
-    /// The worker of a queue runs the submission on a task that inherits no
-    /// task-local of the session, so the submission binds each one itself.
-    /// The SDK gives them to each tool body it runs inside the call. The
+    /// The submission binds each task-local of the call itself, around
+    /// `body`. The SDK gives them to each tool body it runs inside the call. The
     /// tracing `ServiceContext` of the submission is one of them, so the span
     /// of each tool call stays a child of the span of its submission. The
     /// ``SessionOwnWork`` of the session of `context` is one more: each tool
@@ -975,49 +938,28 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs `submission` as one item of `queue`, and reports its wait and its
-    /// start to `observer`, or runs it directly when there is no queue.
+    /// Reports the start of `submission` to `observer`, runs `onStart`, and
+    /// then runs `submission`.
     ///
-    /// `onStart` runs first, before `submission`, in both cases. It hops to
-    /// the actor and calls ``submissionDidStart()``, which sends
-    /// ``SessionEvent/submissionStarted(_:)``. That call applies the reported
-    /// phases first, so a ``SessionEvent/submissionQueued(_:)`` of the
-    /// submission always comes before its start. Because `submission` starts
-    /// only after `onStart` returns, no content of the submission comes before
-    /// its start.
-    ///
-    /// At the start of a queue item, the item also sets the gauge of the
-    /// submissions that wait behind it in the queue of its model
-    /// (``RouterMetrics/recordGenerationQueueWaiting(_:model:)``). The item
-    /// runs on the worker task of the queue, and not on the pump, so the read
-    /// of the count adds no suspension point to the pump.
+    /// `onStart` hops to the actor and calls ``submissionDidStart()``, which
+    /// sends ``SessionEvent/submissionStarted(_:)``. Because `submission`
+    /// starts only after `onStart` returns, no content of the submission
+    /// comes before its start.
     ///
     /// - Parameters:
     ///   - submission: The submission of one model call.
-    ///   - target: The queue of the model and the model, or `nil`.
     ///   - observer: The observer of this session's model calls.
-    ///   - metrics: The metrics recorder of this session.
-    ///   - onStart: The closure that reports the start of the submission. It
-    ///     runs at the start of the queue item, or before the direct call.
+    ///   - onStart: The closure that reports the start of the submission.
     /// - Returns: What `submission` returns.
-    /// - Throws: What the queue or `submission` throws.
+    /// - Throws: What `submission` throws.
     private static func run(
         _ submission: @escaping @Sendable () async throws -> String,
-        on target: SubmissionTarget?,
         reportingTo observer: GenerationPassObserver,
-        metrics: RouterMetrics,
         onStart: @escaping @Sendable () async -> Void
     ) async throws -> String {
-        guard let target else {
-            await onStart()
-            return try await submission()
-        }
-        return try await target.queue.submit(onQueued: { observer.submissionQueued() }) {
-            observer.submissionStarted()
-            metrics.recordGenerationQueueWaiting(await target.queue.waitingCount, model: target.model)
-            await onStart()
-            return try await submission()
-        }
+        observer.submissionStarted()
+        await onStart()
+        return try await submission()
     }
 
     /// Whether a cancellation is outstanding against the work the pump runs,

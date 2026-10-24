@@ -1,24 +1,23 @@
 import Foundation
 import FoundationModelsRouterTestSupport
-import Metrics
 import Synchronization
 import Testing
 
 @testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
-/// Pins that all users of one model share ONE work queue, and that the entry
-/// of the model in the Extras ``ModelPool`` owns it (``ModelHold/queue``). No
-/// router type makes a ``GenerationQueue``: each session backend of a routed
-/// handle names the queue of the pool entry, and each embed call of a
-/// ``RoutedEmbedder`` waits in the queue of the embedding model.
+/// Pins that all users of one model share ONE load of the entry of the model
+/// in the Extras ``ModelPool``, and that the router puts no queue around a
+/// call (task ^qhgfajc). The generations of all users of one model take the
+/// FIFO lock of that model one at a time, as the lock of an MLX model does,
+/// and each embed call of a ``RoutedEmbedder`` goes to the embedding model
+/// directly.
 ///
-/// Each test waits on real signals (a latch, a semaphore, the
-/// ``SessionEvent/submissionQueued(_:)`` event of a session, the queue depth
-/// metric that a queue records when it accepts a job), never on the clock. No
-/// network, no GPU.
-@Suite("The work queue of the pool entry")
-struct PoolEntryQueueTests {
+/// Each test waits on real signals (a latch, a semaphore, a pass that waits
+/// for the lock of the model), never on the clock, inside the limit of a
+/// ``BoundedWait``. No network, no GPU.
+@Suite("The entry of a model in the pool: one load, and no queue of the router")
+struct PoolEntrySharingTests {
     // MARK: - Fixed values
 
     /// A host budget that fits every profile of this suite many times.
@@ -85,7 +84,7 @@ struct PoolEntryQueueTests {
             entered.signal()
             await gate.wait()
             calls.withLock { $0.active -= 1 }
-            return texts.map { _ in [Float](repeating: PoolEntryQueueTests.vectorElement, count: dimension) }
+            return texts.map { _ in [Float](repeating: PoolEntrySharingTests.vectorElement, count: dimension) }
         }
     }
 
@@ -142,79 +141,74 @@ struct PoolEntryQueueTests {
 
     // MARK: - Generation
 
-    @Test("sessions of two routers on one model use the queue of the pool entry, one call at a time, in FIFO order")
+    @Test("sessions of two routers on one model share one load, and take the lock of the model one generation at a time, in FIFO order")
     @MainActor
-    func sessionsOfTwoRoutersShareTheEntryQueueInOrder() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "PoolEntryQueueTests")
+    func sessionsOfTwoRoutersShareOneLoadAndTakeTurnsInOrder() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "PoolEntrySharingTests")
         defer { try? FileManager.default.removeItem(at: dir) }
         let pool = ModelPool()
         let fixture = PassObservingFixture()
         let trio = Self.uniqueTrio(named: "generation")
+        let firstSpy = LoadSpy()
+        let secondSpy = LoadSpy()
         let first = ResidencyFixtures.makeRouter(
-            spy: LoadSpy(), recommendedMaxWorkingSetSize: Self.ampleBudget, cacheDir: dir, pool: pool,
+            spy: firstSpy, recommendedMaxWorkingSetSize: Self.ampleBudget, cacheDir: dir, pool: pool,
             llmContainer: { _ in fixture.makeContainer() })
         let second = ResidencyFixtures.makeRouter(
-            spy: LoadSpy(), recommendedMaxWorkingSetSize: Self.ampleBudget, cacheDir: dir, pool: pool,
+            spy: secondSpy, recommendedMaxWorkingSetSize: Self.ampleBudget, cacheDir: dir, pool: pool,
             llmContainer: { _ in fixture.makeContainer() })
         let fromFirst = try await first.resolve(profile: trio, reporting: ResolutionProgress())
         let fromSecond = try await second.resolve(profile: trio, reporting: ResolutionProgress())
 
-        // The queue of the pool entry of the standard model.
-        let standardKey = ModelPoolKey(ref: try #require(trio.standard.first), role: .llm)
-        let hold = try await Self.residentHold(of: standardKey, in: pool)
-        let queue = hold.queue
-        #expect(fromFirst.standard.backendQueue === queue)
-        #expect(fromSecond.standard.backendQueue === queue)
+        // One load of the standard model for both routers.
+        let standard = try #require(trio.standard.first)
+        let firstLoads = await firstSpy.llmLoads
+        let secondLoads = await secondSpy.llmLoads
+        let standardLoads = (firstLoads + secondLoads).filter { $0 == standard }
+        #expect(standardLoads.count == 1)
 
-        // The first call holds the model. The next two wait in the one queue,
-        // in the order they are submitted. A session sends
-        // `submissionQueued` when its submission joins the queue behind
-        // another job. Each wait also ends when its answer ended (rule T1):
-        // the latch holds the first answer in the model and the next answers
-        // in the queue, so in a test that passes no answer ends first.
+        // The first call holds the lock of the model. The next two wait for
+        // that lock, in the order they came. Each wait also ends when its
+        // answer ended (rule T1): the latch holds the first answer in the
+        // model and the next passes in the lock, so in a test that passes no
+        // answer ends first.
         let sessions = [fromFirst, fromSecond, fromFirst].map { $0.standard.makeSession() }
         // The latch opens before the closes, also when the test throws (rule
         // T1): a close waits for the held pass.
         defer { await SessionFixtureLifecycle.close(sessions, opening: [fixture.latch]) }
-        var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
-        for session in sessions {
-            feeds.append(await SessionEventLog.watch(session))
-        }
-        defer { feeds.forEach { $0.drain.cancel() } }
         var answers: [Task<String, any Error>] = []
         for (index, session) in sessions.enumerated() {
             let prompt = Self.prompts[index]
             let answer = Task { try await session.respond(to: prompt) }
             answers.append(answer)
             if index == 0 {
-                try await RecordedWaitResult.wait(
-                    for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
+                try await BoundedWait.run {
+                    try await RecordedWaitResult.wait(
+                        for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
+                }
             } else {
-                let log = feeds[index].log
-                try await RecordedWaitResult.wait(
-                    for: { try await log.waitForQueuedSubmissions(1) }, endingOnEndOf: answer)
+                try await BoundedWait.run { try await fixture.lock.waitForWaiters(index) }
             }
             #expect(await fixture.observer.enteredCount == 1)
-            #expect(await queue.waitingCount == index)
+            #expect(await fixture.lock.waitingCount == index)
         }
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
         for (index, answer) in answers.enumerated() {
-            #expect(try await answer.value == PassObservingModel.answer(to: Self.prompts[index]))
+            #expect(try await BoundedWait.value(of: answer) == PassObservingModel.answer(to: Self.prompts[index]))
         }
         #expect(fixture.passes.recorded.map(\.prompt) == Self.prompts)
         #expect(await fixture.observer.maximumActive == 1)
-        #expect(await queue.isRunning == false)
-        withExtendedLifetime((first, second, fromFirst, fromSecond, hold)) {}
+        withExtendedLifetime((first, second, fromFirst, fromSecond)) {}
     }
 
     // MARK: - Embedding
 
-    @Test("a router embed call and a direct Extras embedder of one key share one load and one queue")
+    @Test("a router embed call and a direct Extras embedder of one key share one load, and the router adds no queue")
     @MainActor
-    func routerEmbedAndDirectEmbedderShareTheEntryQueue() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "PoolEntryQueueTests")
+    func routerEmbedAndDirectEmbedderShareOneLoad() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "PoolEntrySharingTests")
         defer { try? FileManager.default.removeItem(at: dir) }
         let pool = ModelPool()
         let spy = LoadSpy()
@@ -233,32 +227,24 @@ struct PoolEntryQueueTests {
         #expect(directLoader.loadCount.load(ordering: .sequentiallyConsistent) == 1)
         #expect(await spy.embedderLoads.isEmpty)
 
-        // The direct call holds the model. The router call waits in the queue
-        // of the pool entry, so it never enters the model at the same time.
+        // The direct call is in the model. The router call goes to the model
+        // directly: the router puts no queue around it, and the model
+        // serializes its own calls. Each wait also ends when its call ended
+        // (rule T1): the gate holds each call in the model, so in a test that
+        // passes no call ends first.
         let directEmbedder = try PooledEmbedder(hold: directHold)
-        // Each wait also ends when its call ended (rule T1): the gate holds
-        // the direct call in the model and the router call in the queue, so
-        // in a test that passes no call ends first.
         let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
         let entered = directLoader.embedding.entered
-        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall)
-        // The queue of the pool entry records its depth metric in the step
-        // that puts the job of the router call in its input, under the enqueue
-        // lock, with the factory that the task of that call binds. Thus when
-        // the probe signals, the job is in the queue.
-        let probe = QueueDepthProbe()
-        let routerCall = Task {
-            try await withMetricsFactory(probe) { try await profile.embedding.embed(texts: Self.texts) }
-        }
-        try await RecordedWaitResult.wait(forPermitOf: probe.enqueued, endingOnEndOf: routerCall)
+        try await BoundedWait.run { try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall) }
+        let routerCall = Task { try await profile.embedding.embed(texts: Self.texts) }
+        try await BoundedWait.run { try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: routerCall) }
 
         directLoader.embedding.gate.signal()
         directLoader.embedding.gate.signal()
         let expected = [[Float](repeating: Self.vectorElement, count: RouterTestFixtures.stubDimension)]
-        #expect(try await directCall.value == expected)
-        #expect(try await routerCall.value == expected)
-        #expect(directLoader.embedding.peakActiveCalls == 1)
-        #expect(await directHold.queue.isRunning == false)
-        withExtendedLifetime((router, profile)) {}
+        #expect(try await BoundedWait.value(of: directCall) == expected)
+        #expect(try await BoundedWait.value(of: routerCall) == expected)
+        #expect(directLoader.embedding.peakActiveCalls == 2)
+        withExtendedLifetime((router, profile, directHold)) {}
     }
 }

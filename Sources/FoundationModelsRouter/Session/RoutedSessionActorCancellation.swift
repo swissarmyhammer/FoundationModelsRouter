@@ -254,8 +254,8 @@ extension RoutedSessionActor {
     }
 
     /// Records a cancel of the work the pump runs, and cancels its model
-    /// call. A model call that waits for the worker of the model leaves the
-    /// queue at once; a running one gets the cancel on the task that runs it.
+    /// call. The cancel reaches the model call on the task that runs it, at
+    /// once, also while a pass of it waits for the lock of the model.
     /// A cancel that lands between two model calls of the work stops the
     /// next one before it starts (``isWorkCancelled``). Only ``cancelAll()``
     /// and ``close()`` call it: a cancel of one mail never stops the work.

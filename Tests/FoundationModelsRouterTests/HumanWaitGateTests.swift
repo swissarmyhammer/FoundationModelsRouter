@@ -6,16 +6,15 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises human waits (`generation-queue.md`, section 5.5, rule 6). The
-/// item of the per-model ``GenerationQueue`` is one whole submission to
-/// Foundation (task ^1psqdm9), and a tool body runs inside its submission. So
-/// a human wait inside a tool holds the model for every other session on it:
-/// their submissions wait behind the submission of the wait. The way to wait
-/// for a person without holding the model is an elicitation from a
-/// background run. The session has no wrapper for a human wait: a tool body
-/// waits for the person directly. A session has no lock (task ^3qx0mpt): its
-/// pump runs the answer for the full wait, and a message that arrives
-/// meanwhile waits in the outbox for the next submission.
+/// Exercises human waits (tasks ^1psqdm9 and ^qhgfajc). A lock must not cross
+/// over a tool call, only over the call into the model: the model holds its
+/// FIFO lock for one generation, and a tool body runs between two
+/// generations. So a human wait inside a tool holds nothing, and another
+/// session on the same model answers during the wait. The session has no
+/// wrapper for a human wait: a tool body waits for the person directly. A
+/// session has no lock (task ^3qx0mpt): its pump runs the answer for the full
+/// wait, and a message that arrives meanwhile waits in the outbox for the
+/// next submission.
 ///
 /// Everything runs against stubs with no network and no GPU: a backend whose
 /// `respond` runs a test-supplied closure mid-generation stands in for the SDK
@@ -24,14 +23,13 @@ import Testing
 ///
 /// Every moment a test here waits for is a signal that the run which reaches
 /// the moment sends (task ^1qpmghh): an ``AwaitedEvent`` from the tool body or
-/// from the end of a task, ``SessionEvent/submissionQueued(_:)`` for a
-/// submission that waits behind another, and the end of the pump task of the
-/// session for an idle session. A message that waits in the outbox is a
+/// from the end of a task, and the end of the pump task of the session for an
+/// idle session. A message that waits in the outbox is a
 /// change of ``RoutedSessionActor/stateChanges``, which the session signals
 /// after it puts the message in the queue. No wait here ends on a wall
 /// clock, so a loaded machine makes these tests slower and never red. Each
 /// wait ends on its event.
-@Suite("A human wait in a tool holds the model, and the session keeps its answer running")
+@Suite("A human wait in a tool holds no lock of the model, and the session keeps its answer running")
 struct HumanWaitGateTests {
     // MARK: - Failures raised from inside a human wait
 
@@ -71,8 +69,10 @@ struct HumanWaitGateTests {
     /// the model call, and whether anything reads a torn, half-appended
     /// transcript.
     ///
-    /// It declares the queue of its container, so the session submits each
-    /// whole call of this backend to that queue, as over a live container.
+    /// It holds the FIFO lock of the model of its container for the
+    /// generation before the hook and for the generation after it, as the
+    /// two passes of a tool loop over an MLX model do. The hook, the tool
+    /// body, runs between the two, outside the lock.
     ///
     /// Properly `Sendable`, like ``StubSessionBackend``: each mutable field is
     /// behind a ``Mutex``. A test reads ``entries`` from its own task while
@@ -81,9 +81,9 @@ struct HumanWaitGateTests {
         private let hook: AnswerHook
         private let observer: AnswerObserver
 
-        /// The queue of the container, which the session submits each whole
-        /// call of this backend to.
-        let generationQueue: GenerationQueue?
+        /// The lock of the model of the container. Each generation of each
+        /// backend of the container holds it.
+        let modelLock: FIFOGenerationLock
 
         /// This backend's synthetic transcript: one `.prompt` per call, plus one
         /// `.response` per call that ran to completion.
@@ -92,16 +92,18 @@ struct HumanWaitGateTests {
         /// This backend's synthetic transcript, as of this read.
         var entries: [Transcript.Entry] { transcript.withLock { $0 } }
 
-        init(hook: AnswerHook, observer: AnswerObserver, generationQueue: GenerationQueue?, entries: [Transcript.Entry] = []) {
+        init(hook: AnswerHook, observer: AnswerObserver, modelLock: FIFOGenerationLock, entries: [Transcript.Entry] = []) {
             self.hook = hook
             self.observer = observer
-            self.generationQueue = generationQueue
+            self.modelLock = modelLock
             self.transcript = Mutex(entries)
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
-            await observer.enter(prompt)
+            await modelLock.withLock {
+                self.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+                await self.observer.enter(prompt)
+            }
             if let midAnswer = hook.midAnswer {
                 do {
                     try await midAnswer(prompt)
@@ -111,8 +113,11 @@ struct HumanWaitGateTests {
                 }
             }
             let responseText = HumanWaitGateTests.reply(to: prompt)
-            append(.response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
-            await observer.exit(prompt)
+            await modelLock.withLock {
+                self.append(
+                    .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
+                await self.observer.exit(prompt)
+            }
             return responseText
         }
 
@@ -150,13 +155,13 @@ struct HumanWaitGateTests {
 
         /// A copy of this backend, seeded from ``entries`` as of this call.
         func makeFork() -> any LanguageModelSessionBackend {
-            HookedSessionBackend(hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
+            HookedSessionBackend(hook: hook, observer: observer, modelLock: modelLock, entries: entries)
         }
     }
 
     /// A ``LoadedLLMContainer`` vending ``HookedSessionBackend``s wired to one
-    /// shared hook and observer. Like a live container, it owns one
-    /// ``GenerationQueue`` that every backend declares.
+    /// shared hook and observer. Like the model of a live container, it owns
+    /// one ``FIFOGenerationLock`` that each generation of each backend holds.
     ///
     /// Properly `Sendable`: each stored property is a constant of a
     /// `Sendable` type.
@@ -167,8 +172,9 @@ struct HumanWaitGateTests {
         private let hook: AnswerHook
         private let observer: AnswerObserver
 
-        /// The queue every backend of this container declares.
-        let generationQueue = GenerationQueue()
+        /// The lock of the model, which each backend of this container holds
+        /// for each of its generations.
+        let modelLock = FIFOGenerationLock()
 
         init(hook: AnswerHook, observer: AnswerObserver) {
             self.hook = hook
@@ -184,7 +190,7 @@ struct HumanWaitGateTests {
         }
 
         private func makeHookedBackend(entries: [Transcript.Entry]) -> HookedSessionBackend {
-            HookedSessionBackend(hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
+            HookedSessionBackend(hook: hook, observer: observer, modelLock: modelLock, entries: entries)
         }
     }
 
@@ -372,42 +378,6 @@ struct HumanWaitGateTests {
         }
     }
 
-    /// Thrown by the run of ``submissionQueued(on:)`` when the event stream of
-    /// the session ended, or an answer of the session ended, with no
-    /// ``SessionEvent/submissionQueued(_:)``.
-    private struct SubmissionNeverQueued: Error {}
-
-    /// A run that ends when `session` reports that a submission of it waits
-    /// behind another submission on its model.
-    ///
-    /// The report is ``SessionEvent/submissionQueued(_:)``. The queue of the
-    /// model sends it when the submission joins the waiting list, so the end
-    /// of this run is the signal of that moment. The subscription is open when
-    /// this function returns, so start the answer after the call.
-    ///
-    /// The run also ends at the end of an answer of `session` (rule T1): a
-    /// submission that waits sends the report before its answer ends, so an
-    /// answer that ends first had no submission that waited.
-    ///
-    /// - Parameter session: The session whose submission is to wait.
-    /// - Returns: The run that ends on the report.
-    private static func submissionQueued(on session: any RoutedSession) async -> ObservedRun<Void> {
-        let events = await session.streamSessionEvents().events
-        return ObservedRun {
-            for await event in events {
-                switch event {
-                case .submissionQueued:
-                    return
-                case .answered, .answerFailed:
-                    throw SubmissionNeverQueued()
-                default:
-                    continue
-                }
-            }
-            throw SubmissionNeverQueued()
-        }
-    }
-
     /// The reply of one further ordinary answer on `session`: the proof that
     /// the session and its model still accept work.
     ///
@@ -458,16 +428,15 @@ struct HumanWaitGateTests {
         return Fixture(container: container, observer: observer, hook: hook, profile: profile)
     }
 
-    // MARK: - A human wait in a tool holds the model
+    // MARK: - A human wait in a tool holds no lock of the model
 
-    @Test("an answer whose tool body waits for a person holds the model, so another session over the same model runs after the wait")
+    @Test("an answer whose tool body waits for a person holds no lock, so another session over the same model answers during the wait")
     @MainActor
-    func humanWaitHoldsTheModelForAnotherSession() async throws {
+    func humanWaitHoldsNoLockForAnotherSession() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let queue = fixture.container.generationQueue
 
         // Two root sessions over the SAME model.
         let sessionA = fixture.model.makeSession()
@@ -492,27 +461,24 @@ struct HumanWaitGateTests {
         }
 
         let answerA = ObservedRun { try await sessionA.respond(to: "a-wait") }
-        try await answerA.wait(for: waitStarted)
+        try await BoundedWait.run { try await answerA.wait(for: waitStarted) }
 
         // A's pump keeps its answer running for the full wait.
         #expect(await sessionA.isPumpRunning)
 
-        // B's submission waits behind A's: the wait is a step of A's submission,
-        // so it holds the worker of the model.
-        let queuedB = await Self.submissionQueued(on: sessionB)
+        // B answers during the wait: the wait is a tool body, and it holds
+        // no lock of the model.
         let answerB = ObservedRun { try await sessionB.respond(to: "b") }
-        try await queuedB.value()
-        #expect(await queue.waitingCount == 1)
-        #expect(await fixture.observer.entered == ["a-wait"])
+        #expect(try await BoundedWait.run { try await answerB.value() } == Self.reply(to: "b"))
+        #expect(await fixture.observer.exited == ["b"])
 
-        // A then finishes its own answer, and only then does B run.
+        // A then finishes its own answer.
         humanGate.signal()
-        #expect(try await answerA.value() == Self.reply(to: "a-wait"))
-        #expect(try await answerB.value() == Self.reply(to: "b"))
-        #expect(await fixture.observer.exited == ["a-wait", "b"])
-        #expect(await fixture.observer.maxActive == 1)
+        #expect(try await BoundedWait.run { try await answerA.value() } == Self.reply(to: "a-wait"))
+        #expect(await fixture.observer.entered == ["a-wait", "b"])
+        #expect(await fixture.observer.exited == ["b", "a-wait"])
         #expect(await sessionA.isIdleOnceThePumpEnds())
-        #expect(await queue.isRunning == false)
+        #expect(await fixture.container.modelLock.waitingCount == 0)
     }
 
     // MARK: - A message that arrives during a wait waits for the next submission
@@ -859,20 +825,17 @@ struct HumanWaitGateTests {
         try await wait.wait(for: waitEntered)
         #expect(await sessionA.isPumpRunning)
 
-        // B starts its own answer on the same model. Its submission waits behind
-        // A's, which holds the model.
-        let queuedB = await Self.submissionQueued(on: sessionB)
+        // B starts its own answer on the same model. It reaches its own tool
+        // body while A's answer is suspended in its tool body: neither holds
+        // the lock of the model.
         let answerB = ObservedRun { try await sessionB.respond(to: "answer-b") }
-        try await queuedB.value()
-        #expect(await fixture.container.generationQueue.waitingCount == 1)
+        try await BoundedWait.run { try await answerB.wait(for: inAnswerB) }
         #expect(await sessionB.isPumpRunning)
 
-        // A's answer ends *while* the wait is still open, and B's submission
-        // then reaches the model.
+        // A's answer ends *while* the wait is still open.
         releaseAnswerA.signal()
-        #expect(try await answerA.value() == Self.reply(to: "answer-a"))
+        #expect(try await BoundedWait.run { try await answerA.value() } == Self.reply(to: "answer-a"))
         #expect(await sessionA.isIdleOnceThePumpEnds())
-        try await answerB.wait(for: inAnswerB)
 
         // The wait ends next. It takes nothing back, so it does not suspend.
         releaseWait.signal()

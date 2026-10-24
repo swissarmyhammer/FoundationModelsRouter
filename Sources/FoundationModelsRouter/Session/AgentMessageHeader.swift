@@ -2,7 +2,7 @@ import Foundation
 import FoundationModelsExtras
 
 /// The facts of the sender of an agent message, which the session directory
-/// writes before the text of the message (section 10.1 of `session.md`).
+/// writes before the text of the message.
 ///
 /// The session that renders the prompt cannot read the directory, and the
 /// mail body ``MailBody/agentMessage(from:content:)`` carries only the

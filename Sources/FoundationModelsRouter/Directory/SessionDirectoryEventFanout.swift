@@ -10,7 +10,7 @@ import FoundationModelsExtras
 /// of one session stay in order.
 struct SessionDirectoryEventFanout {
     /// The most events that one stream buffers. A slow reader loses the old
-    /// events, not the new ones (session.md section 7, rule 1).
+    /// events, not the new ones.
     static let bufferLimit = 256
 
     /// The continuation of each open stream, keyed by the id that ``add(_:)``

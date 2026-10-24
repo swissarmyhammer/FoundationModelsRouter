@@ -17,9 +17,8 @@ struct SubmissionWork {
 /// waits for a terminal event, the output of the session, and the model
 /// work of a submission.
 ///
-/// Each helper sends one mail and reads the output of that mail
-/// (`generation-queue.md`, section 5.4). The pump of the session submits the
-/// mail; the helper itself submits nothing.
+/// Each helper sends one mail and reads the output of that mail. The pump of
+/// the session submits the mail; the helper itself submits nothing.
 extension RoutedSessionActor {
     /// Generates a complete text response to a prompt, recording the call.
     ///
@@ -40,7 +39,7 @@ extension RoutedSessionActor {
     ///   message was cancelled or the answer was cancelled, the refusal of
     ///   ``mail(_:)``, or ``GenerationQueueError/waitInsideOpenSubmission(model:)``
     ///   when this call comes from an in-band tool body of an open submission
-    ///   on this session or on the queue of its model.
+    ///   of this session.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         let events = streamEvents(of: Self.userMessage(prompt, maxTokens: maxTokens, mode: .reply))
         return try await SessionAnswer.awaitEnd(of: events, observing: nil).reply
@@ -228,11 +227,10 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Refuses a wait for an answer of this session that could never end
-    /// (`generation-queue.md`, section 5.5, rule 2): a wait from an in-band
-    /// tool body of an open submission of this session, or of an open
-    /// submission on the queue of its model. That submission waits for the
-    /// tool body, and the answer could come only after it.
+    /// Refuses a wait for an answer of this session that could never end: a
+    /// wait from an in-band tool body of an open submission of this session.
+    /// That submission waits for the tool body, and the pump of the session
+    /// runs one answer at a time, so the answer could come only after it.
     ///
     /// A background body has a closed mark
     /// (``ModelCallMark/withBackgroundRunMark(_:)``), so it is never refused:
@@ -243,7 +241,6 @@ extension RoutedSessionActor {
         if ModelCallMark.current?.isOpenModelCall(of: id) == true {
             throw GenerationQueueError.waitInsideOpenSubmission(model: model)
         }
-        try backend.generationQueue?.refuseWaitInsideOpenSubmission()
     }
 
     /// What one submission runs for the options of its batch.
@@ -314,8 +311,8 @@ extension RoutedSessionActor {
             to: composedPrompt, maxTokens: maxTokens)
         {
             noteGenerationProgress(fragment.progress)
-            // The text events go to the output of the session
-            // (`generation-queue.md`, section 5.6), where the subscription of
+            // The text events go to the output of the session,
+            // where the subscription of
             // the mail of the answer reads them.
             for event in Self.sessionEvents(for: fragment) {
                 emitSessionScopedEvent(event)

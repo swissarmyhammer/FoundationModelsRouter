@@ -230,18 +230,6 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     func replacingTranscript(
         _ transcript: FoundationModels.Transcript, tools: [any Tool]
     ) -> any LanguageModelSessionBackend
-
-    /// The work queue of the model of this backend, or `nil` when the backend
-    /// has none (`generation-queue.md`, section 5.3).
-    ///
-    /// The session of this backend submits each generating call of the
-    /// backend to this queue as one item: one whole SDK call, with all of its
-    /// passes and tool bodies. A backend with no queue runs each call
-    /// directly. All the backends of one model name the same queue, a fork
-    /// and a replaced transcript included.
-    ///
-    /// There is a default implementation that gives `nil`.
-    var generationQueue: GenerationQueue? { get }
 }
 
 /// Drives an `AsyncThrowingStream<String, Error>` iterator from the task that
@@ -308,12 +296,6 @@ extension LanguageModelSessionBackend {
     /// transcript.
     public func transcriptUpdates() -> AsyncStream<[FoundationModels.Transcript.Entry]> {
         AsyncStream { $0.finish() }
-    }
-
-    /// Default ``generationQueue``: `nil`, because a backend that does not
-    /// override it names no queue, and its session runs each call directly.
-    public var generationQueue: GenerationQueue? {
-        nil
     }
 
     /// Default ``replacingTranscript(_:)``: ignores `transcript` and forwards

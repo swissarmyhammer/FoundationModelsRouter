@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Task ^5d0qx1b: the limits of an answer are for each answer, not for each
-/// submission (`generation-queue.md`, section 5.5). The chain of submissions
+/// submission. The chain of submissions
 /// from the first delivery to the final answer is one answer.
 ///
 /// Two limits are in the test:

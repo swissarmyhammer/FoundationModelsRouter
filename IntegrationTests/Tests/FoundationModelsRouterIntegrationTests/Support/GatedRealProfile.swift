@@ -29,7 +29,7 @@ let gatedRealProfile = ProfileDefinition(
 /// Read off the resolve path, not off a measured run. `Router.acquireModel`
 /// asks the pool before it reaches the loader, and the pool runs the loader one
 /// time for each distinct residency key, not one time for each slot. A
-/// generation key is the chosen reference alone (`model-pool.md` §2.3), so two
+/// generation key is the chosen reference alone, so two
 /// generation slots that name one repository build one key and load one
 /// container. An embedding key carries a different role, so it never merges
 /// with a generation key, whatever the references are named.

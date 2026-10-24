@@ -25,11 +25,11 @@ import Logging
 /// continuity tasks the model spent the whole ceiling of the call on its
 /// reasoning and wrote no summary. The ceiling stays as it is.
 ///
-/// The blank-slate backend keeps no prompt cache (task ^ptev9yy,
-/// `generation-queue.md`, section 3). Its passes bind the `.uncached` scope,
-/// so the call takes no cache and leaves none: a compaction adds no key to
-/// the cache of the model and pushes out no cache of a real session. Both
-/// tiers (the flash tier and the own-model tier) make their calls here.
+/// The blank-slate backend keeps no prompt cache (task ^ptev9yy). Its passes
+/// bind the `.uncached` scope, so the call takes no cache and leaves none: a
+/// compaction adds no key to the cache of the model and pushes out no cache of
+/// a real session. Both tiers (the flash tier and the own-model tier) make
+/// their calls here.
 private struct BackendCompactionSummarizer: CompactionSummarizer {
     /// The backend each blank-slate summarizer call is built from.
     let backend: any LanguageModelSessionBackend
@@ -47,31 +47,27 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
     }
 }
 
-/// Wraps another ``CompactionSummarizer`` so every model call it makes is one
-/// submission to the queue of the model that runs it
-/// (``RoutedSessionActor/runSummarizerCall(composedPrompt:submittingTo:_:)``).
-/// The call cannot run at the same time as a submission of another session,
-/// or of the same session, on that model.
+/// Wraps another ``CompactionSummarizer`` so every model call it makes runs
+/// as a summarizer call of the session
+/// (``RoutedSessionActor/runSummarizerCall(composedPrompt:_:)``). No lock
+/// and no queue is around the call: the model serializes its own
+/// generations, one generation at a time.
 ///
 /// The call belongs to the task of the compaction, not to the work of the
 /// pump. Only a cancel of that task stops it, and only
 /// ``RoutedSession/close()`` cancels it.
-private struct QueuedCompactionSummarizer: CompactionSummarizer {
-    /// The summarizer whose calls are queued.
+private struct SessionCompactionSummarizer: CompactionSummarizer {
+    /// The summarizer whose calls run.
     let base: any CompactionSummarizer
 
     /// The session that compacts.
     let session: RoutedSessionActor
 
-    /// The queue each call is one submission to, and its model, or `nil` when
-    /// the backend of the summarizer names no queue.
-    let target: SubmissionTarget?
-
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         // A compaction makes one call on each tier it tries, one tier after
         // the other. A cancel that lands between two tiers stops the next
         // tier at its pre-flight check.
-        try await session.runSummarizerCall(composedPrompt: prompt, submittingTo: target) { [base] promptText in
+        try await session.runSummarizerCall(composedPrompt: prompt) { [base] promptText in
             try await base.summarize(promptText, maxTokens: maxTokens)
         }
     }
@@ -83,8 +79,7 @@ private struct BackendSummarizerTier {
     /// The tier this summarizer fills.
     let tier: CompactionSummarizerTier
 
-    /// The backend each blank-slate summarizer call is built from. Its queue
-    /// is the queue each call is one submission to.
+    /// The backend each blank-slate summarizer call is built from.
     let backend: any LanguageModelSessionBackend
 
     /// The context window of the model of ``backend``, in tokens.
@@ -93,17 +88,16 @@ private struct BackendSummarizerTier {
     /// The model of ``backend``.
     let model: ModelRef
 
-    /// The slot of this tier, whose summarizer runs each call as one
-    /// submission of `session` to the queue of ``backend``.
+    /// The slot of this tier, whose summarizer runs each call as a
+    /// summarizer call of `session` over ``backend``.
     ///
     /// - Parameter session: The session that compacts.
     /// - Returns: The slot.
     func slot(for session: RoutedSessionActor) -> CompactionSummarizerSlot {
-        let target = backend.generationQueue.map { SubmissionTarget(queue: $0, model: model) }
-        return CompactionSummarizerSlot(
+        CompactionSummarizerSlot(
             tier: tier,
-            summarizer: QueuedCompactionSummarizer(
-                base: BackendCompactionSummarizer(backend: backend), session: session, target: target),
+            summarizer: SessionCompactionSummarizer(
+                base: BackendCompactionSummarizer(backend: backend), session: session),
             windowTokens: windowTokens, model: model.stringValue)
     }
 }
@@ -434,49 +428,30 @@ extension RoutedSessionActor {
         return tiers
     }
 
-    /// Runs one summarizer call as one submission to the queue of `target`,
-    /// and waits for its result. With no `target`, the call runs directly.
+    /// Runs one summarizer call, and waits for its result.
     ///
     /// The call is not a submission of an answer: it opens no submission,
     /// sends no event of its own, holds no ``inFlightModelCall``, and reads
     /// no state of the running answer. Thus it can run while an answer runs.
-    /// A cancel of the task of the compaction removes a submission that
-    /// waits for the worker, or cancels the running call. The worker of the
-    /// queue inherits no task-local, so the submission binds the origin, the
-    /// tracing context and the ``ModelCallMark`` of the call itself.
+    /// A cancel of the task of the compaction cancels the call. The call
+    /// binds the ``ModelCallMark`` of the call.
     ///
     /// - Parameters:
     ///   - composedPrompt: The prompt of the summarizer call.
-    ///   - target: The queue the call is one submission to, and its model, or
-    ///     `nil` to run the call directly.
     ///   - body: The summarizer call.
     /// - Returns: The summary text.
     /// - Throws: What `body` throws, or `CancellationError` when the task of
-    ///   the compaction was cancelled before the call started or while its
-    ///   submission waited.
+    ///   the compaction was cancelled before the call started.
     nonisolated func runSummarizerCall(
         composedPrompt: String,
-        submittingTo target: SubmissionTarget?,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         try Task.checkCancellation()
-        let mark = ModelCallMark(sessionID: id, submission: target)
+        let mark = ModelCallMark(sessionID: id)
         defer { mark.close() }
-        let origin = OriginContext.current
-        let serviceContext = ServiceContext.current
-        let call: @Sendable () async throws -> String = {
-            try await OriginContext.$current.withValue(origin) {
-                try await ServiceContext.$current.withValue(serviceContext) {
-                    try await ModelCallMark.$current.withValue(mark) {
-                        try await body(composedPrompt)
-                    }
-                }
-            }
+        return try await ModelCallMark.$current.withValue(mark) {
+            try await body(composedPrompt)
         }
-        guard let target else {
-            return try await call()
-        }
-        return try await target.queue.submit(call)
     }
 
     /// Opens one ``RouterTelemetry/SpanName/compact`` span around a whole
@@ -624,9 +599,9 @@ extension RoutedSessionActor {
             // This session's own counter: every size before the call is the
             // count of the model's tokenizer.
             counter: tokenCounter,
-            // Wrapped, never handed over bare: each summarizer call is one
-            // submission to the queue of its model (see
-            // ``QueuedCompactionSummarizer``).
+            // Wrapped, never handed over bare: each summarizer call runs as a
+            // summarizer call of this session (see
+            // ``SessionCompactionSummarizer``).
             summarizers: summarizerTiers().map { $0.slot(for: self) },
             pendingRuns: pendingRuns,
             // The host rule this session was vended or restored with,

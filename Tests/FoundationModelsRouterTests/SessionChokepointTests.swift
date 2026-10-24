@@ -314,7 +314,7 @@ struct SessionChokepointTests {
     /// ended, and the spy counted it.
     ///
     /// - Parameter pool: The pool of the router under test.
-    /// - Throws: What `GenerationQueue.submit` throws.
+    /// - Throws: What the admission queue throws.
     private static func drainAdmissions(of pool: ModelPool) async throws {
         try await pool.admissions.submit {}
     }

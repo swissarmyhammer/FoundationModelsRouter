@@ -59,6 +59,11 @@ final class ObservedPassLog: Sendable {
 
 /// A scripted `LanguageModel` that makes each executor call an observable pass.
 ///
+/// Each pass first takes the ``FIFOGenerationLock`` of the model, as a pass
+/// of an MLX model takes the lock of its container: the passes of all the
+/// sessions over one model run one at a time, first in first out. A tool
+/// body runs between two passes, so it holds no lock.
+///
 /// Each pass records which executor instance ran it and which prompt it got,
 /// reports its entry and its exit to a ``ConcurrencyPeakObserver``, and stays
 /// inside the call until a ``RunLatch`` opens. When ``step`` is set, the pass
@@ -70,9 +75,16 @@ final class ObservedPassLog: Sendable {
 /// A session that mounts a tool gets ``toolRounds`` passes that each call the
 /// first mounted tool, and then one pass that answers with ``answer(to:)``. A
 /// session that mounts no tool gets one pass that answers.
+///
+/// With ``holdsAfterFirstOutput``, a pass that answers sends ``answerPrefix``
+/// first, and holds only after it: a pass that has the lock and generates, and
+/// then gives no output for a time. The whole answer is the same.
 struct PassObservingModel: LanguageModel {
     /// The observer each pass reports its entry and its exit to.
     let observer: ConcurrencyPeakObserver
+
+    /// The lock that each pass holds while it generates.
+    let lock: FIFOGenerationLock
 
     /// The latch each pass waits on before it answers.
     let latch: RunLatch
@@ -88,6 +100,9 @@ struct PassObservingModel: LanguageModel {
     /// one.
     let toolRounds: Int
 
+    /// Whether a pass that answers sends ``answerPrefix`` before it holds.
+    let holdsAfterFirstOutput: Bool
+
     /// The text an answer opens with.
     static let answerPrefix = "answered: "
 
@@ -95,21 +110,28 @@ struct PassObservingModel: LanguageModel {
     ///
     /// - Parameters:
     ///   - observer: The observer each pass reports to.
+    ///   - lock: The lock each pass holds while it generates. The default
+    ///     is a new lock.
     ///   - latch: The latch each pass waits on.
     ///   - passes: The log each pass records into.
     ///   - step: The semaphore each pass waits on after the latch, or `nil`
     ///     (the default) for no step.
     ///   - toolRounds: How many passes of one submission call a tool. The
     ///     default is none, so each submission is one pass that answers.
+    ///   - holdsAfterFirstOutput: Whether a pass that answers sends
+    ///     ``answerPrefix`` before it holds. The default is `false`.
     init(
-        observer: ConcurrencyPeakObserver, latch: RunLatch, passes: ObservedPassLog,
-        step: AsyncSemaphore? = nil, toolRounds: Int = 0
+        observer: ConcurrencyPeakObserver, lock: FIFOGenerationLock = FIFOGenerationLock(), latch: RunLatch,
+        passes: ObservedPassLog, step: AsyncSemaphore? = nil, toolRounds: Int = 0,
+        holdsAfterFirstOutput: Bool = false
     ) {
         self.observer = observer
+        self.lock = lock
         self.latch = latch
         self.passes = passes
         self.step = step
         self.toolRounds = toolRounds
+        self.holdsAfterFirstOutput = holdsAfterFirstOutput
     }
 
     /// The answer the last pass of a submission gives to a prompt.
@@ -131,7 +153,8 @@ struct PassObservingModel: LanguageModel {
     /// length.
     var executorConfiguration: Executor.Configuration {
         Executor.Configuration(
-            observer: observer, latch: latch, passes: passes, step: step, toolRounds: toolRounds)
+            observer: observer, lock: lock, latch: latch, passes: passes, step: step, toolRounds: toolRounds,
+            holdsAfterFirstOutput: holdsAfterFirstOutput)
     }
 
     /// The executor that serves one observable pass for each call.
@@ -141,6 +164,9 @@ struct PassObservingModel: LanguageModel {
         struct Configuration: Sendable, Hashable {
             /// The observer each pass reports to.
             let observer: ConcurrencyPeakObserver
+
+            /// The lock each pass holds while it generates.
+            let lock: FIFOGenerationLock
 
             /// The latch each pass waits on.
             let latch: RunLatch
@@ -154,6 +180,9 @@ struct PassObservingModel: LanguageModel {
             /// How many passes of one submission call a tool.
             let toolRounds: Int
 
+            /// Whether a pass that answers sends its prefix before it holds.
+            let holdsAfterFirstOutput: Bool
+
             /// Equal when the loop lengths are equal and the parts are the
             /// same objects.
             ///
@@ -163,7 +192,8 @@ struct PassObservingModel: LanguageModel {
             /// - Returns: `true` when both configurations name the same parts
             ///   and the same loop.
             static func == (lhs: Self, rhs: Self) -> Bool {
-                lhs.observer === rhs.observer && lhs.latch === rhs.latch && lhs.passes === rhs.passes
+                lhs.observer === rhs.observer && lhs.lock === rhs.lock && lhs.latch === rhs.latch
+                    && lhs.passes === rhs.passes && lhs.holdsAfterFirstOutput == rhs.holdsAfterFirstOutput
                     && lhs.step === rhs.step && lhs.toolRounds == rhs.toolRounds
             }
 
@@ -172,10 +202,12 @@ struct PassObservingModel: LanguageModel {
             /// - Parameter hasher: The hasher to feed.
             func hash(into hasher: inout Hasher) {
                 hasher.combine(ObjectIdentifier(observer))
+                hasher.combine(ObjectIdentifier(lock))
                 hasher.combine(ObjectIdentifier(latch))
                 hasher.combine(ObjectIdentifier(passes))
                 hasher.combine(step.map(ObjectIdentifier.init))
                 hasher.combine(toolRounds)
+                hasher.combine(holdsAfterFirstOutput)
             }
         }
 
@@ -184,7 +216,7 @@ struct PassObservingModel: LanguageModel {
 
         /// The prompt of the submission a transcript ends in, and how many
         /// tool rounds that submission has played so far.
-        private struct Submission {
+        private struct Submission: Sendable {
             /// The joined text of the last `.prompt` entry, or the empty
             /// string when the transcript holds no prompt.
             let prompt: String
@@ -214,36 +246,61 @@ struct PassObservingModel: LanguageModel {
             self.configuration = configuration
         }
 
-        /// Records the pass, holds it until the latch opens and its step
-        /// arrives, and then calls the first mounted tool or answers the
-        /// prompt of the submission.
+        /// Takes the lock of the model, records the pass, holds it until the
+        /// latch opens and its step arrives, and then calls the first mounted
+        /// tool or answers the prompt of the submission. The pass gives the
+        /// lock back when it returns. A pass that a cancel reached while it
+        /// waited for the lock throws `CancellationError` at its turn, and
+        /// records nothing.
         ///
         /// - Parameters:
         ///   - request: The generation request.
         ///   - model: The model. Unread: the parts arrive through the
         ///     configuration.
         ///   - channel: The channel the pass emits into.
-        /// - Throws: Never. `throws` comes from the protocol requirement.
+        /// - Throws: `CancellationError` for a pass that a cancel reached
+        ///   before it took the lock.
         func respond(
             to request: LanguageModelExecutorGenerationRequest,
             model: PassObservingModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let submission = Self.currentSubmission(of: request.transcript)
-            configuration.passes.record(ObservedPass(executor: ObjectIdentifier(identity), prompt: submission.prompt))
-            await configuration.observer.enter()
-            await configuration.latch.waitUntilOpen()
-            await configuration.step?.wait()
-            await configuration.observer.exit()
-            guard let tool = request.enabledToolDefinitions.first, submission.toolRounds < configuration.toolRounds
-            else {
-                await channel.send(
-                    .response(
-                        action: .appendText(
-                            PassObservingModel.answer(to: submission.prompt), tokenCount: Self.emittedTokenCount)))
-                return
+            let configuration = configuration
+            let executor = ObjectIdentifier(identity)
+            let tool = request.enabledToolDefinitions.first.map(\.name)
+            try await configuration.lock.withLock {
+                // A pass whose caller left while it waited for the lock leaves
+                // at its turn, as a pass of MLX does.
+                try Task.checkCancellation()
+                configuration.passes.record(ObservedPass(executor: executor, prompt: submission.prompt))
+                await configuration.observer.enter()
+                let answers = tool == nil || submission.toolRounds >= configuration.toolRounds
+                let sendsPrefixFirst = answers && configuration.holdsAfterFirstOutput
+                if sendsPrefixFirst {
+                    await Self.appendText(PassObservingModel.answerPrefix, into: channel)
+                }
+                await configuration.latch.waitUntilOpen()
+                await configuration.step?.wait()
+                await configuration.observer.exit()
+                guard let tool, !answers else {
+                    let text = PassObservingModel.answer(to: submission.prompt)
+                    await Self.appendText(
+                        sendsPrefixFirst ? String(text.dropFirst(PassObservingModel.answerPrefix.count)) : text,
+                        into: channel)
+                    return
+                }
+                await Self.callTool(named: tool, in: submission, into: channel)
             }
-            await Self.callTool(named: tool.name, in: submission, into: channel)
+        }
+
+        /// Emits `text` as one fragment of the response.
+        ///
+        /// - Parameters:
+        ///   - text: The text to append.
+        ///   - channel: The channel the fragment is sent into.
+        private static func appendText(_ text: String, into channel: LanguageModelExecutorGenerationChannel) async {
+            await channel.send(.response(action: .appendText(text, tokenCount: emittedTokenCount)))
         }
 
         /// Emits one call of the tool `name`, whose one argument names the

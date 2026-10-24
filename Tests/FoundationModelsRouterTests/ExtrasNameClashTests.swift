@@ -44,10 +44,9 @@ struct ExtrasNameClashTests {
                 == (any FoundationModelsExtras.PooledEmbedding).self)
     }
 
-    /// The generation queue names are the same types in both modules.
-    @Test("the queue names of the router and Extras are one type each")
+    /// The refusal name is the same type in both modules.
+    @Test("the refusal name of the router and Extras is one type")
     func queueNamesAreOneType() {
-        #expect(FoundationModelsRouter.GenerationQueue.self == FoundationModelsExtras.GenerationQueue.self)
         #expect(
             FoundationModelsRouter.GenerationQueueError.self == FoundationModelsExtras.GenerationQueueError.self)
     }

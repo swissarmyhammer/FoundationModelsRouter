@@ -1,7 +1,12 @@
 ---
+comments:
+- actor: wballard
+  id: 01m5q4zqxaxzmg9f8xywj5mf8r
+  text: 'Done in the card-1 commit. Each pass of SessionLanguageModel calls the model through Extras PooledGeneration.run(ref:channel:_:) under the prompt-cache scope of the session; the whole-call queue submits, ModelHold.queue use, LoadedLLMContainer.submitting(to:), LanguageModelSessionBackend.generationQueue, the GenerationQueue alias, RouterMetrics.recordGenerationQueueWaiting (and its metric name) and SessionEvent.submissionQueued are removed. The start wiring stays: run(_:reportingTo:onStart:) calls observer.submissionStarted() and onStart before the SDK call. Stall watch: generation-queue.md is deleted, so the choice is stated in GenerationStall/GenerationStallWatch.measuredFrom: a pass counts only from its first output event (GenerationCallPhase.firstOutputEvent(at:)) to its end; the wait for the MLX lock and the read of the prompt before the first output count nothing. The containers and backends now carry a ModelRef for the in-flight meter (MLXFoundationModelsContainer.make(wrapping:ref:)). Deviation: GenerationQueueSubmissionTests'' two in-band-wait tests had to be restated here (they are answered now, because the queue check is gone); card ^hga4td7 keeps the own-session refusal, the Router mark and the background case. Tests: ChildStarvationRegressionTests failed first (bounded wait expired at 60 s), then passed; restated suites are listed in the commit body. Dependent packages are not edited (FoundationModelsAgents, FoundationModelsACPAgent, FoundationModelsMultitool); their files are listed in the commit body.'
+  timestamp: 2026-10-24T14:28:10.794208+00:00
 depends_on: []
-position_column: todo
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffffffc280
 title: Call the model through Extras PooledGeneration, with no whole-call queue job
 ---
 ## What

@@ -192,7 +192,7 @@ struct RoutedSessionCompactTests {
 
     // MARK: - The flash summarizer carries the router's sampling mode
 
-    /// `model-pool.md` §2.5 step A: the flash summarizer is the one backend
+    /// The flash summarizer is the one backend
     /// a compaction builds from a container, so it is where a router's sampling
     /// mode would be lost. The compaction path is the automatic one. A
     /// requested compaction builds its flash summarizer backend in the same

@@ -1,9 +1,9 @@
 import FoundationModels
+import FoundationModelsExtras
 import MLXFoundationModels
 import Synchronization
 
-/// The per-session `FoundationModels.LanguageModel` over a wrapped model
-/// (`generation-queue.md`, sections 5.3 and 5.6).
+/// The per-session `FoundationModels.LanguageModel` over a wrapped model.
 ///
 /// There is one wrapper for each backend a container makes: each session,
 /// each fork, and each summarizer backend. Each wrapper has its own
@@ -15,10 +15,13 @@ import Synchronization
 /// prompt-cache scope: the key of the session, or no cache for a summarizer
 /// call.
 ///
-/// A wrapper holds no queue and runs each pass directly. The session submits
-/// each whole SDK call of its backend to the ``GenerationQueue`` of the model
-/// (``LanguageModelSessionBackend/generationQueue``), so the queue item is the
-/// submission, and each pass of that submission runs inside it.
+/// A wrapper holds no lock. Each pass is one call into the model through
+/// `PooledGeneration.run(ref:channel:_:)` of FoundationModelsExtras, which
+/// counts the call in flight and gives a cancel that does not wait for the
+/// lock of the model. An MLX model holds its own FIFO lock for one
+/// generation only. The SDK runs each tool body after the pass returns, thus
+/// no tool body runs under that lock, and the sessions over one model take
+/// turns at each pass.
 ///
 /// The wrapper keeps the raw model in ``SessionLanguageModelState/wrapped``. A
 /// caller that needs the raw model (the `as? MLXLanguageModel` cast of
@@ -31,9 +34,12 @@ struct SessionLanguageModel: LanguageModel, Sendable {
 
     /// Makes a wrapper with a new per-session state over `wrapped`.
     ///
-    /// - Parameter wrapped: The raw model whose executor runs each pass.
-    init(wrapping wrapped: any LanguageModel) {
-        state = SessionLanguageModelState(wrapped: wrapped)
+    /// - Parameters:
+    ///   - wrapped: The raw model whose executor runs each pass.
+    ///   - ref: The model reference of `wrapped`, which the in-flight meter
+    ///     of each pass names.
+    init(wrapping wrapped: any LanguageModel, ref: ModelRef) {
+        state = SessionLanguageModelState(wrapped: wrapped, ref: ref)
     }
 
     /// Passed through unchanged from the wrapped model.
@@ -109,16 +115,24 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         /// (``PassOutputRelay``, task ^0m997jr). With no observer, it streams
         /// into `channel` itself.
         ///
-        /// The pass binds the scope itself, around the call of the wrapped
-        /// executor (``SessionLanguageModelState/withPromptCacheScope(_:)``).
-        /// A task-local reaches the executor of the fork only when it is
-        /// bound on the task that calls that executor: the SDK can run this
-        /// executor on another task than the SDK call, and the submission
-        /// that holds the SDK call runs on a task that the worker of the
-        /// queue makes.
+        /// The pass binds the scope itself, around the call into the model
+        /// (``SessionLanguageModelState/withPromptCacheScope(_:)``). A
+        /// task-local reaches the wrapped executor only when it is bound on
+        /// the task that calls it: the SDK can run this executor on another
+        /// task than the SDK call. `PooledGeneration.run(ref:channel:_:)`
+        /// reads the scope there, and its task keeps it.
+        ///
+        /// The call into the model is one
+        /// `PooledGeneration.run(ref:channel:_:)` for each pass. The lock of
+        /// an MLX model applies inside it, for this one generation. A cancel
+        /// of the pass throws `CancellationError` at once, also while the
+        /// pass waits for that lock.
         ///
         /// The observer of the session gets the start of the pass before the
-        /// wrapped executor runs, and the end of the pass on every exit.
+        /// wrapped executor runs, and the end of the pass on every exit. The
+        /// start comes before the wait for the lock of the model, thus the
+        /// stall watch counts a pass only from its first output
+        /// (``GenerationStallWatch/measuredFrom``).
         ///
         /// The pass watches of the wrapper run beside the wrapped executor,
         /// and each has ended before this call returns to the SDK
@@ -139,13 +153,16 @@ struct SessionLanguageModel: LanguageModel, Sendable {
             observer?.passStarted()
             defer { observer?.passEnded() }
             let passRequest = state.passRequest(from: request)
+            let innerRespond = innerRespond
             try await state.withPassWatches {
                 try await state.withPromptCacheScope {
-                    guard let observer else {
-                        return try await innerRespond(passRequest, channel)
-                    }
-                    try await PassOutputRelay.relay(into: channel, reportingTo: observer) { executorChannel in
-                        try await innerRespond(passRequest, executorChannel)
+                    try await PooledGeneration.run(ref: state.ref, channel: channel) { modelChannel in
+                        guard let observer else {
+                            return try await innerRespond(passRequest, modelChannel)
+                        }
+                        try await PassOutputRelay.relay(into: modelChannel, reportingTo: observer) { executorChannel in
+                            try await innerRespond(passRequest, executorChannel)
+                        }
                     }
                 }
             }
@@ -200,6 +217,10 @@ final class SessionLanguageModelState: Sendable {
 
     /// The raw model whose executor runs each pass.
     let wrapped: any LanguageModel
+
+    /// The model reference of ``wrapped``. The in-flight meter of each pass
+    /// names it.
+    let ref: ModelRef
 
     /// What the owner of this wrapper installs on it: the session of its
     /// backend, or the compaction that made its backend for a summarizer
@@ -368,10 +389,13 @@ final class SessionLanguageModelState: Sendable {
         }
     }
 
-    /// Stores the raw model.
+    /// Stores the raw model and its reference.
     ///
-    /// - Parameter wrapped: The raw model whose executor runs each pass.
-    init(wrapped: any LanguageModel) {
+    /// - Parameters:
+    ///   - wrapped: The raw model whose executor runs each pass.
+    ///   - ref: The model reference of `wrapped`.
+    init(wrapped: any LanguageModel, ref: ModelRef) {
         self.wrapped = wrapped
+        self.ref = ref
     }
 }

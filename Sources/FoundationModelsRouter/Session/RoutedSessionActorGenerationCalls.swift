@@ -84,7 +84,7 @@ struct GenerationCallLedger {
     var firstOutputAt: ContinuousClock.Instant?
 
     /// Whether that pass sent an output event, or `false` before the backend
-    /// reported one (``GenerationCallPhase/firstOutputEvent``). A pass that
+    /// reported one (``GenerationCallPhase/firstOutputEvent(at:)``). A pass that
     /// sent one and gave no first output token is buffered.
     var sawOutputEvent = false
 
@@ -103,7 +103,7 @@ struct GenerationCallLedger {
             sawOutputEvent = true
         case .firstOutput(let instant):
             firstOutputAt = firstOutputAt ?? instant
-        case .submissionQueued, .submissionStarted, .passEnded:
+        case .submissionStarted, .passEnded:
             break
         }
     }

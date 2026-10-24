@@ -1,8 +1,7 @@
 import Foundation
 
 /// The final answer of one chain of submissions: everything the chain
-/// produced for the messages it delivered (`generation-queue.md`, section
-/// 5.6).
+/// produced for the messages it delivered.
 ///
 /// Carried by ``SessionEvent/answered(_:)``, one time for each final answer,
 /// and returned by ``RoutedSession/respond(to:maxTokens:observing:)``. A chain
@@ -177,7 +176,7 @@ struct SessionAnswerReducer {
             noteStop(WatchStop(stop))
         case .reasoningStopped(let stop):
             noteStop(WatchStop(stop))
-        case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
+        case .compactionStarted, .compactionFailed, .submissionStarted, .answered, .answerFailed,
             .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
             .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay, .elicitationRequested,
             .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone, .workStarted,

@@ -3,7 +3,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The tag rule of ROUTER-2 (session.md section 5.3): a tag has 1 to 64
+/// The tag rule of ROUTER-2: a tag has 1 to 64
 /// characters, each a letter, a digit, `-`, `_`, `:` or `.`; another tag
 /// throws `SessionDirectoryError.invalidTag`.
 @Suite struct SessionTagRuleTests {

@@ -24,26 +24,25 @@ import FoundationModels
 /// sends one mail and reads its output to its terminal event.
 ///
 /// Every generation records the new transcript entries of each submission,
-/// whether the model returns or throws. A session has no lock
-/// (`generation-queue.md`, section 5.4): one pump task for each session is
+/// whether the model returns or throws. A session has no lock: one pump task
+/// for each session is
 /// the only code that submits for that session, and it submits the next
 /// item only after the result of the last one, so one session never has two
 /// SDK calls. Mail that arrives while a submission runs waits for the next
 /// submission, and every waiting mail that can share one submission goes
 /// into it. The terminal of a settled background run is run mail: the pump
 /// delivers it to the model in a later submission, with no caller call.
-/// Model work over one model does not overlap: each model call of an answer
-/// is one submission to the ``GenerationQueue`` of that model, and the one
-/// worker of the queue runs the submissions one at a time, first in first
-/// out. A submission is one whole SDK call, with its generation passes and
-/// the tool bodies between them. So a tool body, or a wait for a person
-/// inside it, holds the model for every other session on it. A tool that
-/// starts long work, or waits for a child session on the same model, is a
-/// background tool: it returns at once, and its result comes back as mail.
-/// An in-band tool body that asks its own session, or a session on the same
-/// model, for an answer is refused at once with
-/// ``GenerationQueueError/waitInsideOpenSubmission(model:)``. A background
-/// body asks its own session and gets the answer of a later submission.
+/// A lock must not cross over a tool call, only over the call into the
+/// model. A submission is one whole SDK call, with its generation passes and
+/// the tool bodies between them. Each pass is one call into the model, and a
+/// local MLX model holds its FIFO lock for that one generation. The SDK runs
+/// each tool body after the pass, thus a tool body, or a wait for a person
+/// inside it, holds nothing: the other sessions on the same model take turns
+/// at each pass. A cloud model needs no lock. An in-band tool body that asks
+/// its own session for an answer is refused at once with
+/// ``GenerationQueueError/waitInsideOpenSubmission(model:)``, because the
+/// pump of the session runs one answer at a time. A background body asks its
+/// own session and gets the answer of a later submission.
 public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// The resolved profile this session runs against.
     nonisolated var profile: LanguageModelProfile { get }
@@ -95,8 +94,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// reports ``unknownContextFill`` when the recording holds no stamp.
     var contextFill: Double { get async }
 
-    /// The SDK transcript of this session as of its last settled point
-    /// (`generation-queue.md`, section 5.8).
+    /// The SDK transcript of this session as of its last settled point.
     ///
     /// A settled point is the end of a submission, after its recording; a
     /// tool-result boundary of the session's own submission; and a compaction.
@@ -187,10 +185,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// observable progress reports ``SessionEvent/generationStalled(_:)`` on
     /// ``streamSessionEvents()`` with ``GenerationProgressVisibility/wholeAnswer``
     /// visibility, and one line in this module's log. Only the time inside a
-    /// pass of the running submission counts: a wait for the worker of the
-    /// ``GenerationQueue`` of the model and a tool body give no report. A
-    /// submission that waits for the worker reports
-    /// ``SessionEvent/submissionQueued(_:)``, and each submission reports
+    /// pass after its first output counts: a wait for the lock of the model
+    /// and a tool body give no report. Each submission reports
     /// ``SessionEvent/submissionStarted(_:)`` when its SDK call starts, on
     /// ``streamSessionEvents()``.
     ///
@@ -230,8 +226,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// - Throws: The error of a failed answer, `CancellationError` when the
     ///   message or its answer was cancelled, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
-    ///   called in band from a tool of a submission of this session, or of a
-    ///   submission on the same model.
+    ///   called in band from a tool of a submission of this session.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -247,9 +242,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// a backgrounded run is in flight; the pump delivers its terminal later,
     /// as mail. A stall reports ``SessionEvent/generationStalled(_:)`` on
     /// ``streamSessionEvents()`` with ``GenerationProgressVisibility/fragments(observed:)``
-    /// visibility. A wait for the worker of the generation queue is not a
-    /// stall; it reports ``SessionEvent/submissionQueued(_:)`` there, and
-    /// each submission reports ``SessionEvent/submissionStarted(_:)``.
+    /// visibility. A wait for the lock of the model is not a stall. Each
+    /// submission reports ``SessionEvent/submissionStarted(_:)``.
     ///
     /// Each submission opens one span, as ``respond(to:maxTokens:)`` states.
     /// The first submission has `submission.cause` reading `message`, and a
@@ -272,8 +266,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``SessionEvent/compaction(_:)`` of a proactive compaction. Then, for
     /// each submission of the chain: one ``SessionEvent/mailDelivered(_:)``
     /// for each mail that joins a continuation,
-    /// ``SessionEvent/submissionQueued(_:)`` (only when the submission must
-    /// wait for the worker), ``SessionEvent/submissionStarted(_:)``, the
+    /// ``SessionEvent/submissionStarted(_:)``, the
     /// ``SessionEvent/textDelta(_:)`` fragments, then, after the diff of the
     /// submission, the tool call and tool status events,
     /// ``SessionEvent/reasoningDelta(_:)``, and
@@ -289,9 +282,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// the stream throws `CancellationError`.
     /// ``SessionEvent/generationStalled(_:)`` is emitted on each interval
     /// without progress: no text fragment, no transcript entry, and no tool
-    /// call or tool result. Only the time inside a pass of the running
-    /// submission counts, so a wait for the worker of the ``GenerationQueue``
-    /// of the model and a tool body between two passes emit no stall.
+    /// call or tool result. Only the time inside a pass after its first
+    /// output counts, so a wait for the lock of the model and a tool body
+    /// between two passes emit no stall.
     ///
     /// Abandoning this stream cancels the message while it is queued
     /// (``cancel(_:)``) and does not wait for the end of that signal; it
@@ -338,8 +331,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   calling task is cancelled first, ``MailRefusal/closed`` when the
     ///   session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
-    ///   called in band from a tool of a submission of this session, or of a
-    ///   submission on the same model.
+    ///   called in band from a tool of a submission of this session.
     func awaitTerminal(of id: MailID) async throws -> SessionEvent
 
     /// Waits for the terminal event of the mail `id`, and gives the answer of
@@ -391,8 +383,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   once when the session has no record of the id,
     ///   ``MailRefusal/closed`` when the session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
-    ///   called in band from a tool of a submission of this session, or of a
-    ///   submission on the same model.
+    ///   called in band from a tool of a submission of this session.
     func awaitAnswer(of id: MailID) async throws -> SessionAnswer
 
     /// Waits for the terminal event of the signal `id`:
@@ -421,7 +412,6 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// session lives.
     ///
     /// Every event travels here, whichever helper sent the mail:
-    /// ``SessionEvent/submissionQueued(_:)``,
     /// ``SessionEvent/submissionStarted(_:)``,
     /// ``SessionEvent/submissionEnded(_:)``, ``SessionEvent/answered(_:)``,
     /// ``SessionEvent/answerFailed(_:)``, ``SessionEvent/textDelta(_:)``,
@@ -563,10 +553,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Installs how long a model call on this session may run with no
     /// observable progress before it reports
     /// ``SessionEvent/generationStalled(_:)``. The change takes effect on the
-    /// next model call. The interval counts only the time inside a pass of the
-    /// running submission, and never the wait for the worker of the
-    /// ``GenerationQueue`` of the model; ``GenerationStall`` states the
-    /// meaning of each field of a report.
+    /// next model call. The interval counts only the time inside a pass after
+    /// its first output, and never the wait for the lock of the model;
+    /// ``GenerationStall`` states the meaning of each field of a report.
     ///
     /// Stall reports are off until the host calls this. The session has no
     /// interval of its own: the host that shows the report names the interval.
@@ -708,8 +697,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Idempotent.
     func close() async
 
-    /// Sends one user message to this session, and returns its id at once
-    /// (`generation-queue.md`, section 5.4).
+    /// Sends one user message to this session, and returns its id at once.
     ///
     /// A helper on top of ``MailSink/mail(_:)``: the message is a user message in
     /// reply mode, with the text of the `.text` segments of `prompt`, joined

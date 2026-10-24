@@ -630,8 +630,9 @@ enum RouterTelemetry {
         /// The recorder of the decode rate of each generation call: its
         /// generated tokens divided by its decode time
         /// (``generationCallDecodeTime``), in tokens per second. The prefill,
-        /// the wait for the worker and the tool bodies are not in it. A call
-        /// whose first output token the session did not see records nothing.
+        /// the wait for the lock of the model and the tool bodies are not in
+        /// it. A call whose first output token the session did not see records
+        /// nothing.
         static let generationTokensPerSecond = prefix + "generation.tokens_per_second"
 
         /// The timer from the start of a submission to its first observable
@@ -674,10 +675,6 @@ enum RouterTelemetry {
         /// of a session, by mail kind, at each post and at each take.
         static let sessionQueueDepth = prefix + "session.queue_depth"
 
-        /// The gauge of the count of the submissions that wait in the
-        /// generation queue of a model, at the start of each submission.
-        static let generationQueueWaiting = prefix + "generation_queue.waiting"
-
         /// The counter of the compactions, by trigger.
         static let compactionCount = prefix + "compaction.count"
 
@@ -693,7 +690,7 @@ enum RouterTelemetry {
         static let allNames = [
             generationTokensIn, generationTokensCached, generationTokensOut, generationTokensPerSecond,
             submissionTimeToFirstToken, generationCallTimeToFirstToken, generationCallDecodeTime,
-            generationCallDuration, loadDuration, residentBytes, sessionQueueDepth, generationQueueWaiting,
+            generationCallDuration, loadDuration, residentBytes, sessionQueueDepth,
             compactionCount, mailQueuePauseDuration, mailCancelled,
         ]
     }

@@ -80,7 +80,7 @@ public actor Router {
     /// The decoding strategy every backend this router's handles make
     /// decodes with, or `nil` for the provider default. A decode option of
     /// the router, not of the shared container: two routers over one pooled
-    /// container each decode with their own mode (`model-pool.md` §2.5).
+    /// container each decode with their own mode.
     let samplingMode: GenerationOptions.SamplingMode?
 
     /// The Extras model pool this router resolves into. Every user of one

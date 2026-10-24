@@ -80,7 +80,7 @@ extension RoutedSessionActor {
             grammar: grammar, since: since, usage: usage, deliveredMail: deliveredMail,
             entryIdsBeforeAttempt: entryIdsBeforeAttempt, onEvent: onEvent)
         // The submission ended, with success or failure, and its entries are
-        // recorded: a settled point (`generation-queue.md`, section 5.8).
+        // recorded: a settled point.
         settleTranscript()
         if let lastGenerationCall {
             await report(generationCall: lastGenerationCall)

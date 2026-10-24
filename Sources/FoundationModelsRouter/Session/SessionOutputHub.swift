@@ -82,7 +82,7 @@ final class SessionOutputHub: Sendable {
                 throw error ?? failure
             case .cancelled, .lost:
                 throw CancellationError()
-            case .signalDone, .compaction, .compactionFailed, .compactionStarted, .submissionQueued,
+            case .signalDone, .compaction, .compactionFailed, .compactionStarted,
                 .submissionStarted, .submissionEnded, .textDelta, .textReset, .reasoningDelta, .entryRecorded,
                 .discoveryPrimingFailed, .generationStalled, .runSettled, .runMessage, .runProgress, .toolCall,
                 .toolStatus, .toolInvocation, .toolCallReport, .toolDisplay, .elicitationRequested, .generationCall,

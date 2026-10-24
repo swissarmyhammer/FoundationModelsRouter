@@ -19,7 +19,7 @@ import Testing
 /// `CrossRouterResidencyTests`.
 @Suite("Pooled model residency")
 struct PooledResidencyTests {
-    // MARK: - Concurrency-observing container (shared-queue test)
+    // MARK: - Concurrency-observing container (shared-lock test)
 
     /// Tracks how many bodies are concurrently inside a suspended `respond`
     /// call, so the shared-model concurrency test can assert non-overlap
@@ -50,35 +50,25 @@ struct PooledResidencyTests {
     /// `respond`, so a test can observe whether two concurrent calls
     /// serialize (never overlap) or interleave.
     ///
-    /// The backend declares no ``LanguageModelSessionBackend/generationQueue``,
-    /// so the session runs its calls directly. Each call submits itself as one
-    /// item to the ``GenerationQueue`` of its container instead, through
-    /// ``GenerationQueue/submit(isolation:onQueued:_:)``: the pattern a
-    /// consumer's own stub container follows.
+    /// The router runs each call of the backend directly. Each call takes the
+    /// FIFO lock of its container for its one generation, as an MLX model
+    /// does: the pattern a consumer's own stub container follows.
     private final class SuspendingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let observer: ConcurrencyObserver
         private let releaseGate: AsyncSemaphore
 
-        /// The queue of the container, which each call submits itself to as
-        /// one item.
-        private let containerQueue: GenerationQueue
+        /// The lock of the model of the container, which each call holds for
+        /// its one generation.
+        private let modelLock: FIFOGenerationLock
 
-        /// Signalled once for each call that must wait behind another item
-        /// of ``containerQueue``.
-        private let queued: AsyncSemaphore
-
-        init(
-            observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, containerQueue: GenerationQueue,
-            queued: AsyncSemaphore
-        ) {
+        init(observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, modelLock: FIFOGenerationLock) {
             self.observer = observer
             self.releaseGate = releaseGate
-            self.containerQueue = containerQueue
-            self.queued = queued
+            self.modelLock = modelLock
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            try await containerQueue.submit(onQueued: { [queued] in queued.signal() }) { [observer, releaseGate] in
+            await modelLock.withLock { [observer, releaseGate] in
                 await observer.enter(prompt)
                 await releaseGate.wait()
                 await observer.exit()
@@ -109,11 +99,8 @@ struct PooledResidencyTests {
         let observer: ConcurrencyObserver
         let releaseGate: AsyncSemaphore
 
-        /// Signalled once for each call that must wait in ``generationQueue``.
-        let queued: AsyncSemaphore
-
-        /// The queue every backend of this container shares.
-        let generationQueue = GenerationQueue()
+        /// The lock of the model, which every backend of this container shares.
+        let modelLock = FIFOGenerationLock()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             makeBackend()
@@ -126,8 +113,7 @@ struct PooledResidencyTests {
         ///
         /// - Returns: The backend.
         private func makeBackend() -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(
-                observer: observer, releaseGate: releaseGate, containerQueue: generationQueue, queued: queued)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, modelLock: modelLock)
         }
     }
 
@@ -392,7 +378,7 @@ struct PooledResidencyTests {
         #expect(await spy.evictions == 3)
     }
 
-    // MARK: - Concurrent generation on a shared model serializes on the model's generation queue.
+    // MARK: - Concurrent generation on a shared model serializes on the lock of the model.
 
     @Test("concurrent generation from two profiles over the same resident model never overlaps")
     @MainActor
@@ -402,7 +388,6 @@ struct PooledResidencyTests {
         let spy = LoadSpy()
         let observer = ConcurrencyObserver()
         let releaseGate = AsyncSemaphore(value: 0)
-        let queued = AsyncSemaphore(value: 0)
         // Fits one trio plus the second profile's two-KV-cache reuse charge.
         let router = ResidencyFixtures.makeRouter(
             spy: spy,
@@ -410,7 +395,7 @@ struct PooledResidencyTests {
                 + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir,
             llmContainer: { _ in
-                SuspendingLLMContainer(observer: observer, releaseGate: releaseGate, queued: queued)
+                SuspendingLLMContainer(observer: observer, releaseGate: releaseGate)
             }
         )
 
@@ -422,9 +407,10 @@ struct PooledResidencyTests {
         let first = try await router.resolve(profile: shared, reporting: ResolutionProgress())
         let second = try await router.resolve(profile: shared, reporting: ResolutionProgress())
 
-        // One pool entry, so one container, so one queue for both profiles.
-        let queue = try #require(first.standard.container as? SuspendingLLMContainer).generationQueue
-        #expect(try #require(second.standard.container as? SuspendingLLMContainer).generationQueue === queue)
+        // One pool entry, so one container, so one model lock for both
+        // profiles.
+        let lock = try #require(first.standard.container as? SuspendingLLMContainer).modelLock
+        #expect(try #require(second.standard.container as? SuspendingLLMContainer).modelLock === lock)
 
         let firstSession = first.standard.makeSession(instructions: nil)
         let secondSession = second.standard.makeSession(instructions: nil)
@@ -440,13 +426,13 @@ struct PooledResidencyTests {
         }
 
         // Let one call reach (and suspend inside) the shared model, and the
-        // other wait in the shared queue, before releasing them, so the queue
+        // other wait for the shared lock, before releasing them, so the lock
         // — not scheduling luck — is what is under test.
-        try await observer.changes.wait(until: { await observer.active == 1 })
+        try await BoundedWait.run { try await observer.changes.wait(until: { await observer.active == 1 }) }
         // The two calls are `async let` children, not tasks, so no end of a
         // task is available to end this wait.
-        await queued.wait()
-        #expect(await queue.waitingCount == 1)
+        try await BoundedWait.run { try await lock.waitForWaiters(1) }
+        #expect(await lock.waitingCount == 1)
         #expect(await observer.maxActive == 1)
 
         releaseGate.signal()

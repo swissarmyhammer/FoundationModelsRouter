@@ -29,29 +29,14 @@ public protocol LoadedModelContainer: Sendable {}
 /// A loaded generation (`standard`/`flash`) model container. Every generation
 /// call a ``RoutedSession`` performs runs through a backend this container makes.
 ///
-/// The entry of the model in the Extras model pool owns the one
-/// ``GenerationQueue`` of the model (``FoundationModelsExtras/ModelHold/queue``).
-/// The router gives that queue to the container through
-/// ``submitting(to:)``, and each backend of the copy that it gets back names
-/// the queue (``LanguageModelSessionBackend/generationQueue``). Thus the
-/// session of the backend submits each whole SDK call to it
-/// (`generation-queue.md`, section 5.3), and all users of one model share one
-/// queue. A container that keeps the default ``submitting(to:)`` and whose
-/// backends name no queue (a test stub or a third-party container) gets no
-/// generation gating from the Router: two sessions over it can generate at
-/// the same time.
+/// The Router puts no lock and no queue around a call of a backend. The rule:
+/// a lock must not cross over a tool call, only over the call into the
+/// model. The live container calls the model once for each pass, and the MLX
+/// model holds its own FIFO lock for that one generation. The SDK runs each
+/// tool body after the pass, thus outside that lock. A cloud model needs no
+/// lock. A container that must serialize its generations does so inside its
+/// own model, for one generation at a time.
 public protocol LoadedLLMContainer: LoadedModelContainer {
-    /// Gives a copy of this container whose backends name `queue`, the work
-    /// queue of the pool entry of the model. The router calls it once for
-    /// each hold, before it makes a session backend.
-    ///
-    /// The default gives this container: its backends keep the queue that
-    /// they name, or no queue.
-    ///
-    /// - Parameter queue: The work queue of the pool entry of the model.
-    /// - Returns: The container whose backends name `queue`.
-    func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer
-
     /// Makes a new session backend over this resident model.
     ///
     /// - Parameter instructions: The session's system instructions, or `nil`.
@@ -130,12 +115,6 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
 }
 
 extension LoadedLLMContainer {
-    /// Gives this container unchanged: its backends keep the queue that they
-    /// name, or no queue.
-    public func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer {
-        self
-    }
-
     /// Ignores `tools` and forwards to ``makeSession(instructions:)``.
     public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions)
@@ -235,8 +214,7 @@ public protocol ModelLoader: Sendable {
     /// Sets the memory budget of the prompt cache that the models of this
     /// loader keep. The pool calls it each time its resident footprint
     /// changes, with the working set less the resident footprints and less
-    /// the prompt-cache bytes that are being written to disk
-    /// (`generation-queue.md`, section 3).
+    /// the prompt-cache bytes that are being written to disk.
     ///
     /// - Parameter memoryBudgetBytes: The most bytes the prompt-cache entries
     ///   in memory may hold.

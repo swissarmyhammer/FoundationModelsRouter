@@ -2,18 +2,14 @@ import FoundationModelsExtras
 import Synchronization
 
 /// One point in the life of a model call, as a ``GenerationPassObserver``
-/// records it (tasks ^ake8sax and ^1psqdm9): the wait and the start of its
-/// submission, and the start and the end of each pass inside it.
+/// records it (tasks ^ake8sax and ^1psqdm9): the start of its submission,
+/// and the start, the first output and the end of each pass inside it.
 enum GenerationCallPhase: Sendable, Equatable {
-    /// The submission of the call joined the queue of its model behind
-    /// another item, because the worker runs a submission of another session.
-    case submissionQueued
-
-    /// The worker of the queue started the submission of the call. `at` is
-    /// when it started.
+    /// The SDK call of the submission started. `at` is when it started.
     case submissionStarted(at: ContinuousClock.Instant)
 
     /// A pass of the running submission started. `at` is when it started.
+    /// The pass can still wait for the lock of the model after this phase.
     case passStarted(at: ContinuousClock.Instant)
 
     /// The pass ended.
@@ -25,51 +21,32 @@ enum GenerationCallPhase: Sendable, Equatable {
     /// that gives no output reports it never.
     case firstOutput(at: ContinuousClock.Instant)
 
-    /// The running pass sent its first output event. A pass reports it at
-    /// most one time, and before its ``firstOutput(at:)``. A pass that sends
-    /// no output event reports it never.
+    /// The running pass sent its first output event. `at` is when the
+    /// session saw it. A pass reports it at most one time, and before its
+    /// ``firstOutput(at:)``. A pass that sends no output event reports it
+    /// never.
+    ///
+    /// A pass sends output only while it holds the lock of the model, thus
+    /// the stall watch counts the pass from this phase
+    /// (``GenerationStallWatch/measuredFrom``).
     ///
     /// The event is the first token of the pass only when a second output
     /// event follows it, which ``firstOutput(at:)`` reports. A pass that
     /// reports this phase and no ``firstOutput(at:)`` sent its whole output
     /// in this one event: its output was buffered, and its first token
     /// cannot be seen (``GenerationCallUsage/outputBuffered``).
-    case firstOutputEvent
-
-    /// The event that tells the consumer of the session about this phase, or
-    /// `nil` for a phase the consumer does not see.
-    ///
-    /// Only ``submissionQueued`` gives an event:
-    /// ``SessionEvent/submissionQueued(_:)`` with the id of the open
-    /// submission. The start of a submission reaches the consumer through
-    /// `RoutedSessionActor.submissionDidStart()`, not through a phase. A
-    /// pass gives no event. A summarizer call of a compaction has no open
-    /// submission, so its phases give no event.
-    ///
-    /// - Parameter submission: The id of the open submission of the session,
-    ///   or `nil` when no submission is open.
-    /// - Returns: The event, or `nil`.
-    func sessionEvent(submission: SubmissionID?) -> SessionEvent? {
-        switch self {
-        case .submissionQueued:
-            submission.map(SessionEvent.submissionQueued)
-        case .submissionStarted, .passStarted, .passEnded, .firstOutput, .firstOutputEvent:
-            nil
-        }
-    }
+    case firstOutputEvent(at: ContinuousClock.Instant)
 }
 
-/// A report of the model calls of a session: the wait and the start of each
-/// submission, and the start and the end of each pass inside it
-/// (`generation-queue.md`, section 5.6).
+/// A report of the model calls of a session: the start of each submission,
+/// and the start, the first output and the end of each pass inside it.
 ///
-/// The submission of a call runs on a task that the worker of the queue
-/// makes, and the SDK runs each pass below it, maybe on a task of its own. A
-/// task-local that the session binds reaches neither of them. So the session
-/// gives this observer to the per-session state of the wrapper of its backend
+/// The SDK runs each pass below the call, maybe on a task of its own, and a
+/// task-local that the session binds need not reach it. So the session gives
+/// this observer to the per-session state of the wrapper of its backend
 /// (``SessionLanguageModelState/reportPasses(to:)``), and the executor calls
 /// it at the start and the end of each pass. The session itself calls it when
-/// its submission waits for the worker, and when the worker starts it.
+/// the SDK call of its submission starts.
 ///
 /// The calls are synchronous and never suspend, so they cannot delay a pass.
 /// Each call appends one ``GenerationCallPhase`` under a lock, in the order of
@@ -132,25 +109,13 @@ final class GenerationPassObserver: Sendable {
         state.withLock { $0.openPasses }
     }
 
-    /// Records that the submission of the call waits behind another item.
+    /// Records that the SDK call of the submission starts now.
     ///
-    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
+    /// The caller is `RoutedSessionActor.run(_:reportingTo:onStart:)` (in
     /// `RoutedSessionActorAnswerExecution.swift`), which
-    /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``
-    /// uses for each model call. It gives this method to
-    /// ``GenerationQueue/submit(isolation:onQueued:_:)`` as `onQueued`, so the
-    /// worker calls it only when the item must wait.
-    func submissionQueued() {
-        record(.submissionQueued)
-    }
-
-    /// Records that the worker of the queue started the submission now.
-    ///
-    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
-    /// `RoutedSessionActorAnswerExecution.swift`). It calls this method first in
-    /// the body of the item that it gives to
-    /// ``GenerationQueue/submit(isolation:onQueued:_:)``, so the call runs on
-    /// the task of the worker when the submission starts.
+    /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:_:)``
+    /// uses for each model call. It calls this method first, before the SDK
+    /// call.
     func submissionStarted() {
         record(.submissionStarted(at: clock.now))
     }
@@ -188,13 +153,16 @@ final class GenerationPassObserver: Sendable {
         record(.firstOutput(at: instant))
     }
 
-    /// Records that the running pass sent its first output event.
+    /// Records that the running pass sent its first output event at
+    /// `instant`, on ``clock``.
     ///
     /// The caller is the relay of the executor channel of the pass
     /// (``PassOutputRelay``), when the first output event of the pass comes,
     /// before the relay forwards that event to the SDK.
-    func passSentFirstOutputEvent() {
-        record(.firstOutputEvent)
+    ///
+    /// - Parameter instant: When the first output event of the pass came.
+    func passSentFirstOutputEvent(at instant: ContinuousClock.Instant) {
+        record(.firstOutputEvent(at: instant))
     }
 
     /// Waits until no pass is open, or until the calling task is cancelled.

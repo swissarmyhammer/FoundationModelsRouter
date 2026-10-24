@@ -3,20 +3,17 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// An item runs on the task of the worker, and the SDK call returns the output
-/// of its pass (tasks ^a0ze9af and ^1psqdm9).
+/// A pass over a ``SessionLanguageModel`` keeps the task-locals of the caller
+/// of the SDK call (tasks ^a0ze9af, ^1psqdm9 and ^qhgfajc).
 ///
 /// ``SubmitterMarkModel`` answers with the value of a task-local that the
 /// test binds around the SDK call. The SDK gives task-locals to the executor
-/// (the control test), so a pass that answers "none" ran on a task that the
-/// worker made, which inherits no task-local of the submitter. That holds for
-/// a whole SDK call over a ``SessionLanguageModel``, submitted as one item.
-///
-/// `FoundationModelsExtras` owns ``GenerationQueue`` and the tests of the
-/// queue itself. This suite tests the router over the queue: a whole SDK call
-/// over the router's ``SessionLanguageModel``.
-@Suite("Generation queue: an item runs on the worker task (tasks ^a0ze9af, ^1psqdm9)")
-struct GenerationQueueWorkerTaskTests {
+/// (the control test). The wrapper calls the model through
+/// `PooledGeneration.run(ref:channel:_:)`, whose task keeps the task-locals
+/// of its caller. Thus the pass sees the mark of the caller, and a tool body
+/// reads the bindings of its model call.
+@Suite("A pass over the wrapper keeps the task-locals of its caller (tasks ^a0ze9af, ^1psqdm9, ^qhgfajc)")
+struct SessionLanguageModelTaskLocalTests {
     /// The task-local that the test binds around the SDK call.
     enum SubmitterMark {
         /// The mark of the task that calls the SDK, or `nil` when no caller
@@ -97,26 +94,19 @@ struct GenerationQueueWorkerTaskTests {
         }
     }
 
-    @Test("with no queue, the SDK gives the task-local of the caller to the pass (the control)")
+    @Test("over the raw model, the SDK gives the task-local of the caller to the pass (the control)")
     func theSDKGivesTheCallerTaskLocalToThePass() async throws {
         let content = try await Self.respondWithMark(over: SubmitterMarkModel())
 
         #expect(content == SubmitterMarkModel.answer(seeing: Self.submitterMark))
     }
 
-    @Test("a whole SDK call submitted as one item runs on the worker task, and returns the output of its pass")
-    func aWholeSDKCallRunsOnTheWorkerTask() async throws {
-        let queue = GenerationQueue()
-        let model = SessionLanguageModel(wrapping: SubmitterMarkModel())
+    @Test("over the wrapper, the pass keeps the task-local of the caller, and returns the output of its pass")
+    func aPassOverTheWrapperKeepsTheTaskLocalOfTheCaller() async throws {
+        let model = SessionLanguageModel(wrapping: SubmitterMarkModel(), ref: ModelRef(repo: "test/submitter-mark"))
 
-        let content = try await SubmitterMark.$value.withValue(Self.submitterMark) {
-            try await queue.submit {
-                let session = LanguageModelSession(model: model, tools: [])
-                return try await session.respond(to: "which mark").content
-            }
-        }
+        let content = try await Self.respondWithMark(over: model)
 
-        #expect(content == SubmitterMarkModel.answer(seeing: nil))
-        #expect(await queue.isRunning == false)
+        #expect(content == SubmitterMarkModel.answer(seeing: Self.submitterMark))
     }
 }

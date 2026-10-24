@@ -70,19 +70,6 @@ struct RouterMetricsTests {
     /// The name of the gauge of the bytes that the models of the pool use.
     private static let residentBytesName = "FoundationModelsRouter.model_pool.resident_bytes"
 
-    /// Tells whether a feed of a session reported that a submission of that
-    /// session waits in the queue of its model.
-    ///
-    /// - Parameter events: The events of the feed so far.
-    /// - Returns: `true` when the events contain
-    ///   ``SessionEvent/submissionQueued(_:)``.
-    private static func containsQueuedSubmission(_ events: [SessionEvent]) -> Bool {
-        events.contains { event in
-            guard case .submissionQueued = event else { return false }
-            return true
-        }
-    }
-
     /// Waits until the holding answer started its pass in the model of
     /// `fixture`, or until `holding` ended (rule T1).
     ///
@@ -444,59 +431,6 @@ struct RouterMetricsTests {
         #expect(values.allSatisfy { $0 >= 0 })
     }
 
-    @Test("a submission that starts while others wait records the waiting count of the queue of its model")
-    func waitingSubmissionsAreRecordedInTheGenerationQueueGauge() async throws {
-        let (values, modelRef) = try await Self.withHeldSessions(count: 1 + Self.waitingPrompts.count) {
-            fixture, profile, sessions in
-            let queue = try #require(profile.standard.backendQueue)
-            let holding = try #require(sessions.first)
-            let waiting = Array(sessions.dropFirst())
-            return try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
-                context in
-                for session in sessions {
-                    await session.useCaptureMetrics(for: context.metricsFactory)
-                }
-                var feeds: [(log: SessionEventLog, drain: Task<Void, Never>)] = []
-                for session in waiting {
-                    feeds.append(await SessionEventLog.watch(session))
-                }
-                let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
-                try await Self.waitForTheHoldingPass(of: fixture, endingOnEndOf: holdingAnswer)
-                var waitingAnswers: [Task<String, any Error>] = []
-                for (index, session) in waiting.enumerated() {
-                    let prompt = Self.waitingPrompts[index]
-                    let answer = Task { try await session.respond(to: prompt) }
-                    waitingAnswers.append(answer)
-                    // The queue counts the submission before it reports the wait,
-                    // and the holding answer keeps each submission in the queue.
-                    // The wait also ends when the answer ended (rule T1): the
-                    // latch holds the answer in the queue, so in a test that
-                    // passes it cannot end first.
-                    let log = feeds[index].log
-                    try await RecordedWaitResult.wait(
-                        for: { try await log.wait(until: { Self.containsQueuedSubmission($0) }) },
-                        endingOnEndOf: answer)
-                    #expect(await queue.waitingCount == index + 1)
-                }
-                await fixture.latch.open()
-                _ = try await holdingAnswer.value
-                for answer in waitingAnswers {
-                    _ = try await answer.value
-                }
-                for feed in feeds {
-                    feed.drain.cancel()
-                }
-                let gauge = try context.metricsFactory.expectGauge(
-                    "FoundationModelsRouter.generation_queue.waiting", [("model.ref", holding.modelRefDimension)])
-                return (gauge.values, holding.modelRefDimension)
-            }
-        }
-
-        // The second submission starts when the first one ends, while the
-        // third one still waits behind it.
-        #expect(values.contains(1), "the waiting counts of \(modelRef) are \(values)")
-        #expect(values.allSatisfy { $0 >= 0 })
-    }
 }
 
 /// A metrics factory that makes each metric through the `TestMetrics` of a

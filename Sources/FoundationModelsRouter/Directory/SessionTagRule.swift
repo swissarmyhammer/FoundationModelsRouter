@@ -1,7 +1,6 @@
 import FoundationModelsExtras
 
-/// The tag rule of ROUTER-2 (session.md section 5.3, and section 8.2 of the
-/// Multitool session.md): a tag has 1 to 64 characters, each a letter, an
+/// The tag rule of ROUTER-2: a tag has 1 to 64 characters, each a letter, an
 /// ASCII digit, `-`, `_`, `:` or `.`. Examples: `reviewer`, `travel`,
 /// `scheduled`, `kanban:task-42`.
 ///

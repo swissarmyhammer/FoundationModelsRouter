@@ -81,6 +81,15 @@ struct PassOutputRelayTests {
         }
     }
 
+    /// Whether `phase` is the first output event of a pass, at any instant.
+    ///
+    /// - Parameter phase: A phase of the observer.
+    /// - Returns: `true` for ``GenerationCallPhase/firstOutputEvent(at:)``.
+    private static func isFirstOutputEvent(_ phase: GenerationCallPhase) -> Bool {
+        if case .firstOutputEvent = phase { return true }
+        return false
+    }
+
     @Test("a pass that streams its tool-call arguments reports one first output, and each event reaches the SDK")
     func streamedArgumentsReportTheFirstOutput() async throws {
         let observer = GenerationPassObserver()
@@ -109,7 +118,9 @@ struct PassOutputRelayTests {
 
         _ = try await Self.relay([Self.metadata, Self.toolCallArguments, Self.usage], reportingTo: observer)
 
-        #expect(observer.takePhases() == [.firstOutputEvent])
+        let phases = observer.takePhases()
+        #expect(phases.count == 1)
+        #expect(phases.allSatisfy(Self.isFirstOutputEvent))
     }
 
     @Test("a pass that streams reports its first output event once, before its first output")
@@ -120,8 +131,8 @@ struct PassOutputRelayTests {
         _ = try await Self.relay(events, reportingTo: observer)
 
         let phases = observer.takePhases()
-        #expect(phases.first == .firstOutputEvent)
-        #expect(phases.filter { $0 == .firstOutputEvent }.count == 1)
+        #expect(phases.first.map(Self.isFirstOutputEvent) == true)
+        #expect(phases.filter(Self.isFirstOutputEvent).count == 1)
         #expect(phases.count == 2)
     }
 
