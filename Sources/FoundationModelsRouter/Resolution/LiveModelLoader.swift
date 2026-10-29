@@ -4,6 +4,7 @@ import FoundationModelsExtras
 import HuggingFace
 import MLXFoundationModels
 import MLXLLM
+import MLXLMCommon
 // Load-bearing although this file names no `MLXVLM` symbol: keep it. The
 // Extras `MLXModelLoader` loads each generation model with
 // `loadModelContainer`, which selects a factory through `MLXLMCommon`'s
@@ -979,6 +980,14 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// init makes.
     let modelLoader: any PooledModelLoader
 
+    /// The factory that loads the MTP drafter of a reference that names one
+    /// (``ModelRef/drafter``). The router links MLXVLM, so
+    /// `loadModelContainer` loads a Qwen3.5-family target as a
+    /// vision-language model, and the drafter must match the factory that
+    /// loaded the target: a plain `.qwen35Text` registration would leave each
+    /// call to plain decode with the fallback reason `incompatibleDrafter`.
+    public static let drafterRegistration: MTPDrafterRegistration = .matchingTarget(.qwen35Text, .qwen35VLM)
+
     /// Creates a live loader. The init needs no ``Router``.
     ///
     /// The loader stores no decoding strategy. A container it vends serves
@@ -1029,7 +1038,9 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ) {
         self.init(
             reporting: reporting,
-            modelLoader: MLXModelLoader(cacheDirectory: cacheDirectory, tokenProvider: tokenProvider))
+            modelLoader: MLXModelLoader(
+                cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
+                drafterRegistration: Self.drafterRegistration))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test

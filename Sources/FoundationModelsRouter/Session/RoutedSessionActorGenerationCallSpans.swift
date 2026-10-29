@@ -94,5 +94,13 @@ extension RoutedSessionActor {
         }
         span.attributes[RouterTelemetry.AttributeKey.finishReason] = "\(usage.finishReason)"
         span.attributes[RouterTelemetry.AttributeKey.toolCallCount] = toolCallCount
+        if let outcome = usage.speculativeDecoding {
+            span.attributes[RouterTelemetry.AttributeKey.speculativeDecoding] = outcome.speculated
+            if let fallbackReason = outcome.fallbackReason {
+                span.attributes[RouterTelemetry.AttributeKey.speculativeDecodingFallbackReason] = fallbackReason
+            }
+            span.attributes[RouterTelemetry.AttributeKey.acceptedDraftTokenCount] = outcome.acceptedDraftTokenCount
+            span.attributes[RouterTelemetry.AttributeKey.draftedTokenCount] = outcome.draftedTokenCount
+        }
     }
 }

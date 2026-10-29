@@ -1,0 +1,1 @@
+{"id":"01M641AJ91KQE3C9ECZ0R7T88V","timestamp":"2026-10-29T14:34:18.785308Z","op":"create","item_id":"01M641AJ90WZ9TV1FQ2Q92TEG4","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: e4e669\n+tag_name: mtp\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: e4e669\n-tag_name: mtp\n","transaction_id":null}

@@ -882,7 +882,9 @@ struct SessionOutboxToolWiringTests {
         // decorator still recognizes the envelope's wire form, so neither the
         // completionToken nor the next-step instruction it carries is
         // truncated away.
-        #expect(rendered == PendingRunEnvelope(completionToken: envelope.completionToken).rendered)
+        // The `next` instruction names the call (FoundationModelsExtras
+        // 18a20df), so the expected envelope is rebuilt from the decoded one.
+        #expect(rendered == PendingRunEnvelope(completionToken: envelope.completionToken, next: envelope.next).rendered)
         #expect(PendingRunEnvelope.isRendered(text: rendered))
 
         // Settle the background run so no background work outlives the test.

@@ -237,6 +237,21 @@ enum RouterTelemetry {
         /// lost data.
         static let outputBuffered = "generation.output_buffered"
 
+        /// Whether MTP drafted in a generation call
+        /// (``SpeculativeDecodingOutcome/speculated``). Set only on a call
+        /// whose model names an MTP drafter.
+        static let speculativeDecoding = "generation.mtp.speculated"
+
+        /// Why a generation call fell back from MTP to plain decode
+        /// (``SpeculativeDecodingOutcome/fallbackReason``).
+        static let speculativeDecodingFallbackReason = "generation.mtp.fallback_reason"
+
+        /// The drafted tokens that the target accepted in a generation call.
+        static let acceptedDraftTokenCount = "generation.mtp.accepted_tokens"
+
+        /// The tokens that the MTP drafter drafted in a generation call.
+        static let draftedTokenCount = "generation.mtp.drafted_tokens"
+
         /// The whole time of a generation call, in milliseconds. Each
         /// generation call span carries it.
         static let callMs = "generation.call_ms"

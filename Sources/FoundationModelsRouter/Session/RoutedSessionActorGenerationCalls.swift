@@ -88,6 +88,11 @@ struct GenerationCallLedger {
     /// sent one and gave no first output token is buffered.
     var sawOutputEvent = false
 
+    /// The id of the response whose MTP outcome the last reported call took,
+    /// or `nil` before a call took one
+    /// (``SpeculativeDecodingOutcome/newest(in:after:)``).
+    var speculationEntryID: String?
+
     /// Applies one reported phase of the model call: the start of a pass
     /// starts the times of a new generation call, its first output event
     /// marks that it sent output, and its first output ends its prefill.
@@ -245,7 +250,7 @@ extension RoutedSessionActor {
             lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
         let usage = generationCallUsage(
             of: call, cached: cached, timing: ended.timing, duration: ended.duration, finishReason: finishReason,
-            entryKind: entryKind)
+            entryKind: entryKind, speculativeDecoding: takeSpeculativeDecodingOutcome(in: submissionEntries))
         traceGenerationCall(
             for: usage, duration: ended.duration,
             toolCallCount: GenerationCallEntryKind.toolCallCount(of: submissionEntries))
@@ -293,7 +298,8 @@ extension RoutedSessionActor {
         let ended = noteEndedCall(call, cached: cached, backendUsage: reported, of: ledger)
         let usage = generationCallUsage(
             of: call, cached: cached, timing: ended.timing, duration: ended.duration, finishReason: finishReason,
-            entryKind: entryKind)
+            entryKind: entryKind,
+            speculativeDecoding: takeSpeculativeDecodingOutcome(in: unrecordedTranscriptEntries()))
         traceGenerationCall(for: usage, duration: ended.duration, toolCallCount: toolCallCount)
         return (usage, (input: call.input - reported.input, output: call.output - reported.output))
     }
@@ -352,10 +358,12 @@ extension RoutedSessionActor {
     ///   - duration: The whole time of the call.
     ///   - finishReason: Why the call stopped.
     ///   - entryKind: What the call left in the transcript.
+    ///   - speculativeDecoding: What MTP did in the call, or `nil`.
     /// - Returns: The report, with the fill of the render after the call.
     private func generationCallUsage(
         of call: (input: Int, output: Int), cached: Int?, timing: GenerationCallTiming, duration: Duration,
-        finishReason: FinishReason, entryKind: GenerationCallEntryKind
+        finishReason: FinishReason, entryKind: GenerationCallEntryKind,
+        speculativeDecoding: SpeculativeDecodingOutcome?
     ) -> GenerationCallUsage {
         GenerationCallUsage(
             tokensIn: call.input,
@@ -368,7 +376,25 @@ extension RoutedSessionActor {
             timeToFirstToken: timing.timeToFirstToken,
             decodeTime: timing.decodeTime,
             outputBuffered: timing.outputBuffered,
-            callDuration: duration)
+            callDuration: duration,
+            speculativeDecoding: speculativeDecoding)
+    }
+
+    /// Takes the MTP outcome of the call that ended: the newest response in
+    /// `entries` that carries one, unless an earlier call of the attempt took
+    /// it. Marks that response as taken in the ledger.
+    ///
+    /// - Parameter entries: The entries the attempt appended.
+    /// - Returns: The outcome, or `nil` when the call left none.
+    private func takeSpeculativeDecodingOutcome(
+        in entries: some BidirectionalCollection<Transcript.Entry>
+    ) -> SpeculativeDecodingOutcome? {
+        guard
+            let found = SpeculativeDecodingOutcome.newest(
+                in: entries, after: generationCallLedger?.speculationEntryID)
+        else { return nil }
+        generationCallLedger?.speculationEntryID = found.entryID
+        return found.outcome
     }
 
     /// Writes `usage` to the run journal and delivers it live.

@@ -193,6 +193,8 @@ public struct RealModelContainer: Sendable {
         let tokenizerLoader = PinnedDateTokenizerLoader(
             wrapping: #huggingFaceTokenizerLoader(), dateString: chatTemplateDate)
         return LiveModelLoader(
-            reporting: { _ in }, modelLoader: MLXModelLoader(tokenizerLoader: tokenizerLoader))
+            reporting: { _ in },
+            modelLoader: MLXModelLoader(
+                tokenizerLoader: tokenizerLoader, drafterRegistration: LiveModelLoader.drafterRegistration))
     }
 }

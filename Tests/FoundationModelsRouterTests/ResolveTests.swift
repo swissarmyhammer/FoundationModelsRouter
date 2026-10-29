@@ -1025,4 +1025,99 @@ struct ResolveTests {
         #expect(sp.state == .loading)
         #expect(sp.bytesDownloaded == 5 << 30)
     }
+
+    // MARK: - MTP drafter
+
+    /// A tree listing with one weight shard far larger than any test budget.
+    private static let hugeTreeJSON = Data("""
+        [
+            {"type": "file", "path": "model.safetensors", "size": 1000000000000}
+        ]
+        """.utf8)
+
+    /// A profile whose first standard candidate names `drafter`.
+    private static func drafterProfile(drafter: ModelRef) -> ProfileDefinition {
+        ProfileDefinition(
+            name: "mtp",
+            description: "the first standard candidate speculates with an MTP drafter",
+            standard: [ModelRef(repo: "org/std-a", drafter: drafter), "org/std-b"],
+            flash: ["org/flash-a"],
+            embedding: ["org/emb-a"],
+            context: ScriptedSessionContext.tokens
+        )
+    }
+
+    /// Resolves `profile` over `source` with the stub probe and loader.
+    @MainActor
+    private static func resolve(
+        _ profile: ProfileDefinition, source: some MetadataSource
+    ) async throws -> LanguageModelProfile {
+        let dir = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let progress = ResolutionProgress()
+        let router = Router(
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: source,
+            loader: StubModelLoader(progress: progress),
+            pool: ModelPool()
+        )
+        return try await router.resolve(profile: profile, reporting: progress)
+    }
+
+    @Test("a standard candidate with a drafter that fits is chosen with its drafter")
+    @MainActor
+    func drafterThatFitsIsChosen() async throws {
+        let profile = Self.drafterProfile(drafter: "org/std-a-mtp")
+        let source = ScriptedMetadataSource(scripts: [:], defaultRaw: Self.rawMetadata)
+
+        let resolved = try await Self.resolve(profile, source: source)
+
+        #expect(resolved.standard.chosen == ModelRef(repo: "org/std-a", drafter: "org/std-a-mtp"))
+    }
+
+    @Test("JointFit charges the drafter bytes, so a drafter that does not fit moves the slot to the next candidate")
+    @MainActor
+    func drafterBytesAreCharged() async throws {
+        let drafter: ModelRef = "org/std-a-mtp"
+        let profile = Self.drafterProfile(drafter: drafter)
+        let source = ScriptedMetadataSource(
+            scripts: [drafter.repo: [.success(RawRepoMetadata(configJSON: Self.configJSON, treeJSON: Self.hugeTreeJSON))]],
+            defaultRaw: Self.rawMetadata)
+
+        let resolved = try await Self.resolve(profile, source: source)
+
+        #expect(resolved.standard.chosen == "org/std-b")
+    }
+
+    @Test("a drafter with no metadata makes its candidate unsized, so the slot takes the next candidate")
+    @MainActor
+    func drafterWithNoMetadataIsUnsized() async throws {
+        let drafter: ModelRef = "org/std-a-mtp"
+        let profile = Self.drafterProfile(drafter: drafter)
+        let source = ScriptedMetadataSource(
+            scripts: [drafter.repo: [.failDirect(.metadataUnavailable("no such repo"))]],
+            defaultRaw: Self.rawMetadata)
+
+        let resolved = try await Self.resolve(profile, source: source)
+
+        #expect(resolved.standard.chosen == "org/std-b")
+    }
+
+    @Test("a profile decodes a slot entry in the mapping form with its drafter")
+    func profileDecodesTheDrafterMapping() throws {
+        let json = """
+            {"name": "mtp", "description": "d",
+             "standard": [{"repo": "mlx-community/Qwen3.8-27B-4bit", "drafter": "mlx-community/Qwen3.8-27B-MTP-4bit"}],
+             "flash": ["org/flash-a"], "embedding": ["org/emb-a"]}
+            """
+
+        let profile = try JSONDecoder().decode(ProfileDefinition.self, from: Data(json.utf8))
+
+        #expect(
+            profile.standard == [
+                ModelRef(repo: "mlx-community/Qwen3.8-27B-4bit", drafter: "mlx-community/Qwen3.8-27B-MTP-4bit")
+            ])
+        #expect(profile.flash == ["org/flash-a"])
+    }
 }

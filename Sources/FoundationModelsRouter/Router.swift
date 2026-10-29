@@ -614,7 +614,9 @@ public actor Router {
     // MARK: - Sizing
 
     /// Fetches every candidate's parsed metadata, merging results for a ref
-    /// shared across slots with ``preferSuccess(left:right:)``.
+    /// shared across slots with ``preferSuccess(left:right:)``. The MTP
+    /// drafter of a candidate (``ModelRef/drafter``) is sized too, under its
+    /// own ref, so the fit charges its weights.
     private func sizeCandidates(
         profile def: ProfileDefinition
     ) async -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
@@ -626,6 +628,9 @@ public actor Router {
                     out[ref] = Self.preferSuccess(left: existing, right: result)
                 } else {
                     out[ref] = result
+                }
+                if let drafter = ref.drafter, out[drafter] == nil {
+                    out[drafter] = await metadataResult(for: drafter)
                 }
             }
         }
@@ -671,6 +676,22 @@ public actor Router {
         return membership
     }
 
+    /// The weight bytes of the MTP drafter of `ref`, which the model loads
+    /// beside its own weights.
+    ///
+    /// - Parameters:
+    ///   - ref: A generation candidate.
+    ///   - metadataByRef: The sized metadata, the drafters included.
+    /// - Returns: 0 for a ref with no drafter, the weight bytes of its drafter,
+    ///   or the error of a drafter that could not be sized.
+    private static func drafterWeightBytes(
+        of ref: ModelRef, metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+    ) -> Result<Int64, RepoMetadataError> {
+        guard let drafter = ref.drafter else { return .success(0) }
+        return (metadataByRef[drafter] ?? .failure(.metadataUnavailable(unsizedCandidateMessage(for: drafter))))
+            .map(\.weightBytes)
+    }
+
     /// The shared diagnostic for a candidate that has no fetched metadata.
     private static func unsizedCandidateMessage(for ref: ModelRef) -> String {
         "candidate \(ref.stringValue) was not sized"
@@ -706,9 +727,17 @@ public actor Router {
             }
             if slots.contains(.standard) || slots.contains(.flash) {
                 let key = ModelPoolKey(ref: ref, role: .llm)
-                let raw = metadata.footprint.footprint(context: context)
                 let sessionKV = metadata.footprint.kvBytes(context: context)
-                candidates.append(residentKeys.contains(key) ? sessionKV : raw)
+                if residentKeys.contains(key) {
+                    candidates.append(sessionKV)
+                } else {
+                    switch drafterWeightBytes(of: ref, metadataByRef: metadataByRef) {
+                    case .failure(let error):
+                        return .failure(error)
+                    case .success(let drafterBytes):
+                        candidates.append(metadata.footprint.footprint(context: context) + drafterBytes)
+                    }
+                }
             }
             // Total by construction: every ref in `metadataByRef` came from
             // `def.candidatesBySlot`, so `membership[ref]` always has at

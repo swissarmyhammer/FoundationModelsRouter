@@ -93,6 +93,10 @@ public struct GenerationCallUsage: Sendable, Equatable {
         tokensIn + tokensOut
     }
 
+    /// What MTP speculative decoding did in the call, or `nil` when the model
+    /// of the call names no MTP drafter, or its backend reports no outcome.
+    public let speculativeDecoding: SpeculativeDecodingOutcome?
+
     /// Creates the usage of one generation call.
     ///
     /// - Parameters:
@@ -113,6 +117,8 @@ public struct GenerationCallUsage: Sendable, Equatable {
     ///     as exactly one output event. The default is `false`.
     ///   - callDuration: The whole time of the call, or `nil` (the default)
     ///     when no session measured it.
+    ///   - speculativeDecoding: What MTP did in the call, or `nil` (the
+    ///     default) when the call reports no outcome.
     public init(
         tokensIn: Int,
         tokensOut: Int,
@@ -123,8 +129,10 @@ public struct GenerationCallUsage: Sendable, Equatable {
         timeToFirstToken: Duration? = nil,
         decodeTime: Duration? = nil,
         outputBuffered: Bool = false,
-        callDuration: Duration? = nil
+        callDuration: Duration? = nil,
+        speculativeDecoding: SpeculativeDecodingOutcome? = nil
     ) {
+        self.speculativeDecoding = speculativeDecoding
         self.tokensIn = tokensIn
         self.tokensCached = tokensCached
         self.timeToFirstToken = timeToFirstToken
@@ -143,6 +151,7 @@ extension GenerationCallUsage: CustomStringConvertible {
     public var description: String {
         "fed \(tokensIn) tokens\(cachedDescription), generated \(tokensOut) tokens, \(stopDescription), "
             + "left \(entryDescription), context \(contextTokens) tokens"
+            + (speculativeDecoding.map { ", \($0)" } ?? "")
     }
 
     /// The words for ``tokensCached``, or nothing when the backend reports no
