@@ -1104,6 +1104,101 @@ struct ResolveTests {
         #expect(resolved.standard.chosen == "org/std-b")
     }
 
+    // MARK: - The ACP agent default on a 32 GB machine
+
+    /// The GPU working set of a 32 GB machine: two thirds of its RAM, the
+    /// smaller share that macOS gives a machine of that size. (A 96 GiB
+    /// machine reports about 81 percent.)
+    private static let workingSetOf32GB: Int64 = (32 << 30) * 2 / 3
+
+    /// A tree listing of one model: one weight file of each size.
+    private static func tree(_ sizes: [Int64]) -> Data {
+        let files = sizes.enumerated().map { #"{"type": "file", "path": "model-\#($0.offset).safetensors", "size": \#($0.element)}"# }
+        return Data("[\(files.joined(separator: ","))]".utf8)
+    }
+
+    /// The sizing keys of a Qwen3.5-family `config.json` (Qwen3.8 27B and its
+    /// MTP head): 64 layers, one full-attention layer in four.
+    private static let qwen38Config: Data = {
+        let layerTypes = (0..<64).map { $0 % 4 == 3 ? #""full_attention""# : #""linear_attention""# }
+        return Data(
+            """
+            {"model_type": "qwen3_5", "text_config": {"num_hidden_layers": 64, "num_attention_heads": 24,
+             "num_key_value_heads": 4, "head_dim": 256, "hidden_size": 5120, "max_position_embeddings": 262144,
+             "layer_types": [\(layerTypes.joined(separator: ","))]}}
+            """.utf8)
+    }()
+
+    /// The sizing keys of a Qwen3 `config.json`.
+    private static func qwen3Config(layers: Int, heads: Int, hidden: Int, maxPositions: Int) -> Data {
+        Data(
+            """
+            {"model_type": "qwen3", "num_hidden_layers": \(layers), "num_attention_heads": \(heads),
+             "num_key_value_heads": 8, "head_dim": 128, "hidden_size": \(hidden), "max_position_embeddings": \(maxPositions)}
+            """.utf8)
+    }
+
+    /// The profile of the ACP agent default (2026-10-29): Qwen3.8 27B 4-bit
+    /// with its MTP head, Qwen3 4B 4-bit, and the 4-bit Qwen3 0.6B embedder.
+    /// No context: the fit picks the window.
+    private static let agentDefaultProfile = ProfileDefinition(
+        name: "acp-default",
+        description: "the ACP agent default with MTP",
+        standard: [
+            ModelRef(repo: "mlx-community/Qwen3.8-27B-4bit", drafter: "mlx-community/Qwen3.8-27B-MTP-4bit")
+        ],
+        flash: ["mlx-community/Qwen3-4B-4bit"],
+        embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"],
+        context: nil
+    )
+
+    /// The metadata of the four repositories, with the weight sizes of the
+    /// Hugging Face cache of 2026-10-29.
+    private static var agentDefaultMetadata: ScriptedMetadataSource {
+        let raw: [String: RawRepoMetadata] = [
+            "mlx-community/Qwen3.8-27B-4bit": RawRepoMetadata(
+                configJSON: qwen38Config, treeJSON: tree([5_343_268_662, 5_354_185_130, 5_357_087_557])),
+            "mlx-community/Qwen3.8-27B-MTP-4bit": RawRepoMetadata(
+                configJSON: qwen38Config, treeJSON: tree([238_934_137])),
+            "mlx-community/Qwen3-4B-4bit": RawRepoMetadata(
+                configJSON: qwen3Config(layers: 36, heads: 32, hidden: 2560, maxPositions: 40960),
+                treeJSON: tree([2_263_022_529])),
+            "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ": RawRepoMetadata(
+                configJSON: qwen3Config(layers: 28, heads: 16, hidden: 1024, maxPositions: 32768),
+                treeJSON: tree([335_296_756])),
+        ]
+        return ScriptedMetadataSource(
+            scripts: raw.mapValues { Array(repeating: .success($0), count: 4) }, defaultRaw: rawMetadata)
+    }
+
+    /// Measured 2026-10-29 with these numbers: at a working set of two thirds
+    /// of 32 GiB the window is 18,849 tokens with the drafter and 19,970
+    /// without it; at three quarters it is 32,292 and 33,414. The drafter
+    /// costs about 1.1k tokens of window.
+    @Test("the ACP agent default with its MTP drafter fits a 32 GB machine, at a window of at least 16k tokens")
+    @MainActor
+    func agentDefaultWithDrafterFits32GB() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let progress = ResolutionProgress()
+        let router = Router(
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 32 << 30, recommendedMaxWorkingSetSize: Self.workingSetOf32GB),
+            metadataSource: Self.agentDefaultMetadata,
+            loader: StubModelLoader(progress: progress),
+            pool: ModelPool()
+        )
+
+        let resolved = try await router.resolve(profile: Self.agentDefaultProfile, reporting: progress)
+
+        print("acpDefault32GB context=\(resolved.standard.contextTokens)")
+        #expect(resolved.standard.chosen.drafter == "mlx-community/Qwen3.8-27B-MTP-4bit")
+        #expect(resolved.flash.chosen == "mlx-community/Qwen3-4B-4bit")
+        #expect(resolved.embedding.chosen == "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ")
+        #expect(resolved.standard.contextTokens >= 16_384)
+    }
+
+
     @Test("a profile decodes a slot entry in the mapping form with its drafter")
     func profileDecodesTheDrafterMapping() throws {
         let json = """
