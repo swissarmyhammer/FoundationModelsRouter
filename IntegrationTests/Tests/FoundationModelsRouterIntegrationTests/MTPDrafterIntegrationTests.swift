@@ -189,9 +189,9 @@ struct MTPDrafterIntegrationTests {
         return run
     }
 
-    /// Measured on 2026-10-29 (mlx-swift-lm d4bab584, Extras a23cd80): each
-    /// run made two calls of about 18k tokens in, because the answer hit a
-    /// reasoning stop at 2048 tokens and one recovery followed. Plain decode
+    /// Measured on 2026-10-29 (mlx-swift-lm d4bab584, Extras a23cd80): the
+    /// answer hit a reasoning stop at 2048 tokens and one recovery followed,
+    /// and the largest call of each run fed 36,354 tokens. Plain decode
     /// made 3086 tokens at 36.9 tok/s. MTP made 3207 tokens at 50.9 tok/s,
     /// accepting 858 of 946 drafted tokens, which is 1.38x plain decode.
     @Test("at a context of about 20k tokens, MTP decodes Qwen3.8-27B-4bit faster than plain decode")
