@@ -45,10 +45,12 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 ///
 /// 1. Start a router, make a root session, drive a real `respond(to:)` answer
 ///    carrying a memorable fact.
-/// 2. Fork the root twice and fork one child again — a genuine branching,
-///    3-level tree — driving a real answer on each fork.
-/// 3. Assert, before any teardown, that each session's `transcript.jsonl` on
-///    disk already contains the entry events of its answer (sync-as-they-happen,
+/// 2. Drive a second real answer on the root. (This step drove a live fork
+///    tree until `RoutedSession.fork` was deleted, ^8ysk36e; the restore of a
+///    recorded fork tree is covered by the unit tests over
+///    `RecordedForkFixtures`.)
+/// 3. Assert, before any teardown, that the root's `transcript.jsonl` on disk
+///    already contains the entry events of its answers (sync-as-they-happen,
 ///    not only at teardown).
 /// 4. Discard the router and every in-memory session (everything from step
 ///    1-3 lives inside ``driveOriginalTree(cacheDir:recordingsDir:)`` alone,
@@ -59,8 +61,8 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// 7. Assert the restored tree matches: structure, each node's own recorded
 ///    answers (via the reconstructed effective entry counts, unchanged from
 ///    what step 3 observed), and an unchanged root `index.md`.
-/// 8. Drive a **new** live answer on a restored node — the deepest one, the
-///    grandfork — asking for the earlier fact, asserting the response
+/// 8. Drive a **new** live answer on the restored root, asking for the
+///    earlier fact, asserting the response
 ///    recalls it: the proof that `LanguageModelSession(transcript:)` seeded
 ///    from a reconstructed `Transcript` behaves indistinguishably from a
 ///    never-torn-down session.
@@ -72,7 +74,7 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// ``LanguageModelSessionBackendIntegrationTests`` and
 /// ``TranscriptReconstructionIntegrationTests`` use — but drives every session
 /// through the **real, public** vending surface
-/// (`makeSession`/`fork`/`restoreSessionTree`), since this test's whole point
+/// (`makeSession`/`restoreSessionTree`), since this test's whole point
 /// is proving that public surface end-to-end, not just its backend seam.
 ///
 /// ## What it NO LONGER proves (task ^bpwfbyz)
@@ -239,9 +241,6 @@ struct SessionTreeRestorationIntegrationTests {
     private struct OriginalTree {
         let routerId: ULID
         let rootId: ULID
-        let forkAId: ULID
-        let forkBId: ULID
-        let grandforkId: ULID
         /// The root session's `index.md` bytes as of just before
         /// restoration.
         let rootIndexBytes: Data
@@ -253,13 +252,17 @@ struct SessionTreeRestorationIntegrationTests {
     }
 
     /// Steps 1-4: builds a fresh profile, drives a root answer carrying a
-    /// memorable fact plus a genuine branching 3-level fork tree (root ->
-    /// forkA, forkB; forkA -> grandfork), each with its own live answer,
-    /// asserts every session's `transcript.jsonl` already reflects its answer
-    /// before this function returns, and returns only plain data — every
+    /// memorable fact and a second live answer after it, asserts the root's
+    /// `transcript.jsonl` already reflects its answers before this function
+    /// returns, and returns only plain data — every
     /// `Router`/`LanguageModelProfile`/`RoutedSession` this function built
     /// goes out of scope with it, simulating discarding the router and every
     /// in-memory session.
+    ///
+    /// The tree was a live fork tree until `RoutedSession.fork` was deleted
+    /// (^8ysk36e). The restore of a recorded fork tree is covered by the unit
+    /// tests over `RecordedForkFixtures` (076b5652); this gated test keeps the
+    /// real-model round trip of a recorded session.
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
         let loaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
@@ -277,41 +280,29 @@ struct SessionTreeRestorationIntegrationTests {
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
 
-        let forkA = try await root.fork(workingDirectory: nil)
-        _ = try await forkA.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let forkB = try await root.fork(workingDirectory: nil)
-        _ = try await forkB.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let grandfork = try await forkA.fork(workingDirectory: nil)
-        _ = try await grandfork.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
-        // Step 3: sync-as-they-happen — every session's transcript.jsonl
-        // already contains the entry events of its own answer, before any teardown.
-        for session in [root, forkA, forkB, grandfork] {
-            let events = try Self.recordedEvents(in: session.recordingDirectory)
-            let entryKinds: Set<TranscriptEvent.Kind> = [.instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning]
-            #expect(events.contains { entryKinds.contains($0.kind) })
-        }
+        // Step 3: sync-as-they-happen — the root's transcript.jsonl already
+        // contains the entry events of its answers, before any teardown.
+        let events = try Self.recordedEvents(in: root.recordingDirectory)
+        let entryKinds: Set<TranscriptEvent.Kind> = [.instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning]
+        #expect(events.contains { entryKinds.contains($0.kind) })
 
         let routerDirectory = recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
-        let effectiveEntryCounts = try [root.id, forkA.id, forkB.id, grandfork.id].reduce(into: [ULID: Int]()) { acc, id in
-            acc[id] = try tree.effectiveEntryEvents(forSession: id).count
-        }
+        let effectiveEntryCounts = [root.id: try tree.effectiveEntryEvents(forSession: root.id).count]
 
         let rootIndexBytes = try Data(contentsOf: Self.rootIndexURL(routerDirectory: routerDirectory, rootId: root.id))
 
         return OriginalTree(
             routerId: routerId,
             rootId: root.id,
-            forkAId: forkA.id,
-            forkBId: forkB.id,
-            grandforkId: grandfork.id,
             rootIndexBytes: rootIndexBytes,
             effectiveEntryCounts: effectiveEntryCounts
         )
     }
 
-    @Test("a whole fork tree recorded, torn down, and restored by root id in a fresh Router matches on disk and recalls prior context live")
+    @Test("a recorded session, torn down and restored by root id in a fresh Router, matches on disk and recalls prior context live")
     func restoresWholeTreeAcrossSimulatedProcessBoundary() async throws {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionTreeRestorationIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
@@ -349,19 +340,14 @@ struct SessionTreeRestorationIntegrationTests {
         // is the whole reason `RealModelHarness.make` takes a `routerId`.
         #expect(restored.root.routerId == original.routerId)
         #expect(restored.root.parentId == nil)
-        let childIds = Set(restored.children(of: original.rootId).map(\.id))
-        #expect(childIds == [original.forkAId, original.forkBId])
-        #expect(restored.children(of: original.forkAId).map(\.id) == [original.grandforkId])
-        #expect(restored.children(of: original.forkBId).isEmpty)
+        #expect(restored.children(of: original.rootId).isEmpty)
 
         // Each node's own recorded answers are unchanged from what was
         // observed on disk before restoration.
         let routerDirectory = recordingsDir.appendingPathComponent(original.routerId.description, isDirectory: true)
         let reloadedTree = try TranscriptTree.load(under: routerDirectory)
-        for id in [original.rootId, original.forkAId, original.forkBId, original.grandforkId] {
-            let count = try reloadedTree.effectiveEntryEvents(forSession: id).count
-            #expect(count == original.effectiveEntryCounts[id])
-        }
+        let count = try reloadedTree.effectiveEntryEvents(forSession: original.rootId).count
+        #expect(count == original.effectiveEntryCounts[original.rootId])
 
         // The root's `index.md` is byte-identical: restoration only ever
         // reads it, and no answer has run on the restored root.
@@ -370,12 +356,11 @@ struct SessionTreeRestorationIntegrationTests {
         )
         #expect(rootIndexBytesAfterRestore == original.rootIndexBytes)
 
-        // Step 8: the fidelity payoff. A brand-new live answer on the deepest
-        // restored node (three levels down from the root that was told the
-        // fact) recalls it — proof the `LanguageModelSession(transcript:)`
-        // seed behaves indistinguishably from a never-torn-down session.
-        let restoredGrandfork = try #require(restored.session(original.grandforkId))
-        let reply = try await restoredGrandfork.respond(
+        // Step 8: the fidelity payoff. A brand-new live answer on the
+        // restored root recalls the fact told before the teardown — proof the
+        // `LanguageModelSession(transcript:)` seed behaves indistinguishably
+        // from a never-torn-down session.
+        let reply = try await restored.root.respond(
             to: "What is my favorite number? Answer with just the number, digits only.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )

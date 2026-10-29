@@ -165,7 +165,9 @@ private struct DownloadObservingLoader: ModelLoader {
 /// and the real ``HuggingFaceMetadataSource``, then asserts every live capability
 /// in that one resolved profile: progress advancement, generation, embedding
 /// (which writes no transcript event, since card ^p3x0bbb), guided generation,
-/// fork lineage, and the merged transcript's total order.
+/// a second answer on the same session, and the merged transcript's total
+/// order. (Fork lineage was asserted here until `RoutedSession.fork` was
+/// deleted, ^8ysk36e.)
 ///
 /// In a target of its own so it never runs on a network/GPU-less box: the whole
 /// package's deployment floor is macOS 27 (so the macOS-27 availability the
@@ -231,7 +233,7 @@ private struct DownloadObservingLoader: ModelLoader {
 ///
 /// Everything else is untouched: the profile, the resolver, the phase and
 /// byte-progress assertions, the generation, the embedding, the guided
-/// grammar, the fork lineage and the merged transcript's total order are
+/// grammar and the merged transcript's total order are
 /// exactly what they were.
 @Suite(
     "Gated real-model integration (milestone 7)",
@@ -263,7 +265,7 @@ struct IntegrationTests {
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     /// Resolves the real profile and asserts every live capability against it.
-    @Test("resolve real profile, then generate, embed, guide, fork, and record")
+    @Test("resolve real profile, then generate, embed, guide, answer again, and record")
     func endToEnd() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
@@ -280,14 +282,13 @@ struct IntegrationTests {
         var plainAnswerDuration: Duration = .zero
         var embedDuration: Duration = .zero
         var guidedAnswerDuration: Duration = .zero
-        var forkAnswerDuration: Duration = .zero
         var parentAnswerDuration: Duration = .zero
         defer {
             // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
             print(
                 "[\(Self.phaseLabel)] resolve=\(resolveDuration) plainAnswer=\(plainAnswerDuration) "
                     + "embed=\(embedDuration) guidedAnswer=\(guidedAnswerDuration) "
-                    + "forkAnswer=\(forkAnswerDuration) parentAnswer=\(parentAnswerDuration)"
+                    + "parentAnswer=\(parentAnswerDuration)"
             )
         }
 
@@ -417,47 +418,18 @@ struct IntegrationTests {
         if case .string = object["city"] {} else { Issue.record("'city' should be a string") }
         if case .string = object["country"] {} else { Issue.record("'country' should be a string") }
 
-        // 5. A fork continues the parent's conversation as an independent child
-        //    session, seeded from the parent's accumulated transcript via
-        //    `LanguageModelSessionBackend.makeFork()` — under the real
-        //    `LanguageModelSession`-backed live path this is not yet wired to any
-        //    real prefix-compute reuse (see plan.md's "Sessions & KV cache" open
-        //    question); fork lineage and independent generation are what this
-        //    asserts here.
-        var child: (any RoutedSession)? = try await session.fork(workingDirectory: nil)
-        #expect(child?.parentId == session.id)
-        #expect(child?.id != session.id)
-        let childRecordingDirectory = try #require(child).recordingDirectory
-        // The child's transcript nests directly under the parent's directory.
-        #expect(
-            childRecordingDirectory.deletingLastPathComponent().standardizedFileURL
-                == session.recordingDirectory.standardizedFileURL
-        )
-        let forkStartInstant = ContinuousClock.now
-        let childReply = try await #require(child).respond(
-            to: "Say hi in one word.",
-            maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        forkAnswerDuration = ContinuousClock.now - forkStartInstant
-        #expect(!childReply.isEmpty)
-
-        // Dropping the only reference releases the fork. No other binding
-        // retains it, so this is a genuine release; the parent is unaffected
-        // and keeps generating.
-        child = nil
+        // 5. The session keeps its conversation: a second answer on the same
+        //    session generates. (A fork child was driven here until
+        //    `RoutedSession.fork` was deleted, ^8ysk36e.)
         let parentStartInstant = ContinuousClock.now
-        let afterRelease = try await session.respond(
+        let afterFirst = try await session.respond(
             to: "Still there?",
             maxTokens: GatedRealModelBudget.responseTokenCeiling)
         parentAnswerDuration = ContinuousClock.now - parentStartInstant
-        #expect(!afterRelease.isEmpty)
+        #expect(!afterFirst.isEmpty)
 
-        // 6. Recording: the fork's transcript.jsonl is physically nested under
-        //    the parent's directory, and the merged log across the whole run is
-        //    totally ordered by (ts, seq).
-        let childFile = childRecordingDirectory
-            .appendingPathComponent("transcript.jsonl", isDirectory: false)
-        #expect(FileManager.default.fileExists(atPath: childFile.path))
-
+        // 6. Recording: the merged log across the whole run is totally
+        //    ordered by (ts, seq).
         let merged = try MergedTranscript.merged(under: recordingsDir)
         #expect(!merged.isEmpty)
         // The generation events landed in the tree, and no embedding event did.
