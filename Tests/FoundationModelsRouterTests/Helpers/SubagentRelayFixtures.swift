@@ -249,7 +249,7 @@ final class SubagentRelayBox: Sendable {
     ///
     /// - Parameter count: The count to wait for.
     /// - Returns: The children.
-    /// - Throws: The error of `#require` when a relaying run ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when a relaying run ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForChildren(_ count: Int) async throws -> [Child] {
         try await waitUntil(atLeast: count, of: { children }, counted: \.count, endingOn: { endedRelays > 0 })
@@ -272,7 +272,7 @@ final class SubagentRelayBox: Sendable {
     ///
     /// - Parameter count: The count to wait for.
     /// - Returns: The count of the relays that finished.
-    /// - Throws: The error of `#require` when the relaying runs ended first,
+    /// - Throws: ``FailureEventCameFirst`` when the relaying runs ended first,
     ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForFinishedRelays(_ count: Int) async throws -> Int {
         try await waitUntil(atLeast: count, of: { finishedRelays }, counted: { $0 }, endingOn: { endedRelays >= count })
@@ -284,7 +284,7 @@ final class SubagentRelayBox: Sendable {
     ///
     /// - Parameter count: The count to wait for.
     /// - Returns: The answers.
-    /// - Throws: The error of `#require` when the asking runs ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when the asking runs ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForAnswers(_ count: Int) async throws -> [ElicitationResponse] {
         try await waitUntil(atLeast: count, of: { answers }, counted: \.count, endingOn: { endedAsks >= count })
@@ -301,7 +301,7 @@ final class SubagentRelayBox: Sendable {
     ///   - failureEvent: Tells whether the event came that ends the wait
     ///     also when the count never comes.
     /// - Returns: The field, read after the wait.
-    /// - Throws: The error of `#require` when the failure event came first,
+    /// - Throws: ``FailureEventCameFirst`` when the failure event came first,
     ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     private func waitUntil<Value>(
         atLeast count: Int, of read: () -> Value, counted: (Value) -> Int, endingOn failureEvent: () -> Bool

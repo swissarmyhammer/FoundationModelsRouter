@@ -290,7 +290,7 @@ struct CompactionSignalTests {
     }
 
     /// Waits until a hook signals `inside`, or until `terminal` returns (rule
-    /// T1). When `terminal` returned first, the test fails by an assertion.
+    /// T1). When `terminal` returned first, the wait throws ``FailureEventCameFirst``.
     ///
     /// The work of the hook holds until the test opens its gate, so in a test
     /// that passes the terminal event comes only after `inside`. A work that
@@ -302,7 +302,7 @@ struct CompactionSignalTests {
     ///   - inside: The semaphore that the hook signals when the work holds.
     ///   - terminal: Waits for the terminal event of the work.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the terminal event came first,
+    /// - Throws: ``FailureEventCameFirst`` when the terminal event came first,
     ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     private static func waitForTheHold(
         _ inside: AsyncSemaphore,

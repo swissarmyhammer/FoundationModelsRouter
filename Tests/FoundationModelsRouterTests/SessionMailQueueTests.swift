@@ -311,7 +311,7 @@ struct SessionMailQueueTests {
 
     /// Waits until `backend` starts a submission, or until the mail `id` of
     /// that submission has its terminal event (rule T1). When the mail ended
-    /// first, the test fails by an assertion.
+    /// first, the wait throws ``FailureEventCameFirst``.
     ///
     /// The backend holds each submission until the test signals
     /// ``GatedStubBackend/proceed``, and the mail ends only after its
@@ -322,7 +322,7 @@ struct SessionMailQueueTests {
     ///   - id: A mail of the submission that the test waits for.
     ///   - session: The session of the mail.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the mail ended before the
+    /// - Throws: ``FailureEventCameFirst`` when the mail ended before the
     ///   backend started, or ``ConditionNeverHeld`` when the test was
     ///   cancelled first.
     private static func waitForTheStart(

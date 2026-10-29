@@ -191,7 +191,7 @@ struct ToolDisplayDeliveryTests {
 
     /// Waits until the feed of the session gave `count` display events that
     /// add a text, or until the feed gave ``SessionEvent/workEnded`` (rule
-    /// T1). When the work ended first, the test fails by an assertion.
+    /// T1). When the work ended first, the wait throws ``FailureEventCameFirst``.
     ///
     /// Use this wait only when each display event comes before the end of
     /// the work: a post of the tool returns after the session sent its
@@ -201,7 +201,7 @@ struct ToolDisplayDeliveryTests {
     ///   - count: How many display events to wait for.
     ///   - fixture: The fixture whose events are watched.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the work ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when the work ended first, or
     ///   ``ConditionNeverHeld`` when the test task was cancelled first.
     private static func waitForDisplayTexts(
         _ count: Int, orWorkEndOn fixture: Fixture, sourceLocation: SourceLocation = #_sourceLocation

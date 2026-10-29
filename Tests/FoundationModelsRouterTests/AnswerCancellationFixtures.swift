@@ -499,7 +499,7 @@ extension AnswerCancellationTests {
     ///   - answerTask: The task awaiting the cancelled answer, whatever it returns.
     ///   - sawCancellation: The event ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``
     ///     returned for that tool.
-    /// - Throws: The error of `#require` when the answer ended before the
+    /// - Throws: ``FailureEventCameFirst`` when the answer ended before the
     ///   cancellation reached the tool, or ``ConditionNeverHeld`` when the
     ///   waiting task was cancelled first.
     static func awaitCancelledUnwind<Value: Sendable>(

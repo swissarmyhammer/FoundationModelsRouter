@@ -79,7 +79,7 @@ struct RouterMetricsTests {
     /// - Parameters:
     ///   - fixture: The fixture whose model records the pass.
     ///   - holding: The task of the holding answer.
-    /// - Throws: The error of `#require` when the holding answer ended first,
+    /// - Throws: ``FailureEventCameFirst`` when the holding answer ended first,
     ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     private static func waitForTheHoldingPass(
         of fixture: PassObservingFixture, endingOnEndOf holding: Task<String, any Error>

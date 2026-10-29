@@ -20,7 +20,7 @@ import Testing
 extension ManualRunClock {
     /// Waits until at least `count` waits are open on this clock, or until
     /// `task` ended. When `task` ended first, and the clock still does not
-    /// hold `count` waits, the test fails by an assertion.
+    /// hold `count` waits, the wait throws ``FailureEventCameFirst``.
     ///
     /// After the end of `task`, the wait reads ``sleeperCount`` again. Thus a
     /// sleeper that came before the end passes, also when the inner task did
@@ -33,7 +33,7 @@ extension ManualRunClock {
     ///     answer, or the settle of the run, that must put the waits on the
     ///     clock.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `task` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForSleepers<Success: Sendable, Failure: Error>(
         atLeast count: Int,

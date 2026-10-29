@@ -1,7 +1,6 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouter
-import Testing
 
 /// The one way a gated suite builds a real ``LanguageModelProfile`` over a
 /// model it has already loaded.
@@ -50,25 +49,34 @@ public enum RealModelHarness {
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the `.embedding` slot
     /// every ``LanguageModelProfile`` must carry. No suite that builds a profile
     /// here embeds anything, so this is present to satisfy the type — and it
-    /// records an issue if a caller drives it all the same.
+    /// throws if a caller drives it all the same.
     private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        /// Records an issue and answers with no vectors.
+        /// Throws ``NoEmbeddingModel``.
         ///
         /// A caller reaches this only by embedding through the `.embedding`
         /// handle of a harness profile, and the harness loaded no embedding
         /// model to answer with — it stamps the one generation model it was
-        /// given into all three slots. So the empty answer is not a result, and
-        /// this states that rather than letting a caller read it as one.
+        /// given into all three slots. So no answer would be a result, and the
+        /// call throws rather than letting a caller read an empty answer as one.
         ///
         /// ``RealToolAnswerComparisonTests`` carried this same tripwire on its own
         /// copy of the stub. It is here now, so every harness caller has it, and
         /// ``RealModelHarnessTests`` holds it.
         ///
         /// - Parameter texts: The texts to embed. Ignored.
-        /// - Returns: An empty array.
+        /// - Returns: Never.
+        /// - Throws: ``NoEmbeddingModel`` always.
         func embed(texts: [String]) async throws -> [[Float]] {
-            Issue.record("the .embedding slot of a RealModelHarness profile holds no embedding model")
-            return []
+            throw NoEmbeddingModel()
+        }
+    }
+
+    /// Thrown by the `.embedding` slot of a harness profile, which holds no
+    /// embedding model.
+    package struct NoEmbeddingModel: Error, CustomStringConvertible {
+        /// The reason of the error.
+        package var description: String {
+            "the .embedding slot of a RealModelHarness profile holds no embedding model"
         }
     }
 

@@ -7,6 +7,23 @@ import Testing
 /// assert on a state that never came.
 struct ConditionNeverHeld: Error {}
 
+/// Thrown by a wait of rule T1 when its failure event came before the state
+/// that the test waits for. A test that does not catch it fails with it, so
+/// the wait needs no recorded issue; a test of the wait itself expects it
+/// with `#expect(throws:)`.
+struct FailureEventCameFirst: Error, CustomStringConvertible {
+    /// What came first, in the words of the wait.
+    let reason: String
+
+    /// The place of the call of the wait.
+    let sourceLocation: SourceLocation
+
+    /// The reason and the place of the wait.
+    var description: String {
+        "\(reason) (wait at \(sourceLocation))"
+    }
+}
+
 /// The one wait of the tests for a state: read the state, and when it is not
 /// the state that the test wants, wait for the next change.
 ///
@@ -22,7 +39,7 @@ struct ConditionNeverHeld: Error {}
 /// Rule T1: each wait of a test also ends on the failure event — the event
 /// that comes also when the state never comes, for example the settle of the
 /// run under test. ``wait(isolation:until:endingOn:sourceLocation:)`` waits
-/// for both, and the test then fails by an assertion. Use the wait with one
+/// for both, and then throws ``FailureEventCameFirst``. Use the wait with one
 /// condition only when no such event exists, or when the test failed before
 /// it waits.
 extension ChangeSignal {
@@ -79,7 +96,7 @@ extension ChangeSignal {
 
     /// Waits until `condition` holds, or until `failureEvent` holds (rule
     /// T1). When the failure event came and `condition` does not hold, the
-    /// test fails by an assertion.
+    /// wait throws ``FailureEventCameFirst``.
     ///
     /// The failure event is an event that comes also when the state of
     /// `condition` never comes: a run that settles, a session that closes, a
@@ -94,7 +111,7 @@ extension ChangeSignal {
     ///     the test wants.
     ///   - failureEvent: Tells whether the failure event came.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the failure event came first;
+    /// - Throws: ``FailureEventCameFirst`` when the failure event came first;
     ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
     ///   otherwise what `condition` or `failureEvent` throws.
     func wait(
@@ -107,15 +124,16 @@ extension ChangeSignal {
             if try await condition() { return true }
             return try await failureEvent()
         })
-        let stateHeld = try await condition()
-        try #require(
-            stateHeld, "the failure event came before the state that the test waits for",
-            sourceLocation: sourceLocation)
+        guard try await condition() else {
+            throw FailureEventCameFirst(
+                reason: "the failure event came before the state that the test waits for",
+                sourceLocation: sourceLocation)
+        }
     }
 
     /// Waits until `condition` holds, or until `task` ended (rule T1). When
-    /// `task` ended and `condition` does not hold, the test fails by an
-    /// assertion.
+    /// `task` ended and `condition` does not hold, the wait throws
+    /// ``FailureEventCameFirst``.
     ///
     /// The end of `task` is the failure event: the end signals this signal
     /// (``RecordedWaitResult/recordingEnd(of:reportingTo:)``), so one wait
@@ -132,7 +150,7 @@ extension ChangeSignal {
     ///     the test wants.
     ///   - task: The task whose end is the failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `task` ended first;
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first;
     ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
     ///   otherwise what `condition` throws.
     func wait<Success: Sendable, Failure: Error>(
@@ -147,8 +165,8 @@ extension ChangeSignal {
     }
 
     /// Waits until `condition` holds, or until the work of `session` ended
-    /// (rule T1). When the work ended and `condition` does not hold, the test
-    /// fails by an assertion.
+    /// (rule T1). When the work ended and `condition` does not hold, the wait
+    /// throws ``FailureEventCameFirst``.
     ///
     /// The work ends when ``RoutedSession/awaitIdle()`` returns. That call
     /// runs in a task of its own, and the end of that task is the failure
@@ -165,7 +183,7 @@ extension ChangeSignal {
     ///     the test wants.
     ///   - session: The session whose end of work is the failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the work ended first;
+    /// - Throws: ``FailureEventCameFirst`` when the work ended first;
     ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
     ///   otherwise what `condition` throws.
     func wait(

@@ -209,7 +209,7 @@ extension AnswerCancellationTests {
     }
 
     /// Waits until a model call signals `inside`, or until the failure event
-    /// came (rule T1). Then the test fails by an assertion when `isInside`
+    /// came (rule T1). Then the wait throws ``FailureEventCameFirst`` when `isInside`
     /// does not hold.
     ///
     /// The failure event is the end of the work that makes the model call:
@@ -226,7 +226,7 @@ extension AnswerCancellationTests {
     ///     ended.
     ///   - isInside: Tells whether the model call came.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the work ended before the model
+    /// - Throws: ``FailureEventCameFirst`` when the work ended before the model
     ///   call came, or ``ConditionNeverHeld`` when the test was cancelled
     ///   first.
     static func waitUntilInside(
@@ -254,7 +254,7 @@ extension AnswerCancellationTests {
     ///   - answerTask: The task of the answer that compacts.
     ///   - fixture: The fixture whose observer counts the summarizer calls.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the answer ended first.
+    /// - Throws: ``FailureEventCameFirst`` when the answer ended first.
     static func waitUntilSummarizerInside<Value: Sendable>(
         isolation: isolated (any Actor)? = #isolation,
         _ inside: AsyncSemaphore,
@@ -278,7 +278,7 @@ extension AnswerCancellationTests {
     ///   - session: The session of the compaction.
     ///   - fixture: The fixture whose observer counts the summarizer calls.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the compaction ended first.
+    /// - Throws: ``FailureEventCameFirst`` when the compaction ended first.
     static func waitUntilSummarizerInside(
         isolation: isolated (any Actor)? = #isolation,
         _ inside: AsyncSemaphore,

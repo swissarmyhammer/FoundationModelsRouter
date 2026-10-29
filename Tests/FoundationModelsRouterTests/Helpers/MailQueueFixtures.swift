@@ -175,7 +175,7 @@ enum MailQueueFixtures {
 
     /// Waits until at least `count` prompts reached `backend`, or until
     /// `session` became idle (rule T1). When the session became idle and the
-    /// count is still low, the test fails by an assertion.
+    /// count is still low, the wait throws ``FailureEventCameFirst``.
     ///
     /// Use this wait after a step that must start a submission, when no
     /// task of the test waits for the answer: a send, a ``RoutedSession/mail(_:)``,
@@ -195,7 +195,7 @@ enum MailQueueFixtures {
     ///   - backend: The backend of the session.
     ///   - session: The session whose idle state is the failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the session became idle first,
+    /// - Throws: ``FailureEventCameFirst`` when the session became idle first,
     ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     static func waitForPrompts(
         _ count: Int, on backend: some PromptCountingBackend, endingWhenIdle session: any RoutedSession,
@@ -207,7 +207,7 @@ enum MailQueueFixtures {
 
     /// Waits until at least `count` prompts reached `backend`, or until the
     /// work of `session` ended (rule T1). When the work ended and the count
-    /// is still low, the test fails by an assertion.
+    /// is still low, the wait throws ``FailureEventCameFirst``.
     ///
     /// The work ends when ``RoutedSession/awaitIdle()`` returns. Use this
     /// wait after a background run settled, when its terminal must start a
@@ -225,7 +225,7 @@ enum MailQueueFixtures {
     ///   - backend: The backend of the session.
     ///   - session: The session whose end of work is the failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the work ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when the work ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     static func waitForPrompts(
         _ count: Int, on backend: some PromptCountingBackend, endingWhenWorkEnds session: any RoutedSession,
@@ -243,7 +243,7 @@ enum MailQueueFixtures {
     ///   - backend: The backend of the session.
     ///   - failureEvent: A wait for the failure event. A cancel ends it.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `failureEvent` returned first,
+    /// - Throws: ``FailureEventCameFirst`` when `failureEvent` returned first,
     ///   or ``ConditionNeverHeld`` when the test was cancelled first.
     private static func waitForPrompts(
         _ count: Int, on backend: some PromptCountingBackend,
@@ -271,7 +271,7 @@ protocol PromptCountingBackend: Sendable {
 extension PromptCountingBackend {
     /// Waits until at least `count` prompts reached this backend, or until
     /// `task` ended (rule T1). When `task` ended and the count is still low,
-    /// the test fails by an assertion.
+    /// the wait throws ``FailureEventCameFirst``.
     ///
     /// The wait is ``ChangeSignal/wait(isolation:until:endingOnEndOf:sourceLocation:)``
     /// on ``changes``. Thus a prompt that came before `task` ended passes,
@@ -283,7 +283,7 @@ extension PromptCountingBackend {
     ///   - count: How many prompts to wait for.
     ///   - task: The task whose end is the failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `task` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForPrompts<Success: Sendable, Failure: Error>(
         _ count: Int, endingOnEndOf task: Task<Success, Failure>,

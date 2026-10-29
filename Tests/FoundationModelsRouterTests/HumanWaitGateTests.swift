@@ -336,8 +336,8 @@ struct HumanWaitGateTests {
         }
 
         /// Waits until `event` was sent, or until the run ended (rule T1).
-        /// When the run ended and `event` was not sent, the test fails by an
-        /// assertion.
+        /// When the run ended and `event` was not sent, the wait throws
+        /// ``FailureEventCameFirst``.
         ///
         /// Use it for an event that the work of this run sends before the
         /// run ends, so that in a test that passes the run does not end
@@ -346,7 +346,7 @@ struct HumanWaitGateTests {
         /// - Parameters:
         ///   - event: The event that the work of the run sends.
         ///   - sourceLocation: The place of the call, for the failure.
-        /// - Throws: The error of `#require` when the run ended before
+        /// - Throws: ``FailureEventCameFirst`` when the run ended before
         ///   `event` was sent, or ``ConditionNeverHeld`` when the test was
         ///   cancelled first.
         func wait(for event: AwaitedEvent, sourceLocation: SourceLocation = #_sourceLocation) async throws {
@@ -367,7 +367,7 @@ struct HumanWaitGateTests {
         ///     that the test wants.
         ///   - changes: The signal of each change of that state.
         ///   - sourceLocation: The place of the call, for the failure.
-        /// - Throws: The error of `#require` when the run ended first, or
+        /// - Throws: ``FailureEventCameFirst`` when the run ended first, or
         ///   ``ConditionNeverHeld`` when the test was cancelled first.
         func wait(
             isolation: isolated (any Actor)? = #isolation,

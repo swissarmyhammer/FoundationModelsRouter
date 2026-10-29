@@ -333,14 +333,14 @@ struct CancelAllSignalTests {
 
         /// Waits until the outputs so far satisfy `condition`, or until they
         /// hold the failure event (rule T1). When the failure event came and
-        /// `condition` does not hold, the test fails by an assertion.
+        /// `condition` does not hold, the wait throws ``FailureEventCameFirst``.
         ///
         /// - Parameters:
         ///   - condition: The condition on the outputs so far.
         ///   - failureEvent: Tells whether the outputs so far hold the event
         ///     that comes also when `condition` never holds.
         ///   - sourceLocation: The place of the call, for the failure.
-        /// - Throws: The error of `#require` when the failure event came
+        /// - Throws: ``FailureEventCameFirst`` when the failure event came
         ///   first, or ``ConditionNeverHeld`` when the waiting task is
         ///   cancelled first.
         func waitFor(

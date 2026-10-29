@@ -473,7 +473,7 @@ struct NestedGenerationReentryTests {
     ///   - answer: The task of the answer whose tool call hands back the
     ///     record.
     /// - Returns: The token the pending envelope names, or `nil`.
-    /// - Throws: The error of `#require` when the answer ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when the answer ended first, or
     ///   ``ConditionNeverHeld`` when the test task was cancelled first.
     private static func handedBackToken(
         from record: HandedBackRecord, endingOnEndOf answer: Task<AnswerOutcome, Never>

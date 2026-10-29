@@ -75,7 +75,7 @@ struct ToolCallFailureAnswerTests {
     /// - Parameters:
     ///   - tool: The tool whose call the test stops.
     ///   - answering: The task of the answer.
-    /// - Throws: The error of `#require` when the answer ended before the call
+    /// - Throws: ``FailureEventCameFirst`` when the answer ended before the call
     ///   of `tool` ran, or ``ConditionNeverHeld`` when the test was cancelled
     ///   first.
     private static func waitForEntry(

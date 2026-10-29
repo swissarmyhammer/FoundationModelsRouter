@@ -89,7 +89,7 @@ extension RecordedWaitResult {
     }
 
     /// Waits until `wait` returns, or until `task` ended. When `task` ended
-    /// first, or when `wait` threw, the test fails by an assertion.
+    /// first, or when `wait` threw, the wait throws ``FailureEventCameFirst``.
     ///
     /// `wait` runs in a task of its own. Thus a wait that has no failure
     /// event of its own (a permit of a semaphore, a count of an observer, a
@@ -100,7 +100,7 @@ extension RecordedWaitResult {
     ///   - wait: The wait for the state that the test wants.
     ///   - task: The task whose end is the failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `task` ended first or `wait`
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first or `wait`
     ///   threw, or ``ConditionNeverHeld`` when the test was cancelled first.
     static func wait<Success: Sendable, Failure: Error>(
         for wait: @escaping @Sendable () async throws -> Void,
@@ -122,7 +122,9 @@ extension RecordedWaitResult {
         defer { waiting.cancel() }
         try await changes.wait(
             until: { waited.value != nil }, endingOn: { ended.value != nil }, sourceLocation: sourceLocation)
-        try #require(waited.value == true, "the wait threw before the state came", sourceLocation: sourceLocation)
+        guard waited.value == true else {
+            throw FailureEventCameFirst(reason: "the wait threw before the state came", sourceLocation: sourceLocation)
+        }
     }
 }
 
@@ -138,7 +140,7 @@ extension RecordedWaitResult {
 /// records does not change the result.
 extension RecordedWaitResult {
     /// Waits until `event` was sent, or until `task` ended. When `task`
-    /// ended and `event` was not sent, the test fails by an assertion.
+    /// ended and `event` was not sent, the wait throws ``FailureEventCameFirst``.
     ///
     /// The wait reads ``AwaitedEvent/hasArrived`` on each signal of
     /// ``AwaitedEvent/changes``, and the end of `task` signals the same
@@ -151,7 +153,7 @@ extension RecordedWaitResult {
     ///   - task: The task that must send `event`. Its end is the failure
     ///     event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `task` ended before `event`
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended before `event`
     ///   was sent, or ``ConditionNeverHeld`` when the test was cancelled
     ///   first.
     static func wait<Success: Sendable, Failure: Error>(
@@ -163,7 +165,7 @@ extension RecordedWaitResult {
     }
 
     /// Takes one permit of `semaphore`, or ends when `task` ended. When
-    /// `task` ended and no permit came, the test fails by an assertion, and
+    /// `task` ended and no permit came, the wait throws ``FailureEventCameFirst``, and
     /// the wait takes no permit after it returned.
     ///
     /// The semaphore is an event: `task` signals it, and only the test takes
@@ -182,7 +184,7 @@ extension RecordedWaitResult {
     ///   - task: The task that must signal `semaphore`. Its end is the
     ///     failure event.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `task` ended before a permit
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended before a permit
     ///   came, or ``ConditionNeverHeld`` when the test was cancelled first.
     static func wait<Success: Sendable, Failure: Error>(
         forPermitOf semaphore: AsyncSemaphore,
@@ -206,12 +208,15 @@ extension RecordedWaitResult {
         acquiring.cancel()
         await acquiring.value
         let tookPermit = if acquired.value == true { true } else { try await takeFreePermit(of: semaphore) }
-        try #require(tookPermit, "the task ended before the semaphore got a permit", sourceLocation: sourceLocation)
+        guard tookPermit else {
+            throw FailureEventCameFirst(
+                reason: "the task ended before the semaphore got a permit", sourceLocation: sourceLocation)
+        }
     }
 
     /// Takes one permit of `semaphore`, or ends when the mail `id` of
     /// `session` has its terminal event. When the mail ended and no permit
-    /// came, the test fails by an assertion.
+    /// came, the wait throws ``FailureEventCameFirst``.
     ///
     /// Use it when the test sent the mail with ``RoutedSession/send(_:)``
     /// and has no task of the answer: the terminal event of the mail is then
@@ -231,7 +236,7 @@ extension RecordedWaitResult {
     ///   - id: The mail whose terminal event is the failure event.
     ///   - session: The session of the mail.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when the mail ended before a permit
+    /// - Throws: ``FailureEventCameFirst`` when the mail ended before a permit
     ///   came, or ``ConditionNeverHeld`` when the test was cancelled first.
     static func wait(
         forPermitOf semaphore: AsyncSemaphore, endingOnTerminalOf id: MailID, on session: any RoutedSession,

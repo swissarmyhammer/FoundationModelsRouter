@@ -39,7 +39,7 @@ actor SessionEventLog {
 
     /// Waits until the events delivered so far satisfy `condition`, or until
     /// `drain` ended (rule T1). When `drain` ended and the events do not
-    /// satisfy `condition`, the test fails by an assertion.
+    /// satisfy `condition`, the wait throws ``FailureEventCameFirst``.
     ///
     /// `drain` is the task of ``watch(_:)`` or ``collect(_:)``. It ends when
     /// its stream ends, after it appended the last event. The close of a
@@ -52,7 +52,7 @@ actor SessionEventLog {
     ///     waits for.
     ///   - drain: The task that drains the stream into this log.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `drain` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `drain` ended first, or
     ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
     nonisolated func wait<Failure: Error>(
         until condition: @Sendable ([SessionEvent]) -> Bool, endingOnEndOf drain: Task<Void, Failure>,

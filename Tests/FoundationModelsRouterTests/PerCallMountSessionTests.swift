@@ -147,7 +147,7 @@ struct PerCallMountSessionTests {
         ///
         /// - Parameter count: The count of prompts to wait for.
         /// - Returns: Every prompt the backend got, in order.
-        /// - Throws: The error of `#require` when the work ended before the
+        /// - Throws: ``FailureEventCameFirst`` when the work ended before the
         ///   state held, or ``ConditionNeverHeld`` when the waiting task was
         ///   cancelled before the state held.
         func promptsAfterThePumpStops(atLeast count: Int) async throws -> [String] {

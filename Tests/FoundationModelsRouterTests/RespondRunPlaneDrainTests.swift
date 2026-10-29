@@ -316,7 +316,7 @@ struct RespondRunPlaneDrainTests {
     ///   - backend: The backend that calls the tools of the session.
     ///   - answer: The task of the answer that calls the tools.
     /// - Returns: The background runs' completion tokens, in tracking order.
-    /// - Throws: The error of `#require` when `answer` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `answer` ended first, or
     ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
     private static func backgroundTokens<Success: Sendable, Failure: Error>(
         atLeast count: Int, on session: any RoutedSession, reportedBy backend: BackgroundingBackend,
@@ -373,7 +373,7 @@ struct RespondRunPlaneDrainTests {
     ///   - backend: The backend to watch.
     ///   - session: The session of `backend`.
     /// - Returns: The prompts, in call order.
-    /// - Throws: The error of `#require` when the work ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when the work ended first, or
     ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
     private static func prompts(
         atLeast count: Int, reaching backend: BackgroundingBackend, of session: any RoutedSession

@@ -72,7 +72,7 @@ struct ChangeSignalTests {
     ///   - seen: The change count that the wait starts from.
     ///   - registered: How many waits are registered when this wait is.
     /// - Returns: The wait.
-    /// - Throws: The error of `#require` when the wait got a result before it
+    /// - Throws: ``FailureEventCameFirst`` when the wait got a result before it
     ///   was registered, or ``ConditionNeverHeld`` when the test task is
     ///   cancelled before the wait is registered.
     private static func startRegisteredWait(

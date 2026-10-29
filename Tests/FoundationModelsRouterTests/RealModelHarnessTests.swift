@@ -241,10 +241,9 @@ struct RealModelHarnessTests {
 
     // MARK: - The embedding slot no caller drives
 
-    /// An embed through the embedding slot of a harness profile records an
-    /// issue.
-    @Test("the embedding slot every harness profile carries records an issue when anything embeds through it")
-    func embeddingSlotRecordsAnIssueWhenDriven() async {
+    /// An embed through the embedding slot of a harness profile throws.
+    @Test("the embedding slot every harness profile carries throws when anything embeds through it")
+    func embeddingSlotThrowsWhenDriven() async {
         let embedder = Self.withTemporaryDirectories { cacheDir, recordingsDir in
             RealModelHarness.make(
                 model: Self.model,
@@ -263,9 +262,8 @@ struct RealModelHarnessTests {
         // `RealToolAnswerComparisonTests` carried on its own copy of the stub
         // before that suite moved onto the harness (task ^zz6kam0); it is here
         // now, so every harness caller has it.
-        await withKnownIssue("the harness embedding stub records an issue when it is driven") {
-            let vectors = try await embedder.embed(texts: ["anything"])
-            #expect(vectors.isEmpty)
+        await #expect(throws: RealModelHarness.NoEmbeddingModel.self) {
+            try await embedder.embed(texts: ["anything"])
         }
     }
 }

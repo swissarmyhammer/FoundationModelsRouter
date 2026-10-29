@@ -4,8 +4,8 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the waits for a prompt of a ``PromptCountingBackend`` (rule T1):
-/// each wait also ends on its failure event, and the test then fails by an
-/// assertion.
+/// each wait also ends on its failure event, and the wait then throws
+/// ``FailureEventCameFirst``.
 ///
 /// The failure event is the end of a task, a session that becomes idle, or
 /// the end of the work of a session. Each wait runs on
@@ -22,13 +22,13 @@ struct PromptWaitTests {
 
     /// The production change that makes this test fail: a wait that reads
     /// only the count of the prompts. That wait does not end when the task
-    /// ends, so it records no issue.
-    @Test("a wait for a prompt fails the test and returns when the task ended and no prompt came")
+    /// ends, so it throws nothing.
+    @Test("a wait for a prompt throws and returns when the task ended and no prompt came")
     func aWaitEndsOnTheEndOfTheTask() async {
         let backend = Backend(script: [:])
         let ended = Task {}
 
-        await withKnownIssue("the task ended before a prompt reached the backend") {
+        await #expect(throws: FailureEventCameFirst.self) {
             try await backend.waitForPrompts(1, endingOnEndOf: ended)
         }
         #expect(backend.prompts.isEmpty)
@@ -54,11 +54,11 @@ struct PromptWaitTests {
 
     /// The production change that makes this test fail: a wait that reads
     /// only the count of the prompts. A session with no mail and no pump is
-    /// idle, and that wait does not end, so it records no issue.
-    @Test("a wait for a prompt fails the test and returns when the session is idle and no prompt came")
+    /// idle, and that wait does not end, so it throws nothing.
+    @Test("a wait for a prompt throws and returns when the session is idle and no prompt came")
     func aWaitEndsWhenTheSessionIsIdle() async throws {
         try await Self.withIdleSession { backend, session in
-            await withKnownIssue("the session became idle before a prompt reached the backend") {
+            await #expect(throws: FailureEventCameFirst.self) {
                 try await MailQueueFixtures.waitForPrompts(1, on: backend, endingWhenIdle: session)
             }
             #expect(backend.prompts.isEmpty)
@@ -68,11 +68,11 @@ struct PromptWaitTests {
     /// The production change that makes this test fail: a wait that reads
     /// only the count of the prompts. The idle wait of a session with no work
     /// (``RoutedSession/awaitIdle()``) returns at once, and that wait does
-    /// not end, so it records no issue.
-    @Test("a wait for a prompt fails the test and returns when the session has no work and no prompt came")
+    /// not end, so it throws nothing.
+    @Test("a wait for a prompt throws and returns when the session has no work and no prompt came")
     func aWaitEndsWhenTheWorkOfTheSessionEnds() async throws {
         try await Self.withIdleSession { backend, session in
-            await withKnownIssue("the work of the session ended before a prompt reached the backend") {
+            await #expect(throws: FailureEventCameFirst.self) {
                 try await MailQueueFixtures.waitForPrompts(1, on: backend, endingWhenWorkEnds: session)
             }
             #expect(backend.prompts.isEmpty)

@@ -4,8 +4,8 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the wait for the sleepers of a ``ManualRunClock`` (rule T1): the
-/// wait also ends on the end of a task, and the test then fails by an
-/// assertion. The suite needs no session, no network and no GPU.
+/// wait also ends on the end of a task, and the wait then throws
+/// ``FailureEventCameFirst``. The suite needs no session, no network and no GPU.
 @Suite("The wait for the sleepers of a manual clock also ends on the end of a task")
 struct ManualRunClockWaitTests {
     /// How far ahead of the clock the sleeper of a test sleeps. The test
@@ -14,14 +14,14 @@ struct ManualRunClockWaitTests {
 
     /// The production change that makes this test fail: a wait that reads
     /// only the count of the sleepers. That wait does not end when the task
-    /// ends, so it records no issue.
-    @Test("a wait for sleepers fails the test and returns when the task ended and no sleeper came")
+    /// ends, so it throws nothing.
+    @Test("a wait for sleepers throws and returns when the task ended and no sleeper came")
     func aWaitEndsOnTheEndOfTheTask() async {
         let clock = ManualRunClock()
         let ended = Task {}
         defer { ended.cancel() }
 
-        await withKnownIssue("the task ended before a sleeper came on the clock") {
+        await #expect(throws: FailureEventCameFirst.self) {
             try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: ended)
         }
         #expect(clock.sleeperCount == 0)
@@ -30,7 +30,7 @@ struct ManualRunClockWaitTests {
     /// The production change that makes this test fail: a wait that ends
     /// before the sleeper is on the clock. The count of the sleepers is then
     /// zero after the wait.
-    @Test("a wait for sleepers returns with no issue when the sleeper came while the task runs")
+    @Test("a wait for sleepers returns with no error when the sleeper came while the task runs")
     func aWaitReturnsWhenTheSleeperCame() async throws {
         let clock = ManualRunClock()
         let deadline = clock.now.advanced(by: Self.sleepDuration)

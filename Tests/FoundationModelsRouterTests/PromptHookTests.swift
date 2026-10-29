@@ -159,7 +159,7 @@ struct PromptHookTests {
         /// the session ended (rule T1).
         ///
         /// - Parameter ids: The ids of the mail.
-        /// - Throws: The error of `#require` when the work ended first.
+        /// - Throws: ``FailureEventCameFirst`` when the work ended first.
         func waitForTheScreens(of ids: [MailID]) async throws {
             let prompts = try prompts
             try await session.stateChanges.wait(
@@ -401,7 +401,7 @@ struct PromptHookTests {
     /// - Parameters:
     ///   - id: The id of the mail.
     ///   - hooked: The session under test.
-    /// - Throws: The error of `#require` when the work of the session ended
+    /// - Throws: ``FailureEventCameFirst`` when the work of the session ended
     ///   first.
     private static func waitForTheChain(of id: MailID, on hooked: HookedSession) async throws {
         let visitor = hooked.visitor

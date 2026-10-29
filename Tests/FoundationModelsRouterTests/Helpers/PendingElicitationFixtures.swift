@@ -88,8 +88,8 @@ final class ElicitationPostings: OperationEventSink {
     }
 
     /// Waits until `count` is at least `expected`, or until `asking` ended
-    /// (rule T1). When `asking` ended and the count is still low, the test
-    /// fails by an assertion.
+    /// (rule T1). When `asking` ended and the count is still low, the wait
+    /// throws ``FailureEventCameFirst``.
     ///
     /// The end of `asking` signals ``changes``, so one wait sees the count
     /// and the end. After the end, the wait reads the count again. Thus a
@@ -103,7 +103,7 @@ final class ElicitationPostings: OperationEventSink {
     ///   - count: Reads the count.
     ///   - asking: The task that asks the question.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `asking` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `asking` ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     private func wait<Success: Sendable, Failure: Error>(
         untilAtLeast expected: Int, of count: () -> Int, endingOnEndOf asking: Task<Success, Failure>,
@@ -116,7 +116,8 @@ final class ElicitationPostings: OperationEventSink {
     }
 
     /// Waits until at least `expected` posts came, or until `asking` ended
-    /// (rule T1). When `asking` ended first, the test fails by an assertion.
+    /// (rule T1). When `asking` ended first, the wait throws
+    /// ``FailureEventCameFirst``.
     ///
     /// A post does not come when the question fails before the run plane
     /// posts it. The task that asks then ends, so the wait also ends. In a
@@ -127,7 +128,7 @@ final class ElicitationPostings: OperationEventSink {
     ///   - expected: The number of posts to wait for.
     ///   - asking: The task that asks the question.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `asking` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `asking` ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForPosts<Success: Sendable, Failure: Error>(
         _ expected: Int, endingOnEndOf asking: Task<Success, Failure>,
@@ -171,8 +172,8 @@ final class ElicitationPostings: OperationEventSink {
     }
 
     /// Waits until at least `expected` completions came, or until `asking`
-    /// ended (rule T1). When `asking` ended first, the test fails by an
-    /// assertion.
+    /// ended (rule T1). When `asking` ended first, the wait throws
+    /// ``FailureEventCameFirst``.
     ///
     /// The run plane resumes the run of an accepted URL question only after
     /// its completion post returned. Thus in a test that passes, `asking`
@@ -184,7 +185,7 @@ final class ElicitationPostings: OperationEventSink {
     ///   - expected: The number of completions to wait for.
     ///   - asking: The task that asks the question.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `asking` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `asking` ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForCompletions<Success: Sendable, Failure: Error>(
         _ expected: Int, endingOnEndOf asking: Task<Success, Failure>,
@@ -220,7 +221,8 @@ final class ElicitationPostings: OperationEventSink {
 
     /// Waits until at least `expected` end posts came to this sink, also
     /// when the end gate still holds them, or until `asking` ended (rule
-    /// T1). When `asking` ended first, the test fails by an assertion.
+    /// T1). When `asking` ended first, the wait throws
+    /// ``FailureEventCameFirst``.
     ///
     /// The run plane gives the run of the question its end only after the
     /// end post returned. Thus in a test that passes, `asking` ends only
@@ -231,7 +233,7 @@ final class ElicitationPostings: OperationEventSink {
     ///   - expected: The number of end posts to wait for.
     ///   - asking: The task that asks the question.
     ///   - sourceLocation: The place of the call, for the failure.
-    /// - Throws: The error of `#require` when `asking` ended first, or
+    /// - Throws: ``FailureEventCameFirst`` when `asking` ended first, or
     ///   ``ConditionNeverHeld`` when the test was cancelled first.
     func waitForArrivedEnds<Success: Sendable, Failure: Error>(
         _ expected: Int, endingOnEndOf asking: Task<Success, Failure>,
