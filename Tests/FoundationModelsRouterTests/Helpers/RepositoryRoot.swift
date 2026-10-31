@@ -1,7 +1,7 @@
 import Foundation
 
 /// The repository root, for a suite that reads a file the repository
-/// carries: the README, the CI workflow, or `UPSTREAM_ASKS.md`.
+/// carries: the README or the CI workflow.
 ///
 /// The root is resolved from the calling suite's own source path. Every
 /// suite in this target sits directly inside

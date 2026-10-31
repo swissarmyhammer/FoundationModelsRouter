@@ -9,33 +9,47 @@
     /// resolution (see plan.md's "Guided generation" section and
     /// ``MLXFoundationModelsContainer``).
     ///
-    /// `GenerationSchemaDecodingTests` documents (with a real, run assertion) *why*
-    /// `GenerationSchema`'s own `Codable` conformance cannot ingest a caller's plain
-    /// JSON Schema text — this was checked, not assumed, and the checks are kept as
-    /// regression tests so a future SDK change that loosens this is caught rather
-    /// than silently re-breaking the assumption in the other direction.
+    /// `GenerationSchemaDecodingTests` pins (with a real, run assertion) what
+    /// `GenerationSchema`'s own `Codable` conformance does with a caller's plain
+    /// JSON Schema text. The SDK now accepts a plain object schema without the
+    /// proprietary `x-order` and `title` keys. It still rejects a titled string
+    /// leaf that has no enum. A later SDK change to either rule fails these
+    /// tests.
     /// `RuntimeJSONSchemaConverterTests` then exercises the hand-written converter
     /// this repo uses instead.
-    @Suite("GenerationSchema's Codable conformance does not decode foreign JSON Schema")
+    @Suite("GenerationSchema's Codable conformance decodes foreign JSON Schema")
     struct GenerationSchemaDecodingTests {
-        @Test("a plain JSON Schema object is rejected: missing the proprietary x-order key")
-        func plainObjectSchemaRejectedMissingXOrder() throws {
+        @Test("a plain JSON Schema object is accepted without the proprietary x-order key")
+        func plainObjectSchemaAcceptedWithoutXOrder() throws {
             let schemaJSON = #"""
                 {"type":"object","properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"],"additionalProperties":false}
                 """#
-            #expect(throws: (any Error).self) {
-                _ = try JSONDecoder().decode(GenerationSchema.self, from: Data(schemaJSON.utf8))
-            }
+            let schema = try JSONDecoder().decode(GenerationSchema.self, from: Data(schemaJSON.utf8))
+            #expect(try Self.propertyNames(of: schema) == ["city", "country"])
         }
 
-        @Test("adding x-order alone is still rejected: missing the proprietary title key")
-        func xOrderAloneStillRejectedMissingTitle() throws {
+        @Test("a JSON Schema object with x-order and no proprietary title key is accepted")
+        func xOrderAloneAcceptedWithoutTitle() throws {
             let schemaJSON = #"""
                 {"type":"object","x-order":["city","country"],"properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"],"additionalProperties":false}
                 """#
-            #expect(throws: (any Error).self) {
-                _ = try JSONDecoder().decode(GenerationSchema.self, from: Data(schemaJSON.utf8))
-            }
+            let schema = try JSONDecoder().decode(GenerationSchema.self, from: Data(schemaJSON.utf8))
+            #expect(try Self.propertyNames(of: schema) == ["city", "country"])
+        }
+
+        /// Re-encodes `schema` and reads the property names of its root object.
+        ///
+        /// - Parameter schema: The decoded schema.
+        /// - Returns: The set of property names.
+        /// - Throws: An error when the schema cannot be encoded, or an
+        ///   expectation failure when the encoding holds no `properties` object.
+        private static func propertyNames(of schema: GenerationSchema) throws -> Set<String> {
+            let reencoded = try JSONEncoder().encode(schema)
+            let object = try #require(
+                try JSONSerialization.jsonObject(with: reencoded) as? [String: Any]
+            )
+            let properties = try #require(object["properties"] as? [String: Any])
+            return Set(properties.keys)
         }
 
         @Test("a titled string leaf (no enum) is rejected: titled strings are treated as enum carriers")

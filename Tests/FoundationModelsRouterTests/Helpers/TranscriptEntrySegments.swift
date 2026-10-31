@@ -23,7 +23,7 @@ enum TranscriptEntrySegments {
             return reasoning.segments
         case .toolOutput(let output):
             return output.segments
-        case .toolCalls:
+        case .toolCalls, .data:
             return []
         @unknown default:
             return []
