@@ -33,8 +33,9 @@ final class RejectingModelLog: Sendable, Hashable {
     /// The content of every text segment of `entry`, in order.
     ///
     /// - Parameter entry: One transcript entry.
-    /// - Returns: The text contents. A tool-calls entry and a reasoning entry
-    ///   give none: the rejection note never goes into either kind.
+    /// - Returns: The text contents. A tool-calls entry, a reasoning entry and
+    ///   a data entry give none: the rejection note never goes into these kinds,
+    ///   and a data entry holds bytes with a content type, not text segments.
     private static func texts(of entry: Transcript.Entry) -> [String] {
         let segments: [Transcript.Segment]
         switch entry {
@@ -42,7 +43,7 @@ final class RejectingModelLog: Sendable, Hashable {
         case .prompt(let prompt): segments = prompt.segments
         case .toolOutput(let output): segments = output.segments
         case .response(let response): segments = response.segments
-        case .toolCalls, .reasoning: segments = []
+        case .toolCalls, .reasoning, .data: segments = []
         @unknown default: segments = []
         }
         return segments.compactMap { segment in
