@@ -24,6 +24,11 @@ import Synchronization
 /// ``SessionStateTracking``). The task holds neither the session nor the
 /// directory, and it ends when the session closes or is released.
 ///
+/// For each registered durable session, one watcher also reads the `inbox/`
+/// folder of the session folder (``SessionInboxWatcher``). A file that
+/// arrives there is delivered as a message (``scanInbox(of:)``). The watcher
+/// ends with the session: ``unregister(_:)`` and ``archive(_:by:)`` stop it.
+///
 /// The directory also owns the record of past sessions (D72): the root
 /// session folders on disk under the recording roots of the host
 /// (``useRecordingRoots(_:)``) answer as recorded summaries
@@ -113,6 +118,19 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// state (``followState(of:reading:)``), or `nil` before the
         /// registration starts it.
         var stateFeed: Task<Void, Never>?
+
+        /// The watcher of the `inbox/` folder of the session
+        /// (``SessionInboxWatcher``), or `nil` for a memory-only session and
+        /// for a folder that did not open.
+        var inboxWatcher: SessionInboxWatcher?
+
+        /// Ends the task and the watcher that the registration started. Each
+        /// place that takes the entry off the registry calls this, so the
+        /// two end together.
+        func cancelFeeds() {
+            stateFeed?.cancel()
+            inboxWatcher?.cancel()
+        }
     }
 
     /// What the directory keeps under its one lock: the live registry and
@@ -130,6 +148,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// synchronous ``register(_:kind:parentID:requestedByClient:)`` and
     /// ``unregister(_:)`` need no `await`.
     private let state = Mutex<Registry>(Registry())
+
+    /// The count of the inbox watchers that are open. Only a test reads it
+    /// (``openInboxWatcherCount``).
+    private let openInboxWatchers = SessionInboxWatcherCount()
 
     /// The launcher that ``start(_:)`` starts each root session through, or
     /// `nil` before ``use(launcher:)`` and after ``shutdown()``. A directory
@@ -181,9 +203,21 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``followState(of:reading:)``), so each `stateChanged` of the session
     /// comes after its `started`.
     ///
+    /// A durable session also gets the watcher of its `inbox/` folder
+    /// (``SessionInboxWatcher``), so a file that arrives there is delivered
+    /// (``scanInbox(of:)``). The folder is made and opened before the lock,
+    /// and the watcher runs after it, because the lock must not wait on the
+    /// file system. A restore registers the restored session, so it starts
+    /// the watcher too. A memory-only session has no folder and no watcher.
+    /// Only the process that owns the recording root registers durable
+    /// sessions, so only that process delivers the files. A file in the inbox
+    /// of a recorded session that is not live waits: no watcher covers it,
+    /// and no file starts a restore, until a process opens the session.
+    ///
     /// A second registration of a session that is still live replaces its
-    /// kind and its parent, and keeps its time of change, its state and its
-    /// feed task. It sends no second `started`.
+    /// kind and its parent, and keeps its time of change, its state, its
+    /// feed task and its watcher. It sends no second `started` and starts no
+    /// second watcher.
     ///
     /// - Parameters:
     ///   - session: The live session.
@@ -197,27 +231,57 @@ public actor RouterSessionDirectory: SessionDirectory {
         _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
     ) {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
-        state.withLock { registry in
+        let watcher = openInboxWatcher(of: session)
+        let isNew = state.withLock { registry in
             if let live = registry.entries[session.id], live.session != nil {
                 entry.updatedAt = live.updatedAt
                 entry.tracking = live.tracking
                 entry.stateFeed = live.stateFeed
+                entry.inboxWatcher = live.inboxWatcher
                 registry.entries[session.id] = entry
-                return
+                return false
             }
-            registry.entries[session.id]?.stateFeed?.cancel()
+            registry.entries[session.id]?.cancelFeeds()
             entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
+            entry.inboxWatcher = watcher
             registry.entries[session.id] = entry
             registry.fanout.send(.started(Self.summary(of: session, in: entry), requestedByClient: requestedByClient))
+            return true
+        }
+        if isNew {
+            watcher?.start()
+        } else {
+            watcher?.cancel()
         }
     }
 
-    /// Takes a session off the live list and ends the task that follows its
-    /// state. An id the directory does not hold changes nothing.
+    /// Opens the watcher of the `inbox/` folder of a session, which does not
+    /// run yet.
+    ///
+    /// - Parameter session: The session to register.
+    /// - Returns: The watcher, or `nil` for a memory-only session and for a
+    ///   folder that did not open. The second case is logged, and the
+    ///   session goes on with no watcher: a send still delivers.
+    private nonisolated func openInboxWatcher(of session: any RoutedSession) -> SessionInboxWatcher? {
+        guard let folder = Self.ledgerDirectory(of: session) else { return nil }
+        let id = session.id
+        do {
+            return try SessionInboxWatcher(sessionFolder: folder, count: openInboxWatchers) { [weak self] in
+                Task { await self?.scanInbox(of: id) }
+            }
+        } catch {
+            logInboxFailure("the inbox folder of a session did not open for watching", error, session: id, file: nil)
+            return nil
+        }
+    }
+
+    /// Takes a session off the live list, ends the task that follows its
+    /// state, and stops the watcher of its inbox. An id the directory does
+    /// not hold changes nothing.
     ///
     /// - Parameter id: The session id.
     nonisolated func unregister(_ id: ULID) {
-        state.withLock { $0.entries.removeValue(forKey: id)?.stateFeed?.cancel() }
+        state.withLock { $0.entries.removeValue(forKey: id)?.cancelFeeds() }
     }
 
     /// The summaries of every live session, in no order. An entry whose
@@ -228,7 +292,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     private nonisolated func liveSummaries() -> [SessionSummary] {
         state.withLock { registry in
             for gone in registry.entries.values where gone.session == nil {
-                gone.stateFeed?.cancel()
+                gone.cancelFeeds()
             }
             registry.entries = registry.entries.filter { $0.value.session != nil }
             return registry.entries.values.compactMap(Self.summary(of:))
@@ -1629,7 +1693,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             guard var entry = registry.entries.removeValue(forKey: id), let session = entry.session else {
                 throw SessionDirectoryError.unknownSession(id)
             }
-            entry.stateFeed?.cancel()
+            entry.cancelFeeds()
             entry.tracking.archive()
             entry.updatedAt = Date()
             var summary = Self.summary(of: session, in: entry)
@@ -1697,6 +1761,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// the count.
     nonisolated var openEventStreamCount: Int {
         state.withLock { $0.fanout.count }
+    }
+
+    /// The number of inbox watchers that are open (``SessionInboxWatcher``):
+    /// made by a registration and not cancelled yet. Only a test reads it,
+    /// for the leak check. A watcher leaves the count when its session
+    /// closes, when it is archived, and when a registration drops it.
+    nonisolated var openInboxWatcherCount: Int {
+        openInboxWatchers.current
     }
 
     // MARK: - State

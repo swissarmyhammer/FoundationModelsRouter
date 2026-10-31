@@ -12,6 +12,12 @@ import Testing
 /// delivery, a file that does not parse moves to `inbox/rejected/`, and a
 /// refusal or a ledger read error leaves the file where it is.
 ///
+/// The registration of a durable session also starts the watcher of its
+/// inbox folder (``SessionInboxWatcher``). A file that arrives is delivered
+/// with no call to the scan, and the close and the archive of the session
+/// stop the watcher. A test waits for the `messageDelivered` event, never
+/// for the clock.
+///
 /// Each test uses the fixture of ``RouterSessionDirectoryDeliveryTests``,
 /// and the loop guard test uses the fixture of ``SessionMessageLoopGuardTests``.
 @Suite("RouterSessionDirectory: the scan of the inbox folder of a session")
@@ -52,6 +58,14 @@ struct RouterSessionDirectoryInboxTests {
     /// The number of the first call of a scripted backend: the call that
     /// the held turn makes.
     private static let firstCall = 1
+
+    /// An event no session sends, which a test sends to mark the end of what
+    /// it reads.
+    private static let marker = SessionDirectoryEvent.archived(id: ULID.generate())
+
+    /// The names of the files that the scan of the inbox skips: a temporary
+    /// file of a writer, a dot file and a file that is not markdown.
+    private static let ignoredNames = [".\(ULID()).md.tmp", ".hidden.md", "notes.txt"]
 
     // MARK: - Helpers
 
@@ -337,5 +351,176 @@ struct RouterSessionDirectoryInboxTests {
                 == [[SessionSendReceipt(outcome: .refused, reason: SessionMessageLimits().chainTooDeepReason)]])
         #expect(try await fixture.directory.inbox(of: receiver.id, markRead: false).isEmpty)
         await fixture.close([sender, receiver])
+    }
+
+    // MARK: - The watcher
+
+    /// The production change that makes this test fail: a registration that
+    /// starts no watcher on the inbox folder, so a file waits for a call of
+    /// the scan.
+    @Test("a file moved into the inbox of a live idle session is delivered with no call to send or scan")
+    func aFileMovedIntoTheInboxIsDelivered() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let target = fixture.makeSession()
+
+        let id = try Self.writeFile(to: target, chainDepth: Self.fileChainDepth)
+
+        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts == [Self.text])
+        #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.id) == [id])
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a watcher that
+    /// waits for the first event before it scans, so a file that arrived
+    /// while no process owned the session waits.
+    @Test("a file in the inbox before the registration is delivered at the start of the watcher")
+    func aFileBeforeTheRegistrationIsDeliveredAtStart() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        fixture.directory.unregister(target.id)
+        let id = try Self.writeFile(to: target)
+        var events = fixture.directory.events().makeAsyncIterator()
+
+        fixture.directory.register(target, kind: .root, parentID: nil)
+
+        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts == [Self.text])
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a scan that reads a
+    /// dot file, a temporary file or a file that is not `.md`.
+    @Test("a temporary file, a dot file and a file that is not markdown are ignored")
+    func ignoredNamesAreNotDelivered() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let target = fixture.makeSession()
+        let inbox = SessionInboxFile.directory(in: target.recordingDirectory)
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        for name in Self.ignoredNames {
+            try Self.fileWithoutFrontmatter.write(
+                to: inbox.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        let id = try Self.writeFile(to: target)
+
+        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.id) == [id])
+        #expect(try Self.names(in: inbox) == Self.ignoredNames.sorted())
+        #expect(Self.rejectedNames(of: target).isEmpty)
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a `close()` that
+    /// leaves the watcher open.
+    @Test("the watcher stops at close, and a later file is not delivered")
+    func theWatcherStopsAtClose() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        #expect(fixture.directory.openInboxWatcherCount == 1)
+        var events = fixture.directory.events().makeAsyncIterator()
+
+        await target.close()
+        let id = try Self.writeFile(to: target)
+        fixture.directory.emit(Self.marker)
+
+        #expect(fixture.directory.openInboxWatcherCount == 0)
+        #expect(await events.next(through: Self.marker) == [Self.marker])
+        #expect(try Self.waitingNames(of: target) == ["\(id).md"])
+        await fixture.close([])
+    }
+
+    /// The production change that makes this test fail: an archive that
+    /// leaves the watcher open.
+    @Test("the watcher stops at archive, and a later file is not delivered")
+    func theWatcherStopsAtArchive() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        #expect(fixture.directory.openInboxWatcherCount == 1)
+        var events = fixture.directory.events().makeAsyncIterator()
+
+        _ = try await fixture.directory.archive(target.id, by: .user(clientID: Self.clientID))
+        let id = try Self.writeFile(to: target)
+        fixture.directory.emit(Self.marker)
+
+        #expect(fixture.directory.openInboxWatcherCount == 0)
+        let received = await events.next(through: Self.marker)
+        #expect(!received.contains { if case .messageDelivered = $0 { true } else { false } })
+        #expect(try Self.waitingNames(of: target) == ["\(id).md"])
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a second
+    /// registration that starts a second watcher and drops the first, or that
+    /// replaces it.
+    @Test("two registrations of one session keep one watcher, and a file is delivered one time")
+    func twoRegistrationsKeepOneWatcher() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let target = fixture.makeSession()
+
+        fixture.directory.register(target, kind: .root, parentID: nil)
+        let id = try Self.writeFile(to: target)
+
+        #expect(fixture.directory.openInboxWatcherCount == 1)
+        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        fixture.directory.emit(Self.marker)
+        let afterwards = await events.next(through: Self.marker)
+        #expect(!afterwards.contains { if case .messageDelivered = $0 { true } else { false } })
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts == [Self.text])
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a watcher for a
+    /// session that has no folder to watch.
+    @Test("a memory-only session starts no watcher")
+    func aMemoryOnlySessionStartsNoWatcher() async throws {
+        let scratch = RouterTestFixtures.makeTempDir(prefix: "RouterSessionDirectoryInboxTests-memory")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
+            over: BasicLLMContainer(), cacheDir: scratch)
+
+        let target = profile.standard.makeSession(configuration: SessionConfiguration())
+
+        #expect(router.sessionDirectory.openInboxWatcherCount == 0)
+        await target.close()
+        withExtendedLifetime(router) {}
+    }
+
+    // MARK: - Helpers of the watcher
+
+    /// Reads the directory events until the delivery of the message `id`.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the message.
+    ///   - events: The iterator of a stream of ``RouterSessionDirectory/events()``
+    ///     that was open before the file came.
+    /// - Returns: `true` when `messageDelivered` of the message came, `false`
+    ///   when the stream ended first.
+    private static func awaitDelivery(
+        of id: MailID, reading events: inout AsyncStream<SessionDirectoryEvent>.Iterator
+    ) async -> Bool {
+        while let event = await events.next() {
+            if case .messageDelivered(let message) = event, message.id == id { return true }
+        }
+        return false
+    }
+
+    /// The names of the files in the inbox folder. The `rejected/` folder is
+    /// not in the result.
+    ///
+    /// - Parameter folder: The inbox folder.
+    /// - Returns: The names, in order.
+    /// - Throws: The error of the folder read.
+    private static func names(in folder: URL) throws -> [String] {
+        let entries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        return entries.filter { $0 != SessionInboxFile.rejectedDirectoryName }.sorted()
     }
 }

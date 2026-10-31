@@ -35,10 +35,26 @@ comments:
     - run: swift test --filter RouterSessionDirectoryInboxTests, 11 tests in 1 suite passed.
     - next: /review
   timestamp: 2026-10-31T08:32:17.283797+00:00
+- actor: claude-code
+  id: 01m68hfy31t1mngtn71rv826qc
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (0e4e4335): 0 findings, 0 confirmed, 0 refuted. The prior finding is checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-31T08:33:49.665468+00:00
+- actor: claude-code
+  id: 01m68hg94vjyfp6xc4mbfwjerc
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — RouterSessionDirectoryInboxTests.swift (mail-refusal test)
+    - test: green — swift test, 2212 tests, 0 failures
+    - commit: 0e4e4335
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T08:34:00.987963+00:00
 depends_on:
 - 01M66VYQ268GZBRG3RDYPCZ0P2
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffc980
 title: Deliver inbox files in RouterSessionDirectory (scan, idempotent, reject)
 ---
 ## What

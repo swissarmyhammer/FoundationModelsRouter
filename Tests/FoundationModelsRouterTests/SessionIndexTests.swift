@@ -161,9 +161,11 @@ struct SessionIndexTests {
     }
 
     /// A run's whole recording tree holds only one folder per session, and
-    /// each session folder holds only its `index.md` and its
-    /// `transcript.jsonl`.
-    @Test("a run's whole recording tree holds only index.md and transcript.jsonl")
+    /// each session folder holds only its `index.md`, its
+    /// `transcript.jsonl` and the `inbox/` folder that the watcher of the
+    /// session opens (``SessionInboxWatcher``). The `inbox/` folder is empty
+    /// because nothing sent a message.
+    @Test("a run's whole recording tree holds only index.md, transcript.jsonl and an empty inbox")
     @MainActor
     func aRunWritesOnlyIndexesAndTranscripts() async throws {
         try await Self.withRouter { fixture in
@@ -171,11 +173,14 @@ struct SessionIndexTests {
             defer { await root.close() }
             _ = try await root.respond(to: "hello")
 
+            let sessionFolder = fixture.directory(of: root.id)
             #expect(try Self.fileNames(directlyIn: fixture.routerDirectory) == [root.id.description])
             #expect(
-                try Self.fileNames(directlyIn: fixture.directory(of: root.id)) == [
-                    SessionIndexFile.fileName, transcriptFileName,
+                try Self.fileNames(directlyIn: sessionFolder) == [
+                    SessionInboxFile.directoryName, SessionIndexFile.fileName, transcriptFileName,
                 ])
+            #expect(
+                try Self.fileNames(directlyIn: SessionInboxFile.directory(in: sessionFolder)).isEmpty)
         }
     }
 
