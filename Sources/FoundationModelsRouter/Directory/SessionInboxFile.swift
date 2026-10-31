@@ -30,6 +30,11 @@ enum SessionInboxFileError: Error, Equatable, LocalizedError {
     /// The text of `file` is longer than `limit` bytes.
     case bodyTooLong(file: URL, limit: Int)
 
+    /// A message for `file` has an unknown key named `key`, which is the name
+    /// of a key that the format knows. A read of the file gives the known key,
+    /// so the writer refuses the message.
+    case reservedUnknownKey(file: URL, key: String)
+
     /// A localized message describing what error occurred.
     var errorDescription: String? {
         switch self {
@@ -49,6 +54,8 @@ enum SessionInboxFileError: Error, Equatable, LocalizedError {
                 "The chain depth \(value) of inbox file \(file.path) is less than \(SessionInboxFile.lowestChainDepth)."
         case .bodyTooLong(let file, let limit):
             return "The text of inbox file \(file.path) is longer than \(limit) bytes."
+        case .reservedUnknownKey(let file, let key):
+            return "The unknown key \"\(key)\" of inbox file \(file.path) is the name of a key that the format knows."
         }
     }
 }
@@ -158,20 +165,30 @@ enum SessionInboxFile {
     /// Writes a message to the inbox of a session folder: first to
     /// `inbox/.<ULID>.md.tmp`, then with a rename to `inbox/<ULID>.md`.
     ///
+    /// The write refuses each message that ``read(_:maxMessageBytes:)`` would
+    /// not give back equal, and it writes nothing for such a message.
+    ///
     /// - Parameters:
     ///   - message: The message.
     ///   - sessionDirectory: The session folder. It must exist; the `inbox/`
     ///     folder is made when it is absent.
-    /// - Throws: `FrontmatterDocumentSaveError` when the frontmatter does not
-    ///   encode or the temporary file does not save, or the error of the
-    ///   folder make or of the rename. A write that fails removes its
-    ///   temporary file.
-    static func write(_ message: SessionInboxMessage, to sessionDirectory: URL) throws {
+    ///   - maxMessageBytes: The longest text, in UTF-8 bytes. This is
+    ///     `SessionMessageLimits.maxMessageBytes` of the directory the inbox
+    ///     belongs to, the same value as for the read.
+    /// - Throws: ``SessionInboxFileError`` when the text is longer than
+    ///   `maxMessageBytes`, the chain depth is less than ``lowestChainDepth``,
+    ///   the sender is a user with an empty client id, or an unknown key has
+    ///   the name of a known key. Also `FrontmatterDocumentSaveError` when the
+    ///   frontmatter does not encode or the temporary file does not save, or
+    ///   the error of the folder make or of the rename. A write that fails
+    ///   removes its temporary file.
+    static func write(_ message: SessionInboxMessage, to sessionDirectory: URL, maxMessageBytes: Int) throws {
         let file = url(of: message.id, in: sessionDirectory)
+        let from = try checkedSender(of: message, file: file, maxMessageBytes: maxMessageBytes)
         let temporary = file.deletingLastPathComponent()
             .appendingPathComponent(temporaryPrefix + file.lastPathComponent + temporarySuffix, isDirectory: false)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FrontmatterDocument(metadata: Header(message), content: message.text).save(to: temporary)
+        try FrontmatterDocument(metadata: Header(message, from: from), content: message.text).save(to: temporary)
         do {
             try FileManager.default.moveItem(at: temporary, to: file)
         } catch {
@@ -214,9 +231,7 @@ enum SessionInboxFile {
         guard let frontmatter = parts.frontmatter else {
             throw SessionInboxFileError.missingFrontmatter(file: file)
         }
-        guard parts.body.utf8.count <= maxMessageBytes else {
-            throw SessionInboxFileError.bodyTooLong(file: file, limit: maxMessageBytes)
-        }
+        try checkBodyLength(parts.body, file: file, maxMessageBytes: maxMessageBytes)
         let header = try header(of: frontmatter, in: file)
         return try message(of: header, body: parts.body, file: file)
     }
@@ -284,13 +299,64 @@ enum SessionInboxFile {
             throw SessionInboxFileError.missingID(file: file)
         }
         let chainDepth = header.chainDepth ?? RouterSessionDirectory.firstChainDepth
-        guard chainDepth >= lowestChainDepth else {
-            throw SessionInboxFileError.invalidChainDepth(file: file, value: chainDepth)
-        }
+        try checkChainDepth(chainDepth, file: file)
         let from = try sender(of: header, in: file)
         return SessionInboxMessage(
             id: id, from: from, inReplyTo: header.inReplyTo, chainDepth: chainDepth, text: body,
             unknownKeys: header.unknownKeys)
+    }
+
+    /// Checks the length of a text. The read and the write both call this, so
+    /// they agree on the limit.
+    ///
+    /// - Parameters:
+    ///   - body: The text.
+    ///   - file: The file, for the error.
+    ///   - maxMessageBytes: The longest text, in UTF-8 bytes.
+    /// - Throws: ``SessionInboxFileError/bodyTooLong(file:limit:)`` when the
+    ///   text is longer than `maxMessageBytes`.
+    private static func checkBodyLength(_ body: String, file: URL, maxMessageBytes: Int) throws {
+        guard body.utf8.count <= maxMessageBytes else {
+            throw SessionInboxFileError.bodyTooLong(file: file, limit: maxMessageBytes)
+        }
+    }
+
+    /// Checks a chain depth. The read and the write both call this, so they
+    /// agree on the least value.
+    ///
+    /// - Parameters:
+    ///   - chainDepth: The chain depth.
+    ///   - file: The file, for the error.
+    /// - Throws: ``SessionInboxFileError/invalidChainDepth(file:value:)`` when
+    ///   the chain depth is less than ``lowestChainDepth``.
+    private static func checkChainDepth(_ chainDepth: Int, file: URL) throws {
+        guard chainDepth >= lowestChainDepth else {
+            throw SessionInboxFileError.invalidChainDepth(file: file, value: chainDepth)
+        }
+    }
+
+    /// Checks a message before the write, with the checks of the read, and
+    /// gives the `from` text of its sender.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - file: The file the write makes, for the error.
+    ///   - maxMessageBytes: The longest text, in UTF-8 bytes.
+    /// - Returns: The `from` text of the sender.
+    /// - Throws: ``SessionInboxFileError`` when the read of the file would
+    ///   reject the message, or would not give back its unknown keys.
+    private static func checkedSender(
+        of message: SessionInboxMessage, file: URL, maxMessageBytes: Int
+    ) throws -> String {
+        try checkBodyLength(message.text, file: file, maxMessageBytes: maxMessageBytes)
+        try checkChainDepth(message.chainDepth, file: file)
+        if let reserved = message.unknownKeys.keys.sorted().first(where: Header.isKnownKey) {
+            throw SessionInboxFileError.reservedUnknownKey(file: file, key: reserved)
+        }
+        guard let from = message.from.inboxText else {
+            throw SessionInboxFileError.invalidSender(file: file, value: SessionMessageSender.userPrefix)
+        }
+        return from
     }
 
     /// The sender of a header.
@@ -358,13 +424,23 @@ enum SessionInboxFile {
         /// The keys that are not one of the known keys.
         var unknownKeys: [String: JSONValue]
 
+        /// Whether a name is the name of a known key.
+        ///
+        /// - Parameter name: A key name.
+        /// - Returns: `true` for `id`, `from`, `inReplyTo` and `chainDepth`.
+        static func isKnownKey(_ name: String) -> Bool {
+            KnownKey(rawValue: name) != nil
+        }
+
         /// Makes the header of a message: each known key but `inReplyTo` has
         /// a value.
         ///
-        /// - Parameter message: The message.
-        init(_ message: SessionInboxMessage) {
+        /// - Parameters:
+        ///   - message: The message.
+        ///   - from: The `from` text of the sender of the message.
+        init(_ message: SessionInboxMessage, from: String) {
             id = message.id
-            from = message.from.inboxText
+            self.from = from
             inReplyTo = message.inReplyTo
             chainDepth = message.chainDepth
             unknownKeys = message.unknownKeys
@@ -388,7 +464,8 @@ enum SessionInboxFile {
 
         /// Encodes the known keys that have a value, and then the other keys.
         /// A key of ``unknownKeys`` with the name of a known key is dropped:
-        /// the known key wins.
+        /// the known key wins. ``SessionInboxFile/write(_:to:maxMessageBytes:)``
+        /// refuses such a message before it gets here.
         ///
         /// - Parameter encoder: The encoder of the frontmatter mapping.
         /// - Throws: The error of an encode.
@@ -417,11 +494,15 @@ extension SessionMessageSender {
     fileprivate static let userPrefix = "user:"
 
     /// The `from` text of the sender: `session:<ULID>`, or `user:<clientID>`,
-    /// or `user` for the default client id of ``SessionInboxFile``.
-    fileprivate var inboxText: String {
+    /// or `user` for the default client id of ``SessionInboxFile``. It is
+    /// `nil` for a user with an empty client id, because the init below does
+    /// not accept `user:` with no client id.
+    fileprivate var inboxText: String? {
         switch self {
         case .session(let id):
             return Self.sessionPrefix + id.ulidString
+        case .user(let clientID) where clientID.isEmpty:
+            return nil
         case .user(let clientID):
             return clientID == SessionInboxFile.defaultUserClientID ? Self.userText : Self.userPrefix + clientID
         }
