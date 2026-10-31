@@ -41,6 +41,11 @@ struct RouterSessionDirectoryInboxTests {
     /// The value of ``unknownKey``.
     private static let unknownValue = "high"
 
+    /// The name of a file that sorts after every file named by an id (a
+    /// lower case letter sorts after the upper case letters and digits of
+    /// an id).
+    private static let laterFileName = "z-later.md"
+
     /// The scans that run at the same time in the test of two scans.
     private static let scansOfOneFile = 2
 
@@ -223,10 +228,12 @@ struct RouterSessionDirectoryInboxTests {
         await fixture.close([target])
     }
 
-    /// The production change that makes this test fail: a scan that removes
-    /// the file of a message that no mail carried, so the message is lost.
-    @Test("a closed session leaves the file in the inbox")
-    func aClosedSessionLeavesTheFile() async throws {
+    /// The production change that makes this test fail: a scan that does
+    /// not return at the guard for a session that is not live (the close of
+    /// a session takes it off the live list), and that removes the file of
+    /// that session.
+    @Test("a session that is not live leaves the file in the inbox")
+    func aSessionThatIsNotLiveLeavesTheFile() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let target = fixture.makeSession()
         let id = try Self.writeFile(to: target)
@@ -236,6 +243,35 @@ struct RouterSessionDirectoryInboxTests {
 
         #expect(try Self.waitingNames(of: target) == ["\(id).md"])
         #expect(Self.rejectedNames(of: target).isEmpty)
+        await fixture.close([])
+    }
+
+    /// The production change that makes this test fail: a scan that removes
+    /// the file of a message that a refusal of the mail kept out of the
+    /// ledger, that goes on to the next file after the refusal, or that
+    /// records the message.
+    ///
+    /// The session is closed and then put on the live list again, so it is
+    /// live for the scan and its mail refuses with ``MailRefusal/closed``.
+    /// The second file does not parse: a scan that reads it moves it to
+    /// `inbox/rejected/`.
+    @Test("a refusal of the mail leaves the file in the inbox, the ledger empty, and the scan stops")
+    func aRefusalOfTheMailLeavesTheFileAndStopsTheScan() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        let id = try Self.writeFile(to: target)
+        let laterName = Self.laterFileName
+        let inbox = SessionInboxFile.directory(in: target.recordingDirectory)
+        try Self.fileWithoutFrontmatter.write(
+            to: inbox.appendingPathComponent(laterName), atomically: true, encoding: .utf8)
+        await target.close()
+        fixture.directory.register(target, kind: .root, parentID: nil)
+
+        await fixture.directory.scanInbox(of: target.id)
+
+        #expect(try Self.waitingNames(of: target) == ["\(id).md", laterName])
+        #expect(Self.rejectedNames(of: target).isEmpty)
+        #expect(try await fixture.directory.message(id, to: target.id) == nil)
         await fixture.close([])
     }
 
