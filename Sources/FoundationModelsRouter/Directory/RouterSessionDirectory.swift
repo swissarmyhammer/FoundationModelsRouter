@@ -211,10 +211,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// and the watcher runs after it, because the lock must not wait on the
     /// file system. A restore registers the restored session, so it starts
     /// the watcher too. A memory-only session has no folder and no watcher.
-    /// Only the process that owns the recording root registers durable
-    /// sessions, so only that process delivers the files. A file in the inbox
-    /// of a recorded session that is not live waits: no watcher covers it,
-    /// and no file starts a restore, until a process opens the session.
+    /// One directory delivers the files of one session. The code does not
+    /// enforce this: it makes no check of the recording root and no claim on
+    /// a file. Two directories that watch one folder can both deliver a file,
+    /// so the host must not run two live copies of one session. A file in the
+    /// inbox of a recorded session that is not live waits: no watcher covers
+    /// it, and no file starts a restore, until a process opens the session.
     ///
     /// A second registration of a session that is still live replaces its
     /// kind and its parent, and keeps its time of change, its state, its
@@ -1174,6 +1176,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// durable session `id`, oldest first (see ``SessionInboxFile``). A
     /// session that is not live, or that is memory-only, has no inbox to
     /// scan, so nothing happens.
+    ///
+    /// One directory delivers the files of one session. The scan does not
+    /// check who owns the recording root, and it makes no claim on a file.
+    /// Two directories that scan one folder can both deliver a file, so the
+    /// host must not run two live copies of one session.
     ///
     /// A file goes through the same delivery as a send
     /// (``hand(_:to:ledger:)``): its mail goes into the mail queue of the

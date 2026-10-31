@@ -37,9 +37,11 @@ final class SessionInboxWatcherCount: Sendable {
 /// process owns the session, so ``start()`` calls the owner once after the
 /// source runs.
 ///
-/// Only the process that owns the recording root delivers the files. That
-/// process is the only one whose directory registers sessions, and so the
-/// only one that makes a watcher.
+/// One directory delivers the files of one session. The code does not
+/// enforce this: it does not check who owns the recording root, and it makes
+/// no lock and no claim on a file. Two directories that watch one folder can
+/// both deliver a file. The host must not run two live copies of one
+/// session.
 ///
 /// The event handler holds the closure of the owner and the file
 /// descriptor, never the watcher, so the watcher can end by the release of
