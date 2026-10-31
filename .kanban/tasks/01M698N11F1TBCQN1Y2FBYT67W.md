@@ -9,10 +9,26 @@ comments:
     - evidence: SessionInboxFile.swift (two from forms, new error userSenderNotWritten, write refuses non-default user), RouterSessionDirectory.swift (deliver uses deliverDirectly for user senders, ledger folder kept; sendToRecorded refuses user with userNeedsLiveSessionReason; docs), SessionInboxFileTests, RouterSessionDirectoryInboxTests, RouterSessionDirectoryDeliveryTests, SendAndAwaitDelivery helper. Filter run of 7 suites: 104 tests passed.
     - next: test (full suite), review.
   timestamp: 2026-10-31T16:49:27.741552+00:00
+- actor: claude-code
+  id: 01m69e1t0nqe5rza44gfjf9my6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD: 0 findings, 0 confirmed, 2 refuted. Manual checks: hand and keep are shared by deliverDirectly and the inbox scan; the ledger comes from the cached ledger(of:in:) for a durable session; user:<clientID> remains only in a doc comment that says it does not parse; tests add no sleep, retry or time limit.
+    - next: none
+  timestamp: 2026-10-31T16:52:55.445938+00:00
+- actor: claude-code
+  id: 01m69e2aatf71gn25cky580a26
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — SessionInboxFile.swift, RouterSessionDirectory.swift, 4 test files
+    - test: green — swift test, 2171 tests, 0 failures
+    - commit: 092c579f
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T16:53:12.154914+00:00
 depends_on:
 - 01M698QM6SE1GFFQTP2XGSG1BP
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffd080
 title: 'Inbox `from` is a session id: drop the user:<clientID> form, send user senders directly'
 ---
 ## What
