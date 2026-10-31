@@ -38,10 +38,26 @@ comments:
     - evidence: swift test --filter 'RouterSessionDirectoryDeliveryTests|RouterSessionDirectoryMessageTests': 30 tests in 2 suites passed.
     - next: review
   timestamp: 2026-10-31T09:31:21.764293+00:00
+- actor: claude-code
+  id: 01m68mwqb2pn8eymkxsba87kv1
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD: 0 findings, 0 confirmed, 1 refuted. The earlier duplication finding is checked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-31T09:33:14.466172+00:00
+- actor: claude-code
+  id: 01m68mwzk59ed114df0f30r6vf
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — shared sendAndAwaitDelivery helper, 7 copies removed
+    - test: green — swift test, 2168 tests, 0 failures
+    - commit: f38c2042
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T09:33:22.917078+00:00
 depends_on:
 - 01M66VZ885BGD130W6TSSS8B7C
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffcb80
 title: Route send(_:) to a durable session through an inbox file
 ---
 ## What
