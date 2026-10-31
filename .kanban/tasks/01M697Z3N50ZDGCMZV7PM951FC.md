@@ -35,8 +35,24 @@ comments:
     - evidence: RouterSessionDirectory.swift: logInboxFailure and logInboxDuplicate now call one helper logInbox(level, what, session, file, metadata) that adds the session id and file path; added import Logging. TranscriptEntryMapperTests.swift: the data-entry test uses try #require plus if case / Issue.record, no guard. Other tests touched by the two commits had no guard (inbox tests: none). swift test --filter 'RouterSessionDirectoryInboxTests|TranscriptEntryMapperTests': 70 tests in 2 suites passed.
     - next: review
   timestamp: 2026-10-31T15:40:36.700587+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m69a173hr0jmgbt0nfyvrj3e
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (6bd1b38c): 0 findings, 0 confirmed, 0 refuted. Both prior findings are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-10-31T15:42:41.777808+00:00
+- actor: claude-code
+  id: 01m69a1twz7ej6aah26dxxr5ee
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — shared logInbox helper, test uses try #require
+    - test: green — swift test, 2170 tests, 0 failures
+    - commit: 6bd1b38c
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T15:43:02.047313+00:00
+position_column: done
+position_ordinal: ffffffffcc80
 title: 'Inbox scan: discard a duplicate-id file with a warning and keep scanning'
 ---
 ## What

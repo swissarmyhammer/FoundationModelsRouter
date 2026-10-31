@@ -1,8 +1,17 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m69a5vbqwm0grg48g9chwyk5
+  text: |-
+    ### implement — changed
+    - RED: new test failed (3 issues). GREEN: `swift test --filter RouterSessionDirectoryInboxTests` ran 26 tests, all pass.
+    - deliver(_:chainDepth:to:) calls scanInbox(of:) after writeInboxFile when the Entry has no inboxWatcher (hasNoInboxWatcher). Docs of Entry.inboxWatcher, openInboxWatcher and deliver corrected.
+    - next: review
+  timestamp: 2026-10-31T15:45:13.591295+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Durable send: deliver the file at once when the session has no inbox watcher'
 ---
 ## What

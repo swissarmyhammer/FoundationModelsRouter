@@ -727,6 +727,37 @@ struct RouterSessionDirectoryInboxTests {
         await fixture.close([target])
     }
 
+    /// The production change that makes this test fail: a send that only
+    /// writes the file, so a durable session with no watcher never gets the
+    /// message while the receipt says `delivered`.
+    ///
+    /// A regular file in the place of `inbox/` makes the watcher fail to
+    /// open at the registration. The file is removed before the send, so the
+    /// write of the inbox file works.
+    @Test("a send to a durable session with no inbox watcher is delivered at once, and the file is gone")
+    func aSendToASessionWithNoWatcherIsDelivered() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        fixture.directory.unregister(target.id)
+        let inbox = SessionInboxFile.directory(in: target.recordingDirectory)
+        try FileManager.default.removeItem(at: inbox)
+        try Data().write(to: inbox)
+        fixture.directory.register(target, kind: .root, parentID: nil)
+        try FileManager.default.removeItem(at: inbox)
+        var events = fixture.directory.events().makeAsyncIterator()
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(fixture.directory.openInboxWatcherCount == 0)
+        fixture.directory.emit(Self.marker)
+        let received = await events.next(through: Self.marker)
+        #expect(received.contains { if case .messageDelivered(let message) = $0 { message.id == messageID } else { false } })
+        #expect(try await fixture.directory.message(messageID, to: target.id)?.text == Self.text)
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        await fixture.close([target])
+    }
+
     /// The production change that makes this test fail: a watcher for a
     /// session that has no folder to watch.
     @Test("a memory-only session starts no watcher")

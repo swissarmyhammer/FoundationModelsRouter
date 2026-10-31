@@ -122,7 +122,8 @@ public actor RouterSessionDirectory: SessionDirectory {
 
         /// The watcher of the `inbox/` folder of the session
         /// (``SessionInboxWatcher``), or `nil` for a memory-only session and
-        /// for a folder that did not open.
+        /// for a folder that did not open. A durable session with `nil` here
+        /// has no watcher, so a send scans its inbox (``hasNoInboxWatcher(_:)``).
         var inboxWatcher: SessionInboxWatcher?
 
         /// Ends the task and the watcher that the registration started. Each
@@ -262,7 +263,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameter session: The session to register.
     /// - Returns: The watcher, or `nil` for a memory-only session and for a
     ///   folder that did not open. The second case is logged, and the
-    ///   session goes on with no watcher: a send still delivers.
+    ///   session goes on with no watcher: a send to it scans the inbox at
+    ///   once (``deliver(_:chainDepth:to:)``), but a file that a hand puts
+    ///   in the inbox waits for a call of ``scanInbox(of:)``.
     private nonisolated func openInboxWatcher(of session: any RoutedSession) -> SessionInboxWatcher? {
         guard let folder = Self.ledgerDirectory(of: session) else { return nil }
         let id = session.id
@@ -869,6 +872,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// registered also gets `delivered`: the file waits in its inbox for the
     /// next open of the session. This is not a `refused` receipt as not live.
     ///
+    /// A durable session whose inbox watcher did not open
+    /// (``hasNoInboxWatcher(_:)``) has no other reader of the file, so the
+    /// send calls ``scanInbox(of:)`` right after the write, and the
+    /// message is in the ledger when the receipt returns.
+    ///
     /// A memory-only session has no folder, so it gets the mail in its
     /// queue and the message in the ledger at once (``hand(_:to:ledger:)``).
     /// A memory-only session that closed and takes no more mail is refused as
@@ -901,7 +909,23 @@ public actor RouterSessionDirectory: SessionDirectory {
             return try deliverDirectly(message, chainDepth: chainDepth, to: session, outcome: outcome)
         }
         let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
+        if hasNoInboxWatcher(id) {
+            scanInbox(of: id)
+        }
         return SessionSendReceipt(messageID: messageID, target: id, outcome: outcome)
+    }
+
+    /// Whether the registry holds a durable session that has no inbox
+    /// watcher, because the inbox folder did not open at the registration.
+    /// Nothing else delivers a file of such a session, so ``deliver(_:chainDepth:to:)``
+    /// scans the inbox itself.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: `true` when the entry of `id` has no watcher. A memory-only
+    ///   session has no watcher too, but it never reaches this check: it has
+    ///   no inbox folder.
+    private nonisolated func hasNoInboxWatcher(_ id: ULID) -> Bool {
+        state.withLock { $0.entries[id]?.inboxWatcher == nil }
     }
 
     /// Delivers `message` to the memory-only session `session`: puts its mail
