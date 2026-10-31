@@ -2,29 +2,21 @@
 
 [![CI](https://github.com/swissarmyhammer/FoundationModelsRouter/actions/workflows/ci.yml/badge.svg)](https://github.com/swissarmyhammer/FoundationModelsRouter/actions/workflows/ci.yml)
 
-A Swift router for local MLX language models on Apple silicon. Author a
-`ProfileDefinition` listing candidate models per role (`standard`, `flash`,
-`embedding`); `Router.resolve` measures the host's real RAM/GPU budget, picks
-the biggest candidate that fits each slot, and hands back a resident,
-sessionable, transcript-recording profile. Residency is pooled: several
-profiles can be resident together, they share one machine budget, and profiles
-that name the same model share its loaded copy. The model pool of
-`FoundationModelsExtras` keeps the holds of each model. It evicts a model only
-when no hold of that model remains.
+Resolve local MLX language models into resident, recorded sessions on Apple silicon.
+
+List candidate models for each role (`standard`, `flash`, `embedding`) in a
+`ProfileDefinition`. `Router.resolve` measures the real RAM and GPU budget of
+the host, picks the biggest candidate that fits each slot, and hands back a
+resident profile. Each session of that profile records its transcript to disk.
+Residency is pooled: profiles that name the same model share one loaded copy.
 
 ```swift
 import Foundation
 import FoundationModelsRouter
 
-// The router records every transcript under this directory.
-let recordingsDir = URL.documentsDirectory.appending(path: "RouterTranscripts")
-
-// `LiveModelLoader` loads each model through the `MLXModelLoader` of
-// `FoundationModelsExtras`. It downloads a model from Hugging Face when the
-// cache does not hold it.
 let router = Router(
-    recordingsDir: recordingsDir,
-    loader: LiveModelLoader()
+    recordingsDir: URL.documentsDirectory.appending(path: "RouterTranscripts"),
+    loader: LiveModelLoader()  // downloads a model from Hugging Face when the cache lacks it
 )
 
 let coding = ProfileDefinition(
@@ -35,17 +27,7 @@ let coding = ProfileDefinition(
     embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
 )
 
-// `ResolutionProgress` binds into SwiftUI; `progress.phases` is the same
-// progress as an AsyncSequence, ending on its own at ready/failed/cancelled.
-let progress = ResolutionProgress()
-let progressTask = Task { @MainActor in
-    for await transition in progress.phases {
-        print("resolve: \(transition.phase)")
-    }
-}
-
-let profile = try await router.resolve(profile: coding, reporting: progress)
-await progressTask.value
+let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
 let session = profile.standard.makeSession(instructions: "You are a terse Swift expert.")
 let answer = try await session.respond(
@@ -54,161 +36,26 @@ let answer = try await session.respond(
 print(answer)
 ```
 
-A second, smaller `flash` model resolves alongside `standard` from the same
-call, so cheap work (triage, classification) can route to it while `standard`
-handles the heavy answers — see `Examples/MultiModelGeneration` for a runnable,
-two-model demo.
-
-## `standard` and `flash` are always two different models
-
-The `standard` and `flash` slots of one resolved profile never use the same
-model. A synchronous tool call, for example the multitool `searchTools`, runs a
-selection call on `flash` inside an open submission on `standard`. Each model
-has one FIFO work queue, so one model in both slots would wait on itself.
-
-`Router.resolve` skips, in the `flash` list, the model that `standard` chose,
-and takes the next `flash` candidate. When the `standard` and `flash` lists
-name only the same one model, `Router.resolve` throws before it loads a model.
-Give the `flash` slot at least one candidate that is not the `standard` model.
-
-## Residency is process-wide
-
-The model pool and the model hold come from the core `FoundationModelsExtras`
-package: `ModelPool` and `ModelHold`. `FoundationModelsRouter` exports the
-name `ModelPool`, so `import FoundationModelsRouter` is sufficient to write
-`ModelPool.shared` or `Router(pool: ModelPool())`.
-
-One pool serves the whole process by default: `ModelPool.shared`. The router
-is one user of that pool. The tool registry and the multitool of
-`FoundationModelsExtras` are other users. All users share the same loaded
-models: when two users name one model, the pool loads that model one time and
-counts its weights one time. The first loader of a model wins. A later user
-gets the container of that loader.
-
-Each load of a new model and each eviction is one job in the FIFO admission
-queue of the pool. `Router.resolve` measures the footprint of the pool, fits
-the profile, and loads each slot in one admission job. Thus no other load and
-no eviction occurs between the measurement and the loads.
-
-Each handle of a resolved profile keeps the three model holds of its resolve.
-A model stays resident while a profile, a handle of that profile, or a hold
-of another user still exists anywhere in the process. There is no release
-call. When the last hold of a model goes, the pool submits an eviction job. A
-dropped `Router` frees nothing. Read `ModelPool.residentModelCount` to see how
-many models the process holds.
-
-The last release puts the eviction job in the admission queue of the pool in
-the same step. A resolve that starts immediately after the drop of the last
-reference thus runs after the eviction, and sees the freed memory. A
-synchronous read of `ModelPool.residentModelCount` immediately after the drop
-can still count the model, because the eviction job has not run yet. To see
-the freed memory, read the footprint in an admission job:
-`try await pool.admit { $0.footprint }`.
-
-Pass a fresh pool to `Router(pool:)` to give a router an isolated pool and an
-isolated budget. Pass `Router(samplingMode:)` to set the decoding strategy of
-a router; two routers over one shared model each decode with their own mode.
-Forks are not counted: any number of forks over one model can exist at once.
-
-## Tool hosting comes from FoundationModelsExtras
-
-The core `FoundationModelsExtras` package hosts the tools of a session: it
-mounts each tool, runs a background tool behind a pending envelope when the
-run continues past the settle period of the session, keeps the run plane of
-the session, and binds the ambient `ToolContext` of each call. A
-host that uses only tools, for example the multitool, thus needs no router.
-
-The router makes, manages, compacts and records sessions, and uses that tool
-hosting for each session. The router names `ToolContext`, `BackgroundTool`,
-`ToolMount`, `ToolMountError`, `SubmissionBoundaryTool`, `LostRunError`,
-`RunKind`, `BackgroundRun`, `WaitOutcome`, `CancelOutcome`,
-`PendingRunEnvelope`, `ToolCallAttachment`, `ToolCallReport`,
-`ElicitationAnswerDelivery` and `ElicitationCompletionDelivery` are aliases of
-the Extras types. Thus `import FoundationModelsRouter` is sufficient to write a
-tool, and a file that imports both modules finds one type for each name.
-
 ## Install
 
-The package needs macOS 27 or later. Declare that floor in your `Package.swift`:
+The package needs macOS 27 or later. Add it to `Package.swift`, with the floor:
 
 ```swift
 platforms: [.macOS("27.0")],
-```
-
-SwiftPM applies macOS 12.0 when your manifest states no floor. The build then
-fails.
-
-The example above needs one package. Add it to the `dependencies` list in
-`Package.swift`:
-
-```swift
-.package(url: "https://github.com/swissarmyhammer/FoundationModelsRouter", branch: "main"),
-```
-
-Then link its product from your own target:
-
-```swift
-.product(name: "FoundationModelsRouter", package: "FoundationModelsRouter"),
-```
-
-`LiveModelLoader` downloads through the Hugging Face client that
-`FoundationModelsExtras` links. Your target needs no Hugging Face product of its
-own, unless it names `TokenProvider` (see below); then it links the
-`HuggingFace` product of `swift-huggingface`.
-
-To keep the models in a folder of your app, give the folder to
-`LiveModelLoader(cacheDirectory:)`. Each download goes into that folder, also
-when `HF_HOME` names a different folder. With no folder, the loader uses the
-default Hugging Face cache. The router keeps its sizing metadata in a different
-folder: give that folder to `Router(cacheDir:)`. `Router.cacheDirectory` shows
-the folder the router uses.
-
-The downloads and the sizing requests send the Hugging Face token of
-`HF_TOKEN` or `~/.cache/huggingface/token` by default. An app with its own home
-gives one `TokenProvider` to both, so it does not depend on the folder of the
-user:
-
-```swift
-let token: TokenProvider = .custom { try? String(contentsOf: tokenFile, encoding: .utf8) }
-let router = Router(
-    metadataSource: HuggingFaceMetadataSource(tokenProvider: token),
-    loader: LiveModelLoader(tokenProvider: token))
+dependencies: [
+    .package(url: "https://github.com/swissarmyhammer/FoundationModelsRouter", branch: "main"),
+],
+// In your target:
+// .product(name: "FoundationModelsRouter", package: "FoundationModelsRouter"),
 ```
 
 ## Documentation
 
-Every public API has a worked example in
-[`Tests/FoundationModelsRouterTests/ExamplesTests.swift`](Tests/FoundationModelsRouterTests/ExamplesTests.swift) —
-resolution, sessions, streaming, guided (grammar-constrained) generation,
-embeddings, forking, and residency. A runnable, real-model demo lives in
-[`Examples/MultiModelGeneration`](Examples/MultiModelGeneration).
-
-## Tests
-
-The tests are split by what they need, and the split is a package boundary
-rather than an environment variable or a name filter. The root package
-declares no integration target, so a plain `swift test` runs only the
-hermetic tests by construction. The real-model targets live in the nested
-[`IntegrationTests/`](IntegrationTests) package.
-
-```sh
-# Everyday: hermetic, no network, no GPU, seconds.
-swift test
-
-# Real models: downloads weights and generates on the GPU. Tens of minutes.
-swift test --package-path IntegrationTests
-
-# The real-model smoke tier alone — does compaction work at all? Seconds.
-swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
-```
-
-`FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`
-hold every suite that reaches a real model, and no suite in either one reads an
-environment variable or can skip itself. Both targets exist only in the nested
-package, so a root `swift test` cannot see them, and a run of the nested
-package executes every suite in it — no command can silently match nothing.
-CI runs the same two commands.
+- [Installation details](docs/installation.md): the macOS floor, the model cache folder, the Hugging Face token.
+- [Models, residency and tools](docs/residency.md): why `standard` and `flash` are two different models, the process-wide model pool, tool hosting.
+- [Tests](docs/testing.md): hermetic and real-model tests, and where the worked examples are.
+- [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration): a runnable demo with two models.
 
 ## License
 
-No license file is currently published in this repository.
+No license file is published in this repository yet.
