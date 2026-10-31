@@ -22,8 +22,24 @@ comments:
     - decision needed: allow the pin move of mlx-swift-lm in Multitool (Package.resolved is gitignored), then build and run the Multitool tests.
     - mailbox-plan.md line "restoreThenDeliver: write the file, then restore" is now wrong (file not edited).
   timestamp: 2026-10-31T16:37:58.612591+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m69dhc4nn958t24jrpmf7xq7
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (899bc92b): 0 findings, 0 confirmed, 0 refuted. Manual check: no caller of restoreSession in Sources/Directory; restoreThenDeliver, restore(_:through:), restores gone; sendToRecorded never uses the launcher; archived refused; unknown id throws unknownSession; tests have no sleep, retry, time limit or guard.
+    - next: task moved to done. Note: the line "restoreThenDeliver: write the file, then restore" in mailbox-plan.md is now wrong. The file is untracked and was not edited.
+  timestamp: 2026-10-31T16:43:56.949886+00:00
+- actor: claude-code
+  id: 01m69dhr725mqjkd8dtqpv7590
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — Router: RouterSessionDirectory.swift, SessionAddressResolution.swift, SessionLauncher.swift, 4 test files; Multitool (uncommitted): 5 files for the new outcome `sent`
+    - test: green (Router) — swift test, 2169 tests, 0 failures; Multitool: golden fixed, 6 other failures in unrelated code (missing eventplan.md, plan.md, git.md; ShellStateTests)
+    - commit: 899bc92b (Router only)
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T16:44:09.314311+00:00
+position_column: done
+position_ordinal: ffffffffcf80
 title: 'Send to a recorded session that is not live: write the inbox file, never restore, receipt `sent`'
 ---
 ## What

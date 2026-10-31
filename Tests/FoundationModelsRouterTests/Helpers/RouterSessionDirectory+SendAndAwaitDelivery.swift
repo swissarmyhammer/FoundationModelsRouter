@@ -6,11 +6,13 @@ extension RouterSessionDirectory {
     /// Sends `message`, and then reads the directory events until each
     /// message of the receipts that a session received is delivered.
     ///
-    /// A send to a durable session writes an inbox file, and the scan of the
-    /// inbox puts the mail in the queue of the session and the message in its
-    /// ledger after the send returns (``send(_:)``). The `messageDelivered`
-    /// event marks that point, so a test that reads the ledger or the queue
-    /// of the target waits for it, and never for the clock.
+    /// A send from a session to a durable session writes an inbox file, and
+    /// the scan of the inbox puts the mail in the queue of the session and the
+    /// message in its ledger after the send returns (``send(_:)``). A send
+    /// from a UI sender to a live session delivers at once, and the event is
+    /// ready in the feed. The `messageDelivered` event marks that point, so a
+    /// test that reads the ledger or the queue of the target waits for it, and
+    /// never for the clock.
     ///
     /// - Parameter message: The message to send.
     /// - Returns: The receipts of the send.

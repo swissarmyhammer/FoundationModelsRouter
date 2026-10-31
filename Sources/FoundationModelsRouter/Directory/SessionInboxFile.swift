@@ -19,9 +19,13 @@ enum SessionInboxFileError: Error, Equatable, LocalizedError {
     /// `file` has no `id` key, and its name is not a ULID.
     case missingID(file: URL)
 
-    /// The `from` of `file` is not `session:<ULID>`, `user:<clientID>` or
-    /// `user`.
+    /// The `from` of `file` is not `session:<ULID>` or `user`.
     case invalidSender(file: URL, value: String)
+
+    /// The message for `file` is from a user sender with the client id
+    /// `clientID`, which is not the default client id. The file has no form
+    /// for a client id, so the writer refuses the message.
+    case userSenderNotWritten(file: URL, clientID: String)
 
     /// The `chainDepth` of `file` is less than
     /// ``SessionInboxFile/lowestChainDepth``.
@@ -48,7 +52,10 @@ enum SessionInboxFileError: Error, Equatable, LocalizedError {
             return "Inbox file \(file.path) has no id, and its name is not a ULID."
         case .invalidSender(let file, let value):
             return
-                "The sender \"\(value)\" of inbox file \(file.path) is not session:<ULID>, user:<clientID> or user."
+                "The sender \"\(value)\" of inbox file \(file.path) is not session:<ULID> or user."
+        case .userSenderNotWritten(let file, let clientID):
+            return
+                "The message for inbox file \(file.path) is from the user client \"\(clientID)\". The file format has no form for a client id."
         case .invalidChainDepth(let file, let value):
             return
                 "The chain depth \(value) of inbox file \(file.path) is less than \(SessionInboxFile.lowestChainDepth)."
@@ -100,12 +107,17 @@ struct SessionInboxMessage: Equatable, Sendable {
 /// The sort of the names is the order of arrival, because a ULID sorts by
 /// time.
 ///
-/// The `from` key has three forms:
-/// - `session:<ULID>` is ``SessionMessageSender/session(_:)``.
-/// - `user:<clientID>` is ``SessionMessageSender/user(clientID:)``. The Router
-///   writes this form for a UI sender, so the client id is not lost.
+/// The `from` key has two forms:
+/// - `session:<ULID>` is ``SessionMessageSender/session(_:)``. Sessions talk
+///   to each other through the inbox, so the Router writes this form.
 /// - `user` is the default of a hand-written file, and also the value of a
-///   file with no `from`. It is `user:` with ``defaultUserClientID``.
+///   file with no `from`. It is ``SessionMessageSender/user(clientID:)`` with
+///   ``defaultUserClientID``.
+///
+/// The file has no form for a client id. A value such as `user:<clientID>`
+/// does not parse, and the writer refuses a user sender with another client
+/// id. A message from a UI sender goes to a live session by the direct path
+/// of ``RouterSessionDirectory/send(_:)``, which writes no file.
 ///
 /// A `from` is not authenticated: the trust boundary is the user account that
 /// owns the folder.
@@ -177,8 +189,9 @@ enum SessionInboxFile {
     ///     belongs to, the same value as for the read.
     /// - Throws: ``SessionInboxFileError`` when the text is longer than
     ///   `maxMessageBytes`, the chain depth is less than ``lowestChainDepth``,
-    ///   the sender is a user with an empty client id, or an unknown key has
-    ///   the name of a known key. Also `FrontmatterDocumentSaveError` when the
+    ///   the sender is a user with a client id other than
+    ///   ``defaultUserClientID``, or an unknown key has the name of a known
+    ///   key. Also `FrontmatterDocumentSaveError` when the
     ///   frontmatter does not encode or the temporary file does not save, or
     ///   the error of the folder make or of the rename. A write that fails
     ///   removes its temporary file.
@@ -344,7 +357,8 @@ enum SessionInboxFile {
     ///   - maxMessageBytes: The longest text, in UTF-8 bytes.
     /// - Returns: The `from` text of the sender.
     /// - Throws: ``SessionInboxFileError`` when the read of the file would
-    ///   reject the message, or would not give back its unknown keys.
+    ///   reject the message, or would not give back its unknown keys, or when
+    ///   the sender is a user with a client id the file cannot keep.
     private static func checkedSender(
         of message: SessionInboxMessage, file: URL, maxMessageBytes: Int
     ) throws -> String {
@@ -353,10 +367,7 @@ enum SessionInboxFile {
         if let reserved = message.unknownKeys.keys.sorted().first(where: Header.isKnownKey) {
             throw SessionInboxFileError.reservedUnknownKey(file: file, key: reserved)
         }
-        guard let from = message.from.inboxText else {
-            throw SessionInboxFileError.invalidSender(file: file, value: SessionMessageSender.userPrefix)
-        }
-        return from
+        return try message.from.inboxText(for: file)
     }
 
     /// The sender of a header.
@@ -367,7 +378,7 @@ enum SessionInboxFile {
     /// - Returns: The sender of the `from` key, or the default user sender
     ///   when the header has no `from`.
     /// - Throws: ``SessionInboxFileError/invalidSender(file:value:)`` when the
-    ///   `from` is not one of the three forms.
+    ///   `from` is not one of the two forms.
     private static func sender(of header: Header, in file: URL) throws -> SessionMessageSender {
         guard let value = header.from else { return .user(clientID: defaultUserClientID) }
         guard let sender = SessionMessageSender(inboxText: value) else {
@@ -412,7 +423,7 @@ enum SessionInboxFile {
         /// The `id` key.
         var id: MailID?
 
-        /// The `from` key, in the text form of ``SessionMessageSender/inboxText``.
+        /// The `from` key, in the text form of ``SessionMessageSender/inboxText(for:)``.
         var from: String?
 
         /// The `inReplyTo` key.
@@ -490,28 +501,28 @@ extension SessionMessageSender {
     /// The text of a user sender with no client id.
     fileprivate static let userText = "user"
 
-    /// The start of the text of a user sender with a client id.
-    fileprivate static let userPrefix = "user:"
-
-    /// The `from` text of the sender: `session:<ULID>`, or `user:<clientID>`,
-    /// or `user` for the default client id of ``SessionInboxFile``. It is
-    /// `nil` for a user with an empty client id, because the init below does
-    /// not accept `user:` with no client id.
-    fileprivate var inboxText: String? {
+    /// The `from` text of the sender: `session:<ULID>`, or `user` for the
+    /// default client id of ``SessionInboxFile``.
+    ///
+    /// - Parameter file: The file the write makes, for the error.
+    /// - Returns: The `from` text.
+    /// - Throws: ``SessionInboxFileError/userSenderNotWritten(file:clientID:)``
+    ///   for a user with another client id, because the file has no form for
+    ///   it.
+    fileprivate func inboxText(for file: URL) throws -> String {
         switch self {
         case .session(let id):
             return Self.sessionPrefix + id.ulidString
-        case .user(let clientID) where clientID.isEmpty:
-            return nil
+        case .user(let clientID) where clientID == SessionInboxFile.defaultUserClientID:
+            return Self.userText
         case .user(let clientID):
-            return clientID == SessionInboxFile.defaultUserClientID ? Self.userText : Self.userPrefix + clientID
+            throw SessionInboxFileError.userSenderNotWritten(file: file, clientID: clientID)
         }
     }
 
     /// Makes the sender of a `from` text.
     ///
-    /// - Parameter inboxText: `session:<ULID>`, `user:<clientID>` or `user`.
-    ///   A client id is not empty.
+    /// - Parameter inboxText: `session:<ULID>` or `user`.
     fileprivate init?(inboxText: String) {
         if inboxText == Self.userText {
             self = .user(clientID: SessionInboxFile.defaultUserClientID)
@@ -519,8 +530,6 @@ extension SessionMessageSender {
             let id = ULID(String(inboxText.dropFirst(Self.sessionPrefix.count)))
         {
             self = .session(id)
-        } else if inboxText.hasPrefix(Self.userPrefix), inboxText.count > Self.userPrefix.count {
-            self = .user(clientID: String(inboxText.dropFirst(Self.userPrefix.count)))
         } else {
             return nil
         }

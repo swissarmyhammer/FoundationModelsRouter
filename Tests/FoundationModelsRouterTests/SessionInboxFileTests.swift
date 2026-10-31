@@ -174,18 +174,6 @@ import Testing
 
     // MARK: - Sender
 
-    /// A UI sender keeps its client id through the file.
-    @Test func aUserSenderWithAClientIDRoundTrips() throws {
-        let directory = Self.makeSessionDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let message = Self.makeMessage(from: .user(clientID: "client-a"))
-
-        try SessionInboxFile.write(message, to: directory, maxMessageBytes: Self.wideLimit)
-
-        let file = SessionInboxFile.url(of: message.id, in: directory)
-        #expect(try SessionInboxFile.read(file, maxMessageBytes: Self.wideLimit).from == .user(clientID: "client-a"))
-    }
-
     /// The default user sender round trips, in the plain `user` form.
     @Test func theDefaultUserSenderRoundTrips() throws {
         let directory = Self.makeSessionDirectory()
@@ -198,31 +186,30 @@ import Testing
         #expect(try SessionInboxFile.read(file, maxMessageBytes: Self.wideLimit) == message)
     }
 
-    /// A UI sender with an empty client id is not written, because the read of
-    /// the file would reject `user:` with no client id. The inbox stays empty.
-    @Test func aUserSenderWithAnEmptyClientIDIsNotWritten() throws {
+    /// A user sender with a client id is not written, because the file has no
+    /// form for a client id. The Router sends such a message to a live session
+    /// directly. The inbox stays empty.
+    @Test(arguments: ["client-a", ""])
+    func aUserSenderWithAClientIDIsNotWritten(clientID: String) throws {
         let directory = Self.makeSessionDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let message = Self.makeMessage(from: .user(clientID: ""))
+        let message = Self.makeMessage(from: .user(clientID: clientID))
         let file = SessionInboxFile.url(of: message.id, in: directory)
 
-        #expect(throws: SessionInboxFileError.invalidSender(file: file, value: "user:")) {
+        #expect(throws: SessionInboxFileError.userSenderNotWritten(file: file, clientID: clientID)) {
             try SessionInboxFile.write(message, to: directory, maxMessageBytes: Self.wideLimit)
         }
         #expect(try SessionInboxFile.pending(in: directory).isEmpty)
     }
 
-    /// The sender `user:<clientID>` of a hand-written file is a UI sender, and
-    /// the sender `session:<ULID>` is a session.
-    @Test func theTwoSenderFormsReadAsTheirCases() throws {
+    /// The sender `session:<ULID>` of a hand-written file is a session.
+    @Test func aSessionSenderReadsAsASession() throws {
         let directory = Self.makeSessionDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let sessionID = ULID.generate()
-        let user = try Self.writeRaw("---\nfrom: user:client-b\n---\nHello", named: "\(MailID()).md", in: directory)
         let session = try Self.writeRaw(
             "---\nfrom: session:\(sessionID)\n---\nHello", named: "\(MailID()).md", in: directory)
 
-        #expect(try SessionInboxFile.read(user, maxMessageBytes: Self.wideLimit).from == .user(clientID: "client-b"))
         #expect(try SessionInboxFile.read(session, maxMessageBytes: Self.wideLimit).from == .session(sessionID))
     }
 
@@ -240,7 +227,7 @@ import Testing
     }
 
     /// A file with a sender that is not one of the forms does not parse.
-    @Test(arguments: ["robot", "session:not-a-ulid", "user:", "agent:x"])
+    @Test(arguments: ["robot", "session:not-a-ulid", "user:", "user:abc", "agent:x"])
     func aBadSenderDoesNotParse(sender: String) throws {
         let directory = Self.makeSessionDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

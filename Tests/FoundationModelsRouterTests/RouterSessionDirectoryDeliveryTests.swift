@@ -157,20 +157,24 @@ struct RouterSessionDirectoryDeliveryTests {
         return Fixture(directories: directories, router: router, profile: profile, launcher: launcher)
     }
 
-    /// Sends one UI message with `text` to the session `id`, and waits until
-    /// the directory delivered it (``RouterSessionDirectory/sendAndAwaitDelivery(_:)``):
-    /// a send to a durable session goes through an inbox file, and the mail
+    /// Sends one message with `text` to the session `id`, and waits until
+    /// the directory delivered it (``RouterSessionDirectory/sendAndAwaitDelivery(_:)``).
+    /// A UI message to a live session is delivered at once. A message from a
+    /// session to a durable session goes through an inbox file, and the mail
     /// and the ledger of the target follow the receipt.
     ///
     /// - Parameters:
     ///   - text: The text of the message.
     ///   - id: The session id of the target.
+    ///   - sender: The sender. The default is the UI client.
     ///   - fixture: The fixture of the test.
     /// - Returns: The receipts of the send.
     private static func send(
-        _ text: String = text, to id: ULID, in fixture: Fixture
+        _ text: String = text, to id: ULID, from sender: SessionMessageSender = .user(clientID: clientID),
+        in fixture: Fixture
     ) async throws -> [SessionSendReceipt] {
-        try await fixture.directory.sendAndAwaitDelivery(text, fromClient: clientID, to: id)
+        try await fixture.directory.sendAndAwaitDelivery(
+            OutgoingSessionMessage(from: sender, to: .session(id), text: text))
     }
 
     /// Starts a held turn on a new session: vends it, sends it the turn
@@ -334,15 +338,16 @@ struct RouterSessionDirectoryDeliveryTests {
     func aRecordedSessionGetsAFileAndTheReceiptIsSent() async throws {
         let fixture = try await Self.makeFixture()
         let (id, folder) = try await fixture.recordClosedSessionWithFolder()
+        let sender = fixture.makeSession()
         await fixture.directory.use(launcher: UncalledLauncher())
 
-        let receipts = try await Self.send(to: id, in: fixture)
+        let receipts = try await Self.send(to: id, from: .session(sender.id), in: fixture)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)])
         #expect(try SessionInboxFile.pending(in: folder).map(\.lastPathComponent) == ["\(messageID).md"])
         #expect(try await fixture.directory.summary(of: id)?.isLive == false)
-        await fixture.close([])
+        await fixture.close([sender])
     }
 
     /// The production change that makes this test fail: a send to a
@@ -352,13 +357,14 @@ struct RouterSessionDirectoryDeliveryTests {
     func aSendToARecordedSessionNeedsNoLauncher() async throws {
         let fixture = try await Self.makeFixture()
         let id = try await fixture.recordClosedSession()
+        let sender = fixture.makeSession()
         await fixture.directory.shutdown()
 
-        let receipts = try await Self.send(to: id, in: fixture)
+        let receipts = try await Self.send(to: id, from: .session(sender.id), in: fixture)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)])
-        await fixture.close([])
+        await fixture.close([sender])
     }
 
     // MARK: - Archived

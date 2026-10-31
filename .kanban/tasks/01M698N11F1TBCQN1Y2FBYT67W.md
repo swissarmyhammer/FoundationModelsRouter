@@ -1,10 +1,18 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m69dvf5x6wbcmv6mh70yh7m4
+  text: |-
+    ### implement — changed
+    - evidence: SessionInboxFile.swift (two from forms, new error userSenderNotWritten, write refuses non-default user), RouterSessionDirectory.swift (deliver uses deliverDirectly for user senders, ledger folder kept; sendToRecorded refuses user with userNeedsLiveSessionReason; docs), SessionInboxFileTests, RouterSessionDirectoryInboxTests, RouterSessionDirectoryDeliveryTests, SendAndAwaitDelivery helper. Filter run of 7 suites: 104 tests passed.
+    - next: test (full suite), review.
+  timestamp: 2026-10-31T16:49:27.741552+00:00
 depends_on:
 - 01M698QM6SE1GFFQTP2XGSG1BP
-position_column: todo
-position_ordinal: '8480'
+position_column: doing
+position_ordinal: '80'
 title: 'Inbox `from` is a session id: drop the user:<clientID> form, send user senders directly'
 ---
 ## What

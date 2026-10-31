@@ -30,6 +30,11 @@ struct RouterSessionDirectoryInboxTests {
     /// The UI client that sends each message.
     private static let clientID = "client-a"
 
+    /// The sender of each file that ``writeFile(to:id:chainDepth:unknownKeys:)``
+    /// writes: the default user sender, the only user sender that a file can
+    /// keep.
+    private static let fileSender = SessionMessageSender.user(clientID: SessionInboxFile.defaultUserClientID)
+
     /// The chain depth of a file that a hand wrote after a chain of two
     /// messages.
     private static let fileChainDepth = 3
@@ -85,7 +90,7 @@ struct RouterSessionDirectoryInboxTests {
         unknownKeys: [String: JSONValue] = [:]
     ) throws -> MailID {
         let message = SessionInboxMessage(
-            id: id, from: .user(clientID: clientID), inReplyTo: nil, chainDepth: chainDepth, text: text,
+            id: id, from: fileSender, inReplyTo: nil, chainDepth: chainDepth, text: text,
             unknownKeys: unknownKeys)
         try SessionInboxFile.write(
             message, to: session.recordingDirectory, maxMessageBytes: SessionMessageLimits().maxMessageBytes)
@@ -127,7 +132,7 @@ struct RouterSessionDirectoryInboxTests {
         #expect(await target.transcript.promptTexts == [Self.text])
         let kept = try #require(try await fixture.directory.message(id, to: target.id))
         #expect(kept.chainDepth == Self.fileChainDepth)
-        #expect(kept.from == .user(clientID: Self.clientID))
+        #expect(kept.from == Self.fileSender)
         #expect(try Self.waitingNames(of: target).isEmpty)
         await fixture.close([target])
     }
@@ -387,25 +392,51 @@ struct RouterSessionDirectoryInboxTests {
 
     // MARK: - Send
 
-    /// Sends one UI message to the session `id`.
+    /// Sends one message to the session `id`.
     ///
     /// - Parameters:
     ///   - id: The session id of the target.
     ///   - directory: The directory that sends.
+    ///   - sender: The sender. The default is the UI client.
     /// - Returns: The receipts of the send.
     /// - Throws: The error of the send.
     private static func send(
-        to id: ULID, through directory: RouterSessionDirectory
+        to id: ULID, through directory: RouterSessionDirectory,
+        from sender: SessionMessageSender = .user(clientID: clientID)
     ) async throws -> [SessionSendReceipt] {
-        try await directory.send(
-            OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(id), text: text))
+        try await directory.send(OutgoingSessionMessage(from: sender, to: .session(id), text: text))
     }
 
     /// The production change that makes this test fail: a send that does not
-    /// carry the UI client id through the file, or that leaves the file in
+    /// carry the sender session through the file, or that leaves the file in
     /// the inbox after the delivery.
-    @Test("a send to a live durable session is delivered from a file, and the client id and the chain depth survive")
-    func aSendToALiveDurableSessionGoesThroughAFile() async throws {
+    @Test("a send from a session to a live durable session is delivered from a file, and the sender and the chain depth survive")
+    func aSendFromASessionToALiveDurableSessionGoesThroughAFile() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let target = fixture.makeSession()
+        let sender = fixture.makeSession()
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory, from: .session(sender.id))
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
+        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        let kept = try #require(try await fixture.directory.message(messageID, to: target.id))
+        #expect(kept.from == .session(sender.id))
+        #expect(kept.chainDepth == RouterSessionDirectory.firstChainDepth)
+        #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.from) == [kept.from])
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts.map { $0.contains(Self.text) } == [true])
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        await fixture.close([target, sender])
+    }
+
+    /// The production change that makes this test fail: a send from a UI
+    /// sender that goes through a file, which cannot keep the client id, or
+    /// that does not send `messageDelivered`.
+    @Test("a send from a UI sender to a live durable session is delivered at once, and the client id survives")
+    func aSendFromAUISenderToALiveDurableSessionIsDirect() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         var events = fixture.directory.events().makeAsyncIterator()
         let target = fixture.makeSession()
@@ -421,8 +452,26 @@ struct RouterSessionDirectoryInboxTests {
         #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.from) == [kept.from])
         #expect(await target.awaitIdle())
         #expect(await target.transcript.promptTexts == [Self.text])
-        #expect(try Self.waitingNames(of: target).isEmpty)
         await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a send from a UI
+    /// sender that writes a file for a durable session. The session is
+    /// closing, so its watcher is stopped, and a file would wait.
+    @Test("a send from a UI sender to a durable session that is closing is refused, and writes no file")
+    func aUISenderGetsNoFileForAClosingSession() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        await target.close()
+        fixture.directory.register(target, kind: .root, parentID: nil)
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+
+        #expect(
+            receipts
+                == [SessionSendReceipt(target: target.id, outcome: .refused, reason: RouterSessionDirectory.notLiveReason)])
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        await fixture.close([])
     }
 
     /// The production change that makes this test fail: a send to a durable
@@ -433,20 +482,21 @@ struct RouterSessionDirectoryInboxTests {
     func aClosingSessionGetsAFileThatWaits() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let target = fixture.makeSession()
+        let sender = fixture.makeSession()
         await target.close()
         fixture.directory.register(target, kind: .root, parentID: nil)
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+        let receipts = try await Self.send(to: target.id, through: fixture.directory, from: .session(sender.id))
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
         let file = SessionInboxFile.url(of: messageID, in: target.recordingDirectory)
         let waiting = try SessionInboxFile.read(file, maxMessageBytes: SessionMessageLimits().maxMessageBytes)
-        #expect(waiting.from == .user(clientID: Self.clientID))
+        #expect(waiting.from == .session(sender.id))
         #expect(waiting.text == Self.text)
         #expect(waiting.chainDepth == RouterSessionDirectory.firstChainDepth)
         #expect(try await fixture.directory.message(messageID, to: target.id) == nil)
-        await fixture.close([])
+        await fixture.close([sender])
     }
 
     /// The production change that makes this test fail: a send that writes
@@ -497,8 +547,9 @@ struct RouterSessionDirectoryInboxTests {
     func aSentMessageIsDeliveredWhenTheSessionOpensLater() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let id = try await fixture.recordClosedSession()
+        let sender = fixture.makeSession()
         var events = fixture.directory.events().makeAsyncIterator()
-        let receipts = try await Self.send(to: id, through: fixture.directory)
+        let receipts = try await Self.send(to: id, through: fixture.directory, from: .session(sender.id))
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)])
 
@@ -506,9 +557,29 @@ struct RouterSessionDirectoryInboxTests {
 
         #expect(await Self.awaitDelivery(of: messageID, reading: &events))
         #expect(await opened.awaitIdle())
-        #expect(await opened.transcript.promptTexts == [Self.text])
+        #expect(await opened.transcript.promptTexts.map { $0.contains(Self.text) } == [true])
         #expect(try Self.waitingNames(of: opened).isEmpty)
-        await fixture.close([opened])
+        await fixture.close([opened, sender])
+    }
+
+    /// The production change that makes this test fail: a send from a UI
+    /// sender to a recorded session that writes a file, which cannot keep the
+    /// client id, or that does not refuse.
+    @Test("a send from a UI sender to a recorded session that is not live is refused, and writes no file")
+    func aUISenderIsRefusedForARecordedSession() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let (id, folder) = try await fixture.recordClosedSessionWithFolder()
+
+        let receipts = try await Self.send(to: id, through: fixture.directory)
+
+        #expect(
+            receipts
+                == [
+                    SessionSendReceipt(
+                        target: id, outcome: .refused, reason: RouterSessionDirectory.userNeedsLiveSessionReason)
+                ])
+        #expect(try SessionInboxFile.pending(in: folder).isEmpty)
+        await fixture.close([])
     }
 
     // MARK: - The watcher
@@ -646,6 +717,7 @@ struct RouterSessionDirectoryInboxTests {
     @Test("a send to a durable session with no inbox watcher is delivered at once, and the file is gone")
     func aSendToASessionWithNoWatcherIsDelivered() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let sender = try await fixture.recordClosedSession()
         let target = fixture.makeSession()
         fixture.directory.unregister(target.id)
         let inbox = SessionInboxFile.directory(in: target.recordingDirectory)
@@ -655,7 +727,8 @@ struct RouterSessionDirectoryInboxTests {
         try FileManager.default.removeItem(at: inbox)
         var events = fixture.directory.events().makeAsyncIterator()
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory, from: .session(sender))
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(fixture.directory.openInboxWatcherCount == 0)
