@@ -812,15 +812,35 @@ public actor RouterSessionDirectory: SessionDirectory {
         let ledger = try ledger(of: id, in: Self.ledgerDirectory(of: session))
         let delivered = Self.delivered(message, chainDepth: chainDepth, to: id)
         do {
-            _ = try session.mail(
-                mail(
-                    id: delivered.id, carrying: delivered.text, from: message.from.sessionID,
-                    inReplyTo: delivered.inReplyTo))
+            try hand(delivered, to: session, ledger: ledger)
         } catch MailRefusal.closed {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
-        keep(delivered, in: ledger)
         return SessionSendReceipt(messageID: delivered.id, target: id, outcome: outcome)
+    }
+
+    /// Puts the mail of `delivered` in the mail queue of `session`, and then
+    /// keeps `delivered` in `ledger`. This is the one step that each delivery
+    /// shares: ``deliver(_:chainDepth:to:)`` and ``scanInbox(of:)`` both end
+    /// here. The step has no suspension point, so no other work of the
+    /// directory runs between the mail and the ledger.
+    ///
+    /// The header of the sender in the mail is built from the live summary
+    /// of the sender (``mail(id:carrying:from:inReplyTo:)``).
+    ///
+    /// - Parameters:
+    ///   - delivered: The message to deliver.
+    ///   - session: The live target session of `delivered`.
+    ///   - ledger: The ledger of the target. Nothing is kept in it when the
+    ///     mail is refused.
+    /// - Throws: The refusal of the mail, for example `MailRefusal.closed`
+    ///   for a session that takes no more mail.
+    private func hand(_ delivered: SessionMessage, to session: any RoutedSession, ledger: SessionMessageLedger) throws {
+        _ = try session.mail(
+            mail(
+                id: delivered.id, carrying: delivered.text, from: delivered.from.sessionID,
+                inReplyTo: delivered.inReplyTo))
+        keep(delivered, in: ledger)
     }
 
     /// The receipt outcome of a mail to the live session `id` now, by the
@@ -969,6 +989,146 @@ public actor RouterSessionDirectory: SessionDirectory {
         ledger.record(delivered)
         ledgers[delivered.to] = ledger
         emit(.messageDelivered(delivered))
+    }
+
+    // MARK: - Inbox files
+
+    /// Delivers the files that wait in the `inbox/` folder of the live
+    /// durable session `id`, oldest first (see ``SessionInboxFile``). A
+    /// session that is not live, or that is memory-only, has no inbox to
+    /// scan, so nothing happens.
+    ///
+    /// A file goes through the same delivery as a send
+    /// (``hand(_:to:ledger:)``): its mail goes into the mail queue of the
+    /// session, the ledger keeps the message with the `chainDepth` of the
+    /// file, and `messageDelivered` follows. Then the file is removed. The
+    /// scan has no caller to throw to, so each failure is logged:
+    ///
+    /// - A file that does not parse moves to `inbox/rejected/`, and the scan
+    ///   goes on with the next file.
+    /// - A file whose id the ledger holds already is removed with no second
+    ///   delivery. This is the state after a crash between the ledger write
+    ///   and the removal of the file.
+    /// - A refusal of the mail (a session that closed), or a ledger that
+    ///   does not read, leaves the file in `inbox/` and stops the scan of
+    ///   this session. The next scan tries the file again.
+    ///
+    /// The scan is synchronous on the actor and has no suspension point, so
+    /// no other scan or send runs between the check of the ledger and
+    /// ``keep(_:in:)``. Two scans thus deliver one file one time.
+    ///
+    /// - Parameter id: The session id.
+    func scanInbox(of id: ULID) {
+        guard let session = liveSession(id), let folder = Self.ledgerDirectory(of: session) else { return }
+        let files: [URL]
+        do {
+            files = try SessionInboxFile.pending(in: folder)
+        } catch {
+            logInboxFailure("the inbox folder of a session did not read", error, session: id, file: nil)
+            return
+        }
+        for file in files {
+            guard deliverInboxFile(file, to: session, in: folder) else { return }
+        }
+    }
+
+    /// Delivers one inbox file to its session, and removes the file.
+    ///
+    /// - Parameters:
+    ///   - file: A file of the inbox folder.
+    ///   - session: The live durable session that owns the inbox.
+    ///   - folder: The session folder.
+    /// - Returns: `true` when the scan goes on with the next file, `false`
+    ///   when the file stays and the scan stops.
+    private func deliverInboxFile(_ file: URL, to session: any RoutedSession, in folder: URL) -> Bool {
+        let message: SessionInboxMessage
+        do {
+            message = try SessionInboxFile.read(file, maxMessageBytes: limits.maxMessageBytes)
+        } catch let error as SessionInboxFileError {
+            rejectInboxFile(file, in: folder, because: error, session: session.id)
+            return true
+        } catch {
+            logInboxFailure("an inbox file did not read; it stays in the inbox", error, session: session.id, file: file)
+            return true
+        }
+        do {
+            let ledger = try ledger(of: session.id, in: folder)
+            if ledger.message(message.id) == nil {
+                try hand(Self.delivered(message, to: session.id), to: session, ledger: ledger)
+            }
+        } catch {
+            logInboxFailure(
+                "an inbox file did not deliver; it stays in the inbox", error, session: session.id, file: file)
+            return false
+        }
+        removeInboxFile(file, session: session.id)
+        return true
+    }
+
+    /// Moves an inbox file that does not parse to `inbox/rejected/`, and logs
+    /// the error of the parse.
+    ///
+    /// - Parameters:
+    ///   - file: A file of the inbox folder.
+    ///   - folder: The session folder.
+    ///   - error: The error of the parse.
+    ///   - id: The session id.
+    private func rejectInboxFile(_ file: URL, in folder: URL, because error: any Error, session id: ULID) {
+        logInboxFailure("an inbox file does not parse; it moves to inbox/rejected", error, session: id, file: file)
+        do {
+            try SessionInboxFile.reject(file, in: folder)
+        } catch {
+            logInboxFailure(
+                "an inbox file that does not parse did not move; it stays in the inbox", error, session: id,
+                file: file)
+        }
+    }
+
+    /// Removes an inbox file after its message is in the ledger. A removal
+    /// that fails is logged: the file stays, and the next scan removes it,
+    /// because the ledger holds its id.
+    ///
+    /// - Parameters:
+    ///   - file: A file of the inbox folder.
+    ///   - id: The session id.
+    private func removeInboxFile(_ file: URL, session id: ULID) {
+        do {
+            try FileManager.default.removeItem(at: file)
+        } catch {
+            logInboxFailure(
+                "a delivered inbox file did not remove; the next scan removes it", error, session: id, file: file)
+        }
+    }
+
+    /// Logs a failure of the inbox scan.
+    ///
+    /// - Parameters:
+    ///   - what: What failed, and what happens to the file.
+    ///   - error: The error.
+    ///   - id: The session id.
+    ///   - file: The inbox file, or `nil` for a failure of the folder.
+    private nonisolated func logInboxFailure(_ what: String, _ error: any Error, session id: ULID, file: URL?) {
+        var metadata = RouterTelemetry.errorMetadata(error)
+        metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(id.description)"
+        if let file {
+            metadata[RouterTelemetry.LogMetadataKey.filePath] = "\(file.path)"
+        }
+        RouterTelemetry.makeLogger(.sessionDirectory).error("\(what)", metadata: metadata)
+    }
+
+    /// The record of an inbox message as the directory delivers it to
+    /// `target` now. The id, the sender, the reply id and the chain depth are
+    /// the ones of the file.
+    ///
+    /// - Parameters:
+    ///   - message: The message of the file.
+    ///   - target: The session id of the target.
+    /// - Returns: The delivered message, not read.
+    private static func delivered(_ message: SessionInboxMessage, to target: ULID) -> SessionMessage {
+        delivered(
+            OutgoingSessionMessage(
+                from: message.from, to: .session(target), text: message.text, inReplyTo: message.inReplyTo),
+            id: message.id, chainDepth: message.chainDepth, to: target)
     }
 
     /// See `SessionDirectory.inbox(of:markRead:)`. Reads the ledger of the

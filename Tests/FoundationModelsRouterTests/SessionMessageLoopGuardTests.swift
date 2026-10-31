@@ -116,7 +116,7 @@ struct SessionMessageLoopGuardTests {
     ///   - directory: Makes the directory under test from the router; the
     ///     router's own directory by default.
     /// - Returns: The fixture.
-    private static func makeFixture(
+    static func makeFixture(
         callsPerTurn: Int = 1,
         directory: (Router) -> RouterSessionDirectory = \.sessionDirectory
     ) async throws -> Fixture {

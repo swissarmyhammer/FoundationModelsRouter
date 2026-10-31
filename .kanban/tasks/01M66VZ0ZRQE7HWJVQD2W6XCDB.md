@@ -1,6 +1,16 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m68h41me6tz5b3q4ahgtqr5k
+  text: |-
+    ### implement — changed
+    - RouterSessionDirectory.swift: new `scanInbox(of:)` (sync on the actor, no suspension point between the ledger check and `keep`). New private `hand(_:to:ledger:)` holds the shared step (mail + keep); `deliver(_:chainDepth:to:)` now calls it. Helpers: `deliverInboxFile`, `rejectInboxFile`, `removeInboxFile`, `logInboxFailure`, static `delivered(_ SessionInboxMessage, to:)` (reuses the existing `delivered` builder).
+    - Tests: new RouterSessionDirectoryInboxTests.swift (10 tests). Test helpers `makeFixture`, `startHeldTurn`, `pendingIDs`, `Backend` (DeliveryTests) and `makeFixture` (LoopGuardTests) changed from private to internal for reuse.
+    - Note: `close()` unregisters the session before the mail queue closes, so the closed-session test hits the "not live" early return. The `MailRefusal.closed` path of `hand` is handled by the generic catch (log, file stays, scan stops) but no test reaches it with a stub session.
+    - evidence: `swift test --filter RouterSessionDirectoryInboxTests` 10/10 pass; neighbours (DeliveryTests, SessionMessageLoopGuardTests, RouterSessionDirectoryMessageTests, SessionInboxFile tests) 64 tests pass.
+  timestamp: 2026-10-31T08:27:20.078183+00:00
 depends_on:
 - 01M66VYQ268GZBRG3RDYPCZ0P2
 position_column: todo

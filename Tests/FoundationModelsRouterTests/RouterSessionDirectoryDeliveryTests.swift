@@ -20,7 +20,7 @@ import Testing
 @Suite("RouterSessionDirectory: the delivery rules of a message")
 struct RouterSessionDirectoryDeliveryTests {
     /// The backend the scripted-turn tests drive.
-    private typealias Backend = SessionMessagePumpTests.PumpProbeBackend
+    typealias Backend = SessionMessagePumpTests.PumpProbeBackend
 
     /// A router over a durable recordings root, and a launcher over its
     /// profile.
@@ -122,7 +122,7 @@ struct RouterSessionDirectoryDeliveryTests {
     ///   - restoreError: The error each restore of the launcher throws, or
     ///     `nil` (the default) for restores that succeed.
     /// - Returns: The fixture.
-    private static func makeFixture(
+    static func makeFixture(
         over container: any LoadedLLMContainer = BasicLLMContainer(), restoreError: (any Error)? = nil
     ) async throws -> Fixture {
         let directories = TestDirectories(prefix: "RouterSessionDirectoryDeliveryTests")
@@ -158,7 +158,7 @@ struct RouterSessionDirectoryDeliveryTests {
     /// - Returns: The working session.
     /// - Throws: The refusal of the turn prompt, or ``ConditionNeverHeld``
     ///   when the test is cancelled before the call starts.
-    private static func startHeldTurn(in fixture: Fixture, on backend: Backend) async throws -> any RoutedSession {
+    static func startHeldTurn(in fixture: Fixture, on backend: Backend) async throws -> any RoutedSession {
         var events = fixture.directory.events().makeAsyncIterator()
         let session = fixture.makeSession()
         _ = try session.send(turnPrompt)
@@ -172,7 +172,7 @@ struct RouterSessionDirectoryDeliveryTests {
     ///
     /// - Parameter session: A live session.
     /// - Returns: The ids, in queue order.
-    private static func pendingIDs(of session: any RoutedSession) async -> [MailID] {
+    static func pendingIDs(of session: any RoutedSession) async -> [MailID] {
         await session.pendingMessages().map(\.id)
     }
 

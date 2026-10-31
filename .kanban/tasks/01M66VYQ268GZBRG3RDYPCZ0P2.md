@@ -38,8 +38,24 @@ comments:
     - Same-cause cleanup (other write/read mismatches in the file): chain depth below 1 is refused on write; an unknown key named like a known key (`id`, `from`, `inReplyTo`, `chainDepth`) is refused on write with the new `reservedUnknownKey` error (the encoder dropped it silently, so the read gave back a different message). New tests: exact limit, byte count (not character count), default user sender round trip.
     - Note: the write signature changed; the only callers are the tests. The build prints one `missing creator for mutated node` warning from the mlx-swift bundle; it is a build system message, not from this code.
   timestamp: 2026-10-31T08:21:03.462146+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m68gwn6ymaakdyz1zzhyz198
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD: 0 findings, 0 confirmed, 0 refuted. The 3 earlier findings are all checked.
+    - next: task moved to done.
+  timestamp: 2026-10-31T08:23:17.982661+00:00
+- actor: claude-code
+  id: 01m68gwywn4mkstdvhdjhe5rsr
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — SessionInboxFile.swift, SessionInboxFileTests.swift (3 findings fixed)
+    - test: green — swift test, 2201 tests, 0 failures
+    - commit: 867989e1
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T08:23:27.893974+00:00
+position_column: done
+position_ordinal: ffffffffc880
 title: 'Add SessionInboxFile: parse, write and reject inbox message files'
 ---
 ## What
