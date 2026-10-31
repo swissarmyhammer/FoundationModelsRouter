@@ -4,6 +4,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import TelemetryTestSupport
 import Testing
+import UniformTypeIdentifiers
 
 @testable import FoundationModelsRouter
 
@@ -779,6 +780,27 @@ struct TranscriptEntryMapperTests {
         #expect(textSegment.id == "s9")
         #expect(textSegment.content == "future segment content")
         logs.expectLogged(containing: "unknown segment carrier")
+    }
+
+    @Test("a data entry records as the unknown kind with its own id and logs that its bytes are not persisted")
+    @available(macOS 27.2, *)
+    func dataEntryRecordsAsUnknownKindAndWarns() async throws {
+        let entry = Transcript.Entry.data(
+            Transcript.DataEntry(id: "d1", contentType: .png, content: Data([0x89, 0x50, 0x4E, 0x47]))
+        )
+
+        let (event, logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            (TranscriptEntryMapper.event(from: entry), context)
+        }
+
+        #expect(event.kind == .unknown)
+        #expect(event.payload.entryId == "d1")
+        guard case .unknown(let id, _) = event.payload.segments?.first else {
+            Issue.record("expected the data entry to record as the unknown segment carrier")
+            return
+        }
+        #expect(id == "d1")
+        logs.expectLogged(containing: "holds bytes that a recording cannot persist")
     }
 
     @Test("an unknown-kind payload rebuilds as a text-only entry and logs a warning")

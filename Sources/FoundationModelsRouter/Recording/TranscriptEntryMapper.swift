@@ -28,9 +28,9 @@ enum TranscriptEntryEncodingError: Error, Equatable {
 ///
 /// Known degradations: sampling, context options, and metadata are not
 /// persisted; a format name with no schema rebuilds as no format; an
-/// attachment with no URL rebuilds as text; an unknown SDK case records as
-/// the `unknown` carrier and rebuilds as text. An encode failure persists
-/// the empty-string sentinel.
+/// attachment with no URL rebuilds as text; a data entry (bytes) and an
+/// unknown SDK case record as the `unknown` carrier and rebuild as text. An
+/// encode failure persists the empty-string sentinel.
 enum TranscriptEntryMapper {
     // MARK: - Encode: Transcript.Entry -> TranscriptEntryPayload
 
@@ -99,25 +99,45 @@ enum TranscriptEntryMapper {
             )
             return (.reasoning, payload, flattenedText(segments))
 
+        case .data:
+            // A data entry holds raw bytes, a content type, and generated
+            // metadata. The recording is a text-level mirror and has no field
+            // for bytes, so the entry degrades the same way as an unknown
+            // SDK case: it records as ``TranscriptEvent/Kind/unknown``,
+            // carrying the entry's own id and its `description` as
+            // best-effort text. The bytes are not persisted. The warning
+            // makes that loss visible in the log.
+            RouterTelemetry.makeLogger(.recording).warning(
+                "TranscriptEntryMapper.event(from:): Transcript.Entry.data holds bytes that a recording cannot persist; recording as the unknown entry kind with best-effort text",
+                metadata: [RouterTelemetry.LogMetadataKey.entryCase: "data"])
+            return unknownEntryEvent(from: entry)
+
         @unknown default:
             // A future SDK release added a `Transcript.Entry` case this
             // mapper predates. A recording library must never let an SDK
-            // addition crash a submission in progress, so the entry degrades: it
-            // records as ``TranscriptEvent/Kind/unknown``, carrying the
-            // entry's own id and its `description` as best-effort text. The
-            // case's exact structure is lost until the mapper learns it (see
-            // plan.md "Honest fidelity scope").
+            // addition crash a submission in progress, so the entry degrades
+            // the same way (see plan.md "Honest fidelity scope"). The case's
+            // exact structure is lost until the mapper learns it.
             let caseName = Mirror(reflecting: entry).children.first?.label ?? "unknown"
             RouterTelemetry.makeLogger(.recording).warning(
                 "TranscriptEntryMapper.event(from:): unrecognized Transcript.Entry case; recording as the unknown entry kind with best-effort text",
                 metadata: [RouterTelemetry.LogMetadataKey.entryCase: "\(caseName)"])
-            let description = String(describing: entry)
-            let payload = TranscriptEntryPayload(
-                entryId: entry.id,
-                segments: [.unknown(id: entry.id, description: description)]
-            )
-            return (.unknown, payload, description)
+            return unknownEntryEvent(from: entry)
         }
+    }
+
+    /// The degraded record of an entry that the mapper cannot mirror: the
+    /// ``TranscriptEvent/Kind/unknown`` kind, the id of the entry, and its
+    /// `description` as best-effort text.
+    private static func unknownEntryEvent(
+        from entry: Transcript.Entry
+    ) -> (kind: TranscriptEvent.Kind, payload: TranscriptEntryPayload, text: String?) {
+        let description = String(describing: entry)
+        let payload = TranscriptEntryPayload(
+            entryId: entry.id,
+            segments: [.unknown(id: entry.id, description: description)]
+        )
+        return (.unknown, payload, description)
     }
 
     // MARK: - Decode: TranscriptEntryPayload -> Transcript.Entry
