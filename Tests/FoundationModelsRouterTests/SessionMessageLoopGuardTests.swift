@@ -36,12 +36,17 @@ struct SessionMessageLoopGuardTests {
 
         /// Vends a root session of ``router`` that mounts ``tool``, and
         /// registers it in ``directory`` when that is not the router's own.
+        /// The session leaves the router's own directory then, so only
+        /// ``directory`` watches its inbox folder: two directories that
+        /// watch one folder race for each file, and the one that loses sends
+        /// no `messageDelivered` event.
         ///
         /// - Parameter tags: The tags of the session.
         /// - Returns: The session, live in ``directory``.
         func makeSession(tags: Set<String> = []) -> any RoutedSession {
             let session = profile.standard.makeSession(configuration: SessionConfiguration(tools: [tool], tags: tags))
             if directory !== router.sessionDirectory {
+                router.sessionDirectory.unregister(session.id)
                 directory.register(session, kind: .root, parentID: nil)
             }
             return session
@@ -276,7 +281,7 @@ struct SessionMessageLoopGuardTests {
         let fixture = try await Self.makeFixture()
         let tagged = (0..<Self.taggedSessions).map { _ in fixture.makeSession(tags: [Self.tag]) }
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .tag(Self.tag), text: Self.text))
 
         Self.expectTagCap(on: receipts, for: tagged)

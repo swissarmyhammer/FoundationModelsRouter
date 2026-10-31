@@ -76,7 +76,10 @@ final class DirectorySendTool: Tool, Sendable {
     }
 
     /// Sends the `value` of `arguments` from the session of the call to the
-    /// route of that session, and records the receipts.
+    /// route of that session, waits until the directory delivered each
+    /// message (a send to a durable session goes through an inbox file, and
+    /// the ledger of the target holds the message only after the
+    /// `messageDelivered` event), and records the receipts.
     ///
     /// - Parameter arguments: The arguments of the call; `value` is the text.
     /// - Returns: The outcome of each receipt, or ``noRouteOutput``.
@@ -85,7 +88,7 @@ final class DirectorySendTool: Tool, Sendable {
     func call(arguments: AmbientToolArguments) async throws -> String {
         guard let sender = ToolContext.current?.sessionID else { throw NoToolContext() }
         guard let address = state.withLock({ $0.routes[sender] }) else { return Self.noRouteOutput }
-        let receipts = try await directory.send(
+        let receipts = try await directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender), to: address, text: arguments.value))
         state.withLock { $0.receipts[sender, default: []].append(receipts) }
         return receipts.map(\.outcome.rawValue).joined(separator: " ")

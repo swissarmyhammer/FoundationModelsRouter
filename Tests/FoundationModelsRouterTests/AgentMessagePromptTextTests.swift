@@ -204,7 +204,7 @@ struct AgentMessagePromptTextTests {
             configuration: SessionConfiguration(
                 workingDirectory: folder, agentID: Self.agentID, agentName: Self.agentName, title: Self.title))
         let target = profile.standard.makeSession(configuration: SessionConfiguration())
-        _ = try await router.sessionDirectory.send(
+        _ = try await router.sessionDirectory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender.id), to: .session(target.id), text: Self.content))
         #expect(await target.awaitIdle())
         let livePrompts = await target.transcript.promptTexts

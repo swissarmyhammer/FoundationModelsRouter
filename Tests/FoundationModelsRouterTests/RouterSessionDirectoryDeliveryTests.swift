@@ -133,7 +133,10 @@ struct RouterSessionDirectoryDeliveryTests {
         return Fixture(directories: directories, router: router, profile: profile, launcher: launcher)
     }
 
-    /// Sends one UI message with `text` to the session `id`.
+    /// Sends one UI message with `text` to the session `id`, and waits until
+    /// the directory delivered it (``RouterSessionDirectory/sendAndAwaitDelivery(_:)``):
+    /// a send to a durable session goes through an inbox file, and the mail
+    /// and the ledger of the target follow the receipt.
     ///
     /// - Parameters:
     ///   - text: The text of the message.
@@ -143,7 +146,7 @@ struct RouterSessionDirectoryDeliveryTests {
     private static func send(
         _ text: String = text, to id: ULID, in fixture: Fixture
     ) async throws -> [SessionSendReceipt] {
-        try await fixture.directory.send(
+        try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(id), text: text))
     }
 
@@ -206,7 +209,7 @@ struct RouterSessionDirectoryDeliveryTests {
             fixture.makeSession(SessionConfiguration(tags: [Self.tag]))
         }
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .tag(Self.tag), text: Self.text))
 
         #expect(receipts.map(\.target) == targets.map(\.id).sorted())
@@ -265,7 +268,7 @@ struct RouterSessionDirectoryDeliveryTests {
                 continue
             }
 
-            let receipts = try await directory.send(
+            let receipts = try await directory.sendAndAwaitDelivery(
                 OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(id), text: Self.text))
 
             let messageID = try #require(receipts.first?.messageID)

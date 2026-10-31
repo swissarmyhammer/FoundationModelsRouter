@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -66,6 +67,12 @@ struct RouterSessionDirectoryInboxTests {
     /// The names of the files that the scan of the inbox skips: a temporary
     /// file of a writer, a dot file and a file that is not markdown.
     private static let ignoredNames = [".\(ULID()).md.tmp", ".hidden.md", "notes.txt"]
+
+    /// The error of a launcher whose restore fails.
+    private struct RestoreFailure: Error, CustomStringConvertible {
+        /// The text of the error.
+        var description: String { "the host cannot restore the session" }
+    }
 
     // MARK: - Helpers
 
@@ -351,6 +358,216 @@ struct RouterSessionDirectoryInboxTests {
                 == [[SessionSendReceipt(outcome: .refused, reason: SessionMessageLimits().chainTooDeepReason)]])
         #expect(try await fixture.directory.inbox(of: receiver.id, markRead: false).isEmpty)
         await fixture.close([sender, receiver])
+    }
+
+    // MARK: - Send
+
+    /// A launcher that reads the `inbox/` folder of a recorded session at the
+    /// start of each restore, and then restores through a ``FakeSessionLauncher``.
+    /// It shows which files wait in the inbox when the restore runs.
+    private final class RestoreWitness: SessionLauncher {
+        /// The launcher that does the restore.
+        private let inner: FakeSessionLauncher
+
+        /// The session folder whose inbox the witness reads.
+        private let folder: URL
+
+        /// The names of the files in the inbox at the start of the last
+        /// restore.
+        private let names = Mutex<[String]>([])
+
+        /// Makes a witness of the inbox in `folder`.
+        ///
+        /// - Parameters:
+        ///   - inner: The launcher that does the restore.
+        ///   - folder: The session folder of the recorded session.
+        init(inner: FakeSessionLauncher, folder: URL) {
+            self.inner = inner
+            self.folder = folder
+        }
+
+        /// The names of the files in the inbox at the start of the last
+        /// restore.
+        var namesAtRestore: [String] {
+            names.withLock { $0 }
+        }
+
+        /// Starts a root session through the inner launcher.
+        func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
+            try await inner.launchRootSession(for: request)
+        }
+
+        /// Reads the inbox, and then restores the session `id` through the
+        /// inner launcher.
+        func restoreSession(id: ULID) async throws -> any RoutedSession {
+            let pending = try SessionInboxFile.pending(in: folder).map(\.lastPathComponent)
+            names.withLock { $0 = pending }
+            return try await inner.restoreSession(id: id)
+        }
+    }
+
+    /// Sends one UI message to the session `id`.
+    ///
+    /// - Parameters:
+    ///   - id: The session id of the target.
+    ///   - directory: The directory that sends.
+    /// - Returns: The receipts of the send.
+    /// - Throws: The error of the send.
+    private static func send(
+        to id: ULID, through directory: RouterSessionDirectory
+    ) async throws -> [SessionSendReceipt] {
+        try await directory.send(
+            OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(id), text: text))
+    }
+
+    /// Records a closed durable session in the fixture, and gives the
+    /// directory its recording root.
+    ///
+    /// - Parameter fixture: The fixture of the test.
+    /// - Returns: The id and the session folder of the recorded session.
+    /// - Throws: The `#require` failure when the vended session is not a
+    ///   ``RoutedSessionActor``.
+    private static func recordClosedSession(
+        in fixture: RouterSessionDirectoryDeliveryTests.Fixture
+    ) async throws -> (id: ULID, folder: URL) {
+        let recorded = try #require(fixture.makeSession() as? RoutedSessionActor)
+        await recorded.close()
+        await fixture.directory.useRecordingRoots { [recorded.recordingDirectory.deletingLastPathComponent()] }
+        return (recorded.id, recorded.recordingDirectory)
+    }
+
+    /// The production change that makes this test fail: a send that does not
+    /// carry the UI client id through the file, or that leaves the file in
+    /// the inbox after the delivery.
+    @Test("a send to a live durable session is delivered from a file, and the client id and the chain depth survive")
+    func aSendToALiveDurableSessionGoesThroughAFile() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let target = fixture.makeSession()
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
+        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        let kept = try #require(try await fixture.directory.message(messageID, to: target.id))
+        #expect(kept.from == .user(clientID: Self.clientID))
+        #expect(kept.chainDepth == RouterSessionDirectory.firstChainDepth)
+        #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.from) == [kept.from])
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts == [Self.text])
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a send to a durable
+    /// session that puts the mail in the queue and the message in the ledger
+    /// itself, so no file waits, and the receipt of a closing session is
+    /// `refused`.
+    @Test("a send to a session that is closing but registered gives delivered, and the file waits for the next open")
+    func aClosingSessionGetsAFileThatWaits() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let target = fixture.makeSession()
+        await target.close()
+        fixture.directory.register(target, kind: .root, parentID: nil)
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
+        let file = SessionInboxFile.url(of: messageID, in: target.recordingDirectory)
+        let waiting = try SessionInboxFile.read(file, maxMessageBytes: SessionMessageLimits().maxMessageBytes)
+        #expect(waiting.from == .user(clientID: Self.clientID))
+        #expect(waiting.text == Self.text)
+        #expect(waiting.chainDepth == RouterSessionDirectory.firstChainDepth)
+        #expect(try await fixture.directory.message(messageID, to: target.id) == nil)
+        await fixture.close([])
+    }
+
+    /// The production change that makes this test fail: a send that writes
+    /// the message to the ledger before it returns, so no delivery event
+    /// follows the receipt.
+    @Test("the message id of the receipt is in the ledger after the delivery event")
+    func theLedgerHoldsTheMessageAfterTheDeliveryEvent() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let target = fixture.makeSession()
+
+        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        #expect(try await fixture.directory.message(messageID, to: target.id)?.text == Self.text)
+        await fixture.close([target])
+    }
+
+    /// The production change that makes this test fail: a send to a
+    /// memory-only session that writes a file, or that does not call the
+    /// mail of the session itself.
+    @Test("a send to a memory-only session puts the mail in the queue itself and writes no file")
+    func aMemoryOnlySessionGetsTheMailDirectly() async throws {
+        let scratch = RouterTestFixtures.makeTempDir(prefix: "RouterSessionDirectoryInboxTests-send")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
+            over: BasicLLMContainer(), cacheDir: scratch)
+        let target = profile.standard.makeSession(configuration: SessionConfiguration())
+
+        let receipts = try await Self.send(to: target.id, through: router.sessionDirectory)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
+        #expect(try await router.sessionDirectory.message(messageID, to: target.id)?.text == Self.text)
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts == [Self.text])
+        let inbox = SessionInboxFile.directory(in: target.recordingDirectory)
+        #expect(!FileManager.default.fileExists(atPath: inbox.path))
+        await target.close()
+    }
+
+    /// The production change that makes this test fail: a restore that runs
+    /// before the file is written, so the first scan of the watcher finds no
+    /// file, or a send that delivers the message a second time.
+    @Test("a send to a recorded session writes the file before the restore, and the restore delivers it")
+    func aRestoreDeliversTheFileItFinds() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let recorded = try await Self.recordClosedSession(in: fixture)
+        let witness = RestoreWitness(inner: fixture.launcher, folder: recorded.folder)
+        await fixture.directory.use(launcher: witness)
+        var events = fixture.directory.events().makeAsyncIterator()
+
+        let receipts = try await Self.send(to: recorded.id, through: fixture.directory)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: recorded.id, outcome: .delivered)])
+        #expect(witness.namesAtRestore == ["\(messageID).md"])
+        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        let restored = try #require(fixture.launcher.sessions.first)
+        #expect(await restored.awaitIdle())
+        #expect(await restored.transcript.promptTexts == [Self.text])
+        #expect(try Self.waitingNames(of: restored).isEmpty)
+        await fixture.close([])
+    }
+
+    /// The production change that makes this test fail: a restore that
+    /// throws and leaves the file in the inbox, so a message with a `refused`
+    /// receipt is delivered at a later open.
+    @Test("a restore that throws removes the file, so a refused message is not delivered later")
+    func aFailedRestoreLeavesNoFile() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let recorded = try await Self.recordClosedSession(in: fixture)
+        let failing = FakeSessionLauncher(profile: fixture.profile, restoreError: RestoreFailure())
+        let witness = RestoreWitness(inner: failing, folder: recorded.folder)
+        await fixture.directory.use(launcher: witness)
+
+        let receipts = try await Self.send(to: recorded.id, through: fixture.directory)
+
+        #expect(
+            receipts == [
+                SessionSendReceipt(target: recorded.id, outcome: .refused, reason: String(describing: RestoreFailure()))
+            ])
+        #expect(witness.namesAtRestore.count == 1)
+        #expect(try SessionInboxFile.pending(in: recorded.folder).isEmpty)
+        await fixture.close([])
     }
 
     // MARK: - The watcher

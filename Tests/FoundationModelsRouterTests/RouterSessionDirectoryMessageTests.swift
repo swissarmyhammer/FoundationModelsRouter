@@ -120,7 +120,7 @@ import Testing
         let target = fixture.makeSession()
         var events = fixture.directory.events().makeAsyncIterator()
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender.id), to: .session(target.id), text: Self.text))
         fixture.directory.emit(Self.marker)
         let received = await events.next(through: Self.marker)
@@ -155,7 +155,7 @@ import Testing
         let target = fixture.makeSession()
         let answered = MailID()
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender.id), to: .session(target.id), text: Self.text, inReplyTo: answered))
 
         let messageID = try Self.messageID(of: receipts)
@@ -177,7 +177,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         let target = fixture.makeSession()
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
 
         let messageID = try Self.messageID(of: receipts)
@@ -201,10 +201,10 @@ import Testing
         let sender = fixture.makeSession()
         let target = fixture.makeSession()
         let answered = MailID()
-        let fromSession = try await fixture.directory.send(
+        let fromSession = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(
                 from: .session(sender.id), to: .session(target.id), text: Self.text, inReplyTo: answered))
-        let fromUI = try await fixture.directory.send(
+        let fromUI = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
         let sentFromSession = try await fixture.directory.message(try Self.messageID(of: fromSession), to: target.id)
         let sentFromUI = try await fixture.directory.message(try Self.messageID(of: fromUI), to: target.id)
@@ -228,7 +228,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         let target = fixture.makeSession()
         let sendStart = DateTime(Date())
-        _ = try await fixture.directory.send(
+        _ = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
         let sendEnd = DateTime(Date())
         #expect(await target.awaitIdle())
@@ -273,7 +273,7 @@ import Testing
         var target: (any RoutedSession)? = fixture.makeSession()
         let id = try #require(target?.id)
         let root = try #require(target.map(fixture.recordingRoot(of:)))
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(id), text: Self.text))
         #expect(await target?.awaitIdle() == true)
         await target?.close()
@@ -294,7 +294,7 @@ import Testing
         let folder = fixture.directories.cacheDir
         let target = fixture.makeSession(SessionConfiguration(workingDirectory: folder, agentID: Self.agentID))
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(
                 from: .user(clientID: Self.clientID), to: .agent(id: Self.agentID, folder: folder), text: Self.text))
 
@@ -312,7 +312,7 @@ import Testing
         let sender = fixture.makeSession()
         var events = fixture.directory.events().makeAsyncIterator()
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender.id), to: .agent(id: Self.agentID, folder: nil), text: Self.text))
         fixture.directory.emit(Self.marker)
         let received = await events.next(through: Self.marker)
@@ -339,7 +339,7 @@ import Testing
         await fixture.directory.shutdown()
 
         await #expect(throws: SessionDirectoryError.noLauncher) {
-            try await fixture.directory.send(
+            try await fixture.directory.sendAndAwaitDelivery(
                 OutgoingSessionMessage(
                     from: .user(clientID: Self.clientID), to: .agent(id: Self.agentID, folder: nil), text: Self.text))
         }
@@ -353,7 +353,7 @@ import Testing
         let folder = fixture.directories.cacheDir
         let target = fixture.makeSession(SessionConfiguration(workingDirectory: folder))
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .folder(folder), text: Self.text))
 
         let messageID = try Self.messageID(of: receipts)
@@ -366,7 +366,7 @@ import Testing
     @Test func aFolderWithNoLiveRootIsRefusedWithTheHint() async throws {
         let fixture = try await Self.makeFixture()
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(
                 from: .user(clientID: Self.clientID), to: .folder(fixture.directories.cacheDir), text: Self.text))
 
@@ -386,7 +386,7 @@ import Testing
         let first = fixture.makeSession(tagged)
         let second = fixture.makeSession(tagged)
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender.id), to: .tag(Self.tag), text: Self.text))
 
         #expect(receipts.map(\.target) == [first.id, second.id])
@@ -400,7 +400,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         let sender = fixture.makeSession(SessionConfiguration(tags: [Self.tag]))
 
-        let receipts = try await fixture.directory.send(
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .session(sender.id), to: .tag(Self.tag), text: Self.text))
 
         #expect(
@@ -416,7 +416,7 @@ import Testing
         let unknown = ULID.generate()
 
         await #expect(throws: SessionDirectoryError.unknownSession(unknown)) {
-            try await fixture.directory.send(
+            try await fixture.directory.sendAndAwaitDelivery(
                 OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(unknown), text: Self.text))
         }
         await fixture.close([])
@@ -460,7 +460,7 @@ import Testing
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
             over: BasicLLMContainer(), cacheDir: scratch)
         let target = profile.standard.makeSession(configuration: SessionConfiguration())
-        let receipts = try await router.sessionDirectory.send(
+        let receipts = try await router.sessionDirectory.sendAndAwaitDelivery(
             OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
 
         let inbox = try await router.sessionDirectory.inbox(of: target.id, markRead: false)
@@ -552,7 +552,7 @@ import Testing
     /// - Returns: The id of the message.
     private static func send(_ text: String, to target: any RoutedSession, in fixture: Fixture) async throws -> MailID {
         try messageID(
-            of: try await fixture.directory.send(
+            of: try await fixture.directory.sendAndAwaitDelivery(
                 OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(target.id), text: text)))
     }
 

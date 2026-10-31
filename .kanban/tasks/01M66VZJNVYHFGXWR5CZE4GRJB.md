@@ -1,10 +1,22 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m68md96cnep2r0n6xnj4pv9p
+  text: |-
+    ### implement — changed
+    - Source: RouterSessionDirectory.swift. deliver(_:chainDepth:to:) writes an inbox file for a durable session (new writeInboxFile), and keeps the direct path for a memory-only session (new deliverDirectly). restoreThenDeliver writes the file, then restores, and removes the file when the restore throws. removeInboxFile takes the failure text. Doc comments of send(_:), deliver and restoreThenDeliver now describe the ledger lag and the closing-but-registered case.
+    - Discovery 1: the restore receipt cannot read deliveryOutcome(of:). The first scan of the watcher can start the turn before restoreThenDeliver goes on, so the state is working and the outcome is queued. The restore path returns delivered by definition.
+    - Discovery 2: a test directory that is not the router own directory, with sessions registered in both, has two watchers on one inbox folder. They race for each file, and the loser sends no messageDelivered event. SessionMessageLoopGuardTests fixture now unregisters the session from the router own directory.
+    - Tests: 6 new tests in RouterSessionDirectoryInboxTests (live send via file, closing session file waits, ledger after event, memory-only direct, restore writes file first, failed restore removes file). New helper sendAndAwaitDelivery (Helpers/RouterSessionDirectory+SendAndAwaitDelivery.swift), used by DirectorySendTool, DeliveryTests, MessageTests, LoopGuardTests and AgentMessagePromptTextTests. ArchiveTests and NoCapTests needed no change (they send refusals or start agents).
+    - Evidence: filters Inbox 24, Delivery 9, Message 21, LoopGuard 6, Archive 11, NoCap 1 all pass; full swift test: 2168 tests in 268 suites passed, no new warnings.
+    - next: review
+  timestamp: 2026-10-31T09:24:48.460855+00:00
 depends_on:
 - 01M66VZ885BGD130W6TSSS8B7C
-position_column: todo
-position_ordinal: '8380'
+position_column: doing
+position_ordinal: '80'
 title: Route send(_:) to a durable session through an inbox file
 ---
 ## What

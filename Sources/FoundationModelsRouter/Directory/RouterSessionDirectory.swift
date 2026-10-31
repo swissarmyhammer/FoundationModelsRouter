@@ -692,7 +692,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// and acts on the decision:
     ///
     /// - Each live target gets the message as a `Mail` in its own mail queue,
-    ///   with the sender in its transcript (``deliver(_:chainDepth:to:)``). The receipt
+    ///   with the sender in its transcript (``deliver(_:chainDepth:to:)``). A
+    ///   durable target gets it through a file in its `inbox/` folder, and the
+    ///   scan of the inbox puts the mail in the queue. The receipt
     ///   follows the delivery rules of ROUTER-5: `delivered` for an idle
     ///   target, whose mail starts a turn, and `queued` for a working target
     ///   or one that needs input, whose mail waits in its queue for the end
@@ -726,7 +728,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// Each delivered message goes into the ledger of its target
     /// (``SessionMessageLedger``) with its chain depth, and a
-    /// `messageDelivered` event follows it.
+    /// `messageDelivered` event follows it. For a durable target the ledger
+    /// is written at the scan of the inbox file, after the receipt: until the
+    /// `messageDelivered` event, ``inbox(of:markRead:)`` and
+    /// ``withdrawWaitingMail(_:from:)`` can miss the `messageID` of the
+    /// receipt. A target that is closing but still registered gives
+    /// `delivered`, and its file waits for the next open of the session. The
+    /// old `refused` receipt as not live is gone for that case.
     ///
     /// - Parameter message: The sender, the address, the text and the reply
     ///   id of the message.
@@ -847,17 +855,30 @@ public actor RouterSessionDirectory: SessionDirectory {
         return delivered + refused
     }
 
-    /// Delivers `message` to the live session `id`: puts its mail in the mail
-    /// queue of the session, keeps it in the ledger of the session, and sends
-    /// `messageDelivered`.
+    /// Delivers `message` to the live session `id`.
+    ///
+    /// A durable session gets the message as a file in its `inbox/` folder
+    /// (``SessionInboxFile``), the same way as a file that a person writes.
+    /// The scan of the inbox (``scanInbox(of:)``) puts the mail in the mail
+    /// queue of the session, keeps the message in the ledger, and sends
+    /// `messageDelivered`. The receipt can thus come before the ledger holds
+    /// the message: ``inbox(of:markRead:)`` and ``withdrawWaitingMail(_:from:)``
+    /// can miss the `messageID` of the receipt for a short time, until the
+    /// `messageDelivered` event. A session that is closing but still
+    /// registered also gets `delivered`: the file waits in its inbox for the
+    /// next open of the session. This is not a `refused` receipt as not live.
+    ///
+    /// A memory-only session has no folder, so it gets the mail in its
+    /// queue and the message in the ledger at once (``hand(_:to:ledger:)``).
+    /// A memory-only session that closed and takes no more mail is refused as
+    /// not live.
     ///
     /// The mail goes into the queue of the session in each state (the
     /// decision of the user on ROUTER-5), and the receipt tells which rule
     /// applied (``deliveryOutcome(of:)``): `delivered` when the session was
     /// idle, so the mail starts a turn, else `queued`, because the mail
     /// waits for the end of the turn that runs. A session that left the
-    /// directory since the resolve, or that closed and takes no more mail,
-    /// is refused as not live.
+    /// directory since the resolve is refused as not live.
     ///
     /// - Parameters:
     ///   - message: The message.
@@ -865,27 +886,73 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The session id of a live target.
     /// - Returns: The `delivered` or `queued` receipt, or a `refused`
     ///   receipt as not live.
-    /// - Throws: The error of a read of the ledger of the session, or a
-    ///   refusal of the mail other than a closed session.
+    /// - Throws: ``SessionInboxFileError`` or the error of the write of the
+    ///   inbox file of a durable session, or the error of a read of the
+    ///   ledger of a memory-only session, or a refusal of its mail other than
+    ///   a closed session.
     private func deliver(
         _ message: OutgoingSessionMessage, chainDepth: Int, to id: ULID
     ) throws -> SessionSendReceipt {
         guard let session = liveSession(id), let outcome = deliveryOutcome(of: id) else {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
-        let ledger = try ledger(of: id, in: Self.ledgerDirectory(of: session))
-        let delivered = Self.delivered(message, chainDepth: chainDepth, to: id)
+        guard let folder = Self.ledgerDirectory(of: session) else {
+            return try deliverDirectly(message, chainDepth: chainDepth, to: session, outcome: outcome)
+        }
+        let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
+        return SessionSendReceipt(messageID: messageID, target: id, outcome: outcome)
+    }
+
+    /// Delivers `message` to the memory-only session `session`: puts its mail
+    /// in the mail queue of the session, keeps it in the ledger, and sends
+    /// `messageDelivered`. A memory-only session has no inbox folder.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - chainDepth: The chain depth of the message.
+    ///   - session: The live memory-only target.
+    ///   - outcome: The outcome of the receipt (``deliveryOutcome(of:)``).
+    /// - Returns: The receipt with `outcome`, or a `refused` receipt as not
+    ///   live for a session that closed and takes no more mail.
+    /// - Throws: The error of a read of the ledger of the session, or a
+    ///   refusal of the mail other than a closed session.
+    private func deliverDirectly(
+        _ message: OutgoingSessionMessage, chainDepth: Int, to session: any RoutedSession,
+        outcome: SessionSendReceipt.Outcome
+    ) throws -> SessionSendReceipt {
+        let ledger = try ledger(of: session.id, in: nil)
+        let delivered = Self.delivered(message, chainDepth: chainDepth, to: session.id)
         do {
             try hand(delivered, to: session, ledger: ledger)
         } catch MailRefusal.closed {
-            return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
+            return SessionSendReceipt(target: session.id, outcome: .refused, reason: Self.notLiveReason)
         }
-        return SessionSendReceipt(messageID: delivered.id, target: id, outcome: outcome)
+        return SessionSendReceipt(messageID: delivered.id, target: session.id, outcome: outcome)
+    }
+
+    /// Writes `message` as a new file in the `inbox/` folder of a durable
+    /// session. The file carries the sender, the reply id and the chain depth
+    /// of the message, and a new message id.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - chainDepth: The chain depth of the message.
+    ///   - folder: The session folder of the target.
+    /// - Returns: The id of the message, which is also the name of the file.
+    /// - Throws: ``SessionInboxFileError`` when the file format refuses the
+    ///   message (for example, a UI sender with an empty client id), or the
+    ///   error of the write.
+    private func writeInboxFile(_ message: OutgoingSessionMessage, chainDepth: Int, to folder: URL) throws -> MailID {
+        let file = SessionInboxMessage(
+            id: MailID(), from: message.from, inReplyTo: message.inReplyTo, chainDepth: chainDepth,
+            text: message.text)
+        try SessionInboxFile.write(file, to: folder, maxMessageBytes: limits.maxMessageBytes)
+        return file.id
     }
 
     /// Puts the mail of `delivered` in the mail queue of `session`, and then
     /// keeps `delivered` in `ledger`. This is the one step that each delivery
-    /// shares: ``deliver(_:chainDepth:to:)`` and ``scanInbox(of:)`` both end
+    /// shares: ``deliverDirectly(_:chainDepth:to:outcome:)`` and ``scanInbox(of:)`` both end
     /// here. The step has no suspension point, so no other work of the
     /// directory runs between the mail and the ledger.
     ///
@@ -927,37 +994,58 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
     }
 
-    /// Restores the recorded session of `summary` through the launcher
-    /// (ROUTER-8), makes it live in the directory, and delivers `message` to
-    /// it (``deliver(_:chainDepth:to:)``), where its mail starts a turn.
+    /// Writes `message` as a file in the `inbox/` folder of the recorded
+    /// session of `summary`, restores the session through the launcher
+    /// (ROUTER-8), and makes it live in the directory. The registration
+    /// starts the watcher of the inbox, and the first scan of the watcher
+    /// delivers the file (``scanInbox(of:)``), where its mail starts a turn.
     ///
     /// A session that this router restores registered itself when the
     /// restore vended it. A session from another router is not in the
     /// directory, so this registers it with the kind and the parent of its
     /// record.
     ///
+    /// A restore that throws removes the file, so a message with a `refused`
+    /// receipt is not delivered at a later open of the session.
+    ///
     /// - Parameters:
     ///   - message: The message.
     ///   - chainDepth: The chain depth of the message.
     ///   - summary: The recorded summary of the target, which is not live.
-    /// - Returns: The receipt of the delivery, or a `refused` receipt with
-    ///   the text of the error when the restore throws.
+    /// - Returns: The `delivered` receipt, because a restored session is
+    ///   idle and its first mail starts a turn. The receipt does not read
+    ///   ``deliveryOutcome(of:)``: the first scan of the watcher can start
+    ///   that turn before this method goes on after the restore. A `refused`
+    ///   receipt with the text of the error when the restore throws, or as
+    ///   not live when the session left the directory.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
-    ///   launcher, or the errors of ``deliver(_:chainDepth:to:)``.
+    ///   launcher, `SessionDirectoryError.unknownSession(_:)` when no
+    ///   recording root holds the folder of the session, or the errors of
+    ///   ``writeInboxFile(_:chainDepth:to:)``.
     private func restoreThenDeliver(
         _ message: OutgoingSessionMessage, chainDepth: Int, to summary: SessionSummary
     ) async throws -> SessionSendReceipt {
         guard let launcher else { throw SessionDirectoryError.noLauncher }
+        guard let folder = try await recordedFolder(of: summary.id) else {
+            throw SessionDirectoryError.unknownSession(summary.id)
+        }
+        let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
         let session: any RoutedSession
         do {
             session = try await restore(summary.id, through: launcher)
         } catch {
+            removeInboxFile(
+                SessionInboxFile.url(of: messageID, in: folder), session: summary.id,
+                failure: "the inbox file of a refused send did not remove; a later open delivers it")
             return SessionSendReceipt(target: summary.id, outcome: .refused, reason: String(describing: error))
         }
         if !isRegistered(session: session) {
             register(session, kind: summary.kind, parentID: summary.parentID)
         }
-        return try deliver(message, chainDepth: chainDepth, to: summary.id)
+        guard liveSession(summary.id) != nil else {
+            return SessionSendReceipt(target: summary.id, outcome: .refused, reason: Self.notLiveReason)
+        }
+        return SessionSendReceipt(messageID: messageID, target: summary.id, outcome: .delivered)
     }
 
     /// Restores the recorded session `id` through `launcher`, or joins the
@@ -1125,7 +1213,9 @@ public actor RouterSessionDirectory: SessionDirectory {
                 "an inbox file did not deliver; it stays in the inbox", error, session: session.id, file: file)
             return false
         }
-        removeInboxFile(file, session: session.id)
+        removeInboxFile(
+            file, session: session.id,
+            failure: "a delivered inbox file did not remove; the next scan removes it, because the ledger holds its id")
         return true
     }
 
@@ -1148,19 +1238,19 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
     }
 
-    /// Removes an inbox file after its message is in the ledger. A removal
-    /// that fails is logged: the file stays, and the next scan removes it,
-    /// because the ledger holds its id.
+    /// Removes an inbox file. A removal that fails is logged, and the file
+    /// stays.
     ///
     /// - Parameters:
     ///   - file: A file of the inbox folder.
     ///   - id: The session id.
-    private func removeInboxFile(_ file: URL, session id: ULID) {
+    ///   - what: What the log says when the removal fails, and what happens
+    ///     to the file.
+    private func removeInboxFile(_ file: URL, session id: ULID, failure what: String) {
         do {
             try FileManager.default.removeItem(at: file)
         } catch {
-            logInboxFailure(
-                "a delivered inbox file did not remove; the next scan removes it", error, session: id, file: file)
+            logInboxFailure(what, error, session: id, file: file)
         }
     }
 
@@ -1602,7 +1692,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// `archivedAt` come with no suspension between them, so a message that
     /// a send sends after the call began is refused as archived.
     ///
-    /// 1. ``RoutedSession/cancelAll()`` stops the running turn, as a cancel
+    /// 1. ``scanInbox(of:)`` puts each file that waits in the `inbox/` folder
+    ///    in the mail queue, because a send to a durable session is a file
+    ///    that the watcher has not scanned yet. Then
+    ///    ``RoutedSession/cancelAll()`` stops the running turn, as a cancel
     ///    does, and drops each waiting mail, also the mail of a message
     ///    that waits for the end of the turn.
     /// 2. ``RoutedSessionActor/updateRecord(_:)`` writes `archivedAt`, and
@@ -1624,6 +1717,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     {
         guard session.facts.archivedAt == nil else { return try requireLiveSummary(of: session.id) }
         let actor = try Self.recordOwner(of: session)
+        scanInbox(of: session.id)
         let stop = session.cancelAll()
         let archivedAt = MillisecondDate.rounded(Date())
         actor.updateRecord { $0.facts.archivedAt = archivedAt }
