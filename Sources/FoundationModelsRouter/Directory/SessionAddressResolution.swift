@@ -2,14 +2,15 @@ import Foundation
 import FoundationModelsExtras
 
 /// What a send does with the address of a message (ROUTER-4): the live sessions that get the
-/// message, a recorded session to restore first, an agent to start, or the
-/// reason and target of a refusal.
+/// message, a recorded session that gets the message as a file in its inbox,
+/// an agent to start, or the reason and target of a refusal.
 ///
 /// ``FoundationModelsExtras/SessionAddress/resolution(from:among:recordedSummary:)``
 /// gives the decision. It is pure: it reads only the summaries it is given,
-/// and it starts, restores and delivers nothing. The send acts on it: it
-/// delivers, restores through the launcher (ROUTER-5), or starts a root
-/// session with origin `message` through the launcher (ROUTER-8).
+/// and it starts, writes and delivers nothing. The send acts on it: it
+/// delivers, writes the inbox file of a recorded session (ROUTER-5), or
+/// starts a root session with origin `message` through the launcher
+/// (ROUTER-8). A send never restores a session.
 ///
 /// An unknown session is not a decision: as the FoundationModelsExtras send
 /// contract says, the resolver throws `SessionDirectoryError.unknownSession`
@@ -19,9 +20,10 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// Deliver the message to each of these live sessions, in this order.
     case deliver([ULID])
 
-    /// Restore this recorded session that is not live, then deliver the
-    /// message to it.
-    case restoreThenDeliver(ULID)
+    /// Write the message as a file in the `inbox/` folder of this recorded
+    /// session that is not live, and restore nothing. The scan of the inbox
+    /// delivers the file when a host opens the session.
+    case sendToRecorded(ULID)
 
     /// Start a root session of the agent, with the message as its first
     /// message. The folder is the folder of the address, else the folder of
@@ -49,10 +51,10 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// - Parameter target: The summary of the session with the id, live or
     ///   recorded.
     /// - Returns: Refused as archived with the session as its target, a
-    ///   delivery to a live session, or a restore of a recorded one.
+    ///   delivery to a live session, or an inbox file for a recorded one.
     fileprivate static func reaching(session target: SessionSummary) -> Self {
         guard target.state != .archived else { return .refused(reason: archivedReason, target: target.id) }
-        return target.isLive ? .deliver([target.id]) : .restoreThenDeliver(target.id)
+        return target.isLive ? .deliver([target.id]) : .sendToRecorded(target.id)
     }
 
     /// The decision for an agent address.
@@ -142,8 +144,8 @@ extension SessionAddress {
     ///
     /// - A session sender must be a live or recorded session, for each
     ///   address: an unknown one throws, and is never read as a user.
-    /// - A session id gives that session when it is live, a restore when it
-    ///   is recorded, a refusal with the session as its target when it is
+    /// - A session id gives that session when it is live, an inbox file when
+    ///   it is recorded, a refusal with the session as its target when it is
     ///   archived, and throws when no session has it (section 9: the session
     ///   must exist).
     /// - An agent gives its newest live root session in the folder of the

@@ -1,8 +1,29 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8580'
+comments:
+- actor: claude-code
+  id: 01m69akeaqyz3htxwmcapmhfp0
+  text: |-
+    ### implement — stuck
+    - blocker: `SessionSendReceipt.Outcome` is not in this repo. It is in the package FoundationModelsExtras: `FoundationModelsExtras/Sources/FoundationModelsExtras/Sessions/SessionSendReceipt.swift` (cases delivered, queued, started, refused). Router uses Extras as a git dependency: `branch: "main"`, locked in Package.resolved at revision a23cd80 (the same revision as the sibling checkout head). Router builds against `.build/checkouts`, not against the sibling folder.
+    - Router code cannot use `.sent` until a new Extras commit with `sent` is pushed and the Router pin moves to it. The task bans a pin change, and the run bans a commit. No code was changed in any repo.
+    - Outside Router, the places to change after Extras: Extras `InMemorySessionDirectory*` (check for exhaustive switches), Multitool `SessionsToolText+Messages.swift` (switch near the delivered/queued/started cases), `SessionsGraphTypes.swift` (the Outcome mapping near the `.delivered`/`.queued`/`.started` lines), `SessionsGraphMutations.swift` (the Value(...) list of outcome descriptions), plus Multitool tests and `Fixtures/ForwardingSessionDirectory.swift`.
+    - Router work that is ready once `sent` exists: `SessionAddressResolution.sendToRecorded(ULID)`, `RouterSessionDirectory.sendToRecorded(_:chainDepth:to:)`, delete `restoreThenDeliver`, `restore(_:through:)`, `restores`; tests in RouterSessionDirectoryInboxTests and SessionAddressResolutionTests (line with `.restoreThenDeliver`).
+    - decision needed: how to ship `sent` in Extras (commit and push order, then Router pin move, then Multitool).
+  timestamp: 2026-10-31T15:52:38.999923+00:00
+- actor: claude-code
+  id: 01m69d6e6mqfwgn4bnz2db0f7k
+  text: |-
+    ### implement — stuck (Multitool part only)
+    - Router part is done and green by filter: 79 tests in 6 suites (Delivery, Inbox, SessionAddressResolution, Archive, Message, Launcher) plus 2 public-surface launcher tests. Router pin: Extras 7959524 via `update FoundationModelsExtras` (no edit override).
+    - Router changes: `.sendToRecorded(ULID)` replaces `.restoreThenDeliver`; `restoreThenDeliver`, `restore(_:through:)`, `restores`, `recordedSummary(of:in:)` removed; new private `sendToRecorded(_:chainDepth:to:)` writes the inbox file and answers `sent`; launcher is not called. SessionLauncher docs updated (restoreSession stays on the port; the directory no longer calls it). FakeSessionLauncher lost its unused `restoreError`.
+    - Multitool: source and test edits are written (SessionsToolText+Messages, SessionsGraphTypes, SessionsGraphMutations, Goldens/sessions.graphql, SessionsToolMessageTests) but NOT built. Blocker: after `update FoundationModelsExtras`, Extras main needs `MLXSpeculativeDecoding` from mlx-swift-lm, and the Multitool pin of mlx-swift-lm (08d789b) lacks it (Router pin d4bab58 has it). Building needs `swift package update mlx-swift-lm` in Multitool, which moves a pin. Not done by order.
+    - decision needed: allow the pin move of mlx-swift-lm in Multitool (Package.resolved is gitignored), then build and run the Multitool tests.
+    - mailbox-plan.md line "restoreThenDeliver: write the file, then restore" is now wrong (file not edited).
+  timestamp: 2026-10-31T16:37:58.612591+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Send to a recorded session that is not live: write the inbox file, never restore, receipt `sent`'
 ---
 ## What

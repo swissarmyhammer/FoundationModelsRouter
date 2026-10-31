@@ -10,8 +10,9 @@ import Testing
 /// needs input, gets the mail in its own mail queue, where it waits for the
 /// end of the turn (`queued`); a message that `inbox(of:markRead: true)`
 /// reads before its delivery leaves the queue and starts no turn; a recorded
-/// target is restored through the launcher (`delivered`); an archived target
-/// is refused and never restored.
+/// target that is not live gets a file in its inbox and the receipt `sent`,
+/// with no call to the launcher; an archived target is refused and never
+/// restored.
 ///
 /// Each test runs on a router that records to a durable root, with a
 /// ``FakeSessionLauncher`` over its scripted profile. A latch of a
@@ -57,12 +58,26 @@ struct RouterSessionDirectoryDeliveryTests {
         /// - Throws: The `#require` failure when the vended session is not a
         ///   ``RoutedSessionActor``.
         func recordClosedSession(changingFacts facts: (inout SessionFacts) -> Void = { _ in }) async throws -> ULID {
+            try await recordClosedSessionWithFolder(changingFacts: facts).id
+        }
+
+        /// Records a closed root session as ``recordClosedSession(changingFacts:)``
+        /// does, and also gives the session folder.
+        ///
+        /// - Parameter facts: A change of the facts of the session before it
+        ///   closes. The default changes nothing.
+        /// - Returns: The id and the session folder of the recorded session.
+        /// - Throws: The `#require` failure when the vended session is not a
+        ///   ``RoutedSessionActor``.
+        func recordClosedSessionWithFolder(
+            changingFacts facts: (inout SessionFacts) -> Void = { _ in }
+        ) async throws -> (id: ULID, folder: URL) {
             let recorded = try #require(makeSession() as? RoutedSessionActor)
             recorded.updateFacts(facts)
             let root = recorded.recordingDirectory.deletingLastPathComponent()
             await recorded.close()
             await directory.useRecordingRoots { [root] }
-            return recorded.id
+            return (recorded.id, recorded.recordingDirectory)
         }
 
         /// Closes `sessions` and each session of ``launcher``, and removes the
@@ -106,10 +121,23 @@ struct RouterSessionDirectoryDeliveryTests {
     /// The tag of each session of the test with many sessions.
     private static let tag = "triage"
 
-    /// The error of a launcher whose restore fails.
-    private struct RestoreRefusal: Error, CustomStringConvertible {
-        /// The text of the error.
-        var description: String { "the host cannot restore the session" }
+    /// A launcher that fails the test at each call, and throws, so a send
+    /// that reaches the launcher shows at once.
+    private struct UncalledLauncher: SessionLauncher {
+        /// The error of each call.
+        private struct Called: Error {}
+
+        /// Fails the test: a send never starts a session.
+        func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
+            Issue.record("The directory started a session for a send to a recorded session.")
+            throw Called()
+        }
+
+        /// Fails the test: a send never restores a session.
+        func restoreSession(id: ULID) async throws -> any RoutedSession {
+            Issue.record("The directory restored the recorded session \(id) for a send.")
+            throw Called()
+        }
     }
 
     // MARK: - Helpers
@@ -117,18 +145,14 @@ struct RouterSessionDirectoryDeliveryTests {
     /// Makes a fixture over `container`, whose directory uses a launcher
     /// over its profile.
     ///
-    /// - Parameters:
-    ///   - container: The container that vends the backend of each session.
-    ///   - restoreError: The error each restore of the launcher throws, or
-    ///     `nil` (the default) for restores that succeed.
+    /// - Parameter container: The container that vends the backend of each
+    ///   session.
     /// - Returns: The fixture.
-    static func makeFixture(
-        over container: any LoadedLLMContainer = BasicLLMContainer(), restoreError: (any Error)? = nil
-    ) async throws -> Fixture {
+    static func makeFixture(over container: any LoadedLLMContainer = BasicLLMContainer()) async throws -> Fixture {
         let directories = TestDirectories(prefix: "RouterSessionDirectoryDeliveryTests")
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
             over: container, cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
-        let launcher = FakeSessionLauncher(profile: profile, restoreError: restoreError)
+        let launcher = FakeSessionLauncher(profile: profile)
         await router.sessionDirectory.use(launcher: launcher)
         return Fixture(directories: directories, router: router, profile: profile, launcher: launcher)
     }
@@ -303,56 +327,37 @@ struct RouterSessionDirectoryDeliveryTests {
 
     // MARK: - Recorded
 
-    /// The production change that makes this test fail: the refusal of a
-    /// recorded target as not live, as before ROUTER-5.
-    @Test("a send to a recorded session restores it through the launcher, and the message starts a turn")
-    func aRecordedSessionIsRestoredAndTheMessageStartsATurn() async throws {
+    /// The production change that makes this test fail: a send to a recorded
+    /// session that restores it through the launcher, or a receipt other
+    /// than `sent`, or no file in the inbox of the session.
+    @Test("a send to a recorded session writes one inbox file, answers sent, and the launcher gets no call")
+    func aRecordedSessionGetsAFileAndTheReceiptIsSent() async throws {
         let fixture = try await Self.makeFixture()
-        let id = try await fixture.recordClosedSession()
+        let (id, folder) = try await fixture.recordClosedSessionWithFolder()
+        await fixture.directory.use(launcher: UncalledLauncher())
 
         let receipts = try await Self.send(to: id, in: fixture)
 
         let messageID = try #require(receipts.first?.messageID)
-        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .delivered)])
-        #expect(fixture.launcher.restoredIDs == [id])
-        #expect(try await fixture.directory.summary(of: id)?.isLive == true)
-        let restored = try #require(fixture.launcher.sessions.first)
-        #expect(restored.id == id)
-        #expect(await restored.awaitIdle())
-        let transcript = await restored.transcript
-        #expect(transcript.promptTexts == [Self.text])
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)])
+        #expect(try SessionInboxFile.pending(in: folder).map(\.lastPathComponent) == ["\(messageID).md"])
+        #expect(try await fixture.directory.summary(of: id)?.isLive == false)
         await fixture.close([])
     }
 
-    /// The production change that makes this test fail: a restore error
-    /// that the send lets out, or a refusal that drops the text of the
-    /// error.
-    @Test("a restore that throws gives refused with the text of the error")
-    func aRestoreThatThrowsIsRefusedWithTheErrorText() async throws {
-        let fixture = try await Self.makeFixture(restoreError: RestoreRefusal())
-        let id = try await fixture.recordClosedSession()
-
-        let receipts = try await Self.send(to: id, in: fixture)
-
-        #expect(
-            receipts == [
-                SessionSendReceipt(target: id, outcome: .refused, reason: String(describing: RestoreRefusal()))
-            ])
-        #expect(fixture.launcher.restoredIDs == [id])
-        await fixture.close([])
-    }
-
-    /// The production change that makes this test fail: a restore with no
-    /// launcher that refuses quietly instead of throwing `noLauncher`.
-    @Test("a send to a recorded session throws noLauncher from a directory with no launcher")
-    func aRestoreWithNoLauncherThrowsNoLauncher() async throws {
+    /// The production change that makes this test fail: a send to a
+    /// recorded session that needs the launcher, so it throws `noLauncher`
+    /// from a directory with none.
+    @Test("a send to a recorded session needs no launcher")
+    func aSendToARecordedSessionNeedsNoLauncher() async throws {
         let fixture = try await Self.makeFixture()
         let id = try await fixture.recordClosedSession()
         await fixture.directory.shutdown()
 
-        await #expect(throws: SessionDirectoryError.noLauncher) {
-            try await Self.send(to: id, in: fixture)
-        }
+        let receipts = try await Self.send(to: id, in: fixture)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)])
         await fixture.close([])
     }
 

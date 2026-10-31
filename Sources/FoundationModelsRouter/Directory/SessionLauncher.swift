@@ -1,7 +1,8 @@
 import FoundationModelsExtras
 
 /// The port that the host fills, so the ``RouterSessionDirectory`` can start
-/// a new root session and restore a recorded one (ROUTER-8). Router cannot
+/// a new root session (ROUTER-8), and so the host can restore a recorded one
+/// through the same port. Router cannot
 /// compose the tools of a session and does not know the agent catalog, so
 /// the host makes each session; the directory only asks for one.
 ///
@@ -48,7 +49,8 @@ public protocol SessionLauncher: Sendable {
     func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession
 
     /// Restores the recorded session `id`, with the tools that the host gives
-    /// it, so a message can reach a session that is not live (ROUTER-5).
+    /// it. The directory does not call this for a send: a send to a recorded
+    /// session that is not live only writes a file in its inbox (ROUTER-5).
     ///
     /// - Parameter id: The id of the recorded session.
     /// - Returns: The restored session.

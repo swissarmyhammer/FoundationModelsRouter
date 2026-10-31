@@ -9,8 +9,24 @@ comments:
     - evidence: doc comments only in SessionInboxWatcher.swift (type doc), RouterSessionDirectory.swift (`register`, `scanInbox(of:)`). The text now says: one directory delivers for each session; the code makes no root check and no claim; two directories on one folder can both deliver a file; the host must not run two live copies of one session. rg over Sources/ found no other doc that says delivery needs root ownership (the other hits are the recorder lock docs). swift build: complete, no source warning (only the existing mlx bundle build-system warning).
     - next: the full suite runs in the test step.
   timestamp: 2026-10-31T15:49:00.272187+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m69ahcfeaamh3fk748wxp14c
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (cd7a3030): 0 findings, 0 confirmed, 0 refuted. Docs checked against code: the Directory folder has no root-ownership check, no lock and no claim; the three doc comments (SessionInboxWatcher type doc, `register`, `scanInbox(of:)`) say the same rule and match the code. No doc in Sources/ claims that root ownership is enforced for delivery.
+    - next: none; task in done.
+  timestamp: 2026-10-31T15:51:31.566084+00:00
+- actor: claude-code
+  id: 01m69ahq7hqw4qdn0hm08vn1md
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — doc comments in SessionInboxWatcher.swift, RouterSessionDirectory.swift
+    - test: green — swift test, 2171 tests, 0 failures
+    - commit: cd7a3030
+    - review: clean — 0 findings, task done
+  timestamp: 2026-10-31T15:51:42.577612+00:00
+position_column: done
+position_ordinal: ffffffffce80
 title: 'Inbox: write the single-delivering-process rule in the code docs'
 ---
 ## What

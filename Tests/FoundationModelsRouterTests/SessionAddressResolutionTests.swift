@@ -6,7 +6,7 @@ import Testing
 
 /// The pure resolver that turns the address of a send into a decision
 /// (ROUTER-4): the live
-/// targets, a recorded session to restore, an agent to start, a refusal
+/// targets, a recorded session that gets a file in its inbox, an agent to start, a refusal
 /// with its reason and target, or the `unknownSession` error of the
 /// FoundationModelsExtras send contract for an unknown sender or target.
 ///
@@ -186,8 +186,8 @@ struct SessionAddressResolutionTests {
             name: "a live session id gives that session",
             sender: fromUser, address: .session(newerCoder.id), expected: .success(.deliver([newerCoder.id]))),
         Row(
-            name: "a recorded session id that is not live is restored, then delivered",
-            sender: fromUser, address: .session(recorded.id), expected: .success(.restoreThenDeliver(recorded.id))),
+            name: "a recorded session id that is not live gets the message in its inbox, with no restore",
+            sender: fromUser, address: .session(recorded.id), expected: .success(.sendToRecorded(recorded.id))),
         Row(
             name: "an archived session id is refused as archived, with the archived session as the target",
             sender: fromReviewer, address: .session(archived.id),

@@ -43,8 +43,9 @@ import Synchronization
 /// the last summary when the state is idle (`nil` with any other state, as
 /// the port documents). ``summary(of:)`` reports the last summary in each
 /// state. ``send(_:)`` delivers a message to each live target of its address
-/// as a `Mail` by the delivery rules of ROUTER-5, restores a recorded target
-/// through the launcher, or starts a session of an agent for it, keeps each
+/// as a `Mail` by the delivery rules of ROUTER-5, writes the message as a file
+/// in the inbox of a recorded target that is not live, or starts a session of
+/// an agent for it, keeps each
 /// delivered message in the ledger of its target (``SessionMessageLedger``,
 /// ROUTER-4) with its chain depth, and sends `messageDelivered`. Each send
 /// passes the loop guards of ``SessionMessageLimits`` first (ROUTER-5): the
@@ -171,13 +172,6 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// ledger of a memory-only session lives here alone.
     private var ledgers: [ULID: SessionMessageLedger] = [:]
 
-    /// The restore through the launcher that runs now for each recorded
-    /// session, by session id (``restore(_:through:)``). Two sends to one
-    /// recorded session while its restore runs share that one restore, so
-    /// the launcher never makes two live sessions with one id. A restore
-    /// leaves the map when it ends.
-    private var restores: [ULID: Task<any RoutedSession, any Error>] = [:]
-
     /// The loop guards that ``send(_:)`` applies to each message (ROUTER-5).
     private let limits: SessionMessageLimits
 
@@ -209,14 +203,16 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``SessionInboxWatcher``), so a file that arrives there is delivered
     /// (``scanInbox(of:)``). The folder is made and opened before the lock,
     /// and the watcher runs after it, because the lock must not wait on the
-    /// file system. A restore registers the restored session, so it starts
-    /// the watcher too. A memory-only session has no folder and no watcher.
+    /// file system. A session that a host restores registers itself, so it
+    /// starts the watcher too. A memory-only session has no folder and no
+    /// watcher.
     /// One directory delivers the files of one session. The code does not
     /// enforce this: it makes no check of the recording root and no claim on
     /// a file. Two directories that watch one folder can both deliver a file,
     /// so the host must not run two live copies of one session. A file in the
     /// inbox of a recorded session that is not live waits: no watcher covers
-    /// it, and no file starts a restore, until a process opens the session.
+    /// it, and no file restores the session, until a process opens the session.
+    /// Then the first scan of the watcher delivers the file.
     ///
     /// A second registration of a session that is still live replaces its
     /// kind and its parent, and keeps its time of change, its state, its
@@ -707,16 +703,19 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   of the turn. The session's pump then carries every waiting message
     ///   in one turn. No delivery waits for a free slot: the number of
     ///   sessions that work at the same time has no limit (D72).
-    /// - A recorded target that is not live is restored through the
-    ///   launcher, and then gets the message as a live target does
-    ///   (``restoreThenDeliver(_:chainDepth:to:)``). A restore that throws is a
-    ///   `refused` receipt with the text of the error.
+    /// - A recorded target that is not live gets the message as a file in
+    ///   its `inbox/` folder, and nothing more (``sendToRecorded(_:chainDepth:to:)``).
+    ///   The directory does not restore the session and does not call the
+    ///   launcher. The receipt is `sent`: the message is written where the
+    ///   target reads it, and it is not in a queue. When a host opens the
+    ///   session, the first scan of its inbox watcher delivers the file, and
+    ///   the `messageDelivered` event follows.
     /// - An agent with no live root session gets a new one through the
     ///   launcher, with origin `message` and the message as its first
     ///   message, and the receipt is `started`
     ///   (``startAgent(_:in:for:chainDepth:)``).
     /// - A refusal of the resolver is a `refused` receipt with its reason
-    ///   and target. An archived target is one: it is never restored.
+    ///   and target. An archived target is one: it gets no file.
     ///
     /// The loop guards of ``SessionMessageLimits`` apply to each sender
     /// (ROUTER-5). A text longer than the limit throws before the address is
@@ -749,8 +748,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   longer than the limit, `SessionDirectoryError.unknownSession` for a
     ///   session sender or a session id target that no live or recorded
     ///   session has, `SessionDirectoryError.noLauncher` when an agent
-    ///   address must start a session or a recorded target must be restored
-    ///   with no launcher, the start errors of the launcher for an agent
+    ///   address must start a session with no launcher, the start errors of
+    ///   the launcher for an agent
     ///   address, `JSONLFileError.readFailed(description:)` when the
     ///   `messages.jsonl` of a target or of the sender exists and does not
     ///   read, or the error of the recording roots of the host.
@@ -770,9 +769,8 @@ public actor RouterSessionDirectory: SessionDirectory {
         switch resolution {
         case .deliver(let targets):
             return try deliver(message, chainDepth: chainDepth, toEach: targets)
-        case .restoreThenDeliver(let id):
-            let summary = try Self.recordedSummary(of: id, in: recorded)
-            return [try await restoreThenDeliver(message, chainDepth: chainDepth, to: summary)]
+        case .sendToRecorded(let id):
+            return [try await sendToRecorded(message, chainDepth: chainDepth, to: id)]
         case .startAgent(let agentID, let folder):
             return [try await startAgent(agentID, in: folder, for: message, chainDepth: chainDepth)]
         case .refused(let reason, let target):
@@ -1022,91 +1020,30 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Writes `message` as a file in the `inbox/` folder of the recorded
-    /// session of `summary`, restores the session through the launcher
-    /// (ROUTER-8), and makes it live in the directory. The registration
-    /// starts the watcher of the inbox, and the first scan of the watcher
-    /// delivers the file (``scanInbox(of:)``), where its mail starts a turn.
-    ///
-    /// A session that this router restores registered itself when the
-    /// restore vended it. A session from another router is not in the
-    /// directory, so this registers it with the kind and the parent of its
-    /// record.
-    ///
-    /// A restore that throws removes the file, so a message with a `refused`
-    /// receipt is not delivered at a later open of the session.
+    /// session `id`, which is not live, and stops. The directory restores
+    /// nothing and does not call the launcher. The file waits until a host
+    /// opens the session: the registration starts the watcher of the inbox,
+    /// and the first scan of the watcher delivers the file
+    /// (``scanInbox(of:)``), where its mail starts a turn.
     ///
     /// - Parameters:
     ///   - message: The message.
     ///   - chainDepth: The chain depth of the message.
-    ///   - summary: The recorded summary of the target, which is not live.
-    /// - Returns: The `delivered` receipt, because a restored session is
-    ///   idle and its first mail starts a turn. The receipt does not read
-    ///   ``deliveryOutcome(of:)``: the first scan of the watcher can start
-    ///   that turn before this method goes on after the restore. A `refused`
-    ///   receipt with the text of the error when the restore throws, or as
-    ///   not live when the session left the directory.
-    /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
-    ///   launcher, `SessionDirectoryError.unknownSession(_:)` when no
-    ///   recording root holds the folder of the session, or the errors of
+    ///   - id: The session id of the recorded target.
+    /// - Returns: The `sent` receipt, with the id of the message and the
+    ///   target: the file is written, and the message is not in a queue. The
+    ///   `messageDelivered` event reports the delivery later.
+    /// - Throws: `SessionDirectoryError.unknownSession(_:)` when no recording
+    ///   root holds the folder of the session, or the errors of
     ///   ``writeInboxFile(_:chainDepth:to:)``.
-    private func restoreThenDeliver(
-        _ message: OutgoingSessionMessage, chainDepth: Int, to summary: SessionSummary
+    private func sendToRecorded(
+        _ message: OutgoingSessionMessage, chainDepth: Int, to id: ULID
     ) async throws -> SessionSendReceipt {
-        guard let launcher else { throw SessionDirectoryError.noLauncher }
-        guard let folder = try await recordedFolder(of: summary.id) else {
-            throw SessionDirectoryError.unknownSession(summary.id)
-        }
-        let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
-        let session: any RoutedSession
-        do {
-            session = try await restore(summary.id, through: launcher)
-        } catch {
-            removeInboxFile(
-                SessionInboxFile.url(of: messageID, in: folder), session: summary.id,
-                failure: "the inbox file of a refused send did not remove; a later open delivers it")
-            return SessionSendReceipt(target: summary.id, outcome: .refused, reason: String(describing: error))
-        }
-        if !isRegistered(session: session) {
-            register(session, kind: summary.kind, parentID: summary.parentID)
-        }
-        guard liveSession(summary.id) != nil else {
-            return SessionSendReceipt(target: summary.id, outcome: .refused, reason: Self.notLiveReason)
-        }
-        return SessionSendReceipt(messageID: messageID, target: summary.id, outcome: .delivered)
-    }
-
-    /// Restores the recorded session `id` through `launcher`, or joins the
-    /// restore of `id` that runs now (``restores``).
-    ///
-    /// - Parameters:
-    ///   - id: The session id.
-    ///   - launcher: The launcher of the directory.
-    /// - Returns: The restored session.
-    /// - Throws: The error of the restore.
-    private func restore(_ id: ULID, through launcher: any SessionLauncher) async throws -> any RoutedSession {
-        if let running = restores[id] {
-            return try await running.value
-        }
-        let restore = Task { try await launcher.restoreSession(id: id) }
-        restores[id] = restore
-        defer { restores[id] = nil }
-        return try await restore.value
-    }
-
-    /// The recorded summary of the session `id`, which the resolver read
-    /// when it decided to restore the session.
-    ///
-    /// - Parameters:
-    ///   - id: The session id.
-    ///   - recorded: The recorded summaries that the resolver read.
-    /// - Returns: The summary.
-    /// - Throws: `SessionDirectoryError.unknownSession(_:)` when `recorded`
-    ///   holds no summary with the id, which the resolver never decides.
-    private static func recordedSummary(of id: ULID, in recorded: [SessionSummary]) throws -> SessionSummary {
-        guard let summary = recorded.first(where: { $0.id == id }) else {
+        guard let folder = try await recordedFolder(of: id) else {
             throw SessionDirectoryError.unknownSession(id)
         }
-        return summary
+        let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
+        return SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)
     }
 
     /// Starts a root session of the agent through the launcher with

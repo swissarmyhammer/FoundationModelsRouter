@@ -33,10 +33,6 @@ final class FakeSessionLauncher: SessionLauncher {
     /// for a launcher that breaks the contract and vends with none of them.
     private let copiesRequestFacts: Bool
 
-    /// The error each restore throws, or `nil` for a launcher whose restores
-    /// succeed.
-    private let restoreError: (any Error)?
-
     /// The requests, the restores and the sessions, which the directory
     /// changes from its task.
     private let state = Mutex(State())
@@ -48,12 +44,9 @@ final class FakeSessionLauncher: SessionLauncher {
     ///   - copiesRequestFacts: `true` (the default) to copy the facts of each
     ///     request into the configuration of its session; `false` to vend
     ///     each session with none of them.
-    ///   - restoreError: The error each restore throws, or `nil` (the
-    ///     default) for restores that succeed.
-    init(profile: LanguageModelProfile, copiesRequestFacts: Bool = true, restoreError: (any Error)? = nil) {
+    init(profile: LanguageModelProfile, copiesRequestFacts: Bool = true) {
         self.profile = profile
         self.copiesRequestFacts = copiesRequestFacts
-        self.restoreError = restoreError
     }
 
     /// Each request the launcher got, in order.
@@ -61,8 +54,7 @@ final class FakeSessionLauncher: SessionLauncher {
         state.withLock { $0.requests }
     }
 
-    /// The id of each restore the launcher got, in order, also of a restore
-    /// that threw.
+    /// The id of each restore the launcher got, in order.
     var restoredIDs: [ULID] {
         state.withLock { $0.restoredIDs }
     }
@@ -90,13 +82,9 @@ final class FakeSessionLauncher: SessionLauncher {
     ///
     /// - Parameter id: The session id.
     /// - Returns: The restored session.
-    /// - Throws: The `restoreError` of the launcher, or the error of the
-    ///   restore.
+    /// - Throws: The error of the restore.
     func restoreSession(id: ULID) async throws -> any RoutedSession {
         state.withLock { $0.restoredIDs.append(id) }
-        if let restoreError {
-            throw restoreError
-        }
         let session = try await profile.standard.restoreSession(id: id).session
         state.withLock { $0.sessions.append(session) }
         return session
