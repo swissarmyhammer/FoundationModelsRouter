@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsExtras
+import Logging
 import Synchronization
 
 /// The session directory of one ``Router``: the Router side of the Extras
@@ -1270,12 +1271,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The session id.
     ///   - file: The inbox file, or `nil` for a failure of the folder.
     private nonisolated func logInboxFailure(_ what: String, _ error: any Error, session id: ULID, file: URL?) {
-        var metadata = RouterTelemetry.errorMetadata(error)
-        metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(id.description)"
-        if let file {
-            metadata[RouterTelemetry.LogMetadataKey.filePath] = "\(file.path)"
-        }
-        RouterTelemetry.makeLogger(.sessionDirectory).error("\(what)", metadata: metadata)
+        logInbox(.error, what, session: id, file: file, metadata: RouterTelemetry.errorMetadata(error))
     }
 
     /// Logs a warning for an inbox file whose mail id the session holds
@@ -1286,13 +1282,30 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The session id.
     ///   - file: The inbox file.
     private nonisolated func logInboxDuplicate(_ message: MailID, session id: ULID, file: URL) {
-        RouterTelemetry.makeLogger(.sessionDirectory).warning(
-            "an inbox file has the mail id of a mail that the session holds; the file is removed",
-            metadata: [
-                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
-                RouterTelemetry.LogMetadataKey.messageId: "\(message.description)",
-                RouterTelemetry.LogMetadataKey.filePath: "\(file.path)",
-            ])
+        logInbox(
+            .warning, "an inbox file has the mail id of a mail that the session holds; the file is removed",
+            session: id, file: file,
+            metadata: [RouterTelemetry.LogMetadataKey.messageId: "\(message.description)"])
+    }
+
+    /// Logs an event of the inbox scan. The one place that adds the session id
+    /// and the file path to the metadata.
+    ///
+    /// - Parameters:
+    ///   - level: The log level.
+    ///   - what: What happened, and what happens to the file.
+    ///   - id: The session id.
+    ///   - file: The inbox file, or `nil` for an event of the folder.
+    ///   - metadata: The metadata that is specific to the event.
+    private nonisolated func logInbox(
+        _ level: Logger.Level, _ what: String, session id: ULID, file: URL?, metadata: Logger.Metadata
+    ) {
+        var metadata = metadata
+        metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(id.description)"
+        if let file {
+            metadata[RouterTelemetry.LogMetadataKey.filePath] = "\(file.path)"
+        }
+        RouterTelemetry.makeLogger(.sessionDirectory).log(level: level, "\(what)", metadata: metadata)
     }
 
     /// The record of an inbox message as the directory delivers it to

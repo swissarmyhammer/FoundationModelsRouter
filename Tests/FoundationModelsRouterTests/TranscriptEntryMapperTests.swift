@@ -795,11 +795,12 @@ struct TranscriptEntryMapperTests {
 
         #expect(event.kind == .unknown)
         #expect(event.payload.entryId == "d1")
-        guard case .unknown(let id, _) = event.payload.segments?.first else {
+        let segment = try #require(event.payload.segments?.first)
+        if case .unknown(let id, _) = segment {
+            #expect(id == "d1")
+        } else {
             Issue.record("expected the data entry to record as the unknown segment carrier")
-            return
         }
-        #expect(id == "d1")
         logs.expectLogged(containing: "holds bytes that a recording cannot persist")
     }
 
