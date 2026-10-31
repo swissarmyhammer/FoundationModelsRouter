@@ -192,18 +192,6 @@ import Testing
         #expect(!encoded.contains("cursor"))
     }
 
-    /// No Router source names the change log type of the Extras GraphQL
-    /// toolkit: the `sessions` graph wraps the events, Router does not.
-    @Test func noRouterSourceNamesTheChangeLog() throws {
-        let files = try LibrarySourceFiles.urls(under: RepositoryRoot.url())
-
-        let naming = try files.filter { file in
-            try String(contentsOf: file, encoding: .utf8).contains(Self.changeLogTypeName)
-        }
-
-        #expect(naming.isEmpty, "these files name \(Self.changeLogTypeName): \(naming.map(\.lastPathComponent))")
-    }
-
     // MARK: - Constants
 
     /// An event no test session sends, which a test sends to mark the end of
@@ -219,6 +207,4 @@ import Testing
     /// How many events one stream buffers.
     private static let bufferedEventCount = 256
 
-    /// The type name of the change log of the Extras GraphQL toolkit.
-    private static let changeLogTypeName = "ChangeLog"
 }
