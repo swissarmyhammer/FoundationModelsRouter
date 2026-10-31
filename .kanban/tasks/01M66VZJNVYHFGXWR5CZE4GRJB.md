@@ -13,6 +13,31 @@ comments:
     - Evidence: filters Inbox 24, Delivery 9, Message 21, LoopGuard 6, Archive 11, NoCap 1 all pass; full swift test: 2168 tests in 268 suites passed, no new warnings.
     - next: review
   timestamp: 2026-10-31T09:24:48.460855+00:00
+- actor: claude-code
+  id: 01m68mprmj2seym2tvt4d7gj0q
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD: 1 finding (RouterSessionDirectoryDeliveryTests.swift:271, duplication). Checked: restore path returns delivered with a doc reason; archiveLive scans before cancelAll with no suspension; LoopGuard fixture unregisters from the router directory; failed restore removes the file; doc comments of send, deliver and restoreThenDeliver match the task; no sleep, retry or time limit in the test diff.
+    - next: fix the open finding, then run /review again.
+  timestamp: 2026-10-31T09:29:59.186538+00:00
+- actor: claude-code
+  id: 01m68mq3me006x0nc001yx0a50
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — RouterSessionDirectory.swift, helper RouterSessionDirectory+SendAndAwaitDelivery.swift, 6 test files
+    - test: green — swift test, 2168 tests, 0 failures (archive race fixed in archiveLive)
+    - commit: 352168eb
+    - review: findings — RouterSessionDirectoryDeliveryTests.swift:271
+  timestamp: 2026-10-31T09:30:10.446017+00:00
+- actor: claude-code
+  id: 01m68ms994xs98f71sskt6j6cn
+  text: |-
+    ### implement — changed
+    - Added shared `sendAndAwaitDelivery(_:fromClient:to:)` to Tests/FoundationModelsRouterTests/Helpers/RouterSessionDirectory+SendAndAwaitDelivery.swift.
+    - Used it in DeliveryTests (helper `send` and `aSendToASessionThatNeedsInputIsQueued`) and removed the same copied user-to-session send in RouterSessionDirectoryMessageTests (6 places). The `.tag` call is unchanged.
+    - evidence: swift test --filter 'RouterSessionDirectoryDeliveryTests|RouterSessionDirectoryMessageTests': 30 tests in 2 suites passed.
+    - next: review
+  timestamp: 2026-10-31T09:31:21.764293+00:00
 depends_on:
 - 01M66VZ885BGD130W6TSSS8B7C
 position_column: doing
@@ -46,3 +71,12 @@ In `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift`, chan
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-10-31 04:27)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveryTests.swift:271` `duplication/duplication` — The `aSendToASessionThatNeedsInputIsQueued` test rebuilds the send that the file's own `send(_:to:in:)` helper already performs: `directory.sendAndAwaitDelivery(OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(id), text: Self.text))`. The copy is inlined because the helper takes a `Fixture` and this test uses a `BackgroundingSessionFixture`. If the helper's sender, target shape, or waiting behavior changes, this copy drifts out of sync. Move the helper's body to a shared function that takes a `RouterSessionDirectory` (or the directory from the fixture) and an id, and call it from both the `Fixture`-based helper and this test. Do not change the `.tag` call at lines 212-213.

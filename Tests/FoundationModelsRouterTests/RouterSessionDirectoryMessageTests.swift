@@ -178,7 +178,7 @@ import Testing
         let target = fixture.makeSession()
 
         let receipts = try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
+            Self.text, fromClient: Self.clientID, to: target.id)
 
         let messageID = try Self.messageID(of: receipts)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
@@ -205,7 +205,7 @@ import Testing
             OutgoingSessionMessage(
                 from: .session(sender.id), to: .session(target.id), text: Self.text, inReplyTo: answered))
         let fromUI = try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
+            Self.text, fromClient: Self.clientID, to: target.id)
         let sentFromSession = try await fixture.directory.message(try Self.messageID(of: fromSession), to: target.id)
         let sentFromUI = try await fixture.directory.message(try Self.messageID(of: fromUI), to: target.id)
         let sent = [try #require(sentFromSession), try #require(sentFromUI)]
@@ -228,8 +228,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         let target = fixture.makeSession()
         let sendStart = DateTime(Date())
-        _ = try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
+        _ = try await fixture.directory.sendAndAwaitDelivery(Self.text, fromClient: Self.clientID, to: target.id)
         let sendEnd = DateTime(Date())
         #expect(await target.awaitIdle())
         await fixture.closeSessions([target])
@@ -273,8 +272,7 @@ import Testing
         var target: (any RoutedSession)? = fixture.makeSession()
         let id = try #require(target?.id)
         let root = try #require(target.map(fixture.recordingRoot(of:)))
-        let receipts = try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(id), text: Self.text))
+        let receipts = try await fixture.directory.sendAndAwaitDelivery(Self.text, fromClient: Self.clientID, to: id)
         #expect(await target?.awaitIdle() == true)
         await target?.close()
         target = nil
@@ -461,7 +459,7 @@ import Testing
             over: BasicLLMContainer(), cacheDir: scratch)
         let target = profile.standard.makeSession(configuration: SessionConfiguration())
         let receipts = try await router.sessionDirectory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(target.id), text: Self.text))
+            Self.text, fromClient: Self.clientID, to: target.id)
 
         let inbox = try await router.sessionDirectory.inbox(of: target.id, markRead: false)
 
@@ -552,8 +550,7 @@ import Testing
     /// - Returns: The id of the message.
     private static func send(_ text: String, to target: any RoutedSession, in fixture: Fixture) async throws -> MailID {
         try messageID(
-            of: try await fixture.directory.sendAndAwaitDelivery(
-                OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(target.id), text: text)))
+            of: try await fixture.directory.sendAndAwaitDelivery(text, fromClient: clientID, to: target.id))
     }
 
     // MARK: - Constants

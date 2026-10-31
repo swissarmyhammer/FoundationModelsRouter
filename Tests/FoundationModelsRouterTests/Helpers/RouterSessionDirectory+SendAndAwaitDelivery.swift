@@ -27,4 +27,21 @@ extension RouterSessionDirectory {
         }
         return receipts
     }
+
+    /// Sends one UI message with `text` from the client `clientID` to the
+    /// session `id`, and waits until the directory delivered it
+    /// (``sendAndAwaitDelivery(_:)``).
+    ///
+    /// - Parameters:
+    ///   - text: The text of the message.
+    ///   - clientID: The UI client that sends the message.
+    ///   - id: The session id of the target.
+    /// - Returns: The receipts of the send.
+    /// - Throws: The errors of ``send(_:)``.
+    func sendAndAwaitDelivery(
+        _ text: String, fromClient clientID: String, to id: ULID
+    ) async throws -> [SessionSendReceipt] {
+        try await sendAndAwaitDelivery(
+            OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(id), text: text))
+    }
 }

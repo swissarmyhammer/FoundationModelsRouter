@@ -146,8 +146,7 @@ struct RouterSessionDirectoryDeliveryTests {
     private static func send(
         _ text: String = text, to id: ULID, in fixture: Fixture
     ) async throws -> [SessionSendReceipt] {
-        try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(id), text: text))
+        try await fixture.directory.sendAndAwaitDelivery(text, fromClient: clientID, to: id)
     }
 
     /// Starts a held turn on a new session: vends it, sends it the turn
@@ -268,8 +267,7 @@ struct RouterSessionDirectoryDeliveryTests {
                 continue
             }
 
-            let receipts = try await directory.sendAndAwaitDelivery(
-                OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .session(id), text: Self.text))
+            let receipts = try await directory.sendAndAwaitDelivery(Self.text, fromClient: Self.clientID, to: id)
 
             let messageID = try #require(receipts.first?.messageID)
             #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .queued)])
