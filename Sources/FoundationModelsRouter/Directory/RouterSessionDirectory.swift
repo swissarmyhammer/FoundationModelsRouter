@@ -1161,9 +1161,15 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - A file whose id the ledger holds already is removed with no second
     ///   delivery. This is the state after a crash between the ledger write
     ///   and the removal of the file.
-    /// - A refusal of the mail (a session that closed), or a ledger that
-    ///   does not read, leaves the file in `inbox/` and stops the scan of
-    ///   this session. The next scan tries the file again.
+    /// - A file whose id the queue or an open answer of the session holds,
+    ///   and the ledger does not (`MailRefusal.duplicateID`), is removed and
+    ///   logged as a warning, and the scan goes on with the next file. The
+    ///   refusal never ends later, because the mail with this id is already
+    ///   in the session, so one bad file does not block the files after it.
+    /// - A refusal of the mail because the session closed
+    ///   (`MailRefusal.closed`), or a ledger that does not read, leaves the
+    ///   file in `inbox/` and stops the scan of this session. The next scan
+    ///   tries the file again.
     ///
     /// The scan is synchronous on the actor and has no suspension point, so
     /// no other scan or send runs between the check of the ledger and
@@ -1208,6 +1214,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             if ledger.message(message.id) == nil {
                 try hand(Self.delivered(message, to: session.id), to: session, ledger: ledger)
             }
+        } catch MailRefusal.duplicateID(let duplicate) {
+            logInboxDuplicate(duplicate, session: session.id, file: file)
         } catch {
             logInboxFailure(
                 "an inbox file did not deliver; it stays in the inbox", error, session: session.id, file: file)
@@ -1268,6 +1276,23 @@ public actor RouterSessionDirectory: SessionDirectory {
             metadata[RouterTelemetry.LogMetadataKey.filePath] = "\(file.path)"
         }
         RouterTelemetry.makeLogger(.sessionDirectory).error("\(what)", metadata: metadata)
+    }
+
+    /// Logs a warning for an inbox file whose mail id the session holds
+    /// already. The file is removed after the log.
+    ///
+    /// - Parameters:
+    ///   - message: The mail id of the file.
+    ///   - id: The session id.
+    ///   - file: The inbox file.
+    private nonisolated func logInboxDuplicate(_ message: MailID, session id: ULID, file: URL) {
+        RouterTelemetry.makeLogger(.sessionDirectory).warning(
+            "an inbox file has the mail id of a mail that the session holds; the file is removed",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.messageId: "\(message.description)",
+                RouterTelemetry.LogMetadataKey.filePath: "\(file.path)",
+            ])
     }
 
     /// The record of an inbox message as the directory delivers it to

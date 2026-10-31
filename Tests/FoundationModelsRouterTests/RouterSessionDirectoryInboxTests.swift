@@ -296,6 +296,38 @@ struct RouterSessionDirectoryInboxTests {
         await fixture.close([])
     }
 
+    /// The production change that makes this test fail: a scan that keeps
+    /// the file of a duplicate mail id in the inbox, or that stops at it, so
+    /// the files after it wait.
+    ///
+    /// A held turn lets the queue hold the first id. The id of the second
+    /// file is newer, so its file sorts after the first one.
+    @Test("a file whose mail id the queue holds is removed, and the files after it are delivered")
+    func aDuplicateMailIDIsRemovedAndTheScanGoesOn() async throws {
+        let latch = RunLatch()
+        let backend = RouterSessionDirectoryDeliveryTests.Backend(script: [Self.firstCall: .hold(latch)])
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture(
+            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend))
+        let target = try await RouterSessionDirectoryDeliveryTests.startHeldTurn(in: fixture, on: backend)
+        let queuedID = MailID()
+        _ = try target.mail(
+            Mail(id: queuedID, sender: .user, body: .userMessage(prompt: Self.text, options: UserMessageOptions())))
+        try Self.writeFile(to: target, id: queuedID)
+        let laterID = try Self.writeFile(to: target)
+
+        await fixture.directory.scanInbox(of: target.id)
+        let waiting = await RouterSessionDirectoryDeliveryTests.pendingIDs(of: target)
+        await latch.open()
+
+        #expect(waiting == [queuedID, laterID])
+        #expect(try Self.waitingNames(of: target).isEmpty)
+        #expect(Self.rejectedNames(of: target).isEmpty)
+        #expect(try await fixture.directory.message(queuedID, to: target.id) == nil)
+        #expect(try await fixture.directory.message(laterID, to: target.id) != nil)
+        #expect(await target.awaitIdle())
+        await fixture.close([target])
+    }
+
     /// The production change that makes this test fail: a scan that treats
     /// a ledger it cannot read as an empty ledger, and delivers the file, or
     /// removes the file.

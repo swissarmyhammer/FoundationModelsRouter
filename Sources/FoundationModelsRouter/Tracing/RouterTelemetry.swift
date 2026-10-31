@@ -468,6 +468,9 @@ enum RouterTelemetry {
         /// The path of a file.
         static let filePath = prefix + "file.path"
 
+        /// The id of a message.
+        static let messageId = prefix + "message.id"
+
         /// The sequence number of a transcript event.
         static let eventSeq = prefix + "event.seq"
 
@@ -550,7 +553,7 @@ enum RouterTelemetry {
         /// Every key above.
         static let allKeys = [
             category, sessionId, archivedBy, entryId, segmentId, responseFormatName, entryCase, userPresence,
-            encodeContext, schemaName, errorType, errorCode, filePath, eventSeq, supersededSeq,
+            encodeContext, schemaName, errorType, errorCode, filePath, messageId, eventSeq, supersededSeq,
             repetitionStop, reasoningStop, generationStall, mailDeliveryPause, contextTokens, promptTokens,
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
