@@ -934,6 +934,69 @@ struct RepoMetadataTests {
         ) { try window.get() }
     }
 
+    @Test("a CoreML repo is reported as a CoreML embedding model")
+    func coreMLRepoIsACoreMLEmbeddingModel() throws {
+        let raw = RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw, repo: "org/coreml-embedder")
+
+        #expect(metadata.isCoreMLEmbedding)
+    }
+
+    @Test("a repo with safetensors weights is not reported as a CoreML embedding model")
+    func safetensorsRepoIsNotACoreMLEmbeddingModel() throws {
+        let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
+
+        #expect(!metadata.isCoreMLEmbedding)
+    }
+
+    @Test("a CoreML repo in the embedding slot is sized as an embedder: its bundle bytes")
+    func coreMLRepoInEmbeddingSlotIsSized() throws {
+        let ref: ModelRef = "org/coreml-embedder"
+        let metadata = try RepoMetadata(
+            raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
+
+        let bytes = Router.footprintBytes(
+            for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
+            membership: [ref: [.embedding]], residentKeys: [])
+
+        #expect(try bytes.get() == Self.coreMLBundleBytes)
+    }
+
+    @Test(
+        "a CoreML repo in a generation slot is rejected before any download, with a message that names the slot rule",
+        arguments: [ModelSlot.standard, ModelSlot.flash])
+    func coreMLRepoInGenerationSlotIsRejected(slot: ModelSlot) throws {
+        let ref: ModelRef = "org/coreml-embedder"
+        let metadata = try RepoMetadata(
+            raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
+
+        let bytes = Router.footprintBytes(
+            for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
+            membership: [ref: [slot]], residentKeys: [])
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "candidate org/coreml-embedder is a Core ML embedding model; it cannot fill the standard or flash slot"
+            )
+        ) { try bytes.get() }
+    }
+
+    @Test("a CoreML repo listed for the embedding slot and a generation slot is rejected")
+    func coreMLRepoInBothKindsOfSlotIsRejected() throws {
+        let ref: ModelRef = "org/coreml-embedder"
+        let metadata = try RepoMetadata(
+            raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
+
+        let bytes = Router.footprintBytes(
+            for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
+            membership: [ref: [.embedding, .flash]], residentKeys: [])
+
+        #expect(throws: RepoMetadataError.self) { try bytes.get() }
+    }
+
     /// Builds a reader over a fresh temp cache dir, returning the dir for cleanup
     /// and the stub source for fetch-count assertions.
     private static func makeReader(

@@ -128,8 +128,9 @@ struct SlotPoolLoader: PooledModelLoader {
 extension ModelHold {
     /// The container of this hold as a generation container.
     ///
-    /// The first loader of the key can be the Extras `MLXModelLoader` of a
-    /// `PooledModel`, which gives a bare `MLXLanguageModel`. The router then
+    /// The first loader of the key can be the Extras loader of a
+    /// `PooledModel` (`HubModelLoader`, which loads a generation model with
+    /// `MLXModelLoader`), which gives a bare `MLXLanguageModel`. The router then
     /// wraps that model in a live container
     /// (``MLXFoundationModelsContainer/make(wrapping:repo:)``), so a
     /// `PooledModel` and a router share one resident model in either order.

@@ -692,6 +692,13 @@ public actor Router {
             .map(\.weightBytes)
     }
 
+    /// The diagnostic for a Core ML embedding model that a profile lists for
+    /// the standard slot or the flash slot. Core ML loads embedding models
+    /// only, so such a candidate cannot load.
+    private static func coreMLInGenerationSlotMessage(for ref: ModelRef) -> String {
+        "candidate \(ref.stringValue) is a Core ML embedding model; it cannot fill the standard or flash slot"
+    }
+
     /// The shared diagnostic for a candidate that has no fetched metadata.
     private static func unsizedCandidateMessage(for ref: ModelRef) -> String {
         "candidate \(ref.stringValue) was not sized"
@@ -730,7 +737,12 @@ public actor Router {
     /// marginal cost: one session KV cache at `context` for a generation
     /// model, whatever context it was first loaded at, and zero for an
     /// embedder.
-    private static func footprintBytes(
+    ///
+    /// A Core ML embedding model (``RepoMetadata/isCoreMLEmbedding``) that
+    /// is a candidate of the standard slot or of the flash slot is an error:
+    /// Core ML loads embedding models only. The error comes from the sizing,
+    /// thus before any download.
+    static func footprintBytes(
         for ref: ModelRef,
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
@@ -745,6 +757,9 @@ public actor Router {
             return .failure(error)
         case .success(let metadata):
             let slots = membership[ref] ?? []
+            if metadata.isCoreMLEmbedding && (slots.contains(.standard) || slots.contains(.flash)) {
+                return .failure(.metadataUnavailable(coreMLInGenerationSlotMessage(for: ref)))
+            }
             var candidates: [Int64] = []
             if slots.contains(.embedding) {
                 let key = ModelPoolKey(ref: ref, role: .embedding)

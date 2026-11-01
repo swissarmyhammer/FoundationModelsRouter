@@ -78,6 +78,16 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// to read, and it can only be an embedder.
     let nativeMaxContext: Int?
 
+    /// Whether the repo is a Core ML embedding model.
+    ///
+    /// The sizing of the repo decides this, and nothing else does: only a
+    /// Core ML repo has no ``nativeMaxContext``, see ``init(raw:repo:)``. The
+    /// load does not use this value. The Extras `HubModelLoader` reads the
+    /// files of the repo and chooses the Core ML loader or the MLX loader
+    /// itself. The router uses this value only to reject a Core ML repo in a
+    /// generation slot before any download.
+    var isCoreMLEmbedding: Bool { nativeMaxContext == nil }
+
     /// Creates parsed metadata from already-resolved values.
     ///
     /// `numFullAttentionLayers` defaults to `numHiddenLayers`. `nativeMaxContext`

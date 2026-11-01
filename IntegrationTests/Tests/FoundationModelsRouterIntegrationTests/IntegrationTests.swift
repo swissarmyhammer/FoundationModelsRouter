@@ -161,7 +161,7 @@ private struct DownloadObservingLoader: ModelLoader {
 /// The gated end-to-end integration suite (milestone 7).
 ///
 /// It resolves the ``gatedRealProfile`` once — all three slots co-resident — over a
-/// real ``LiveModelLoader`` (over the Extras `MLXModelLoader`)
+/// real ``LiveModelLoader`` (over the Extras `HubModelLoader`)
 /// and the real ``HuggingFaceMetadataSource``, then asserts every live capability
 /// in that one resolved profile: progress advancement, generation, embedding
 /// (which writes no transcript event, since card ^p3x0bbb), guided generation,
@@ -292,7 +292,7 @@ struct IntegrationTests {
             )
         }
 
-        // The real loader (over the Extras `MLXModelLoader`) and the real Hub
+        // The real loader (over the Extras `HubModelLoader`) and the real Hub
         // metadata source, each wrapped so the suite can observe the
         // resolution phase progression.
         let progress = await MainActor.run { ResolutionProgress() }
@@ -476,7 +476,7 @@ struct IntegrationTests {
     ///
     /// Loads only the embedder of ``gatedRealProfile``, through the real
     /// ``LiveModelLoader``: the question is the embed body of the embedding
-    /// model that the Extras `MLXModelLoader` loads, not the resolver that
+    /// model that the Extras `HubModelLoader` loads, not the resolver that
     /// ``endToEnd()`` drives.
     @Test("a batch vector equals the vector of the same text embedded alone")
     func batchVectorEqualsVectorOfTextAlone() async throws {
@@ -512,7 +512,7 @@ struct IntegrationTests {
     }
 
     /// Makes the real ``LiveModelLoader``: it loads each model through the
-    /// Extras `MLXModelLoader`, over the Hugging Face cache.
+    /// Extras `HubModelLoader`, over the Hugging Face cache.
     private static func makeLiveLoader() -> LiveModelLoader {
         LiveModelLoader()
     }

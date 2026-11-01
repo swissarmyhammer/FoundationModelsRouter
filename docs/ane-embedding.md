@@ -18,21 +18,41 @@ The router does not need a special flag from you.
 
 ## How the router loads it
 
-A CoreML embedding model loads through a new Extras container. That container
-runs the model on the ANE. The router gives the model to your tools through
-the same `.embedding` slot of the profile as other embedding models.
+`LiveModelLoader` loads each model through the Extras `HubModelLoader`. For an
+embedding model, `HubModelLoader` looks at the files of the repository. A
+repository with a `.mlpackage` folder and no `.safetensors` file loads with
+the Extras Core ML loader, and the model runs on the ANE. Any other repository
+loads with MLX. A generation model always loads with MLX, because Core ML
+loads embedding models only.
 
-## How the router detects a CoreML model
+A host that gives a cache folder or a token provider to `LiveModelLoader`
+gives it to both loaders.
 
-The router detects a CoreML repository from the repository metadata.
+The router gives the model to your tools through the same `.embedding` slot of
+the profile as other embedding models. `RoutedEmbedder.embed(texts:)` works
+the same way, and its span keeps the attributes `model.ref` and
+`embedding.dimension`.
 
-Status: planned. This detection is not in the code yet. Until it is, do not
-depend on automatic selection of the Extras container.
+## How the router detects a Core ML model
+
+The router detects a Core ML repository from the repository metadata, during
+sizing and before any download. A repository with no `.safetensors` file at its
+root and with a `.mlpackage` or `.mlmodelc` folder is a Core ML repository.
+`RepoMetadata.isCoreMLEmbedding` reports this.
+
+The router uses the result for one rule: a Core ML model cannot fill the
+standard slot or the flash slot. When a profile lists such a model for one of
+these slots, resolution rejects the candidate with a clear message, and
+tries the next candidate. The message names the model and the rule.
+
+The router does not choose the loader from this result. `HubModelLoader`
+chooses the loader from the files of the repository, so the load follows one
+rule: the rule of Extras.
 
 ## Prefixes
 
-The model needs a prefix in front of each text. The loader adds no prefix, so
-the router adds it:
+The model needs a prefix in front of each text. The Core ML loader adds no
+prefix, so the router adds it:
 
 | Call | Prefix |
 |---|---|

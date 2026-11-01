@@ -497,7 +497,7 @@ struct SlotPoolLoaderTests {
     /// the measure, not from a caller.
     private static let measuredFootprintBytes: Int64 = 4_321
 
-    /// A model loader in place of `MLXModelLoader`. It records each key it
+    /// A model loader in place of `HubModelLoader`. It records each key it
     /// loads, each key it measures and the type of each container it evicts,
     /// and reports ``reportedSteps``. It gives a
     /// ``ForeignEmbedding`` for an embedding key, and a ``ForeignContainer``

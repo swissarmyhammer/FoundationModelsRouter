@@ -37,7 +37,7 @@ let metricsPackage = "swift-metrics"
 // `#huggingFaceTokenizerLoader()` expands to code that references
 // `Tokenizers.AutoTokenizer`, so an integrator must supply this package to
 // construct a live `TokenizerLoader`. The library target loads through the
-// Extras `MLXModelLoader`, and FoundationModelsExtras brings its own Hub
+// Extras `HubModelLoader`, and FoundationModelsExtras brings its own Hub
 // client and tokenizer loader, so only the targets that expand the macro
 // themselves need this — the RealModelSupport target and the real-model test
 // targets in the nested `IntegrationTests/` package. The version pin mirrors
@@ -47,7 +47,7 @@ let transformersPackage = "swift-transformers"
 // The Hugging Face Hub client package. The library target links its
 // `HuggingFace` product because `TokenProvider` is in the public API of the
 // router: a host gives one token provider to `LiveModelLoader`, which passes
-// it to the Extras `MLXModelLoader` for each download, and to
+// it to the Extras `HubModelLoader` for each download, and to
 // `HuggingFaceMetadataSource`, which sends its token on each sizing GET. The
 // URL and the version requirement are the same as in FoundationModelsExtras.
 let huggingFacePackage = "swift-huggingface"
@@ -312,7 +312,7 @@ let package = Package(
         // `Router.resolve` makes two local generation models co-resident and the
         // program routes a quick prompt to `profile.flash` and a heavyweight prompt to
         // `profile.standard`. It loads each model through `LiveModelLoader(reporting:)`,
-        // which loads through the Extras `MLXModelLoader`, so it needs no Hub
+        // which loads through the Extras `HubModelLoader`, so it needs no Hub
         // client product of its own.
         .executableTarget(
             name: "MultiModelGeneration",

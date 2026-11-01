@@ -25,7 +25,8 @@ import Synchronization
 // live seams: ``MLXFoundationModelsContainer`` runs the real `LanguageModelSession`
 // (`FoundationModels`) pipeline over an `MLXLanguageModel` conformance, and
 // ``LoadedPooledEmbedding`` gives the router the embedding model that the
-// Extras `MLXModelLoader` loads.
+// Extras `HubModelLoader` loads: an MLX model, or a Core ML model that runs on
+// the Apple Neural Engine.
 //
 // **No `MLXLMCommon.ChatSession` and no hand-rolled generation loop.** The
 // session surface every generation call runs through is Apple's own
@@ -898,10 +899,11 @@ extension MLXFoundationModelsSessionBackend: SessionPromptCacheScoping {
 }
 
 /// The router container of an embedding model that the model loader of
-/// ``LiveModelLoader`` loaded, for example the Extras `MLXModelLoader`. The
-/// router makes no MLX embedder itself: this container only gives the
-/// router's ``LoadedEmbeddingContainer`` shape to the ``PooledEmbedding`` of
-/// that loader.
+/// ``LiveModelLoader`` loaded, for example the Extras `HubModelLoader`. The
+/// loader gives an MLX embedding model, or a Core ML embedding model that
+/// runs on the Apple Neural Engine. The router makes no embedder itself: this
+/// container only gives the router's ``LoadedEmbeddingContainer`` shape to the
+/// ``PooledEmbedding`` of that loader.
 struct LoadedPooledEmbedding: LoadedEmbeddingContainer {
     /// The embedding model that the model loader returned. The eviction
     /// gives it back to that loader.
@@ -957,8 +959,12 @@ public enum LiveModelLoaderError: Error, Equatable, LocalizedError {
 }
 
 /// The live ``ModelLoader``. Each model loads through the Extras
-/// `MLXModelLoader`, the one MLX loader of the family, which downloads the
-/// model when the Hugging Face cache does not hold it. The router wraps a
+/// `HubModelLoader`, which downloads the model when the Hugging Face cache
+/// does not hold it. It loads a generation model with `MLXModelLoader`, the
+/// one MLX loader of the family. For an embedding model it looks at the files
+/// of the repository: a repository with a `.mlpackage` folder and no
+/// `safetensors` file loads with the Core ML loader, on the Apple Neural
+/// Engine, and any other repository loads with MLX. The router wraps a
 /// generation model in a live generation container, and wraps an embedding
 /// model in an embedding container.
 ///
@@ -974,9 +980,9 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// protocol: ``load(_:)`` and ``load(key:progressHandler:)``.
     private let reporting: @Sendable (DownloadProgress) -> Void
 
-    /// The loader of each model: `MLXModelLoader` in a live loader. The pool
+    /// The loader of each model: `HubModelLoader` in a live loader. The pool
     /// evicts each container through it too. It is not private, thus a unit
-    /// test can read the cache folder of the `MLXModelLoader` that the public
+    /// test can read the cache folder of the `HubModelLoader` that the public
     /// init makes.
     let modelLoader: any PooledModelLoader
 
@@ -1029,7 +1035,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     which reads these variables.
     ///   - tokenProvider: The provider of the token of each download, a
     ///     `TokenProvider` of swift-huggingface, which the Extras
-    ///     `MLXModelLoader` gives to its Hub client. The default `.environment`
+    ///     `HubModelLoader` gives to the Hub client of each of its loaders. The default `.environment`
     ///     reads `HF_TOKEN` and `~/.cache/huggingface/token`. `.none` sends no
     ///     token.
     public init(
@@ -1038,7 +1044,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ) {
         self.init(
             reporting: reporting,
-            modelLoader: MLXModelLoader(
+            modelLoader: HubModelLoader(
                 cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
                 drafterRegistration: Self.drafterRegistration))
     }
@@ -1100,8 +1106,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     }
 
     /// Loads a generation model through the model loader: the Extras
-    /// `MLXModelLoader` in a live loader, which downloads the model when the
-    /// cache does not hold it. The weights load before the container is
+    /// `HubModelLoader` in a live loader, which loads it with MLX and
+    /// downloads the model when the cache does not hold it. The weights load before the container is
     /// returned. The live loader uses neither `slot` nor `context`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
@@ -1152,7 +1158,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     }
 
     /// Loads an embedding model through the model loader: the Extras
-    /// `MLXModelLoader` in a live loader, which downloads the model when the
+    /// `HubModelLoader` in a live loader, which loads it with MLX or with Core
+    /// ML, by the files of the repository, and downloads the model when the
     /// cache does not hold it. The live loader does not use `slot`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
@@ -1254,7 +1261,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     }
 
     /// Measures the bytes of the model of `key` for the Extras model pool,
-    /// through the model loader: the Extras `MLXModelLoader` in a live loader,
+    /// through the model loader: the Extras `HubModelLoader` in a live loader,
     /// which measures the weights of the model in its cache folder. A pool
     /// that the application gives this loader counts the result as the
     /// footprint of the model.

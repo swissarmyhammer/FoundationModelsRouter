@@ -6,7 +6,7 @@ import Testing
 
 /// Proves which Hugging Face cache folder a ``LiveModelLoader`` uses (task
 /// ^1056ce6). A host gives the folder, for example a folder in Application
-/// Support, and the Extras `MLXModelLoader` of the live loader downloads to
+/// Support, and the Extras `HubModelLoader` of the live loader downloads to
 /// that folder and reads the weights from it.
 ///
 /// No test downloads. Each test writes a fake snapshot into a temporary

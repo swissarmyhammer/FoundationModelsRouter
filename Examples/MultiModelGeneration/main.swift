@@ -162,7 +162,7 @@ let startedAt = Date()
 
 // In production you build a `Router` with a durable `recordingsDir` and a
 // `LiveModelLoader`. The live loader loads each model through the Extras
-// `MLXModelLoader`, which downloads a model from Hugging Face when the cache
+// `HubModelLoader`, which downloads a model from Hugging Face when the cache
 // does not hold it. The `reporting` callback of the loader receives only the
 // loads through the Extras pool protocol; a router load reports to the callback
 // of its resolve, so this example drops each value.

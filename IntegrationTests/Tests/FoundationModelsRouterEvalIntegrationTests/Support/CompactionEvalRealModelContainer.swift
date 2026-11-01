@@ -11,7 +11,7 @@ import MLXLMCommon
 /// ``MLXFoundationModelsContainer``.
 ///
 /// The load has three steps. It builds a ``LiveModelLoader``, which loads
-/// through the Extras `MLXModelLoader`. It loads the `.standard` slot at the tier's own context.
+/// through the Extras `HubModelLoader`. It loads the `.standard` slot at the tier's own context.
 /// Then it narrows the returned `any LoadedLLMContainer` to the concrete
 /// type. The tier gives the model, the context, the mode and the error as
 /// parameters. The continuity tier gives ``CompactionContinuityRealModel``.
