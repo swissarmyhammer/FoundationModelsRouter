@@ -697,6 +697,32 @@ public actor Router {
         "candidate \(ref.stringValue) was not sized"
     }
 
+    /// The native max context of one candidate, for the window search of a
+    /// generation model.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate to read.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    /// - Returns: The native max context, or why the candidate has none. A
+    ///   Core ML repo has none: it can be an embedder only.
+    static func nativeMaxContextResult(
+        for ref: ModelRef,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+    ) -> Result<Int, RepoMetadataError> {
+        let metadataResult = metadataByRef[ref]
+            ?? .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
+        return metadataResult.flatMap { metadata in
+            guard let native = metadata.nativeMaxContext else {
+                return .failure(
+                    .metadataUnavailable(
+                        "candidate \(ref.stringValue) is a Core ML repo with no config.json; it can be an embedder only"
+                    )
+                )
+            }
+            return .success(native)
+        }
+    }
+
     /// The raw footprint bytes for one candidate at a context, sized under
     /// every slot it is a candidate for, with the largest figure kept.
     ///
@@ -843,9 +869,7 @@ public actor Router {
                     )
                 },
                 nativeMaxContext: { ref in
-                    (metadataByRef[ref]
-                        ?? .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref))))
-                        .map(\.nativeMaxContext)
+                    Self.nativeMaxContextResult(for: ref, metadataByRef: metadataByRef)
                 }
             )
         } catch let failure as ResolutionFailure {

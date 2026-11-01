@@ -68,6 +68,16 @@ struct Footprint: Sendable, Equatable {
     }
 
     /// A footprint for an embedder, which has no KV cache. Its memory is its weights alone.
+    ///
+    /// A Core ML model that runs on the Apple Neural Engine (ANE) is counted in
+    /// full against the memory budget. The ANE has no memory of its own. On
+    /// Apple silicon the CPU, the GPU and the ANE share one pool of unified
+    /// memory. The compiled model weights are mapped into that same pool, so an
+    /// ANE model takes bytes that an MLX model could use. The count is
+    /// `weightBytes`, the size of the Core ML bundle, with no discount for the
+    /// ANE. A discount would let joint fit choose a set of models that does not
+    /// fit in memory. The cost of this rule is that fit can be too strict, but
+    /// the system never commits more than the host has.
     static func embedder(weightBytes: Int64) -> Footprint {
         Footprint(weightBytes: weightBytes, layers: 0, kvHeads: 0, headDim: 0)
     }

@@ -39,7 +39,11 @@ enum RepoMetadataError: Error, Equatable {
 ///
 /// The GQA and head-dim fallbacks are not applied here; ``Footprint`` applies them.
 struct RepoMetadata: Sendable, Equatable, Codable {
-    /// Resident weight bytes — `Σ size(*.safetensors)`.
+    /// Resident weight bytes.
+    ///
+    /// For an MLX repo this is `Σ size(*.safetensors)` at the repo root. For a
+    /// Core ML repo it is the size of the largest `.mlpackage` or `.mlmodelc`
+    /// bundle; see ``init(raw:repo:)``.
     let weightBytes: Int64
 
     /// Transformer layer count (`num_hidden_layers`).
@@ -69,12 +73,16 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// The value is the raw `config.json` figure. No floor, cap or default is
     /// applied. ``init(raw:repo:)`` fails when no field is present or when the
     /// value is not positive.
-    let nativeMaxContext: Int
+    ///
+    /// The value is `nil` for a Core ML repo. Such a repo has no `config.json`
+    /// to read, and it can only be an embedder.
+    let nativeMaxContext: Int?
 
     /// Creates parsed metadata from already-resolved values.
     ///
     /// `numFullAttentionLayers` defaults to `numHiddenLayers`. `nativeMaxContext`
-    /// has no default; every caller passes the figure it read.
+    /// has no default; every caller passes the figure it read, or `nil` for a
+    /// Core ML repo.
     init(
         weightBytes: Int64,
         numHiddenLayers: Int,
@@ -83,7 +91,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         headDim: Int?,
         hiddenSize: Int?,
         numFullAttentionLayers: Int? = nil,
-        nativeMaxContext: Int
+        nativeMaxContext: Int?
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -97,14 +105,29 @@ struct RepoMetadata: Sendable, Equatable, Codable {
 
     /// Parses sizing metadata from raw fetched artifacts.
     ///
+    /// A repo with `*.safetensors` files at its root is an MLX repo. Its weight
+    /// bytes are the sum of those files, and `config.json` must give the
+    /// attention architecture. A repo with no such file but with a Core ML
+    /// bundle is a Core ML repo. It is sized by the largest bundle and needs no
+    /// `config.json`: it has no KV cache, so only its weight bytes matter.
+    ///
     /// - Parameters:
-    ///   - raw: The fetched `config.json` and tree listing.
+    ///   - raw: The fetched `config.json` and tree listing. The listing must
+    ///     be recursive, so that the files inside a bundle directory appear.
     ///   - repo: The Hugging Face repository id, e.g. `"org/repo"`. The error
     ///     for a missing or non-positive context-length field names it.
-    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when `config.json`
-    ///   is absent, does not parse, lacks required fields, has no positive
-    ///   context-length field, or the tree has no `*.safetensors`.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when an MLX
+    ///   repo has no `config.json`, a `config.json` that does not parse, lacks
+    ///   required fields or has no positive context-length field, or when the
+    ///   tree has neither `*.safetensors` nor a Core ML bundle.
     init(raw: RawRepoMetadata, repo: String) throws {
+        let entries = (try? JSONDecoder().decode([TreeEntry].self, from: raw.treeJSON)) ?? []
+        let safetensorsBytes = Self.safetensorsBytes(entries: entries)
+        let coreMLBytes = safetensorsBytes > 0 ? 0 : Self.coreMLBundleBytes(entries: entries)
+        if coreMLBytes > 0 {
+            self.init(coreMLWeightBytes: coreMLBytes)
+            return
+        }
         guard let configJSON = raw.configJSON else {
             throw RepoMetadataError.metadataUnavailable("config.json is not present in the repo")
         }
@@ -114,7 +137,11 @@ struct RepoMetadata: Sendable, Equatable, Codable {
                 "config.json has neither head_dim nor hidden_size to size a head"
             )
         }
-        let weightBytes = try Self.residentWeightBytes(treeJSON: raw.treeJSON)
+        guard safetensorsBytes > 0 else {
+            throw RepoMetadataError.metadataUnavailable(
+                "no *.safetensors weight files or Core ML bundles in the repo tree"
+            )
+        }
         // Hybrid linear/full-attention models (e.g. Qwen3.5's linear_attention
         // layers, a fixed-size recurrent state that does not grow with context)
         // declare layer_types; only its "full_attention" entries materialize a
@@ -124,7 +151,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             ?? sizing.numHiddenLayers
         let nativeMaxContext = try Self.nativeMaxContext(from: sizing, repo: repo)
         self.init(
-            weightBytes: weightBytes,
+            weightBytes: safetensorsBytes,
             numHiddenLayers: sizing.numHiddenLayers,
             numAttentionHeads: sizing.numAttentionHeads,
             numKeyValueHeads: sizing.numKeyValueHeads,
@@ -208,22 +235,80 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         )
     }
 
-    /// Sums the sizes of every `*.safetensors` file in a tree listing. Prefers `lfs.size` over `size`.
+    /// Creates the metadata of a Core ML repo: an embedder with no KV cache.
     ///
-    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the sum is not positive.
-    private static func residentWeightBytes(treeJSON: Data) throws -> Int64 {
-        let entries = (try? JSONDecoder().decode([TreeEntry].self, from: treeJSON)) ?? []
-        let total = entries
-            .filter { $0.path.hasSuffix(Self.safetensorsSuffix) }
-            .reduce(Int64(0)) { $0 + ($1.lfs?.size ?? $1.size ?? 0) }
-        guard total > 0 else {
-            throw RepoMetadataError.metadataUnavailable("no *.safetensors weight files in the repo tree")
+    /// Every architecture field is zero or `nil`, so ``footprint`` has no KV
+    /// term, and ``nativeMaxContext`` is `nil`.
+    ///
+    /// - Parameter coreMLWeightBytes: The size of the Core ML bundle.
+    private init(coreMLWeightBytes: Int64) {
+        self.init(
+            weightBytes: coreMLWeightBytes,
+            numHiddenLayers: 0,
+            numAttentionHeads: 0,
+            numKeyValueHeads: nil,
+            headDim: 0,
+            hiddenSize: nil,
+            nativeMaxContext: nil
+        )
+    }
+
+    /// Sums the sizes of every `*.safetensors` file at the root of a tree
+    /// listing. Prefers `lfs.size` over `size`.
+    ///
+    /// - Parameter entries: The entries of the recursive tree listing.
+    /// - Returns: The sum, or `0` when the root has no such file.
+    private static func safetensorsBytes(entries: [TreeEntry]) -> Int64 {
+        entries
+            .filter { $0.isFile && !$0.path.contains(pathSeparator) && $0.path.hasSuffix(safetensorsSuffix) }
+            .reduce(Int64(0)) { $0 + $1.byteCount }
+    }
+
+    /// The size of the largest Core ML bundle in a tree listing.
+    ///
+    /// A bundle is a directory whose name ends in `.mlpackage` or `.mlmodelc`.
+    /// Its size is the sum of the files inside it. The result is the largest
+    /// bundle, not the sum of all bundles, because the loader opens one bundle
+    /// to make one model. A repo often holds the same model in two forms (a
+    /// `.mlpackage` and its compiled `.mlmodelc`) or in several quantizations.
+    /// A sum would count one model more than once. The largest bundle is the
+    /// safe bound for the one that loads.
+    ///
+    /// - Parameter entries: The entries of the recursive tree listing.
+    /// - Returns: The bytes of the largest bundle, or `0` when there is none.
+    private static func coreMLBundleBytes(entries: [TreeEntry]) -> Int64 {
+        var bytesByBundle: [String: Int64] = [:]
+        for entry in entries where entry.isFile {
+            if let bundle = coreMLBundlePath(of: entry.path) {
+                bytesByBundle[bundle, default: 0] += entry.byteCount
+            }
         }
-        return total
+        return bytesByBundle.values.max() ?? 0
+    }
+
+    /// The path of the Core ML bundle that contains a file.
+    ///
+    /// - Parameter path: A file path from the tree listing.
+    /// - Returns: The path up to and including the first component that ends
+    ///   in a bundle suffix, or `nil` when the file is in no bundle.
+    private static func coreMLBundlePath(of path: String) -> String? {
+        let components = path.split(separator: pathSeparator, omittingEmptySubsequences: true)
+        let bundleIndex = components.firstIndex { component in
+            coreMLBundleSuffixes.contains { component.hasSuffix($0) }
+        }
+        guard let bundleIndex, bundleIndex < components.count - 1 else { return nil }
+        return components[...bundleIndex].joined(separator: String(pathSeparator))
     }
 
     /// The file extension that marks a weight shard in the tree listing.
     private static let safetensorsSuffix = ".safetensors"
+
+    /// The directory suffixes that mark a Core ML bundle: the source package
+    /// and the compiled model.
+    private static let coreMLBundleSuffixes = [".mlpackage", ".mlmodelc"]
+
+    /// The separator between the components of a tree path.
+    private static let pathSeparator: Character = "/"
 
     /// The `layer_types` entry that marks a layer as full attention.
     private static let fullAttentionLayerType = "full_attention"
@@ -337,9 +422,16 @@ struct RepoMetadata: Sendable, Equatable, Codable {
 
     /// One entry of the repo tree listing. `lfs.size` is the real size of an LFS object.
     private struct TreeEntry: Decodable {
+        let type: String?
         let path: String
         let size: Int64?
         let lfs: LFS?
+
+        /// Whether the entry is a file. A directory entry is not; its size is `0`.
+        var isFile: Bool { type != "directory" }
+
+        /// The real size of the file: `lfs.size` when present, else `size`, else `0`.
+        var byteCount: Int64 { lfs?.size ?? size ?? 0 }
 
         struct LFS: Decodable {
             let size: Int64?
@@ -579,13 +671,23 @@ public struct HuggingFaceMetadataSource: MetadataSource {
     public func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
         let rev = revision ?? Self.defaultRevision
         let configURL = endpoint.appendingPathComponent("\(repo)/resolve/\(rev)/config.json")
-        let treeURL = endpoint
-            .appendingPathComponent("api/models/\(repo)/tree/\(rev)")
+        let treeURL = Self.recursiveTreeURL(endpoint: endpoint, repo: repo, revision: rev)
         let token = try await tokenProvider.getToken()
 
         let configJSON = try await optionalData(for: Self.request(for: configURL, bearerToken: token))
         let (treeJSON, _) = try await session.data(for: Self.request(for: treeURL, bearerToken: token))
         return RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
+    }
+
+    /// The URL of the recursive tree listing for a repo at a revision.
+    ///
+    /// The listing is recursive so that the files inside a Core ML bundle
+    /// directory appear. A flat listing shows only the directory, with size `0`.
+    private static func recursiveTreeURL(endpoint: URL, repo: String, revision: String) -> URL {
+        let base = endpoint.appendingPathComponent("api/models/\(repo)/tree/\(revision)")
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return base }
+        components.queryItems = [URLQueryItem(name: "recursive", value: "true")]
+        return components.url ?? base
     }
 
     /// A GET of `url` that carries `token` in its `Authorization` header.

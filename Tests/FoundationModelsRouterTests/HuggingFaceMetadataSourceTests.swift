@@ -118,7 +118,7 @@ struct HuggingFaceMetadataSourceTests {
 
         let urls = recorder.urls.map(\.absoluteString)
         #expect(urls.contains("https://hf.example.test/org/model/resolve/main/config.json"))
-        #expect(urls.contains("https://hf.example.test/api/models/org/model/tree/main"))
+        #expect(urls.contains("https://hf.example.test/api/models/org/model/tree/main?recursive=true"))
     }
 
     @Test("requested URLs pin the given revision instead of defaulting to main")
@@ -133,7 +133,7 @@ struct HuggingFaceMetadataSourceTests {
 
         let urls = recorder.urls.map(\.absoluteString)
         #expect(urls.contains("https://hf.example.test/org/model/resolve/v2/config.json"))
-        #expect(urls.contains("https://hf.example.test/api/models/org/model/tree/v2"))
+        #expect(urls.contains("https://hf.example.test/api/models/org/model/tree/v2?recursive=true"))
     }
 
     @Test("a non-404 HTTP status for config.json is returned as data, not swallowed as absent")

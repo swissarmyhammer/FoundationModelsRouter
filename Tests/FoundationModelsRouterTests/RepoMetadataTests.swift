@@ -795,6 +795,121 @@ struct RepoMetadataTests {
         #expect(await source.fetchCount == 1)
     }
 
+    // MARK: - CoreML repos
+
+    /// The tree listing of a CoreML embedding repo, in the shape the Hub returns
+    /// for a recursive listing: directory entries with size 0, then the files.
+    /// The repo has no `config.json` and no `*.safetensors`.
+    /// Bundle bytes: 625_086 (graph) + 308_767_296 (weights) + 617 (manifest).
+    private static let coreMLTreeJSON = Data("""
+        [
+            {"type": "directory", "path": "embed-8bit.mlpackage", "size": 0},
+            {"type": "directory", "path": "embed-8bit.mlpackage/Data", "size": 0},
+            {"type": "file", "path": "README.md", "size": 11164},
+            {"type": "file", "path": "tokenizer.json", "size": 33385008, "lfs": {"size": 33385008}},
+            {"type": "file", "path": "embed-8bit.mlpackage/Manifest.json", "size": 617},
+            {"type": "file", "path": "embed-8bit.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+             "size": 625086, "lfs": {"size": 625086}},
+            {"type": "file", "path": "embed-8bit.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+             "size": 134, "lfs": {"size": 308767296}}
+        ]
+        """.utf8)
+
+    /// The sum of the file sizes in the one bundle of ``coreMLTreeJSON``.
+    private static let coreMLBundleBytes: Int64 = 309_392_999
+
+    @Test("a CoreML repo with no config.json is sized by the bytes of its .mlpackage files")
+    func coreMLRepoWeightBytes() throws {
+        let raw = RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw, repo: "org/coreml-embedder")
+
+        #expect(metadata.weightBytes == Self.coreMLBundleBytes)
+    }
+
+    @Test("a CoreML repo has no KV cache, so its footprint is its weights at every context")
+    func coreMLRepoFootprintIsWeightsOnly() throws {
+        let raw = RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw, repo: "org/coreml-embedder")
+
+        #expect(metadata.footprint.footprint(context: 8192) == Self.coreMLBundleBytes)
+    }
+
+    @Test("a CoreML repo has no native max context")
+    func coreMLRepoHasNoNativeMaxContext() throws {
+        let raw = RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw, repo: "org/coreml-embedder")
+
+        #expect(metadata.nativeMaxContext == nil)
+    }
+
+    @Test("a compiled .mlmodelc bundle is sized like a .mlpackage bundle")
+    func compiledCoreMLBundleIsSized() throws {
+        let tree = Data("""
+            [
+                {"type": "file", "path": "embed.mlmodelc/weights/weight.bin", "size": 134, "lfs": {"size": 4000}},
+                {"type": "file", "path": "embed.mlmodelc/model.mil", "size": 500}
+            ]
+            """.utf8)
+
+        let metadata = try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
+
+        #expect(metadata.weightBytes == 4500)
+    }
+
+    @Test("a repo with two bundles of one model is sized by the larger bundle, not the sum")
+    func twoCoreMLBundlesCountTheLargerOne() throws {
+        let tree = Data("""
+            [
+                {"type": "file", "path": "embed-8bit.mlpackage/weights/weight.bin", "size": 3000},
+                {"type": "file", "path": "embed-fp16.mlpackage/weights/weight.bin", "size": 6000}
+            ]
+            """.utf8)
+
+        let metadata = try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
+
+        #expect(metadata.weightBytes == 6000)
+    }
+
+    @Test("a repo with safetensors weights does not add a CoreML bundle to them")
+    func safetensorsRepoIgnoresCoreMLBundle() throws {
+        let tree = Data("""
+            [
+                {"type": "file", "path": "model.safetensors", "size": 1000},
+                {"type": "file", "path": "extra.mlpackage/weights/weight.bin", "size": 9000}
+            ]
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
+
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
+
+        #expect(metadata.weightBytes == 1000)
+    }
+
+    @Test("a repo with no weight files of any kind cannot be sized")
+    func repoWithNoWeightsIsAnError() {
+        let tree = Data("""
+            [{"type": "file", "path": "README.md", "size": 10}]
+            """.utf8)
+
+        #expect(throws: RepoMetadataError.self) {
+            try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
+        }
+    }
+
+    @Test("a CoreML repo cannot be a generation model: the router gives it no native max context")
+    func coreMLRepoHasNoGenerationWindow() throws {
+        let ref: ModelRef = "org/coreml-embedder"
+        let raw = RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/coreml-embedder")
+
+        let window = Router.nativeMaxContextResult(for: ref, metadataByRef: [ref: .success(metadata)])
+
+        #expect(throws: RepoMetadataError.self) { try window.get() }
+    }
+
     /// Builds a reader over a fresh temp cache dir, returning the dir for cleanup
     /// and the stub source for fetch-count assertions.
     private static func makeReader(
