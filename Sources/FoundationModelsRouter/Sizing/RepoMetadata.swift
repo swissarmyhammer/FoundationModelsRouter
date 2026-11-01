@@ -117,11 +117,12 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///   - repo: The Hugging Face repository id, e.g. `"org/repo"`. The error
     ///     for a missing or non-positive context-length field names it.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when an MLX
+    ///   tree listing does not decode, or when an MLX
     ///   repo has no `config.json`, a `config.json` that does not parse, lacks
     ///   required fields or has no positive context-length field, or when the
     ///   tree has neither `*.safetensors` nor a Core ML bundle.
     init(raw: RawRepoMetadata, repo: String) throws {
-        let entries = (try? JSONDecoder().decode([TreeEntry].self, from: raw.treeJSON)) ?? []
+        let entries = try Self.decodeTreeEntries(raw.treeJSON, repo: repo)
         let safetensorsBytes = Self.safetensorsBytes(entries: entries)
         let coreMLBytes = safetensorsBytes > 0 ? 0 : Self.coreMLBundleBytes(entries: entries)
         if coreMLBytes > 0 {
@@ -178,6 +179,24 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         try nativeMaxContext(from: sizingSource(configJSON: configJSON), repo: repo)
     }
 
+    /// Decodes the tree listing of a repo.
+    ///
+    /// - Parameters:
+    ///   - treeJSON: The bytes of the recursive tree listing.
+    ///   - repo: The repository id the error names.
+    /// - Returns: The entries of the listing.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the bytes
+    ///   do not decode. The message names the decode failure.
+    private static func decodeTreeEntries(_ treeJSON: Data, repo: String) throws -> [TreeEntry] {
+        do {
+            return try JSONDecoder().decode([TreeEntry].self, from: treeJSON)
+        } catch {
+            throw RepoMetadataError.metadataUnavailable(
+                "the tree listing for \(repo) could not be decoded: \(error)"
+            )
+        }
+    }
+
     /// Decodes `config.json` and returns its sizing source.
     ///
     /// - Parameter configJSON: The bytes of `config.json`.
@@ -186,7 +205,10 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///   do not parse, or when neither level has `num_hidden_layers` and
     ///   `num_attention_heads`.
     private static func sizingSource(configJSON: Data) throws -> ResolvedSizing {
-        guard let config = try? JSONDecoder().decode(RepoConfig.self, from: configJSON) else {
+        let config: RepoConfig
+        do {
+            config = try JSONDecoder().decode(RepoConfig.self, from: configJSON)
+        } catch {
             throw RepoMetadataError.metadataUnavailable("config.json could not be parsed")
         }
         guard let sizing = config.sizingSource else {

@@ -894,8 +894,28 @@ struct RepoMetadataTests {
             [{"type": "file", "path": "README.md", "size": 10}]
             """.utf8)
 
-        #expect(throws: RepoMetadataError.self) {
-            try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
+        let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "no *.safetensors weight files or Core ML bundles in the repo tree"
+            )
+        ) {
+            try RepoMetadata(raw: raw, repo: "org/c")
+        }
+    }
+
+    @Test("a tree listing that does not decode is reported as a decode failure, not as a repo with no weights")
+    func malformedTreeListingIsADecodeError() {
+        let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Data("not json".utf8))
+
+        do {
+            _ = try RepoMetadata(raw: raw, repo: "org/c")
+            Issue.record("a malformed tree listing must throw")
+        } catch let RepoMetadataError.metadataUnavailable(message) {
+            #expect(message.hasPrefix("the tree listing for org/c could not be decoded"))
+        } catch {
+            Issue.record("unexpected error \(error)")
         }
     }
 
@@ -907,7 +927,11 @@ struct RepoMetadataTests {
 
         let window = Router.nativeMaxContextResult(for: ref, metadataByRef: [ref: .success(metadata)])
 
-        #expect(throws: RepoMetadataError.self) { try window.get() }
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "candidate org/coreml-embedder is a Core ML repo with no config.json; it can be an embedder only"
+            )
+        ) { try window.get() }
     }
 
     /// Builds a reader over a fresh temp cache dir, returning the dir for cleanup
