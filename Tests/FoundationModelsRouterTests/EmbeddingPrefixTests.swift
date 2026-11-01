@@ -6,8 +6,8 @@ import Testing
 /// Exercises the embedding prefix table and the query and document embed
 /// calls of ``RoutedEmbedder``.
 ///
-/// Each test builds a ``RoutedEmbedder`` over a ``RecordingEmbeddingContainer``
-/// and reads the texts that the container received. No network and no GPU.
+/// Each test builds a ``RoutedEmbedder`` over a ``StubEmbeddingContainer``
+/// with an ``EmbedTextLog`` and reads the texts that the container received. No network and no GPU.
 @Suite("Embedding prefixes")
 struct EmbeddingPrefixTests {
     /// The repo that the prefix table knows.
@@ -16,17 +16,18 @@ struct EmbeddingPrefixTests {
     /// A repo that the prefix table does not know.
     private static let unknownRepo: ModelRef = "org/emb-a"
 
-    /// Builds an embedder over a fresh recording container.
+    /// Builds an embedder over a stub container that records into a fresh log.
     private static func makeEmbedder(
         chosen: ModelRef
-    ) -> (embedder: RoutedEmbedder, container: RecordingEmbeddingContainer) {
-        let container = RecordingEmbeddingContainer()
+    ) -> (embedder: RoutedEmbedder, container: EmbedTextLog) {
+        let log = EmbedTextLog()
+        let container = StubEmbeddingContainer(dimension: 2, log: log)
         let embedder = HandBuiltProfileFixtures.makeEmbedder(
             chosen: chosen,
             container: container,
             routerId: ULID()
         )
-        return (embedder, container)
+        return (embedder, log)
     }
 
     @Test("embed(queries:) puts the query prefix in front of each text")

@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsHooks
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 import Tracing
 
@@ -26,12 +27,39 @@ struct StubMetadataSource: MetadataSource {
     func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
 }
 
+/// A record of the texts that ``StubEmbeddingContainer`` received, so a test
+/// can read exactly what the router sent to the container.
+///
+/// The ``Mutex`` guards the one mutable value. This makes the log safe when
+/// the router calls the container from other tasks.
+final class EmbedTextLog: Sendable {
+    /// The texts of each call, in call order.
+    private let calls = Mutex<[[String]]>([])
+
+    /// The texts of each ``StubEmbeddingContainer/embed(texts:)`` call, in call order.
+    var received: [[String]] {
+        calls.withLock { $0 }
+    }
+
+    /// Adds the texts of one call to the log.
+    ///
+    /// - Parameter texts: The strings the router sent to the container.
+    func record(_ texts: [String]) {
+        calls.withLock { $0.append(texts) }
+    }
+}
+
 /// A ``LoadedEmbeddingContainer`` stub embedding every text as a constant
 /// vector of the configured dimension.
+///
+/// When a test passes a ``log``, the stub records the texts of each call there.
 struct StubEmbeddingContainer: LoadedEmbeddingContainer {
     let dimension: Int
+    var log: EmbedTextLog?
+
     func embed(texts: [String]) async throws -> [[Float]] {
-        texts.map { _ in [Float](repeating: 0.5, count: dimension) }
+        log?.record(texts)
+        return texts.map { _ in [Float](repeating: 0.5, count: dimension) }
     }
 }
 
