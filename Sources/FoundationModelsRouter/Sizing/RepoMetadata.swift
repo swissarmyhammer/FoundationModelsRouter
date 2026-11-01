@@ -188,12 +188,29 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the bytes
     ///   do not decode. The message names the decode failure.
     private static func decodeTreeEntries(_ treeJSON: Data, repo: String) throws -> [TreeEntry] {
+        try decode([TreeEntry].self, from: treeJSON) { error in
+            "the tree listing for \(repo) could not be decoded: \(error)"
+        }
+    }
+
+    /// Decodes JSON bytes and wraps any decode failure as a metadata error.
+    ///
+    /// - Parameters:
+    ///   - type: The type to decode.
+    ///   - data: The JSON bytes.
+    ///   - failureMessage: Builds the error message from the decode error.
+    /// - Returns: The decoded value.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the bytes
+    ///   do not decode.
+    private static func decode<T: Decodable>(
+        _ type: T.Type,
+        from data: Data,
+        failureMessage: (Error) -> String
+    ) throws -> T {
         do {
-            return try JSONDecoder().decode([TreeEntry].self, from: treeJSON)
+            return try JSONDecoder().decode(type, from: data)
         } catch {
-            throw RepoMetadataError.metadataUnavailable(
-                "the tree listing for \(repo) could not be decoded: \(error)"
-            )
+            throw RepoMetadataError.metadataUnavailable(failureMessage(error))
         }
     }
 
@@ -205,11 +222,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///   do not parse, or when neither level has `num_hidden_layers` and
     ///   `num_attention_heads`.
     private static func sizingSource(configJSON: Data) throws -> ResolvedSizing {
-        let config: RepoConfig
-        do {
-            config = try JSONDecoder().decode(RepoConfig.self, from: configJSON)
-        } catch {
-            throw RepoMetadataError.metadataUnavailable("config.json could not be parsed")
+        let config = try decode(RepoConfig.self, from: configJSON) { _ in
+            "config.json could not be parsed"
         }
         guard let sizing = config.sizingSource else {
             throw RepoMetadataError.metadataUnavailable(
