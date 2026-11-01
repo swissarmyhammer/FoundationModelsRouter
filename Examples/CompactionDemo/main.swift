@@ -192,13 +192,13 @@ let router = Router(
 // `standard` holds the conversation; `flash` writes the compaction's summary
 // (see `demoSummarizerModel`); `embedding` is unused by this demo, but
 // `Router.resolve` co-resides all three slots from one profile, so it is
-// the same small placeholder the repo's other demos use.
+// the same ANE embedding model the repo's other demos use.
 let demoProfile = ProfileDefinition(
     name: "compaction-demo",
     description: "One small resident model whose transcript is compacted in place once scripted messages cross the trigger.",
     standard: [demoModel],
     flash: [demoSummarizerModel],
-    embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"],
+    embedding: ["erjigit17/embeddinggemma-300m-ane-coreml"],
     context: demoContextTokens
 )
 

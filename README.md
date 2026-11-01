@@ -24,7 +24,7 @@ let coding = ProfileDefinition(
     description: "Local coding assistant.",
     standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
     flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-    embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+    embedding: ["erjigit17/embeddinggemma-300m-ane-coreml"]
 )
 
 let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
@@ -35,6 +35,8 @@ let answer = try await session.respond(
 )
 print(answer)
 ```
+
+The embedding model runs on the Apple Neural Engine.
 
 ## Install
 

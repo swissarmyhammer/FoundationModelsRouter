@@ -194,7 +194,7 @@ let demo = ProfileDefinition(
     description: "Flash triages, standard answers — two co-resident models from one resolve.",
     standard: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
     flash: ["mlx-community/SmolLM-135M-Instruct-4bit"],
-    embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"]
+    embedding: ["erjigit17/embeddinggemma-300m-ane-coreml"]
 )
 
 // MARK: - Resolve once, observing progress
