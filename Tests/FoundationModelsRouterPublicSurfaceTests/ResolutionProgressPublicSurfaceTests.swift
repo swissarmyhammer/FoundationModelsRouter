@@ -169,7 +169,7 @@ struct ResolutionProgressPublicSurfaceTests {
                 return calls.map(\.toolName).joined(separator: " ")
             case .toolOutput(let output):
                 return text(of: output.segments)
-            case .reasoning:
+            case .reasoning, .data:
                 return ""
             @unknown default:
                 return ""
