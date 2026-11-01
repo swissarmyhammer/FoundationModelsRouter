@@ -21,9 +21,6 @@ struct LiveModelLoaderCoreMLTests {
     /// The commit of the fake snapshot. The `main` ref file names it.
     private static let commit = "0123456789abcdef0123456789abcdef01234567"
 
-    /// The ref that the loader reads when the model names no revision.
-    private static let mainRef = "main"
-
     /// The bytes of the weight file of the fake package.
     private static let packageWeightBytes = 2_048
 
@@ -77,37 +74,14 @@ struct LiveModelLoaderCoreMLTests {
         #expect(bytes == Int64(Self.safetensorsBytes))
     }
 
-    // MARK: - Fixtures
-
-    /// Makes a temporary Hugging Face cache folder that holds a fake snapshot
-    /// of ``ref``: a `main` ref file that names ``commit``, and the given
-    /// files in the snapshot of that commit.
+    /// Makes a temporary cache folder that holds a fake snapshot of ``ref``
+    /// with the given files.
     ///
     /// - Parameter files: The path of each file in the snapshot, relative to
     ///   the snapshot, and its bytes.
     /// - Returns: The cache folder. The caller removes it.
-    /// - Throws: The error of a file write, after the removal of the folder.
+    /// - Throws: The error of a file write.
     private static func makeCache(files: [String: Int]) throws -> URL {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let repo = folder.appendingPathComponent(
-            "models--" + ref.repo.replacingOccurrences(of: "/", with: "--"), isDirectory: true)
-        let refs = repo.appendingPathComponent("refs", isDirectory: true)
-        let snapshot = repo.appendingPathComponent("snapshots", isDirectory: true)
-            .appendingPathComponent(commit, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: refs, withIntermediateDirectories: true)
-            try Data(commit.utf8).write(to: refs.appendingPathComponent(mainRef, isDirectory: false))
-            for (path, bytes) in files {
-                let file = snapshot.appendingPathComponent(path, isDirectory: false)
-                try FileManager.default.createDirectory(
-                    at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data(repeating: 0, count: bytes).write(to: file)
-            }
-        } catch {
-            try? FileManager.default.removeItem(at: folder)
-            throw error
-        }
-        return folder
+        try FakeHubCache.make(ref: ref, commit: commit, files: files)
     }
 }

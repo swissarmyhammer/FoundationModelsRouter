@@ -52,9 +52,9 @@ struct LiveModelLoaderCacheFolderTests {
 
     @Test("a live loader with a cache folder measures the weights in that folder, also when HF_HOME names another")
     func cacheFolderHoldsTheWeights() async throws {
-        let given = try Self.makeCacheWithSnapshot(weightBytes: Self.givenFolderWeightBytes)
+        let given = try Self.makeCache(weightBytes: Self.givenFolderWeightBytes)
         defer { try? FileManager.default.removeItem(at: given) }
-        let other = try Self.makeCacheWithSnapshot(weightBytes: Self.environmentFolderWeightBytes)
+        let other = try Self.makeCache(weightBytes: Self.environmentFolderWeightBytes)
         defer { try? FileManager.default.removeItem(at: other) }
         let loader = Self.withCacheVariables(naming: other) { LiveModelLoader(cacheDirectory: given) }
 
@@ -65,7 +65,7 @@ struct LiveModelLoaderCacheFolderTests {
 
     @Test("a live loader with no cache folder does not read a snapshot in another folder")
     func noCacheFolderUsesTheDefaultCache() async throws {
-        let folder = try Self.makeCacheWithSnapshot(weightBytes: Self.givenFolderWeightBytes)
+        let folder = try Self.makeCache(weightBytes: Self.givenFolderWeightBytes)
         defer { try? FileManager.default.removeItem(at: folder) }
         let loader = LiveModelLoader()
 
@@ -96,31 +96,13 @@ struct LiveModelLoaderCacheFolderTests {
         return body()
     }
 
-    /// Makes a temporary Hugging Face cache folder that holds a fake snapshot
-    /// of ``ref``: a `main` ref file that names ``commit``, and one weight
-    /// file of `weightBytes` in the snapshot of that commit.
+    /// Makes a temporary cache folder that holds a fake snapshot of ``ref``
+    /// with one weight file of `weightBytes`.
     ///
     /// - Parameter weightBytes: The bytes of the weight file.
     /// - Returns: The cache folder. The caller removes it.
-    /// - Throws: The error of a file write, after the removal of the folder.
-    private static func makeCacheWithSnapshot(weightBytes: Int) throws -> URL {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let repo = folder.appendingPathComponent(
-            "models--" + ref.repo.replacingOccurrences(of: "/", with: "--"), isDirectory: true)
-        let refs = repo.appendingPathComponent("refs", isDirectory: true)
-        let snapshot = repo.appendingPathComponent("snapshots", isDirectory: true)
-            .appendingPathComponent(commit, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: refs, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
-            try Data(commit.utf8).write(to: refs.appendingPathComponent(mainRef, isDirectory: false))
-            try Data(repeating: 0, count: weightBytes)
-                .write(to: snapshot.appendingPathComponent(weightFileName, isDirectory: false))
-        } catch {
-            try? FileManager.default.removeItem(at: folder)
-            throw error
-        }
-        return folder
+    /// - Throws: The error of a file write.
+    private static func makeCache(weightBytes: Int) throws -> URL {
+        try FakeHubCache.make(ref: ref, commit: commit, files: [weightFileName: weightBytes])
     }
 }
