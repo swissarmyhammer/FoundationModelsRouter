@@ -53,6 +53,7 @@ dependencies: [
 
 - [Installation details](docs/installation.md): the macOS floor, the model cache folder, the Hugging Face token.
 - [Models, residency and tools](docs/residency.md): why `standard` and `flash` are two different models, the process-wide model pool, tool hosting.
+- [ANE embedding models](docs/ane-embedding.md): the default CoreML embedding model, and how the router will detect it.
 - [Tests](docs/testing.md): hermetic and real-model tests, and where the worked examples are.
 - [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration): a runnable demo with two models.
 
