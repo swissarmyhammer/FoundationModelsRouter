@@ -16,12 +16,15 @@ struct EmbeddingPrefixTests {
     /// A repo that the prefix table does not know.
     private static let unknownRepo: ModelRef = "org/emb-a"
 
+    /// The length of each vector that the stub container makes.
+    private static let stubDimension = 2
+
     /// Builds an embedder over a stub container that records into a fresh log.
     private static func makeEmbedder(
         chosen: ModelRef
-    ) -> (embedder: RoutedEmbedder, container: EmbedTextLog) {
+    ) -> (embedder: RoutedEmbedder, log: EmbedTextLog) {
         let log = EmbedTextLog()
-        let container = StubEmbeddingContainer(dimension: 2, log: log)
+        let container = StubEmbeddingContainer(dimension: stubDimension, log: log)
         let embedder = HandBuiltProfileFixtures.makeEmbedder(
             chosen: chosen,
             container: container,
@@ -32,40 +35,40 @@ struct EmbeddingPrefixTests {
 
     @Test("embed(queries:) puts the query prefix in front of each text")
     func queriesGetQueryPrefix() async throws {
-        let (embedder, container) = Self.makeEmbedder(chosen: Self.knownRepo)
+        let (embedder, log) = Self.makeEmbedder(chosen: Self.knownRepo)
         _ = try await embedder.embed(queries: ["cats", "dogs"])
         #expect(
-            container.received == [
+            log.received == [
                 ["task: search result | query: cats", "task: search result | query: dogs"]
             ])
     }
 
     @Test("embed(documents:) puts the document prefix in front of each text")
     func documentsGetDocumentPrefix() async throws {
-        let (embedder, container) = Self.makeEmbedder(chosen: Self.knownRepo)
+        let (embedder, log) = Self.makeEmbedder(chosen: Self.knownRepo)
         _ = try await embedder.embed(documents: ["cats", "dogs"])
-        #expect(container.received == [["title: none | text: cats", "title: none | text: dogs"]])
+        #expect(log.received == [["title: none | text: cats", "title: none | text: dogs"]])
     }
 
     @Test("embed(texts:) adds no prefix, also for a model in the table")
     func textsGetNoPrefix() async throws {
-        let (embedder, container) = Self.makeEmbedder(chosen: Self.knownRepo)
+        let (embedder, log) = Self.makeEmbedder(chosen: Self.knownRepo)
         _ = try await embedder.embed(texts: ["cats"])
-        #expect(container.received == [["cats"]])
+        #expect(log.received == [["cats"]])
     }
 
     @Test("a model with no table entry gets no prefix on a query")
     func unknownModelQueryUnchanged() async throws {
-        let (embedder, container) = Self.makeEmbedder(chosen: Self.unknownRepo)
+        let (embedder, log) = Self.makeEmbedder(chosen: Self.unknownRepo)
         _ = try await embedder.embed(queries: ["cats"])
-        #expect(container.received == [["cats"]])
+        #expect(log.received == [["cats"]])
     }
 
     @Test("a model with no table entry gets no prefix on a document")
     func unknownModelDocumentUnchanged() async throws {
-        let (embedder, container) = Self.makeEmbedder(chosen: Self.unknownRepo)
+        let (embedder, log) = Self.makeEmbedder(chosen: Self.unknownRepo)
         _ = try await embedder.embed(documents: ["cats"])
-        #expect(container.received == [["cats"]])
+        #expect(log.received == [["cats"]])
     }
 
     @Test("a query call returns one vector per text")
@@ -77,9 +80,9 @@ struct EmbeddingPrefixTests {
 
     @Test("a revision on the model ref does not hide the table entry")
     func revisionKeepsEntry() async throws {
-        let (embedder, container) = Self.makeEmbedder(
+        let (embedder, log) = Self.makeEmbedder(
             chosen: "erjigit17/embeddinggemma-300m-ane-coreml@main")
         _ = try await embedder.embed(documents: ["cats"])
-        #expect(container.received == [["title: none | text: cats"]])
+        #expect(log.received == [["title: none | text: cats"]])
     }
 }

@@ -54,12 +54,15 @@ final class EmbedTextLog: Sendable {
 ///
 /// When a test passes a ``log``, the stub records the texts of each call there.
 struct StubEmbeddingContainer: LoadedEmbeddingContainer {
+    /// The value of each component of each vector that the stub makes.
+    static let componentValue: Float = 0.5
+
     let dimension: Int
     var log: EmbedTextLog?
 
     func embed(texts: [String]) async throws -> [[Float]] {
         log?.record(texts)
-        return texts.map { _ in [Float](repeating: 0.5, count: dimension) }
+        return texts.map { _ in [Float](repeating: Self.componentValue, count: dimension) }
     }
 }
 
@@ -67,6 +70,10 @@ struct StubEmbeddingContainer: LoadedEmbeddingContainer {
 /// every generation slot and a ``StubEmbeddingContainer`` for the embedding
 /// slot.
 struct StubModelLoader: ModelLoader {
+    /// The byte count that the stub reports as downloaded and as total, so
+    /// each load shows as complete.
+    static let completeBytes: Int64 = 1
+
     let container: any LoadedLLMContainer
     let dimension: Int
 
@@ -76,7 +83,7 @@ struct StubModelLoader: ModelLoader {
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+        reporting(DownloadProgress(bytesDownloaded: Self.completeBytes, bytesTotal: Self.completeBytes))
         return container
     }
 
@@ -85,7 +92,7 @@ struct StubModelLoader: ModelLoader {
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+        reporting(DownloadProgress(bytesDownloaded: Self.completeBytes, bytesTotal: Self.completeBytes))
         return StubEmbeddingContainer(dimension: dimension)
     }
 
