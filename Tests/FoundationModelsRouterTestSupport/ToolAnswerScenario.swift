@@ -156,6 +156,11 @@ public enum NormalizedTranscriptEntry: Sendable, Equatable, CustomStringConverti
     /// comparison can hold two paths to.
     case reasoning
 
+    /// A `.data` entry, reduced to the identifier of its content type. The
+    /// bytes are caller-supplied and carry nothing a comparison can hold two
+    /// paths to.
+    case data(contentType: String)
+
     /// A one-line rendering, so a failed comparison prints a legible diff
     /// instead of a wall of structure.
     public var description: String {
@@ -172,6 +177,8 @@ public enum NormalizedTranscriptEntry: Sendable, Equatable, CustomStringConverti
             return "response(markers: \(markers))"
         case .reasoning:
             return "reasoning"
+        case .data(let contentType):
+            return "data(\(contentType))"
         }
     }
 }
@@ -268,6 +275,8 @@ extension Array where Element == NormalizedTranscriptEntry {
             return .response(markers: markers.filter { body.contains($0) })
         case .reasoning:
             return .reasoning
+        case .data(let data):
+            return .data(contentType: data.contentType.identifier)
         @unknown default:
             return .reasoning
         }
@@ -300,6 +309,8 @@ public enum NormalizedTranscriptEntryKind: String, Equatable {
     case response
     /// A `.reasoning` entry.
     case reasoning
+    /// A `.data` entry.
+    case data
 }
 
 extension NormalizedTranscriptEntry {
@@ -316,6 +327,7 @@ extension NormalizedTranscriptEntry {
         case .toolOutput: return .toolOutput
         case .response: return .response
         case .reasoning: return .reasoning
+        case .data: return .data
         }
     }
 }

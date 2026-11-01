@@ -70,7 +70,7 @@ struct WatchedText: Sendable, Equatable {
                 return WatchedText(entryId: entry.id, text: text(of: response.segments))
             case .toolCalls(let calls):
                 return WatchedText(entryId: entry.id, text: ToolCallArgumentsText.text(of: calls))
-            case .instructions, .prompt, .toolOutput:
+            case .instructions, .prompt, .toolOutput, .data:
                 return nil
             @unknown default:
                 return nil

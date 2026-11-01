@@ -39,8 +39,8 @@ public enum GenerationProgressKind: Sendable, Equatable {
     /// invocation.
     case toolResult
 
-    /// A transcript entry of a different kind: instructions, a prompt, or a
-    /// response.
+    /// A transcript entry of a different kind: instructions, a prompt, a
+    /// response, or data.
     case transcriptEntry
 
     /// The kind of append that `entry` is, when a snapshot adds it to the
@@ -55,7 +55,7 @@ public enum GenerationProgressKind: Sendable, Equatable {
             self = .toolResult
         case .reasoning:
             self = .reasoning
-        case .instructions, .prompt, .response:
+        case .instructions, .prompt, .response, .data:
             self = .transcriptEntry
         @unknown default:
             self = .transcriptEntry

@@ -113,7 +113,7 @@ enum TranscriptChatMessages {
             return calls.isEmpty ? nil : Chat.Message.assistant("", toolCalls: calls)
         case .toolOutput(let output):
             return Chat.Message.tool(toolOutputContent(of: output.segments), id: output.id)
-        case .reasoning:
+        case .reasoning, .data:
             return nil
         @unknown default:
             return nil

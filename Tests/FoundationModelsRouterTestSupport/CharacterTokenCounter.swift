@@ -49,7 +49,7 @@ public struct CharacterTokenCounter: TokenCounter {
             return calls.map { $0.toolName + $0.arguments.jsonString }.joined()
         case .toolOutput(let output):
             return toolOutputContent(of: output.segments)
-        case .reasoning:
+        case .reasoning, .data:
             return ""
         @unknown default:
             return ""

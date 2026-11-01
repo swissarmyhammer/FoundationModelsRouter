@@ -178,7 +178,7 @@ enum RepeatedPartRemoval {
             guard !segments.isEmpty else { return nil }
             response.segments = segments
             return .response(response)
-        case .instructions, .prompt, .toolCalls, .toolOutput:
+        case .instructions, .prompt, .toolCalls, .toolOutput, .data:
             return entry
         @unknown default:
             return entry

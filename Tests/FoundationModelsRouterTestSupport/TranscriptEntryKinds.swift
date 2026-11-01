@@ -44,6 +44,7 @@ public enum TranscriptEntryKinds {
             case .toolCalls: kind = "toolCalls"
             case .toolOutput: kind = "toolOutput"
             case .reasoning: kind = "reasoning"
+            case .data: kind = "data"
             @unknown default: kind = "unknown"
             }
             if !kinds.contains(kind) {

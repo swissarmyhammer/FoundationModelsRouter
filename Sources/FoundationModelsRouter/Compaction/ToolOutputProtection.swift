@@ -159,7 +159,7 @@ private struct PairingScope {
             return nil
         case .toolOutput(let output):
             return answer(output)
-        case .instructions, .response, .reasoning:
+        case .instructions, .response, .reasoning, .data:
             return nil
         @unknown default:
             return nil

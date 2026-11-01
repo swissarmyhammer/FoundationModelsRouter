@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
+import UniformTypeIdentifiers
 
 /// Holds ``TranscriptEntryKinds`` to its contract: the kind-listing helper
 /// the recorded-fixture suite and the `RecordCompactionFixture` tool share
@@ -36,6 +37,21 @@ struct TranscriptEntryKindsTests {
         let names = TranscriptEntryKinds.names(of: Transcript(entries: entries))
 
         #expect(names == ["reasoning"])
+    }
+
+    @Test("a data entry is named data, not unknown")
+    func aDataEntryIsNamedData() {
+        guard #available(macOS 27.2, *) else {
+            Issue.record("The data entry needs macOS 27.2.")
+            return
+        }
+        let entries: [Transcript.Entry] = [
+            .data(Transcript.DataEntry(id: "data-1", contentType: .png, content: Data([0x89, 0x50])))
+        ]
+
+        let names = TranscriptEntryKinds.names(of: Transcript(entries: entries))
+
+        #expect(names == ["data"])
     }
 
     @Test("realTrafficKinds names exactly the six kinds a recorded conversation must carry")

@@ -44,7 +44,7 @@ enum ReasoningOnlyOutput {
         switch entry {
         case .prompt, .toolOutput:
             return true
-        case .instructions, .reasoning, .response, .toolCalls:
+        case .instructions, .reasoning, .response, .toolCalls, .data:
             return false
         @unknown default:
             return false
@@ -65,7 +65,7 @@ enum ReasoningOnlyOutput {
             return WatchedText.text(of: reasoning.segments)
         case .response:
             return isEmptyResponse(entry) ? "" : nil
-        case .instructions, .prompt, .toolCalls, .toolOutput:
+        case .instructions, .prompt, .toolCalls, .toolOutput, .data:
             return nil
         @unknown default:
             return nil

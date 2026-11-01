@@ -236,6 +236,9 @@ public struct Summarization: Sendable, Equatable, Codable {
             return "Tool output (\(output.toolName)): \(text(of: output.segments))"
         case .reasoning(let reasoning):
             return "Reasoning: \(text(of: reasoning.segments))"
+        case .data:
+            // Binary content has no text to summarize.
+            return nil
         @unknown default:
             return nil
         }

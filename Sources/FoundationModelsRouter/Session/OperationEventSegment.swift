@@ -127,7 +127,7 @@ extension OperationEventSegment {
             return .toolOutput(
                 Transcript.ToolOutput(
                     id: output.id, toolName: output.toolName, segments: removingPlans(from: output.segments)))
-        case .instructions, .toolCalls, .response, .reasoning:
+        case .instructions, .toolCalls, .response, .reasoning, .data:
             return entry
         @unknown default:
             return entry
