@@ -15,6 +15,16 @@ import FoundationModelsExtras
 /// and `./` forms to an absolute path before it sizes or loads a model; see
 /// ``resolved(_:home:workingDirectory:)``.
 enum LocalModelPath {
+    /// The home folder of the user. It is the default `~` of every function
+    /// that expands a local path.
+    static var defaultHome: URL { FileManager.default.homeDirectoryForCurrentUser }
+
+    /// The working folder of the process. It is the default start of `./` of
+    /// every function that expands a local path.
+    static var defaultWorkingDirectory: URL {
+        URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory)
+    }
+
     /// The start of an absolute path.
     private static let rootPrefix = "/"
 
@@ -42,8 +52,8 @@ enum LocalModelPath {
     /// - Returns: The absolute folder of a local path, or `nil` for a Hub repo id.
     static func directory(
         of repo: String,
-        home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        workingDirectory: URL = URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory)
+        home: URL = LocalModelPath.defaultHome,
+        workingDirectory: URL = LocalModelPath.defaultWorkingDirectory
     ) -> URL? {
         if repo.hasPrefix(rootPrefix) {
             return URL(filePath: repo, directoryHint: .isDirectory).standardizedFileURL
@@ -75,8 +85,8 @@ enum LocalModelPath {
     ///   or `ref` when it names a Hub repo.
     static func resolved(
         _ ref: ModelRef,
-        home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        workingDirectory: URL = URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory)
+        home: URL = LocalModelPath.defaultHome,
+        workingDirectory: URL = LocalModelPath.defaultWorkingDirectory
     ) -> ModelRef {
         ModelRef(
             repo: directory(of: ref.repo, home: home, workingDirectory: workingDirectory)?.path ?? ref.repo,
@@ -95,8 +105,8 @@ extension ProfileDefinition {
     ///     working folder of the process by default.
     /// - Returns: The profile with resolved references. A Hub repo id is not changed.
     func resolvingLocalModelPaths(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        workingDirectory: URL = URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory)
+        home: URL = LocalModelPath.defaultHome,
+        workingDirectory: URL = LocalModelPath.defaultWorkingDirectory
     ) -> ProfileDefinition {
         func resolve(_ refs: [ModelRef]) -> [ModelRef] {
             refs.map { LocalModelPath.resolved($0, home: home, workingDirectory: workingDirectory) }

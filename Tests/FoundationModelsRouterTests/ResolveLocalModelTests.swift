@@ -1,5 +1,4 @@
 import Foundation
-import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
@@ -11,35 +10,6 @@ import Testing
 /// path to the loader. No test uses the network or a GPU.
 @Suite("Resolve with a local model folder")
 struct ResolveLocalModelTests {
-    /// A stand-in for a loaded generation model.
-    private struct StubLLMContainer: LoadedLLMContainer {
-        let tokenCounter: any TokenCounter = CharacterTokenCounter()
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(shouldThrow: true)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(shouldThrow: true)
-        }
-    }
-
-    /// A stand-in for a loaded embedding model.
-    private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-
-        func embed(texts: [String]) async throws -> [[Float]] {
-            texts.map { _ in [0] }
-        }
-    }
-
-    /// A machine with plenty of memory.
-    private struct StubProbe: MachineProbe {
-        let chip = "Apple Test"
-        let totalRAM: Int64 = 64 << 30
-        let recommendedMaxWorkingSetSize: Int64 = 48 << 30
-    }
-
     /// A Hub source that gives one MLX repo for every id and records each id.
     private actor RecordingMetadataSource: MetadataSource {
         /// The repo ids that were asked for, in order.
@@ -47,7 +17,7 @@ struct ResolveLocalModelTests {
 
         func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
             askedRepos.append(repo)
-            return RawRepoMetadata(configJSON: ResolveLocalModelTests.configJSON, treeJSON: ResolveLocalModelTests.treeJSON)
+            return RouterTestFixtures.rawMetadata
         }
     }
 
@@ -59,31 +29,18 @@ struct ResolveLocalModelTests {
         func loadLLM(
             ref: ModelRef, slot: ModelSlot, context: Int, reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
-            StubLLMContainer()
+            BasicLLMContainer()
         }
 
         func loadEmbedder(
             ref: ModelRef, slot: ModelSlot, reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
             loadedEmbedderRefs.append(ref)
-            return StubEmbeddingContainer()
+            return StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension)
         }
 
         func preload(container: any LoadedModelContainer) async throws {}
     }
-
-    /// A `config.json` with a small attention shape.
-    private static let configJSON = Data("""
-        {
-            "num_hidden_layers": 2, "num_attention_heads": 8, "num_key_value_heads": 2,
-            "head_dim": 16, "hidden_size": 128, "max_position_embeddings": 8192
-        }
-        """.utf8)
-
-    /// A tree with one small weight shard.
-    private static let treeJSON = Data("""
-        [{"type": "file", "path": "model.safetensors", "size": 1000}]
-        """.utf8)
 
     /// The size of the Core ML package of the local folder.
     private static let packageBytes = 400
@@ -108,7 +65,7 @@ struct ResolveLocalModelTests {
         cache: TempModelFolder, source: RecordingMetadataSource, loader: RecordingModelLoader
     ) -> Router {
         Router(
-            cacheDir: cache.url, recorder: InMemoryRecorder(), probe: StubProbe(), metadataSource: source,
+            cacheDir: cache.url, recorder: InMemoryRecorder(), probe: RouterTestFixtures.stubProbe, metadataSource: source,
             loader: loader, pool: ModelPool())
     }
 
