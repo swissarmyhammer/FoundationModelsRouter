@@ -74,7 +74,7 @@ struct Footprint: Sendable, Equatable {
     /// Apple silicon the CPU, the GPU and the ANE share one pool of unified
     /// memory. The compiled model weights are mapped into that same pool, so an
     /// ANE model takes bytes that an MLX model could use. The count is
-    /// `weightBytes`, the size of the Core ML bundle, with no discount for the
+    /// `weightBytes`, the size of the Core ML package, with no discount for the
     /// ANE. A discount would let joint fit choose a set of models that does not
     /// fit in memory. The cost of this rule is that fit can be too strict, but
     /// the system never commits more than the host has.

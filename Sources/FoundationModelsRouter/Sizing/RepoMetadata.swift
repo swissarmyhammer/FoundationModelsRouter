@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import HuggingFace
 import Logging
 
@@ -42,8 +43,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// Resident weight bytes.
     ///
     /// For an MLX repo this is `Σ size(*.safetensors)` at the repo root. For a
-    /// Core ML repo it is the size of the largest `.mlpackage` or `.mlmodelc`
-    /// bundle; see ``init(raw:repo:)``.
+    /// Core ML repo it is the size of the largest `.mlpackage` folder; see
+    /// ``init(raw:repo:)``.
     let weightBytes: Int64
 
     /// Transformer layer count (`num_hidden_layers`).
@@ -80,9 +81,9 @@ struct RepoMetadata: Sendable, Equatable, Codable {
 
     /// Whether the repo is a Core ML embedding model.
     ///
-    /// The sizing of the repo decides this, and nothing else does: only a
-    /// Core ML repo has no ``nativeMaxContext``, see ``init(raw:repo:)``. The
-    /// load does not use this value. The Extras `HubModelLoader` reads the
+    /// The Extras `HubModelFormat.detect(paths:)` rule decides this, and
+    /// ``init(raw:repo:)`` applies it to the tree of the repo: only a Core ML
+    /// repo has no ``nativeMaxContext``. The load does not use this value. The Extras `HubModelLoader` reads the
     /// files of the repo and chooses the Core ML loader or the MLX loader
     /// itself. The router uses this value only to reject a Core ML repo in a
     /// generation slot before any download.
@@ -115,11 +116,13 @@ struct RepoMetadata: Sendable, Equatable, Codable {
 
     /// Parses sizing metadata from raw fetched artifacts.
     ///
-    /// A repo with `*.safetensors` files at its root is an MLX repo. Its weight
-    /// bytes are the sum of those files, and `config.json` must give the
-    /// attention architecture. A repo with no such file but with a Core ML
-    /// bundle is a Core ML repo. It is sized by the largest bundle and needs no
-    /// `config.json`: it has no KV cache, so only its weight bytes matter.
+    /// The Extras `HubModelFormat.detect(paths:)` rule decides the format from
+    /// the paths of the tree. A Core ML repo is sized by its largest `.mlpackage`
+    /// folder and needs no `config.json`: it has no KV cache, so only its weight
+    /// bytes matter. Any other repo is an MLX repo. Its weight bytes are the sum
+    /// of the `*.safetensors` files at its root, and `config.json` must give the
+    /// attention architecture. A repo with only a `.mlmodelc` folder is an MLX
+    /// repo, and so is a repo with a `.safetensors` file at any depth.
     ///
     /// - Parameters:
     ///   - raw: The fetched `config.json` and tree listing. The listing must
@@ -130,15 +133,17 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///   tree listing does not decode, or when an MLX
     ///   repo has no `config.json`, a `config.json` that does not parse, lacks
     ///   required fields or has no positive context-length field, or when the
-    ///   tree has neither `*.safetensors` nor a Core ML bundle.
+    ///   tree has neither `*.safetensors` at the root nor a `.mlpackage` folder.
     init(raw: RawRepoMetadata, repo: String) throws {
         let entries = try Self.decodeTreeEntries(raw.treeJSON, repo: repo)
-        let safetensorsBytes = Self.safetensorsBytes(entries: entries)
-        let coreMLBytes = safetensorsBytes > 0 ? 0 : Self.coreMLBundleBytes(entries: entries)
-        if coreMLBytes > 0 {
-            self.init(coreMLWeightBytes: coreMLBytes)
-            return
+        if HubModelFormat.detect(paths: entries.map(\.path)) == .coreML {
+            let packageBytes = Self.coreMLPackageBytes(entries: entries)
+            if packageBytes > 0 {
+                self.init(coreMLWeightBytes: packageBytes)
+                return
+            }
         }
+        let safetensorsBytes = Self.safetensorsBytes(entries: entries)
         guard let configJSON = raw.configJSON else {
             throw RepoMetadataError.metadataUnavailable("config.json is not present in the repo")
         }
@@ -150,7 +155,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         }
         guard safetensorsBytes > 0 else {
             throw RepoMetadataError.metadataUnavailable(
-                "no *.safetensors weight files or Core ML bundles in the repo tree"
+                "no *.safetensors weight files or .mlpackage folders in the repo tree"
             )
         }
         // Hybrid linear/full-attention models (e.g. Qwen3.5's linear_attention
@@ -286,7 +291,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// Every architecture field is zero or `nil`, so ``footprint`` has no KV
     /// term, and ``nativeMaxContext`` is `nil`.
     ///
-    /// - Parameter coreMLWeightBytes: The size of the Core ML bundle.
+    /// - Parameter coreMLWeightBytes: The size of the Core ML package.
     private init(coreMLWeightBytes: Int64) {
         self.init(
             weightBytes: coreMLWeightBytes,
@@ -310,48 +315,45 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             .reduce(Int64(0)) { $0 + $1.byteCount }
     }
 
-    /// The size of the largest Core ML bundle in a tree listing.
+    /// The size of the largest `.mlpackage` folder in a tree listing.
     ///
-    /// A bundle is a directory whose name ends in `.mlpackage` or `.mlmodelc`.
-    /// Its size is the sum of the files inside it. The result is the largest
-    /// bundle, not the sum of all bundles, because the loader opens one bundle
-    /// to make one model. A repo often holds the same model in two forms (a
-    /// `.mlpackage` and its compiled `.mlmodelc`) or in several quantizations.
-    /// A sum would count one model more than once. The largest bundle is the
-    /// safe bound for the one that loads.
+    /// The size of a package is the sum of the files inside it. The result is
+    /// the largest package, not the sum of all packages, because the loader
+    /// opens one package to make one model. A repo can hold several
+    /// quantizations of one model, and a sum would count the model more than
+    /// once. The largest package is the safe bound for the one that loads. A
+    /// `.mlmodelc` folder is not sized: the Extras Core ML loader compiles a
+    /// package itself and does not load a compiled folder.
     ///
     /// - Parameter entries: The entries of the recursive tree listing.
-    /// - Returns: The bytes of the largest bundle, or `0` when there is none.
-    private static func coreMLBundleBytes(entries: [TreeEntry]) -> Int64 {
-        var bytesByBundle: [String: Int64] = [:]
+    /// - Returns: The bytes of the largest package, or `0` when there is none.
+    private static func coreMLPackageBytes(entries: [TreeEntry]) -> Int64 {
+        var bytesByPackage: [String: Int64] = [:]
         for entry in entries where entry.isFile {
-            if let bundle = coreMLBundlePath(of: entry.path) {
-                bytesByBundle[bundle, default: 0] += entry.byteCount
+            if let package = coreMLPackagePath(of: entry.path) {
+                bytesByPackage[package, default: 0] += entry.byteCount
             }
         }
-        return bytesByBundle.values.max() ?? 0
+        return bytesByPackage.values.max() ?? 0
     }
 
-    /// The path of the Core ML bundle that contains a file.
+    /// The path of the `.mlpackage` folder that contains a file.
     ///
     /// - Parameter path: A file path from the tree listing.
     /// - Returns: The path up to and including the first component that ends
-    ///   in a bundle suffix, or `nil` when the file is in no bundle.
-    private static func coreMLBundlePath(of path: String) -> String? {
+    ///   in `.mlpackage`, or `nil` when the file is in no package.
+    private static func coreMLPackagePath(of path: String) -> String? {
         let components = path.split(separator: pathSeparator, omittingEmptySubsequences: true)
-        let bundleIndex = components.firstIndex { component in
-            coreMLBundleSuffixes.contains { component.hasSuffix($0) }
-        }
-        guard let bundleIndex, bundleIndex < components.count - 1 else { return nil }
-        return components[...bundleIndex].joined(separator: String(pathSeparator))
+        let packageIndex = components.firstIndex { $0.hasSuffix(coreMLPackageSuffix) }
+        guard let packageIndex, packageIndex < components.count - 1 else { return nil }
+        return components[...packageIndex].joined(separator: String(pathSeparator))
     }
 
     /// The file extension that marks a weight shard in the tree listing.
     private static let safetensorsSuffix = ".safetensors"
 
-    /// The directory suffixes that mark a Core ML bundle: the source package
-    /// and the compiled model.
-    private static let coreMLBundleSuffixes = [".mlpackage", ".mlmodelc"]
+    /// The directory suffix that marks a Core ML package.
+    private static let coreMLPackageSuffix = ".mlpackage"
 
     /// The separator between the components of a tree path.
     private static let pathSeparator: Character = "/"
@@ -727,7 +729,7 @@ public struct HuggingFaceMetadataSource: MetadataSource {
 
     /// The URL of the recursive tree listing for a repo at a revision.
     ///
-    /// The listing is recursive so that the files inside a Core ML bundle
+    /// The listing is recursive so that the files inside a Core ML package
     /// directory appear. A flat listing shows only the directory, with size `0`.
     private static func recursiveTreeURL(endpoint: URL, repo: String, revision: String) -> URL {
         let base = endpoint.appendingPathComponent("api/models/\(repo)/tree/\(revision)")

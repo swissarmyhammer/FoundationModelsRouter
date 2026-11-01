@@ -19,10 +19,10 @@ The router does not need a special flag from you.
 ## How the router loads it
 
 `LiveModelLoader` loads each model through the Extras `HubModelLoader`. For an
-embedding model, `HubModelLoader` looks at the files of the repository. A
-repository with a `.mlpackage` folder and no `.safetensors` file loads with
-the Extras Core ML loader, and the model runs on the ANE. Any other repository
-loads with MLX. A generation model always loads with MLX, because Core ML
+embedding model, `HubModelLoader` looks at the files of the repository with
+the rule in the section "How the router detects a Core ML model". A Core ML
+repository loads with the Extras Core ML loader, and the model runs on the
+ANE. Any other repository loads with MLX. A generation model always loads with MLX, because Core ML
 loads embedding models only.
 
 A host that gives a cache folder or a token provider to `LiveModelLoader`
@@ -35,10 +35,23 @@ the same way, and its span keeps the attributes `model.ref` and
 
 ## How the router detects a Core ML model
 
-The router detects a Core ML repository from the repository metadata, during
-sizing and before any download. A repository with no `.safetensors` file at its
-root and with a `.mlpackage` or `.mlmodelc` folder is a Core ML repository.
-`RepoMetadata.isCoreMLEmbedding` reports this.
+The router uses the rule of Extras: `HubModelFormat.detect(paths:)`. The
+router gives it the paths of the files of the repository, relative to the
+root. The router gets these paths from the repository metadata, during sizing
+and before any download. The rule has two parts:
+
+- A repository is a Core ML repository when it has a `.mlpackage` folder and
+  no file that ends in `.safetensors`, at any depth.
+- Any other repository is an MLX repository.
+
+A repository with only a `.mlmodelc` folder is an MLX repository. The Extras
+Core ML loader compiles a `.mlpackage` folder itself, and it does not load a
+compiled `.mlmodelc` folder. A repository with a `.mlpackage` folder and a
+`.safetensors` file in a sub-folder is also an MLX repository.
+
+The router sizes a Core ML repository by its largest `.mlpackage` folder. It
+does not size a `.mlmodelc` folder. `RepoMetadata.isCoreMLEmbedding` reports
+the result.
 
 The router uses the result for one rule: a Core ML model cannot fill the
 standard slot or the flash slot. When a profile lists such a model for one of
@@ -46,8 +59,8 @@ these slots, resolution rejects the candidate with a clear message, and
 tries the next candidate. The message names the model and the rule.
 
 The router does not choose the loader from this result. `HubModelLoader`
-chooses the loader from the files of the repository, so the load follows one
-rule: the rule of Extras.
+chooses the loader from the files of the repository with the same rule, so
+the router and the loader cannot disagree.
 
 ## Prefixes
 

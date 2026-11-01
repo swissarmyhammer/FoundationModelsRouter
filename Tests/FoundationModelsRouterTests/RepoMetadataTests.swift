@@ -845,18 +845,67 @@ struct RepoMetadataTests {
         #expect(metadata.nativeMaxContext == nil)
     }
 
-    @Test("a compiled .mlmodelc bundle is sized like a .mlpackage bundle")
-    func compiledCoreMLBundleIsSized() throws {
+    /// The tree listing of a repo that holds only a compiled `.mlmodelc` folder.
+    private static let compiledOnlyTreeJSON = Data("""
+        [
+            {"type": "file", "path": "embed.mlmodelc/weights/weight.bin", "size": 134, "lfs": {"size": 4000}},
+            {"type": "file", "path": "embed.mlmodelc/model.mil", "size": 500}
+        ]
+        """.utf8)
+
+    @Test("a repo with only a .mlmodelc folder is not sized as a CoreML repo: it needs a config.json like MLX")
+    func compiledOnlyRepoIsNotCoreML() {
+        let raw = RawRepoMetadata(configJSON: nil, treeJSON: Self.compiledOnlyTreeJSON)
+
+        #expect(throws: RepoMetadataError.metadataUnavailable("config.json is not present in the repo")) {
+            try RepoMetadata(raw: raw, repo: "org/c")
+        }
+    }
+
+    @Test("a repo with only a .mlmodelc folder has no weights to size, so it cannot be sized")
+    func compiledOnlyRepoHasNoWeights() {
+        let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.compiledOnlyTreeJSON)
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "no *.safetensors weight files or .mlpackage folders in the repo tree"
+            )
+        ) {
+            try RepoMetadata(raw: raw, repo: "org/c")
+        }
+    }
+
+    @Test("a .mlmodelc folder next to a .mlpackage folder does not add its bytes to the package")
+    func compiledFolderIsNotSizedBesideAPackage() throws {
         let tree = Data("""
             [
-                {"type": "file", "path": "embed.mlmodelc/weights/weight.bin", "size": 134, "lfs": {"size": 4000}},
-                {"type": "file", "path": "embed.mlmodelc/model.mil", "size": 500}
+                {"type": "file", "path": "embed.mlpackage/weights/weight.bin", "size": 3000},
+                {"type": "file", "path": "embed.mlmodelc/weights/weight.bin", "size": 9000}
             ]
             """.utf8)
 
         let metadata = try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
 
-        #expect(metadata.weightBytes == 4500)
+        #expect(metadata.weightBytes == 3000)
+    }
+
+    @Test("a nested .safetensors file next to a .mlpackage folder makes the repo MLX, so it is not sized as CoreML")
+    func nestedSafetensorsMakesTheRepoMLX() {
+        let tree = Data("""
+            [
+                {"type": "file", "path": "embed.mlpackage/weights/weight.bin", "size": 3000},
+                {"type": "file", "path": "extra/model.safetensors", "size": 1000}
+            ]
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "no *.safetensors weight files or .mlpackage folders in the repo tree"
+            )
+        ) {
+            try RepoMetadata(raw: raw, repo: "org/c")
+        }
     }
 
     @Test("a repo with two bundles of one model is sized by the larger bundle, not the sum")
@@ -898,7 +947,7 @@ struct RepoMetadataTests {
 
         #expect(
             throws: RepoMetadataError.metadataUnavailable(
-                "no *.safetensors weight files or Core ML bundles in the repo tree"
+                "no *.safetensors weight files or .mlpackage folders in the repo tree"
             )
         ) {
             try RepoMetadata(raw: raw, repo: "org/c")
