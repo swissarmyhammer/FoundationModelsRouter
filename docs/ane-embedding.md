@@ -62,6 +62,54 @@ The router does not choose the loader from this result. `HubModelLoader`
 chooses the loader from the files of the repository with the same rule, so
 the router and the loader cannot disagree.
 
+## A model in a local folder
+
+A candidate can name a folder on the disk instead of a Hub repository:
+
+```swift
+let profile = ProfileDefinition(
+    name: "local", description: "A local embedder",
+    standard: ["org/standard"], flash: ["org/flash"],
+    embedding: [ModelRef(repo: "~/models/embedder")])
+```
+
+Use one of three forms for the path:
+
+- An absolute path, for example `/Users/me/models/embedder`.
+- A path that starts with `~`, for example `~/models/embedder`.
+- A path that starts with `./`, for example `./models/embedder`.
+
+Before the sizing, the router changes the `~` form and the `./` form to an
+absolute path. The `./` form starts from the working folder of the process.
+The Extras loaders load the folder when the `repo` of the reference is the
+absolute path of an existing folder. They make no download. The model that the
+resolved profile chose holds the absolute path.
+
+The router keeps a local path apart from a Hub repository id by the form of
+the string. A Hub id such as `org/name`, or a plain name such as `models`, is
+always a Hub id, even when a folder of that name exists. Do not use `@` in a
+local path. `ModelRef` reads text after `@` as a revision.
+
+The router sizes the folder from its files, and it makes no Hub call:
+
+- The router reads the names at the top of the folder, and it uses
+  `HubModelFormat.detect(paths:)` on them. The Extras loader reads the same
+  names, so the router and the loader cannot disagree.
+- A Core ML folder is sized by its largest `.mlpackage` folder, and it needs no
+  `config.json`.
+- An MLX folder is sized by the sum of the `.safetensors` files at the top of
+  the folder. Its `config.json` gives the attention shape and the native
+  context.
+- The router follows a symbolic link, because the folder of a Hub snapshot
+  holds links to its files.
+- The router reads the files again at each resolve. It keeps no cache for a
+  local folder.
+
+A folder that does not exist, is empty, or cannot be read cannot be sized. The
+router rejects that candidate with a clear message and tries the next
+candidate. A Core ML folder in the standard slot or the flash slot is rejected,
+as it is for a Hub repository.
+
 ## Prefixes
 
 The model needs a prefix in front of each text. The Core ML loader adds no

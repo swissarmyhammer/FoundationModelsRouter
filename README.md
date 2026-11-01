@@ -38,6 +38,23 @@ print(answer)
 
 The embedding model runs on the Apple Neural Engine.
 
+## Local models
+
+A candidate can name a folder on the disk instead of a Hub repository. Give an
+absolute path, or a path that starts with `~` or `./`:
+
+```swift
+let profile = ProfileDefinition(
+    name: "local", description: "Models from the disk",
+    standard: [ModelRef(repo: "~/models/standard")],
+    flash: [ModelRef(repo: "~/models/flash")],
+    embedding: [ModelRef(repo: "./models/embedder")])
+```
+
+The router finds the format of the folder (MLX or Core ML) by itself, and it
+sizes the folder from its files. It makes no Hub call and no download. See
+[ANE embedding models](docs/ane-embedding.md) for the rules.
+
 ## Install
 
 The package needs macOS 27 or later. Add it to `Package.swift`, with the floor:
@@ -55,7 +72,7 @@ dependencies: [
 
 - [Installation details](docs/installation.md): the macOS floor, the model cache folder, the Hugging Face token.
 - [Models, residency and tools](docs/residency.md): why `standard` and `flash` are two different models, the process-wide model pool, tool hosting.
-- [ANE embedding models](docs/ane-embedding.md): the default CoreML embedding model, and how the router will detect it.
+- [ANE embedding models](docs/ane-embedding.md): the default CoreML embedding model, how the router detects it, and models in a local folder.
 - [Tests](docs/testing.md): hermetic and real-model tests, and where the worked examples are.
 - [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration): a runnable demo with two models.
 

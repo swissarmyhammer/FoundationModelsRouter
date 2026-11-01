@@ -207,8 +207,15 @@ public actor Router {
     /// stay in the Hugging Face cache, so a later resolve continues the
     /// transfer rather than starting it again.
     ///
+    /// A candidate can name a folder on the disk instead of a Hub repo: an
+    /// absolute path, or a path that starts with `~` or `./`. The router sizes
+    /// such a folder from its files, with no Hub call and no download, and the
+    /// loader loads it from the folder. The `~` and `./` forms become absolute
+    /// paths before the sizing, so the chosen model of the resolved profile
+    /// holds the absolute path.
+    ///
     /// - Parameters:
-    ///   - def: The authored profile to resolve.
+    ///   - authored: The authored profile to resolve.
     ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
     /// - Returns: The resolved, resident profile. Its `standard` and `flash`
     ///   slots never use the same model.
@@ -220,14 +227,17 @@ public actor Router {
     ///   `CancellationError` when the calling task is cancelled, or any download
     ///   or load error from the ``ModelLoader``.
     public func resolve(
-        profile def: ProfileDefinition,
+        profile authored: ProfileDefinition,
         reporting progress: ResolutionProgress
     ) async throws -> LanguageModelProfile {
+        // A local model path in the `~` or `./` form becomes an absolute path
+        // here, so that the sizing and the Extras loaders see the folder.
+        let def = authored.resolvingLocalModelPaths()
         // Resolution is the slowest thing the library does, so the whole call
         // — the lock wait included — is one span, and each model this resolve
         // has to fetch opens a child span under it. The span records a
         // thrown error and raises it again.
-        try await withEnteredSpan(RouterTelemetry.SpanName.resolve) { attributes in
+        return try await withEnteredSpan(RouterTelemetry.SpanName.resolve) { attributes in
             attributes[RouterTelemetry.AttributeKey.routerId] = id.description
             attributes[RouterTelemetry.AttributeKey.profileDefinitionName] = def.name
         } body: { span in

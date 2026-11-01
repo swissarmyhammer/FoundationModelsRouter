@@ -136,7 +136,28 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///   tree has neither `*.safetensors` at the root nor a `.mlpackage` folder.
     init(raw: RawRepoMetadata, repo: String) throws {
         let entries = try Self.decodeTreeEntries(raw.treeJSON, repo: repo)
-        if HubModelFormat.detect(paths: entries.map(\.path)) == .coreML {
+        try self.init(
+            entries: entries, format: HubModelFormat.detect(paths: entries.map(\.path)),
+            configJSON: raw.configJSON, repo: repo)
+    }
+
+    /// Parses sizing metadata from the files of a repo and the format that was
+    /// decided for it.
+    ///
+    /// A Core ML repo is sized by its largest `.mlpackage` folder and needs no
+    /// `config.json`. Any other repo is an MLX repo: its weight bytes are the
+    /// sum of the `*.safetensors` files at its root, and `config.json` must
+    /// give the attention architecture.
+    ///
+    /// - Parameters:
+    ///   - entries: Every file of the repo, with its path relative to the root
+    ///     of the repo. A file inside a bundle directory appears with its full path.
+    ///   - format: The format that ``HubModelFormat/detect(paths:)`` decided.
+    ///   - configJSON: The bytes of `config.json`, or `nil` when absent.
+    ///   - repo: The name the errors give: a repository id or a folder path.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` as ``init(raw:repo:)``.
+    init(entries: [TreeEntry], format: HubModelFormat, configJSON: Data?, repo: String) throws {
+        if format == .coreML {
             let packageBytes = Self.coreMLPackageBytes(entries: entries)
             if packageBytes > 0 {
                 self.init(coreMLWeightBytes: packageBytes)
@@ -144,7 +165,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             }
         }
         let safetensorsBytes = Self.safetensorsBytes(entries: entries)
-        guard let configJSON = raw.configJSON else {
+        guard let configJSON else {
             throw RepoMetadataError.metadataUnavailable("config.json is not present in the repo")
         }
         let sizing = try Self.sizingSource(configJSON: configJSON)
@@ -469,7 +490,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     }
 
     /// One entry of the repo tree listing. `lfs.size` is the real size of an LFS object.
-    private struct TreeEntry: Decodable {
+    struct TreeEntry: Decodable {
         let type: String?
         let path: String
         let size: Int64?
@@ -519,6 +540,10 @@ struct RepoMetadataReader: Sendable {
 
     /// Returns the parsed metadata for a model.
     ///
+    /// A reference to a local model folder (see ``LocalModelPath``) is read from
+    /// the files of the folder at each call. It makes no Hub call and uses no
+    /// cache, because the files of a folder can change.
+    ///
     /// A commit-pinned reference is read from the cache first and fetched only on
     /// a miss. A reference whose revision can move is fetched first, and its
     /// cached entry is read only when the fetch fails.
@@ -526,6 +551,9 @@ struct RepoMetadataReader: Sendable {
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the repo
     ///   lacks sizing inputs, or any error from the source or cache I/O.
     func metadata(for ref: ModelRef) async throws -> RepoMetadata {
+        if let directory = LocalModelPath.directory(of: ref.repo) {
+            return try RepoMetadata(localDirectory: directory)
+        }
         if Self.revisionCanMove(ref.revision) {
             return try await refreshedMetadata(for: ref)
         }
