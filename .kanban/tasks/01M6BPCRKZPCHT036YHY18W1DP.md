@@ -37,8 +37,15 @@ comments:
     evidence: 2 files - Sources/FoundationModelsRouter/Core/LocalModelPath.swift, Tests/FoundationModelsRouterTests/ResolveLocalModelTests.swift; 25 tests in 3 suites passed; 5 of 5 findings checked
     task: ^y18w1dp
   timestamp: 2026-11-01T16:59:36.379668+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6c0whzqxjv31efywdtdqsbh
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 22f63923), 0 findings, 7 checks attempted, 0 failed. All prior findings are checked.
+    - next: none. Task moved to done.
+  timestamp: 2026-11-01T17:00:35.191336+00:00
+position_column: done
+position_ordinal: ffffffffda80
 title: ModelRef accepts a local model path
 ---
 The agent config must take a local path as a model reference, and the format (CoreML or MLX) is found by itself. ModelRef parses owner/name@revision only. Let ModelRef hold a local directory path (an absolute path, or a path that starts with ~ or ./) and keep it apart from a Hub repo id. Pass the path to the Extras loader. Depends on Extras card ^3mnxzqf (HubModelLoader detects the model format from a local path). Related Router card ^zpcsp86 (LiveModelLoader uses HubModelLoader). The ACP agent card in FoundationModelsACPAgent waits for these cards.
