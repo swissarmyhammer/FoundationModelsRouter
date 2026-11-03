@@ -481,15 +481,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // headless session stays headless. A record with no envelope,
             // with no presence, or with a presence that this version does
             // not know restores interactive, the default.
-            let (outbox, runPlane, instancedTools, resultWitness) = makeSessionToolWiring(
+            let (outbox, runPlane, instancedTools, resultWitness) = routedLLM.wireSessionTools(
                 tools,
                 sessionID: node.id,
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
-                tokenCounter: routedLLM.container.tokenCounter,
                 inlineSettleGrace: inlineSettleGrace,
                 userPresence: userPresence ?? configuration?.restoredUserPresence ?? .interactive,
                 parentCall: nil,
-                recordedSpawn: node.record.agentSpawn
+                recordedSpawn: node.record.agentSpawn,
+                delegationAdvisor: nil
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)

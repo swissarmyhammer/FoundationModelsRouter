@@ -40,6 +40,46 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// reads it here. See ``TokenCounter``.
     public var tokenCounter: any TokenCounter { container.tokenCounter }
 
+    /// Wires the tools of one session: its outbox, its run plane, its
+    /// instanced tools and its result witness.
+    ///
+    /// The live site (`makeSession`) and the restore site
+    /// (`restoreSessionTree`) both call this one helper. It gives the token
+    /// counter of the resident container, and it forwards the rest to
+    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:parentCall:recordedSpawn:delegationAdvisor:)``.
+    ///
+    /// - Parameters:
+    ///   - tools: The original tools of the caller. The call does not change them.
+    ///   - sessionID: The id of the session.
+    ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap output to, or `nil` for no cap.
+    ///   - inlineSettleGrace: How long each background call waits for its own run, in seconds.
+    ///   - userPresence: Tells if a user can answer the questions of the session.
+    ///   - parentCall: The context of the call that starts the session as a child, or `nil`.
+    ///   - recordedSpawn: The spawn record of a restored sub-agent session, or `nil`.
+    ///   - delegationAdvisor: The advisor of the hint to give a code change to an agent, or `nil`.
+    /// - Returns: The outbox, the run plane, the instanced tools and the result witness of the session.
+    func wireSessionTools(
+        _ tools: [any Tool],
+        sessionID: ULID,
+        cappedToTokenLimit tokenLimit: Int?,
+        inlineSettleGrace: TimeInterval,
+        userPresence: UserPresence,
+        parentCall: ToolContext?,
+        recordedSpawn: SessionRecord.AgentSpawn?,
+        delegationAdvisor: AgentDelegationAdvisor?
+    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool], resultWitness: ToolResultWitness?) {
+        makeSessionToolWiring(
+            tools,
+            sessionID: sessionID,
+            cappedToTokenLimit: tokenLimit,
+            tokenCounter: container.tokenCounter,
+            inlineSettleGrace: inlineSettleGrace,
+            userPresence: userPresence,
+            parentCall: parentCall,
+            recordedSpawn: recordedSpawn,
+            delegationAdvisor: delegationAdvisor)
+    }
+
     // sah:allow duplication a public convenience (^pckk91c) whose body only forwards its parameters into a SessionConfiguration and on to makeSession(configuration:); makeGuidedSession forwards the same parameters plus its grammar, and neither body holds logic that can drift
     /// Vends a new generation session over this resident model.
     ///
@@ -218,11 +258,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `outbox` — not the bare originals.
         let delegationAdvisor = AgentDelegationAdvisor.make(
             hint: agentDelegationHint, tools: tools, isRoot: parentCall == nil && agentSpawn == nil)
-        let (outbox, runPlane, instancedTools, resultWitness) = makeSessionToolWiring(
+        let (outbox, runPlane, instancedTools, resultWitness) = wireSessionTools(
             tools,
             sessionID: sessionId,
             cappedToTokenLimit: budget?.toolOutputLimit,
-            tokenCounter: container.tokenCounter,
             inlineSettleGrace: inlineSettleGrace,
             userPresence: userPresence,
             parentCall: parentCall,

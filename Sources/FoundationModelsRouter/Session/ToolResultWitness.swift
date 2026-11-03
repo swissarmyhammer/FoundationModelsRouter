@@ -127,7 +127,9 @@ struct ToolCallWitnesses: ToolCallWitness {
     ///
     /// - Parameter call: The inner call that begins.
     func toolCallWillBegin(_ call: WitnessedToolCall) {
-        witnesses.forEach { $0.toolCallWillBegin(call) }
+        for witness in witnesses {
+            witness.toolCallWillBegin(call)
+        }
     }
 
     /// Gives the end of a call to each witness.
@@ -136,6 +138,8 @@ struct ToolCallWitnesses: ToolCallWitness {
     ///   - call: The call that ended.
     ///   - result: How the call ended, and its own value.
     func toolCallDidEnd(_ call: WitnessedToolCall, result: OperationResult) {
-        witnesses.forEach { $0.toolCallDidEnd(call, result: result) }
+        for witness in witnesses {
+            witness.toolCallDidEnd(call, result: result)
+        }
     }
 }
