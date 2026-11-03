@@ -476,7 +476,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // inherit its parent's last known fill rather than report
             // unknown.
             let usageState = TranscriptTree.restoredUsageState(
-                in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: .generationCall))
+                in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: [.generationCall]))
             let effectiveEvents = try tree.effectiveEntryEvents(forSession: node.id)
             // `SessionRecord.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
@@ -600,7 +600,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // effect runs again.
             await session.reportLostMail(
                 TranscriptTree.lostMail(
-                    in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: .mail), ofSession: node.id))
+                    in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: [.mail]), ofSession: node.id))
             return session
         }
 

@@ -28,8 +28,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD, 2 findings on this card: SessionEndedMarkerTests.swift:52, SessionEndedMarkerTests.swift:118
     - next: fix both findings, then review again
   timestamp: 2026-11-03T15:56:05.108573+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6h29es4bfvxbxatq0wt42t0
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 0 findings (0 confirmed, 0 refuted). Prior 2 findings all checked.
+    - next: none, card moved to done.
+  timestamp: 2026-11-03T16:01:18.628380+00:00
+position_column: done
+position_ordinal: ffffffffdc80
 title: Mark a session record as ended, so a host can tell a finished sub-agent run from an interrupted one
 ---
 ## What

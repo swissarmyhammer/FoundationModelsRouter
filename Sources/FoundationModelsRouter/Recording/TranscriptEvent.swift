@@ -78,6 +78,17 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// to find the mail that a crash cut off. A journal recorded before
         /// this kind holds no such event.
         case mail
+        /// A tool call started (the write-ahead record of the call). Router-only.
+        /// The session records it when the call starts, before the tool body
+        /// runs, so a crash in the tool run leaves the call on disk.
+        /// ``TranscriptEvent/entry`` holds the id, the tool name and the
+        /// arguments JSON of the one call in ``TranscriptEntryPayload/toolCalls``.
+        /// The marker mirrors no entry. The `.toolCalls` entry of the
+        /// submission still follows at the end of the submission. A restore
+        /// drops a marker that a later `.toolCalls` entry covers, and turns
+        /// the markers that no entry covers into one `.toolCalls` entry with a
+        /// placeholder `.toolOutput` for each call (``OpenToolCalls``).
+        case toolCallStarted
         /// A tool invocation was requested. Deprecated: ``toolCalls`` replaces
         /// it. Kept so pre-v2 recordings decode.
         case toolCall
@@ -94,7 +105,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
             case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail,
-                .toolCall:
+                .toolCallStarted, .toolCall:
                 return false
             }
         }

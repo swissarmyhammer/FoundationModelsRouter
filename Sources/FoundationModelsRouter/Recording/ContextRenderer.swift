@@ -98,16 +98,23 @@ enum ContextRenderer {
     /// seeds from this render, so it does not give the question to the
     /// model.
     ///
+    /// Before all this, it folds the open tool calls of a crash into entries
+    /// (``OpenToolCalls/folding(_:)``), so the render holds a call and an
+    /// output for each ``TranscriptEvent/Kind/toolCallStarted`` marker that
+    /// no later `.toolCalls` entry covers.
+    ///
     /// - Parameter events: The effective events of the session, in `seq`
-    ///   order, with the ``TranscriptEvent/Kind/repeatedPartRemoval`` events.
+    ///   order, with the ``TranscriptEvent/Kind/repeatedPartRemoval`` events
+    ///   and the ``TranscriptEvent/Kind/toolCallStarted`` markers.
     ///   Each other router-only event is passed over.
     /// - Returns: The context.
     /// - Throws: ``TranscriptReconstructionError`` for an event that does not
     ///   rebuild.
     static func context(of events: [TranscriptEvent]) throws -> Transcript {
+        let folded = OpenToolCalls.folding(events)
         let entries = try TranscriptTree.entries(
-            of: TranscriptTree.reconstructableEvents(events.filter(\.kind.isEntryKind), view: .restore))
-        let render = RepeatedPartRemoval.render(of: entries, applying: try TranscriptTree.renderCut(in: events))
+            of: TranscriptTree.reconstructableEvents(folded.filter(\.kind.isEntryKind), view: .restore))
+        let render = RepeatedPartRemoval.render(of: entries, applying: try TranscriptTree.renderCut(in: folded))
         let rendered = render.map { MailRecordSegment.removingRecords(from: OperationEventSegment.removingPlans(from: $0)) }
         return Transcript(entries: OperationEventSegment.removingRelayedQuestions(from: rendered))
     }

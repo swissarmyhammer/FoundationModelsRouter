@@ -60,8 +60,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD, 1 finding on this card: RecordedSessions.swift:59
     - next: fix the finding, then review again
   timestamp: 2026-11-03T15:56:06.136137+00:00
-position_column: review
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01m6h29frtw72s2pvmte2d949w
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 0 findings (0 confirmed, 0 refuted). Prior 1 finding checked.
+    - next: none, card moved to done.
+  timestamp: 2026-11-03T16:01:19.642464+00:00
+position_column: done
+position_ordinal: ffffffffdd80
 title: Public read-only lookup of recorded child sessions and public orphan scan, without restoring the parent
 ---
 ## What

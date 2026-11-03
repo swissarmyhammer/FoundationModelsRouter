@@ -14,8 +14,30 @@ comments:
 
     Tests (`WriteAheadToolCallTests`): stop the session before `finishSubmission`, restore, the started marker is there and the open call folds into one entry; clean run has no duplicate in the reconstruction or in the live events; open call pairs with a later output; no read of the transcript between passes.
   timestamp: 2026-11-03T13:40:23.908210+00:00
-position_column: todo
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m6h3pwaw0a13bvq4a1r39s4f
+  text: |-
+    CHECK ANSWERS (read from the code before any change).
+    1. ToolCallOutputPairing: it pairs a .toolOutput entry to a call by id. The SDK sets Transcript.ToolOutput.id to the id of the call it answers (measured on macOS 27, see the doc of ToolCallOutputPairing). When the id names no announced call, the oldest call without output is used. So a placeholder output must have the id of its call.
+    2. SDK rule on outputs: no SDK text is in the checkout (it is a binary framework), so the rule is not proved by a test. The code of the session keeps the rule that each call has an output: InFlightTranscript.removingUnansweredCalls removes a call that has no output after a stop, and InFlightTranscript.appendingOutputs adds the output of each result. The restore follows the same rule: one placeholder output for each open call.
+    3. Background-run placeholder today: the tool answers with the rendered PendingRunEnvelope (JSON with pending, completionToken, next). It is a normal .toolOutput entry. TokenCappingTool never cuts it. The real result arrives later as run mail. The envelope needs a valid ULID completion token (makeDecoded checks it), and a restore after a crash has no token for the call. So the restore uses a plain text placeholder (OpenToolCalls.placeholderOutput), not an envelope.
+
+    CHANGES FROM THE DESIGN (the user or the coordinator must decide).
+    A. Place of the write: ToolMounting.makeSessionMounted does not know the call id. Tool.call(arguments:) gets no call id, and the decorator has no access to the session actor. The write is in RoutedSessionActor.deliver(invocation:) for the OPEN ToolInvocationRecord. The Extras mount layer posts it with await before the tool body runs, so the marker is on disk before the body. The id, the name and the arguments come from ToolCallRunJoin.openedCall (the SDK waits in the tool call, the same read as before, no new read between passes).
+    B. Live events at the start of the call: NOT done. Evidence: with the toolCall and running toolStatus events sent at the start, 4 existing tests failed. SessionObserverSeedingTests (grouped rows of the live projection differ from the seeded rows) and ToolInvocationLivenessTests (event order). Cause: SessionObserver closes the narration text of a pass (textReset) only when the last row is the open text row. A call row that came earlier hides it, so the narration no longer joins its call group. The live events stay at the end of the submission, as before. So no duplicate is possible and no consumer changes. If early live events are still wanted, SessionObserver must change first (card to add).
+    C. Fork: forkPrefix now drops a toolCallStarted marker that follows the last entry the fork keeps. Without it, each fork would inherit the markers of the next submission of its parent and show them as open calls (test in WriteAheadToolCallTests).
+    D. Existing tests changed: ToolInvocationLivenessTests expect the toolCallStarted marker in the recorded kinds (2 places).
+
+    OPEN POINTS. (1) A call that started and was cancelled (no .toolCalls entry ever) leaves an uncovered marker, and a later restore shows it as an open call. (2) A crash while call 1 of a submission is done and call 2 runs shows both as open: the result of call 1 is not recorded, and the placeholder text says so. (3) The prompt of the submission in flight is not recorded (entries are written at the end), so the folded entry follows the last recorded entry. (4) A fork of a restored parent does not inherit the open call of the parent that has no later entry.
+
+    Files: Recording/OpenToolCalls.swift (new), TranscriptEvent.swift, TranscriptEntryMapper.swift, TranscriptTree.swift, TranscriptReconstruction.swift, ContextRenderer.swift, SessionTreeRestoration.swift, Session/ToolCallRunJoin.swift, RoutedSessionActorRunJournal.swift, RoutedSessionActorRecording.swift, SessionObserver.swift; tests: WriteAheadToolCallTests.swift (new, 18 tests), ToolInvocationLivenessTests.swift.
+
+    ### implement - changed
+    - evidence: full swift test: 2280 tests in 277 suites passed, 0 failures; WriteAheadToolCallTests 18 tests passed (confirmed by the suite line in the log).
+    - next: review
+  timestamp: 2026-11-03T16:26:07.068233+00:00
+position_column: review
+position_ordinal: '80'
 title: 'Write-ahead record of a tool call: the .toolCalls entry reaches the recording when the call starts, not at the end of the submission'
 ---
 ## What

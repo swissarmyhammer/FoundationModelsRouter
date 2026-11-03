@@ -255,7 +255,7 @@ extension TranscriptTree {
         forSession id: ULID,
         view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {
-        let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: .repeatedPartRemoval)
+        let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: [.repeatedPartRemoval, .toolCallStarted])
         guard view == .restore else {
             return Transcript(entries: try Self.entries(of: renderEvents.filter(\.kind.isEntryKind)))
         }

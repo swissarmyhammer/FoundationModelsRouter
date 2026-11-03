@@ -395,11 +395,23 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// the SDK can continue when the tool returns, and the close record
     /// carries the id that its open record joined.
     ///
+    /// The open record is also the start of a tool call. The call is then
+    /// recorded (``recordStart(of:)``), before the tool body runs.
+    ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
         noteGenerationProgress(record.closedAt == nil ? .toolCall : .toolResult)
         let submissionEntries = record.closedAt == nil ? unrecordedTranscriptEntries() : []
-        let toolCallID = toolCallRunJoin.toolCallID(for: record, in: submissionEntries)
+        let toolCallID: String?
+        if record.closedAt == nil {
+            let call = toolCallRunJoin.openedCall(for: record, in: submissionEntries)
+            toolCallID = call?.id
+            if let call {
+                await recordStart(of: call)
+            }
+        } else {
+            toolCallID = toolCallRunJoin.toolCallID(for: record, in: submissionEntries)
+        }
         await noteGenerationCallBoundary(at: record)
         deliverPost(.toolInvocation(record, toolCallID: toolCallID))
     }

@@ -44,8 +44,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD, 3 findings on this card: RoutedLLM.swift:191, RestoredSessionIdentityTests.swift:83, RestoredSessionIdentityTests.swift:265
     - next: fix all three findings, then review again
   timestamp: 2026-11-03T15:56:07.164854+00:00
-position_column: review
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m6h29gsyr9d1awk5v3xchg83
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 0 findings (0 confirmed, 0 refuted). Prior 3 findings all checked.
+    - next: none, card moved to done.
+  timestamp: 2026-11-03T16:01:20.702154+00:00
+position_column: done
+position_ordinal: ffffffffde80
 title: 'A restored sub-agent session keeps its identity: parent session id, root session id and parent call'
 ---
 ## What

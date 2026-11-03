@@ -316,8 +316,10 @@ struct ToolInvocationLivenessTests {
         #expect(pending.events.isEmpty)
 
         // Not recorded: the persisted shape of a tool-using answer is the
-        // session meta line, the usage of the generation call that asked for
-        // the tool (written at the tool's open, before the diff), the
+        // session meta line, the write-ahead marker of the call (written at
+        // the tool's open, before the tool body runs), the usage of the
+        // generation call that asked for the tool (written at the tool's
+        // open, before the diff), the
         // submission's own SDK entries as the diff after the submission
         // records them (instructions included, the same shape
         // `ScriptedToolAnswerComparisonTests` asserts on the raw transcript),
@@ -326,8 +328,8 @@ struct ToolInvocationLivenessTests {
         let recordedKinds = await fixture.recorder.events.withoutMailRecords.map(\.kind)
         #expect(
             recordedKinds == [
-                .session, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput, .response,
-                .generationCall,
+                .session, .toolCallStarted, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput,
+                .response, .generationCall,
             ])
     }
 
@@ -730,8 +732,8 @@ struct ToolInvocationLivenessTests {
         let recordedKinds = await fixture.recorder.events.withoutMailRecords.map(\.kind)
         #expect(
             recordedKinds == [
-                .session, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput, .response,
-                .generationCall,
+                .session, .toolCallStarted, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput,
+                .response, .generationCall,
             ])
     }
 

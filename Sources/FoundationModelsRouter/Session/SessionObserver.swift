@@ -530,7 +530,7 @@ public final class SessionObserver {
                     TranscriptEntry(
                         id: payload.entryId, kind: .reasoning(text ?? ""), sourceEntryId: payload.entryId))
             case .session, .instructions, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop,
-                .mail, .toolCall, .unknown:
+                .mail, .toolCallStarted, .toolCall, .unknown:
                 break
             }
         }
@@ -721,7 +721,7 @@ public final class SessionObserver {
         case .response:
             return compactionRow(from: entry, entryId: payload.entryId) == nil ? .text(entryId: payload.entryId) : nil
         case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
-            .generationCall, .repeatedPartRemoval, .watchStop, .mail, .toolCall, .unknown:
+            .generationCall, .repeatedPartRemoval, .watchStop, .mail, .toolCallStarted, .toolCall, .unknown:
             return nil
         }
     }

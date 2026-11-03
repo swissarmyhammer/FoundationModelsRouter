@@ -300,7 +300,7 @@ package struct TranscriptTree: Sendable {
     /// parent's effective entry-kind events truncated to this session's fork
     /// cut point, then this session's own entry-kind events. Only kinds with
     /// ``TranscriptEvent/Kind/isEntryKind`` appear, and the events of
-    /// `routerKind` when the caller names one. The cut point is
+    /// `routerKinds` when the caller names some. The cut point is
     /// ``SessionRecord/forkedAtHistoryOrdinal``, or
     /// ``SessionRecord/forkedAtEntryCount`` when the record holds no ordinal.
     ///
@@ -319,17 +319,24 @@ package struct TranscriptTree: Sendable {
     ///   (task ^gg49g5e). The session records a cut after the entries it cuts,
     ///   and before the next entry. So a fork keeps each cut of its parent's
     ///   entries before the fork cut point, and no cut of a later entry.
+    /// - ``TranscriptEvent/Kind/toolCallStarted``: the events
+    ///   ``effectiveTranscript(forSession:view:)`` folds into the open calls
+    ///   of a crash (``OpenToolCalls``). The session records a marker when a
+    ///   call starts, ahead of the entries of its submission. So a fork keeps
+    ///   no marker after the last entry that the fork cut point keeps: the
+    ///   later entry of that marker is not in the fork, and the call would
+    ///   look open (``forkPrefix(of:entryCount:)``).
     ///
     /// - Parameters:
     ///   - id: The session's span id.
-    ///   - routerKind: A router-only kind to keep with the entry kinds, or
-    ///     `nil` to keep the entry kinds only.
+    ///   - routerKinds: The router-only kinds to keep with the entry kinds.
+    ///     None (the default) keeps the entry kinds only.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
     ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
     func effectiveEntryEvents(
-        forSession id: ULID, alongWith routerKind: TranscriptEvent.Kind? = nil
+        forSession id: ULID, alongWith routerKinds: Set<TranscriptEvent.Kind> = []
     ) throws -> [TranscriptEvent] {
-        try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == routerKind }
+        try effectiveEvents(forSession: id) { $0.isEntryKind || routerKinds.contains($0) }
     }
 
     /// This session's effective events of the kinds `isKept` keeps, oldest
@@ -385,14 +392,25 @@ package struct TranscriptTree: Sendable {
     ///
     /// For a list of entry-kind events only, this is the first `cut` events.
     ///
+    /// A ``TranscriptEvent/Kind/toolCallStarted`` marker after the last
+    /// entry-kind event that the prefix keeps is not in the prefix. The
+    /// marker belongs to the submission of the next entry, which the fork
+    /// does not inherit. The entry that covers the marker is in that
+    /// submission, so the marker alone would make an open call of a finished
+    /// call (``OpenToolCalls``).
+    ///
     /// - Parameters:
     ///   - events: A parent's effective events, oldest first.
     ///   - cut: The fork cut point, as a count of entry-kind events.
     /// - Returns: The events the fork inherits.
-    private static func forkPrefix(of events: [TranscriptEvent], entryCount cut: Int) -> [TranscriptEvent] {
+    static func forkPrefix(of events: [TranscriptEvent], entryCount cut: Int) -> [TranscriptEvent] {
         let entryIndices = events.indices.lazy.filter { events[$0].kind.isEntryKind }
         let end = entryIndices.dropFirst(cut).first ?? events.endIndex
-        return Array(events[..<end])
+        let lastKeptEntry = entryIndices.last { $0 < end }
+        let nextSubmissionStart = lastKeptEntry.map { $0 + 1 } ?? events.startIndex
+        return events[..<end].enumerated().compactMap { index, event in
+            index >= nextSubmissionStart && event.kind == .toolCallStarted ? nil : event
+        }
     }
 
     // MARK: - Event decoding

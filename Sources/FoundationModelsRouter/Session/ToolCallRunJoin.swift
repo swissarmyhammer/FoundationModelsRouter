@@ -47,9 +47,25 @@ struct ToolCallRunJoin {
         guard record.closedAt == nil else {
             return toolCallIDsByCorrelationID.removeValue(forKey: record.correlationID)
         }
+        return openedCall(for: record, in: entries)?.id
+    }
+
+    /// The SDK tool call that the run of an open `record` joins, and the join.
+    ///
+    /// The call is the first call of `entries` that has the tool name of the
+    /// record, no `.toolOutput` entry, and no run yet. The session records
+    /// the id, the name and the arguments of this call when the call starts
+    /// (``TranscriptEvent/Kind/toolCallStarted``).
+    ///
+    /// - Parameters:
+    ///   - record: The live open record that the outbox forwarded.
+    ///   - entries: The transcript entries that the submission in flight
+    ///     appended.
+    /// - Returns: The SDK tool call, or `nil` when no call joins the run.
+    mutating func openedCall(for record: ToolInvocationRecord, in entries: [Transcript.Entry]) -> Transcript.ToolCall? {
         guard let call = claims.claim(named: record.tool, in: entries) else { return nil }
         toolCallIDsByCorrelationID[record.correlationID] = call.id
-        return call.id
+        return call
     }
 }
 

@@ -452,9 +452,40 @@ extension RoutedSessionActor {
         case .response:
             onEvent(.entryRecorded(id: entry.entryId, kind: .response))
         case .session, .instructions, .prompt, .embedding, .divergence, .generationCall, .repeatedPartRemoval,
-            .watchStop, .mail, .toolCall, .unknown:
+            .watchStop, .mail, .toolCallStarted, .toolCall, .unknown:
             break
         }
+    }
+
+    /// The prefix of the entry id of a ``TranscriptEvent/Kind/toolCallStarted``
+    /// marker. The id of the call follows it. The entry id of the marker is
+    /// not the id of any entry of the transcript.
+    private static let startedEntryIDPrefix = "started-"
+
+    /// Records the start of the SDK tool call `call` before its tool body
+    /// runs.
+    ///
+    /// The write is one ``TranscriptEvent/Kind/toolCallStarted`` event with
+    /// the id, the tool name and the arguments of the call, through the
+    /// recorder, which flushes it. A crash in the tool run then leaves the
+    /// call in the recording. The `.toolCalls` entry of the call is still
+    /// recorded at the end of the submission, by the diff
+    /// (``recordTranscriptDelta(grammar:since:usage:deliveredMail:entryIdsBeforeAttempt:onEvent:)``),
+    /// and so are the live events of the call. This call sends no live event:
+    /// the projection of the session (``SessionObserver``) closes the
+    /// narration text of a pass when the next text starts, and it needs the
+    /// call row to come after that close.
+    ///
+    /// The caller got `call` from the entries of the submission in flight,
+    /// while the SDK waits in the tool call. This call reads no transcript.
+    ///
+    /// - Parameter call: The SDK tool call that starts.
+    func recordStart(of call: Transcript.ToolCall) async {
+        let payload = ToolCallPayload(id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString)
+        await append(
+            partial: makePartialEvent(
+                kind: .toolCallStarted,
+                entry: TranscriptEntryPayload(entryId: Self.startedEntryIDPrefix + call.id, toolCalls: [payload])))
     }
 
     /// Records the `session` meta event once, before the first recorded entry.
