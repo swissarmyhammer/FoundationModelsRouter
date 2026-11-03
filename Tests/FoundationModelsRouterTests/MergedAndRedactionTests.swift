@@ -164,6 +164,36 @@ struct MergedAndRedactionTests {
         }
     }
 
+    /// The production change that makes this test fail: a one-folder read that
+    /// drops the check of the schema version of the folder.
+    @Test("the one-folder read refuses a folder whose index.md carries a future schema version, with the typed error")
+    func oneFolderReadRefusesAFutureVersionIndexWithTheTypedError() async throws {
+        let uncanonicalDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MergedTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: uncanonicalDir, withIntermediateDirectories: true)
+        // Canonicalized as in the test of the merge above, because the typed
+        // error names the directory and the test asserts on the exact value.
+        let canonicalPath = try #require(
+            try uncanonicalDir.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath)
+        let routerDir = URL(fileURLWithPath: canonicalPath, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: routerDir) }
+
+        let recorder: JSONLRecorder = .jsonl(directory: routerDir, now: { Self.fixedInstant })
+        let sessionDir = routerDir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        await recorder.append(samplePartial(kind: .prompt, text: "body"), to: sessionDir)
+        let futureVersion = RecordingSchemaVersion.current + 1
+        var futureRecord = SessionRecordFixtures.record(in: sessionDir)
+        futureRecord.schemaVersion = futureVersion
+        try SessionRecordFixtures.write(futureRecord, to: sessionDir)
+
+        #expect(
+            throws: RecordingSchemaVersionError.recordingFromNewerRouter(
+                directory: sessionDir, version: futureVersion, supported: RecordingSchemaVersion.current)
+        ) {
+            _ = try TranscriptEvent.read(sessionDirectory: sessionDir)
+        }
+    }
+
     // MARK: - Level gating (unit)
 
     @Test("level off writes nothing")

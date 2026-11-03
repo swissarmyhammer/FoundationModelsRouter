@@ -1,9 +1,10 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -88,7 +89,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionRecord`` against this call's owning profile, and a mismatch
     /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -151,7 +152,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     completes the run
     ///     (``RoutedSession/completeClaimedRun(_:outcome:detail:)``) or the
     ///     session closes. See
-    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``.
+    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
+    ///   - transcriptReader: The reader of the recorded transcripts of
+    ///     sessions, or `nil` (the default) for no reader. The recording does
+    ///     not hold the reader, because it is a live object, so a host gives
+    ///     it again here, as it gives the tools. See
+    ///     ``SessionConfiguration/transcriptReader``.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -167,12 +173,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         userPresence: UserPresence? = nil,
         hookSessionKey: String? = nil,
-        claimingRuns: Set<RunKey> = []
+        claimingRuns: Set<RunKey> = [],
+        transcriptReader: (any SessionTranscriptReader)? = nil
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
-            userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns)
+            userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns,
+            transcriptReader: transcriptReader)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

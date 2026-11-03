@@ -2,7 +2,6 @@ import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
-import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -38,66 +37,12 @@ struct RestoredSessionIdentityTests {
     // MARK: - Fixtures
 
     /// The ids that a tool saw in its `ToolContext`.
-    private struct Identity: Equatable {
+    fileprivate struct Identity: Equatable {
         /// ``ToolContext/parentSessionID``.
         let parent: ULID?
 
         /// ``ToolContext/rootSessionID``.
         let root: ULID
-    }
-
-    /// The `ToolContext` of the last call of each session, by session id.
-    private final class ContextStore: Sendable {
-        private let contexts = Mutex<[ULID: ToolContext]>([:])
-
-        /// Saves the context of one call.
-        func save(_ context: ToolContext) {
-            contexts.withLock { $0[context.sessionID] = context }
-        }
-
-        /// The context of the last call of `session`, or `nil` when there was none.
-        func context(of session: ULID) -> ToolContext? {
-            contexts.withLock { $0[session] }
-        }
-
-        /// The ids of the last call of `session`.
-        func identity(of session: ULID) throws -> Identity {
-            let context = try #require(context(of: session))
-            return Identity(parent: context.parentSessionID, root: context.rootSessionID)
-        }
-    }
-
-    /// A tool that saves the `ToolContext` of each call in a store.
-    private struct ContextRecordingTool: Tool {
-        let name: String
-        let description = "test-only tool that saves the context of its call"
-        let store: ContextStore
-
-        func call(arguments: BackgroundFixtureArguments) async throws -> String {
-            if let context = ToolContext.current { store.save(context) }
-            return "recorded"
-        }
-    }
-
-    /// A container whose backend calls each tool, also for a restored session.
-    private final class ToolDrivingContainer: LoadedLLMContainer {
-        let tokenCounter: any TokenCounter = CharacterTokenCounter()
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            makeSession(instructions: instructions, tools: [])
-        }
-
-        func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            BackgroundingBackend(tools: tools)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            makeSession(transcript: transcript, tools: [])
-        }
-
-        func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            BackgroundingBackend(tools: tools)
-        }
     }
 
     /// The three sessions of a chain, root to grandchild.
@@ -118,7 +63,7 @@ struct RestoredSessionIdentityTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let recordings = directory.appendingPathComponent("recordings")
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: ToolDrivingContainer(), cacheDir: directory.appendingPathComponent("cache"),
+            over: ToolDrivingLLMContainer(), cacheDir: directory.appendingPathComponent("cache"),
             recordingsDir: recordings)
         try await body(profile, recordings)
         withExtendedLifetime(router) {}
@@ -291,5 +236,17 @@ struct RestoredSessionIdentityTests {
 
             #expect(after == before)
         }
+    }
+}
+
+extension ContextStore {
+    /// The ids of the last call of `session`.
+    ///
+    /// - Parameter session: The session to read.
+    /// - Returns: The parent id and the root id of the last call of `session`.
+    /// - Throws: When the store holds no context of `session`.
+    fileprivate func identity(of session: ULID) throws -> RestoredSessionIdentityTests.Identity {
+        let context = try #require(context(of: session))
+        return RestoredSessionIdentityTests.Identity(parent: context.parentSessionID, root: context.rootSessionID)
     }
 }

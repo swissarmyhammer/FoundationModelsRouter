@@ -758,7 +758,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// of this session writes no terminal event for any run. The runs that are
     /// open stay open, so a restore finds them as orphans (``RunStatus/orphaned``),
     /// as after a crash. A host that claimed them
-    /// (``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``)
+    /// (``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``)
     /// then completes the ORIGINAL calls with ``completeClaimedRun(_:outcome:detail:)``.
     ///
     /// Call it before ``close()``. The close then does what it does for each
@@ -807,7 +807,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Completes a run that the host claimed at the restore of this session,
     /// with the real result of the host.
     ///
-    /// The restore of a session (``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``)
+    /// The restore of a session (``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``)
     /// posts a `.lost` terminal for each orphan run. A run in `claimingRuns`
     /// gets none. It stays an open claim of this session, and the session is
     /// not idle (``awaitIdle()``) while a claim is open. This call posts the

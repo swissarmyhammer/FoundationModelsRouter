@@ -57,6 +57,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - parentCall: The context of the call that starts the session as a child, or `nil`.
     ///   - recordedSpawn: The spawn record of a restored sub-agent session, or `nil`.
     ///   - delegationAdvisor: The advisor of the hint to give a code change to an agent, or `nil`.
+    ///   - transcriptReader: The reader of the recorded transcripts of sessions, or `nil`. See
+    ///     ``SessionConfiguration/transcriptReader``.
     /// - Returns: The outbox, the run plane, the instanced tools and the result witness of the session.
     func wireSessionTools(
         _ tools: [any Tool],
@@ -66,7 +68,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         userPresence: UserPresence,
         parentCall: ToolContext?,
         recordedSpawn: SessionRecord.AgentSpawn?,
-        delegationAdvisor: AgentDelegationAdvisor?
+        delegationAdvisor: AgentDelegationAdvisor?,
+        transcriptReader: (any SessionTranscriptReader)?
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool], resultWitness: ToolResultWitness?) {
         makeSessionToolWiring(
             tools,
@@ -77,7 +80,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             userPresence: userPresence,
             parentCall: parentCall,
             recordedSpawn: recordedSpawn,
-            delegationAdvisor: delegationAdvisor)
+            delegationAdvisor: delegationAdvisor,
+            transcriptReader: transcriptReader)
     }
 
     // sah:allow duplication a public convenience (^pckk91c) whose body only forwards its parameters into a SessionConfiguration and on to makeSession(configuration:); makeGuidedSession forwards the same parameters plus its grammar, and neither body holds logic that can drift
@@ -161,7 +165,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             hookOrigin: configuration.hookOrigin,
             agentDelegationHint: configuration.agentDelegationHint,
             facts: configuration.initialFacts,
-            requestedByClient: configuration.requestedByClient)
+            requestedByClient: configuration.requestedByClient,
+            transcriptReader: configuration.transcriptReader)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -200,6 +205,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - requestedByClient: The UI client that asked for the start, which
     ///     the one `started` event of the registration carries, or `nil`
     ///     (the default). See ``SessionConfiguration/requestedByClient``.
+    ///   - transcriptReader: The reader of the recorded transcripts of
+    ///     sessions that the tools of the session read through, or `nil`
+    ///     (the default). See ``SessionConfiguration/transcriptReader``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -222,7 +230,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         hookOrigin: SessionOrigin? = nil,
         agentDelegationHint: AgentDelegationHint? = nil,
         facts: SessionFacts = SessionFacts(),
-        requestedByClient: String? = nil
+        requestedByClient: String? = nil,
+        transcriptReader: (any SessionTranscriptReader)? = nil
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -271,7 +280,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             userPresence: userPresence,
             parentCall: parentCall,
             recordedSpawn: agentSpawn,
-            delegationAdvisor: delegationAdvisor
+            delegationAdvisor: delegationAdvisor,
+            transcriptReader: transcriptReader
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -441,6 +451,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - delegationAdvisor: The advisor of the hint to give a code change
     ///     to an agent, or `nil` for no hint. It is the call witness of the
     ///     root site, and each `String`-output tool counts its calls in it.
+    ///   - transcriptReader: The reader of the recorded transcripts of
+    ///     sessions, or `nil`. The root site and the recorded-spawn site
+    ///     hold it, and the child site of a live `parentCall` keeps the
+    ///     reader of that call. See ``SessionConfiguration/transcriptReader``.
     /// - Returns: The outbox and the run plane of the session, the mounted
     ///   tools, and the witness that reads the final result of each tool call
     ///   (``ToolResultWitness``), or `nil` for a session of a live parent call.
@@ -453,7 +467,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         userPresence: UserPresence,
         parentCall: ToolContext?,
         recordedSpawn: SessionRecord.AgentSpawn? = nil,
-        delegationAdvisor: AgentDelegationAdvisor? = nil
+        delegationAdvisor: AgentDelegationAdvisor? = nil,
+        transcriptReader: (any SessionTranscriptReader)? = nil
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool], resultWitness: ToolResultWitness?) {
         let outbox = SessionOutbox(model: chosen)
         let runPlane = RunPlane(
@@ -473,11 +488,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 MountSite(
                     sessionID: sessionID, runPlane: runPlane, parentSessionID: spawn.parentSessionId,
                     rootSessionID: spawn.rootSessionId, rootRunPlane: runPlane, sink: outbox, tracer: tracer,
-                    inlineSettleGrace: inlineSettleGrace, callWitness: callWitness)
+                    inlineSettleGrace: inlineSettleGrace, callWitness: callWitness,
+                    transcriptReader: transcriptReader)
             }
             ?? MountSite(
                 sessionID: sessionID, runPlane: runPlane, sink: outbox, tracer: tracer,
-                inlineSettleGrace: inlineSettleGrace, callWitness: callWitness)
+                inlineSettleGrace: inlineSettleGrace, callWitness: callWitness,
+                transcriptReader: transcriptReader)
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool, site: site, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter,

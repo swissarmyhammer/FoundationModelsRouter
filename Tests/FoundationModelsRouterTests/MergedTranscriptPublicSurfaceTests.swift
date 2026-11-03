@@ -74,6 +74,46 @@ struct MergedTranscriptPublicSurfaceTests {
         )
     }
 
+    // MARK: - The read of one folder
+
+    /// The production change that makes this test fail: a read that walks the
+    /// child folders of the session folder.
+    @Test("the one-folder read returns the events of that folder only and skips the child folders")
+    func theOneFolderReadSkipsChildFolders() throws {
+        let routerDirectory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: routerDirectory) }
+        let routerId = ULID.generate()
+        let parentId = ULID.generate()
+        let childId = ULID.generate()
+        try Self.writeSession(
+            id: parentId, of: routerId, lines: Self.fixtureLines(forSessionAt: 0), under: routerDirectory)
+        let parentDirectory = routerDirectory.appendingPathComponent(parentId.description, isDirectory: true)
+        try Self.writeSession(
+            id: childId, of: routerId, lines: Self.fixtureLines(forSessionAt: 1), under: parentDirectory)
+
+        let events = try TranscriptEvent.read(sessionDirectory: parentDirectory)
+
+        #expect(events.map(\.sessionId) == [parentId, parentId])
+    }
+
+    /// The production change that makes this test fail: a read that keeps the
+    /// order of the lines on disk.
+    @Test("the one-folder read sorts the events by timestamp and sequence")
+    func theOneFolderReadSortsTheEvents() throws {
+        let routerDirectory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: routerDirectory) }
+        let sessionId = ULID.generate()
+        try Self.writeSession(
+            id: sessionId, of: ULID.generate(), lines: Self.recordedTexts.indices.reversed().map {
+                FixtureLine(seq: $0, text: Self.recordedTexts[$0])
+            }, under: routerDirectory)
+
+        let events = try TranscriptEvent.read(
+            sessionDirectory: routerDirectory.appendingPathComponent(sessionId.description, isDirectory: true))
+
+        #expect(events.map(\.text) == Self.recordedTexts as [String?])
+    }
+
     // MARK: - Fixtures
 
     /// One recorded line of a fixture session, in the shape the recorder writes

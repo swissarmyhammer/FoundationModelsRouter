@@ -168,6 +168,9 @@ extension ToolMounting {
     ///   - inlineSettleGrace: How long each background call waits for its own
     ///     run, in seconds. See ``SessionConfiguration/inlineSettleGrace``.
     ///     A negative value acts as `0`.
+    ///   - transcriptReader: The reader of the recorded transcripts of
+    ///     sessions, or `nil` (the default). See
+    ///     ``SessionConfiguration/transcriptReader``.
     /// - Returns: The model-facing tool.
     static func makeSessionMounted(
         tool: any Tool,
@@ -177,13 +180,14 @@ extension ToolMounting {
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)? = nil,
-        inlineSettleGrace: TimeInterval
+        inlineSettleGrace: TimeInterval,
+        transcriptReader: (any SessionTranscriptReader)? = nil
     ) -> any Tool {
         makeSessionMounted(
             tool: tool,
             site: MountSite(
                 sessionID: sessionID, runPlane: runPlane, sink: sink, tracer: tracer,
-                inlineSettleGrace: inlineSettleGrace),
+                inlineSettleGrace: inlineSettleGrace, transcriptReader: transcriptReader),
             cappedToTokenLimit: tokenLimit,
             tokenCounter: tokenCounter)
     }

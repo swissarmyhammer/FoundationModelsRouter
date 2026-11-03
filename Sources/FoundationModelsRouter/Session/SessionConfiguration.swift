@@ -115,7 +115,7 @@ public struct SessionConfiguration: Sendable {
     /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
     /// ``persistable`` does not record it. A restore gets
     /// it again from the host, through the `isNoOpToolCall` argument of
-    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``.
+    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
     public var isNoOpToolCall: NoOpToolCallCheck
 
     /// Tells if a user can answer the questions of the session.
@@ -228,6 +228,22 @@ public struct SessionConfiguration: Sendable {
     /// and ``SessionRecord/facts`` do not hold it.
     public var requestedByClient: String?
 
+    /// The reader of the recorded transcripts of sessions, or `nil` (the
+    /// default) for no reader.
+    ///
+    /// The host builds the reader, and the router only gives it to the tools
+    /// of the session: it is in the ``ToolContext`` of every tool call, and a
+    /// tool reads through ``ToolContext/transcript(of:)``. A child session
+    /// that starts from a live ``parentCall`` keeps the reader of that call.
+    /// With `nil` and no parent call, ``ToolContext/transcript(of:)`` throws
+    /// ``SessionTranscriptError/noSource``. For a session that a restore
+    /// makes, the host gives the reader again as the `transcriptReader`
+    /// argument of
+    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
+    ///
+    /// The reader is a live object, thus ``persistable`` does not record it.
+    public var transcriptReader: (any SessionTranscriptReader)?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
     /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
@@ -238,7 +254,7 @@ public struct SessionConfiguration: Sendable {
     /// `agentDelegationHint` defaults to `AgentDelegationHint()`, `tags`
     /// defaults to none, and the other fact fields (`agentID`, `agentName`,
     /// `title`, `startedBy`, `origin`) and `requestedByClient` default to
-    /// `nil`.
+    /// `nil`, and `transcriptReader` defaults to `nil`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -263,7 +279,8 @@ public struct SessionConfiguration: Sendable {
         title: String? = nil,
         startedBy: ULID? = nil,
         origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil,
-        requestedByClient: String? = nil
+        requestedByClient: String? = nil,
+        transcriptReader: (any SessionTranscriptReader)? = nil
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -289,6 +306,7 @@ public struct SessionConfiguration: Sendable {
         self.startedBy = startedBy
         self.origin = origin
         self.requestedByClient = requestedByClient
+        self.transcriptReader = transcriptReader
     }
 
     /// The first ``SessionFacts`` of a session vended with this

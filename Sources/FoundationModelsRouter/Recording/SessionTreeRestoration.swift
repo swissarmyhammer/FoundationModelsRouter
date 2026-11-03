@@ -3,8 +3,8 @@ import FoundationModels
 import FoundationModelsExtras
 
 /// A failure to restore recorded sessions from disk, through
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -96,7 +96,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 ///
 /// This type stays internal. A caller resumes a session by an id it holds,
 /// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` is the
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` is the
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
@@ -268,6 +268,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     an orphan run that is not claimed gets ``OpenToolCalls/lostOutput``,
     ///     and an open call with no run in the journal gets
     ///     ``OpenToolCalls/unrecordedOutput``.
+    ///   - transcriptReader: The reader of the recorded transcripts of
+    ///     sessions, or `nil` (the default) for no reader. Every restored node
+    ///     gets it. The recording does not hold the reader, because it is a
+    ///     live object, so a host gives it again here, as it gives the tools.
+    ///     See ``SessionConfiguration/transcriptReader``.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -282,7 +287,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         userPresence: UserPresence? = nil,
         hookSessionKey: String? = nil,
-        claimingRuns: Set<RunKey> = []
+        claimingRuns: Set<RunKey> = [],
+        transcriptReader: (any SessionTranscriptReader)? = nil
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -491,7 +497,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 userPresence: userPresence ?? configuration?.restoredUserPresence ?? .interactive,
                 parentCall: nil,
                 recordedSpawn: node.record.agentSpawn,
-                delegationAdvisor: nil
+                delegationAdvisor: nil,
+                transcriptReader: transcriptReader
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
@@ -677,7 +684,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``
         /// releases those forks anyway.
         ///
         /// The model reads its instructions from the leading `.instructions`
