@@ -80,7 +80,7 @@ struct RestoredSessionIdentityTests {
     }
 
     /// A container whose backend calls each tool, also for a restored session.
-    private final class ToolDrivingContainer: LoadedLLMContainer, @unchecked Sendable {
+    private final class ToolDrivingContainer: LoadedLLMContainer {
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
@@ -236,6 +236,36 @@ struct RestoredSessionIdentityTests {
         }
     }
 
+    // MARK: - A fresh sub-agent session with a recorded spawn
+
+    /// The production change that makes this test fail: a fresh session whose
+    /// tools are mounted on the root site when it has a spawn record and no
+    /// parent call, so the tools see no parent and no root.
+    @Test("a fresh session with a spawn record and no parent call gives its tools the ids that a restore gives")
+    func aFreshSessionTakesItsIdsFromTheSpawnRecord() async throws {
+        try await Self.withProfile { profile, _ in
+            let parent = ULID.generate()
+            let freshStore = ContextStore()
+            let restoredStore = ContextStore()
+            let spawn = SessionRecord.AgentSpawn(parentSessionId: parent, parentToolCallId: Self.childCallID)
+            let tool = ContextRecordingTool(name: Self.originalToolName, store: freshStore)
+            let fresh = profile.standard.makeSession(
+                configuration: SessionConfiguration(tools: [tool], agentSpawn: spawn))
+            _ = try await fresh.respond(to: Self.prompt)
+            let before = try freshStore.identity(of: fresh.id)
+            await fresh.close()
+
+            let replacement = ContextRecordingTool(name: Self.replacementToolName, store: restoredStore)
+            let restored = try await profile.standard.restoreSession(id: fresh.id, tools: [replacement]).session
+            _ = try await restored.respond(to: Self.prompt)
+            let after = try restoredStore.identity(of: fresh.id)
+            await restored.close()
+
+            #expect(before == Identity(parent: parent, root: parent))
+            #expect(after == before)
+        }
+    }
+
     // MARK: - A parent that is not restored
 
     /// The production change that makes this test fail: a restore that needs
@@ -248,8 +278,10 @@ struct RestoredSessionIdentityTests {
             let chain = try await Self.makeChain(on: profile, store: original)
             let before = try original.identity(of: chain.grandchild.id)
             for session in [chain.grandchild, chain.child, chain.root] { await session.close() }
-            try FileManager.default.removeItem(at: Self.folder(of: chain.child.id, in: recordings))
-            try FileManager.default.removeItem(at: Self.folder(of: chain.root.id, in: recordings))
+            for gone in [chain.child.id, chain.root.id] {
+                let folder = try #require(try TranscriptTree.sessionFolder(of: gone, under: recordings))
+                try FileManager.default.removeItem(at: folder)
+            }
 
             let tool = ContextRecordingTool(name: Self.replacementToolName, store: restoredStore)
             let restored = try await profile.standard.restoreSession(id: chain.grandchild.id, tools: [tool]).session
@@ -259,13 +291,5 @@ struct RestoredSessionIdentityTests {
 
             #expect(after == before)
         }
-    }
-
-    /// The session folder of `id` under the recording root of the router.
-    private static func folder(of id: ULID, in recordings: URL) throws -> URL {
-        let routers = try FileManager.default.contentsOfDirectory(
-            at: recordings, includingPropertiesForKeys: nil)
-        let folders = routers.map { $0.appendingPathComponent(id.description, isDirectory: true) }
-        return try #require(folders.first { FileManager.default.fileExists(atPath: $0.path) })
     }
 }

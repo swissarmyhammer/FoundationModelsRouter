@@ -48,11 +48,6 @@ struct SessionEndedMarkerTests {
             agentSpawn: SessionRecord.AgentSpawn(parentSessionId: parent, parentToolCallId: spawnCallID))
     }
 
-    /// The record that the `index.md` in `folder` holds.
-    private static func record(in folder: URL) throws -> SessionRecord {
-        try #require(try SessionIndexFile.read(in: folder))
-    }
-
     // MARK: - Recorded session
 
     /// The production change that makes this test fail: a marker that is not
@@ -66,7 +61,7 @@ struct SessionEndedMarkerTests {
 
         let end = try await fixture.directory.markEnded(recorded.id, reason: .failed)
 
-        let onDisk = try Self.record(in: recorded.recordingDirectory)
+        let onDisk = try #require(try SessionIndexFile.read(in: recorded.recordingDirectory))
         #expect(onDisk.facts.endedAt == end.endedAt)
         #expect(onDisk.facts.endReason == .failed)
         #expect(try await fixture.directory.endMarker(of: recorded.id) == end)
@@ -81,12 +76,12 @@ struct SessionEndedMarkerTests {
         let recorded = await fixture.recordClosedRoot()
         await fixture.useRoot(of: recorded.recordingDirectory)
         let first = try await fixture.directory.markEnded(recorded.id, reason: .finished)
-        let onDisk = try Self.record(in: recorded.recordingDirectory)
+        let onDisk = try #require(try SessionIndexFile.read(in: recorded.recordingDirectory))
 
         let second = try await fixture.directory.markEnded(recorded.id, reason: .cancelled)
 
         #expect(second == first)
-        #expect(try Self.record(in: recorded.recordingDirectory) == onDisk)
+        #expect(try SessionIndexFile.read(in: recorded.recordingDirectory) == onDisk)
     }
 
     /// The production change that makes this test fail: a mark of an id that
@@ -120,7 +115,9 @@ struct SessionEndedMarkerTests {
         let live = try await directory.sessions(matching: SessionQuery())
         #expect(session.facts.endedAt == end.endedAt)
         #expect(session.facts.endReason == .finished)
-        #expect(try Self.record(in: session.recordingDirectory).facts.endedAt == end.endedAt)
+        let onDisk = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
+        #expect(onDisk.facts.endedAt == end.endedAt)
+        #expect(try await directory.endMarker(of: session.id) == end)
         #expect(live.map(\.id) == [session.id])
         await session.close()
     }
@@ -143,7 +140,7 @@ struct SessionEndedMarkerTests {
         await session.close()
         await latch.open()
 
-        let onDisk = try Self.record(in: session.recordingDirectory)
+        let onDisk = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
         #expect(onDisk.facts.endedAt == nil)
         #expect(onDisk.facts.endReason == nil)
     }

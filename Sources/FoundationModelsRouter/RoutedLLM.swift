@@ -226,6 +226,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             inlineSettleGrace: inlineSettleGrace,
             userPresence: userPresence,
             parentCall: parentCall,
+            recordedSpawn: agentSpawn,
             delegationAdvisor: delegationAdvisor
         )
 

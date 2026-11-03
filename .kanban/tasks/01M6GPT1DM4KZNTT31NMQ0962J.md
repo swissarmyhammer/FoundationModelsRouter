@@ -21,6 +21,13 @@ comments:
   id: 01m6gxqe954k8060wvxp54j1s2
   text: 'Implemented. Deviation from the DESIGN: SessionSummary belongs to the FoundationModelsExtras package, a git dependency, so Router cannot add endedAt and endReason to it. Router has these public calls instead: markEnded(_:reason:) returns the new SessionEndedMarker; endMarker(of:) reads it; unendedChildren(of:) lists the subagent children that are not ended. The name SessionEnd was taken by a hook event, so the type is SessionEndedMarker. Undecided: whether Extras should get the two summary fields. Full swift test passed.'
   timestamp: 2026-11-03T14:41:33.989585+00:00
+- actor: claude-code
+  id: 01m6h1zwkmx8kfzw9rwsj5je41
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD, 2 findings on this card: SessionEndedMarkerTests.swift:52, SessionEndedMarkerTests.swift:118
+    - next: fix both findings, then review again
+  timestamp: 2026-11-03T15:56:05.108573+00:00
 position_column: review
 position_ordinal: '80'
 title: Mark a session record as ended, so a host can tell a finished sub-agent run from an interrupted one
@@ -52,3 +59,10 @@ Consumer: FoundationModelsACPAgent board, tag `subagents`, task "Cold resume" (`
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #subagents
+
+## Review Findings (2026-11-03 09:48)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified.
+
+- [x] `Tests/FoundationModelsRouterTests/SessionEndedMarkerTests.swift:52` `reuse/reuse` — The new helper `record(in:)` reimplements a helper that already exists. It does the same read of the index file and the same `#require`. Three test suites now hold this same body, and each copy can drift on its own. Move one shared helper, for example a static `record(in:)` in a file under Tests/FoundationModelsRouterTestSupport or the existing Helpers folder, and call it from all three suites. Remove the private copies. If you prefer to keep this change small, call `SessionIndexFile.read` directly at each use and drop the wrapper.
+- [x] `Tests/FoundationModelsRouterTests/SessionEndedMarkerTests.swift:118` `completeness/inverse-operation-coverage` — The live-session test writes the ended marker with markEnded and checks it through session.facts and the index.md on disk. It never reads it back through the directory's endMarker(of:) accessor. The recorded-session test does read it back through endMarker(of:), so the read path is proven only for recorded sessions, not for live ones. Add `#expect(try await directory.endMarker(of: session.id) == end)` to aMarkOnALiveSessionKeepsItLive, so the read direction is proven for a live session as well as a recorded one.

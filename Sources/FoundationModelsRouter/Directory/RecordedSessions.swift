@@ -38,11 +38,7 @@ struct RecordedSessions {
     /// - Throws: The error of a listing of a root that exists, or the read
     ///   error of an `index.md` that exists (``SessionIndexFile/read(in:)``).
     func records() throws -> [SessionRecord] {
-        let folders = try roots.flatMap(Self.sessionFolders(under:))
-        let firstFolders = Dictionary(folders, uniquingKeysWith: { first, _ in first })
-        return try firstFolders.values
-            .compactMap(SessionIndexFile.read(in:))
-            .sorted { $0.sessionId > $1.sessionId }
+        try readRecords(depth: .direct)
     }
 
     /// The records of the sessions recorded under ``roots`` at any depth: the
@@ -57,18 +53,7 @@ struct RecordedSessions {
     /// - Throws: The read error of an `index.md` that exists
     ///   (``SessionIndexFile/read(in:)``).
     func nestedRecords() throws -> [SessionRecord] {
-        var seen: Set<ULID> = []
-        var records: [SessionRecord] = []
-        for root in roots where FileManager.default.fileExists(atPath: root.path) {
-            for indexURL in TranscriptFileDiscovery.fileURLs(named: SessionIndexFile.fileName, under: root) {
-                let folder = indexURL.deletingLastPathComponent()
-                guard let id = ULID(ulidString: folder.lastPathComponent), seen.insert(id).inserted,
-                    let record = try SessionIndexFile.read(in: folder)
-                else { continue }
-                records.append(record)
-            }
-        }
-        return records.sorted { $0.sessionId > $1.sessionId }
+        try readRecords(depth: .nested)
     }
 
     /// The summaries of the root sessions recorded under ``roots``.
@@ -103,22 +88,57 @@ struct RecordedSessions {
             isLive: false)
     }
 
-    /// The root session folders of `root`: each entry that is a folder named
-    /// by a ULID, in root order.
+    /// How deep a listing looks for the folder of a session under a root.
+    private enum Depth {
+        /// Only the entries of the root.
+        case direct
+
+        /// A folder at any depth under the root.
+        case nested
+    }
+
+    /// The records of the sessions that ``roots`` hold at `depth`. This is the
+    /// one root walk of ``records()`` and ``nestedRecords()``: if two roots
+    /// hold a folder with one id, the first root wins.
     ///
-    /// - Parameter root: A recording root.
-    /// - Returns: The id and the folder of each root session, or none when
-    ///   `root` does not exist.
+    /// - Parameter depth: How deep the listing of each root looks.
+    /// - Returns: One record for each recorded session, newest first.
+    /// - Throws: The error of a listing of a root that exists, or the read
+    ///   error of an `index.md` that exists.
+    private func readRecords(depth: Depth) throws -> [SessionRecord] {
+        let folders = try roots.flatMap { try Self.sessionFolders(under: $0, depth: depth) }
+        let firstFolders = Dictionary(folders, uniquingKeysWith: { first, _ in first })
+        return try firstFolders.values
+            .compactMap(SessionIndexFile.read(in:))
+            .sorted { $0.sessionId > $1.sessionId }
+    }
+
+    /// The session folders of `root` at `depth`: each folder named by a ULID,
+    /// in root order. A `direct` listing takes each entry of the root. A
+    /// `nested` listing takes each folder at any depth that holds an
+    /// `index.md`.
+    ///
+    /// - Parameters:
+    ///   - root: A recording root.
+    ///   - depth: How deep the listing looks.
+    /// - Returns: The id and the folder of each session, or none when `root`
+    ///   does not exist.
     /// - Throws: The error of the listing of a root that exists.
-    private static func sessionFolders(under root: URL) throws -> [(ULID, URL)] {
+    private static func sessionFolders(under root: URL, depth: Depth) throws -> [(ULID, URL)] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
-        let entries = try FileManager.default.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: [.isDirectoryKey])
-        return entries.compactMap { entry in
-            guard (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
-                let id = ULID(ulidString: entry.lastPathComponent)
-            else { return nil }
-            return (id, entry)
+        let candidates: [URL]
+        switch depth {
+        case .direct:
+            candidates = try FileManager.default.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: [.isDirectoryKey]
+            ).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+        case .nested:
+            candidates = TranscriptFileDiscovery
+                .fileURLs(named: SessionIndexFile.fileName, under: root)
+                .map { $0.deletingLastPathComponent() }
+        }
+        return candidates.compactMap { folder in
+            ULID(ulidString: folder.lastPathComponent).map { ($0, folder) }
         }
     }
 }

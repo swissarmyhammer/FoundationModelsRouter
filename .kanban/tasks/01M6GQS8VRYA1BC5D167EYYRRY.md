@@ -53,6 +53,13 @@ comments:
     Full swift test: 2261 tests in 276 suites passed, no warnings from the change.
     UNDECIDED: (1) A nested spawn child (folder inside the folder of its parent, no fork cut) still throws forkCutPointMissing in runStatuses, as before. (2) recordedChildren(of:) still reads every index.md under the roots (the card asks for a listing; the request covered runStatuses only).
   timestamp: 2026-11-03T15:29:24.577467+00:00
+- actor: claude-code
+  id: 01m6h1zxkr8gbn8bh6jy6ygprh
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD, 1 finding on this card: RecordedSessions.swift:59
+    - next: fix the finding, then review again
+  timestamp: 2026-11-03T15:56:06.136137+00:00
 position_column: review
 position_ordinal: '8280'
 title: Public read-only lookup of recorded child sessions and public orphan scan, without restoring the parent
@@ -86,3 +93,9 @@ Consumers: FoundationModelsAgents board, card `01M6GNHC0MV9FBT33Z9DTT5TVA` (rest
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #subagents
+
+## Review Findings (2026-11-03 09:48)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified.
+
+- [x] `Sources/FoundationModelsRouter/Directory/RecordedSessions.swift:59` `reuse/reuse` — nestedRecords() is a near-copy of records(). Both walk the recording roots, skip roots that do not exist, keep the first root for each session id, read each index.md with SessionIndexFile.read(in:), and sort newest first. The new function reimplements that loop with its own discovery (TranscriptFileDiscovery) and its own dedup (a Set of ULIDs) instead of extending records(). Two copies of the same root-walk and dedup logic will drift apart when one is fixed. Parameterize the existing folder listing by depth (direct entries for records(), any depth for nestedRecords()), so both share one root walk, one first-root-wins rule and one read-and-sort step. records() then calls the shared helper with the direct-entry mode, and recordedChildren(of:) calls it with the nested mode.

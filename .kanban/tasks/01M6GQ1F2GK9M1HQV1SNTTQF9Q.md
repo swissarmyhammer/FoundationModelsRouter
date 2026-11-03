@@ -37,6 +37,13 @@ comments:
     - evidence: RestoredSessionIdentityTests (5 tests) failed first (4 failed, the root test passed as it should), then passed. Full `swift test`: 2256 + 38 + 19 tests, 0 failures. Files: RoutedLLM.swift, SessionRecord.swift (AgentSpawn.rootSessionId), SessionTreeRestoration.swift, SessionConfiguration.swift (doc), RestoredSessionIdentityTests.swift, RecordedSessionsPublicSurfaceTests.swift (hand-written record got rootSessionId).
     - next: review. Open: a restored child uses its own run plane as the root run plane, so rootUserPresence is the user presence of the child, not of a live root.
   timestamp: 2026-11-03T15:25:18.969926+00:00
+- actor: claude-code
+  id: 01m6h1zykwbe2k27h42k8h75qj
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD, 3 findings on this card: RoutedLLM.swift:191, RestoredSessionIdentityTests.swift:83, RestoredSessionIdentityTests.swift:265
+    - next: fix all three findings, then review again
+  timestamp: 2026-11-03T15:56:07.164854+00:00
 position_column: review
 position_ordinal: '8380'
 title: 'A restored sub-agent session keeps its identity: parent session id, root session id and parent call'
@@ -72,3 +79,11 @@ Consumer: FoundationModelsAgents board, card `01M6GNHC0MV9FBT33Z9DTT5TVA` (resto
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #subagents
+
+## Review Findings (2026-11-03 09:48)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified.
+
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:191` `completeness/invariant-propagation` — The recorded spawn is re-rooted here (`agentSpawn?.rooted(at:)`) and used for hook lineage (line 198), but the tool-wiring call at lines 221-230 passes `parentCall: parentCall` and does not pass `recordedSpawn`. A fresh session that has an `agentSpawn` but no `parentCall` therefore mounts its tools on the root site, so its `ToolContext` reports no parent session and no root session. The restore site (`restoreSessionTree`, `recordedSpawn: node.record.agentSpawn`) does pass it. The same spawn record gives different tool identities depending on whether the session is fresh or restored. The change covers the restore path and leaves this sibling site without the same treatment. Pass the resolved spawn to the wiring on the fresh path as well, for example `recordedSpawn: agentSpawn` in the call at lines 221-230, so that `makeSessionToolWiring` derives the parent and root ids from the record when `parentCall` is nil. Add a test that vends a session with an `agentSpawn` and no `parentCall`, then asserts that its tools see the recorded parent and root ids, and that those ids match the ones a restore gives.
+- [x] `Tests/FoundationModelsRouterTests/RestoredSessionIdentityTests.swift:83` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+- [x] `Tests/FoundationModelsRouterTests/RestoredSessionIdentityTests.swift:265` `reuse/reuse` — The test helper `folder(of:in:)` reimplements finding a session's folder under a recording root. The change adds a production function for that same capability, `TranscriptTree.sessionFolder(of:under:)`, which the test does not call. Replace `folder(of:in:)` with a call to `TranscriptTree.sessionFolder(of:under:)` (the test target uses `@testable import`), and unwrap the optional with `#require`. If the test needs the looser match on purpose, say so in a comment.

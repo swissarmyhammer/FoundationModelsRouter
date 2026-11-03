@@ -39,8 +39,15 @@ comments:
     - If the host answers at both levels (child first, then the parent copy): the parent takes the second answer (`.delivered`). The relay sends it down. The child has no question any more, so the run of the child keeps the first answer only.
     - UNDECIDED: should an answer in the child end the parent copy at once? That needs a relay change (new child event, or a settle of the parent copy when the child answer comes). Not done, because the card says only "ends once".
   timestamp: 2026-11-03T14:47:08.493642+00:00
-position_column: review
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m6h1zzns0w25ne7hp0z251sz
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 0 findings on this card
+    - next: none, moved to done
+  timestamp: 2026-11-03T15:56:08.249811+00:00
+position_column: done
+position_ordinal: ffffffffdb80
 title: Give a host a public way to get the live session (or its event feed) of a sub-agent session
 ---
 ## What
