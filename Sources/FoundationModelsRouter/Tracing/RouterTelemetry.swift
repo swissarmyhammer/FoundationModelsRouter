@@ -550,6 +550,9 @@ enum RouterTelemetry {
         /// The name of the span of an "enter" record (``EnterRecord``).
         static let spanName = prefix + "span.name"
 
+        /// The id of a tool call, as the SDK gave it.
+        static let toolCallId = prefix + "tool.call_id"
+
         /// Every key above.
         static let allKeys = [
             category, sessionId, archivedBy, entryId, segmentId, responseFormatName, entryCase, userPresence,
@@ -558,7 +561,7 @@ enum RouterTelemetry {
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,
-            spanName,
+            spanName, toolCallId,
         ]
     }
 
@@ -704,12 +707,16 @@ enum RouterTelemetry {
         /// ``SessionEvent/cancelled(_:)``.
         static let mailCancelled = prefix + "mail.cancelled"
 
+        /// The counter of the write-ahead markers of tool calls that the
+        /// recorder could not write (``TranscriptEvent/Kind/toolCallStarted``).
+        static let toolCallMarkerDropped = prefix + "recording.tool_call_marker.dropped"
+
         /// Every name above.
         static let allNames = [
             generationTokensIn, generationTokensCached, generationTokensOut, generationTokensPerSecond,
             submissionTimeToFirstToken, generationCallTimeToFirstToken, generationCallDecodeTime,
             generationCallDuration, loadDuration, residentBytes, sessionQueueDepth,
-            compactionCount, mailQueuePauseDuration, mailCancelled,
+            compactionCount, mailQueuePauseDuration, mailCancelled, toolCallMarkerDropped,
         ]
     }
 

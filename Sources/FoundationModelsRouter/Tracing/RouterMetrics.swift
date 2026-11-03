@@ -193,6 +193,12 @@ struct RouterMetrics: Sendable {
         Counter(label: RouterTelemetry.MetricName.mailCancelled, factory: factory).increment(by: count)
     }
 
+    /// Counts one write-ahead marker of a tool call that the recorder could
+    /// not write. The counter has no dimension.
+    func recordDroppedToolCallMarker() {
+        Counter(label: RouterTelemetry.MetricName.toolCallMarkerDropped, factory: factory).increment()
+    }
+
     /// Counts one compaction.
     ///
     /// - Parameter trigger: What asked for the compaction.

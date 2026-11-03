@@ -10,6 +10,13 @@ struct OpenClaim {
     /// The `.lost` terminal that the restore did not post for this run. It
     /// gives the `op` and the detail of the lost terminal of the close.
     let lostTerminal: OperationEvent
+
+    /// Whether a call of ``RoutedSessionActor/completeClaimedRun(_:outcome:detail:)``
+    /// took this claim and has not yet journaled the terminal event. A
+    /// second call finds the claim and does nothing. A close that comes in
+    /// this time still finds the claim, so it ends the run as `.lost` when
+    /// the terminal of the call is not in the journal.
+    var isCompleting = false
 }
 
 /// ``RoutedSessionActor``'s claimed runs: orphan runs that the host took at
@@ -35,22 +42,32 @@ extension RoutedSessionActor {
     /// claim stays open, and the journal keeps the run as an orphan for the
     /// next restore.
     ///
-    /// The claim leaves ``openClaims`` before the first suspension, so two
-    /// calls for one key post one terminal event. The terminal goes through
-    /// the outbox, as the terminal of any run does. The lease of the claim
-    /// ends after the post, so the mail of the terminal holds its own lease
-    /// before the work of the claim ends, and the session has no idle moment
-    /// between the two.
+    /// The claim is marked as completing before the first suspension, so two
+    /// calls for one key post one terminal event. The claim stays in
+    /// ``openClaims`` until the post returns, so a ``close()`` in the time of
+    /// the post still finds it. The close then journals the `.lost` terminal
+    /// of the run behind the post. The journal admits one terminal for each
+    /// run (``claimJournalWrite(for:)``), so the run ends with one terminal
+    /// event in each order, and the close waits for the post before it closes
+    /// the output. The terminal goes through the outbox, as the terminal of
+    /// any run does. The lease of the claim ends after the post, so the mail
+    /// of the terminal holds its own lease before the work of the claim ends,
+    /// and the session has no idle moment between the two.
+    ///
+    /// - Returns: `true` when this call took the claim. A close at the same
+    ///   time can still end the run as `.lost`.
     func completeClaimedRun(_ key: RunKey, outcome: OperationOutcome, detail: String?) async -> Bool {
         guard !isSuspended.withLock({ $0 }) else { return false }
-        guard let claim = openClaims.removeValue(forKey: key) else { return false }
+        guard let claim = openClaims[key], !claim.isCompleting else { return false }
+        openClaims[key]?.isCompleting = true
         await attachOutboxJournalIfNeeded()
         let terminal = claim.lostTerminal
         await outbox.post(
             event: OperationEvent(
                 tool: terminal.tool, op: terminal.op, correlationID: terminal.correlationID, kind: .completed,
                 detail: detail ?? "", outcome: outcome))
-        claim.lease.end()
+        // A close that took the claim in the meantime ends the lease itself.
+        openClaims.removeValue(forKey: key)?.lease.end()
         return true
     }
 

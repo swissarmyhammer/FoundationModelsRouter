@@ -139,6 +139,25 @@ struct OrphanRunScan {
         }
     }
 
+    /// The detail of the lost terminal of a run that wrote no event.
+    static let eventlessLostDetail = "The run stopped before it wrote an event."
+
+    /// The op of the lost terminal of a run that wrote no event. The journal
+    /// holds no op of such a run.
+    static let eventlessLostOp = "run"
+
+    /// The `.lost` terminal for a run that the host claimed and that wrote no
+    /// journal event before the process stopped. The journal holds no event
+    /// to take the op and the detail from, so they are fixed texts.
+    ///
+    /// - Parameter run: The claimed run.
+    /// - Returns: The terminal event.
+    static func lostTerminal(withoutEventOf run: RunKey) -> OperationEvent {
+        OperationEvent(
+            tool: run.tool, op: eventlessLostOp, correlationID: run.correlationID, kind: .completed,
+            detail: eventlessLostDetail, outcome: .lost)
+    }
+
     /// The `detail` of the lost terminal of a run whose newest kept event
     /// is `newest`: the message of its question, or its own `detail`.
     ///

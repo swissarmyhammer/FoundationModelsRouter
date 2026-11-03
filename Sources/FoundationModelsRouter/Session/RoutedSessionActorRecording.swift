@@ -479,6 +479,10 @@ extension RoutedSessionActor {
     /// The caller got `call` from the entries of the submission in flight,
     /// while the SDK waits in the tool call. This call reads no transcript.
     ///
+    /// A write that fails does not block the tool. The recorder logs the
+    /// error with the id of the call and counts the loss
+    /// (``RouterTelemetry/MetricName/toolCallMarkerDropped``).
+    ///
     /// The marker also holds the completion token of the run of the call.
     /// A restore uses it to find the run of an open call in the journal
     /// (``OpenToolCalls``).

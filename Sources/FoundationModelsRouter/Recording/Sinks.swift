@@ -110,6 +110,10 @@ package actor JSONLRecorder: TranscriptRecorder {
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
         let target = (directory ?? self.directory).appendingPathComponent(transcriptFileName, isDirectory: false)
+        if let markedCallID = event.toolCallStartedID {
+            appendMarker(event, ofCall: markedCallID, to: target)
+            return
+        }
         JSONLAppend.appendDroppingFailure(
             event,
             to: target,
@@ -118,6 +122,38 @@ package actor JSONLRecorder: TranscriptRecorder {
             failureMessage: "dropping a transcript event",
             failureMetadata: [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
         )
+    }
+
+    /// Appends the write-ahead marker of a tool call. A write that fails is
+    /// not silent: the error log names the id of the call, and a counter
+    /// counts the loss (``RouterMetrics/recordDroppedToolCallMarker()``). The
+    /// tool is not blocked: the call goes on without the marker, and a
+    /// restore after a crash in this call then finds no open call.
+    ///
+    /// The marker needs no `F_FULLFSYNC` and no `fsync` of the directory. The
+    /// requirement is a process crash and an orderly quit, and not a loss of
+    /// power, and the `fsync(2)` of the file (see Durability) is enough for
+    /// that.
+    ///
+    /// - Parameters:
+    ///   - event: The stamped marker event.
+    ///   - callID: The id of the tool call of the marker.
+    ///   - target: The `transcript.jsonl` to append to.
+    private func appendMarker(_ event: TranscriptEvent, ofCall callID: String, to target: URL) {
+        let written = JSONLAppend.appendDroppingFailure(
+            event,
+            to: target,
+            through: appendLine,
+            logger: RouterTelemetry.makeLogger(.recording),
+            failureMessage: "dropping a tool call marker",
+            failureMetadata: [
+                RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)",
+                RouterTelemetry.LogMetadataKey.toolCallId: "\(callID)",
+            ]
+        )
+        if !written {
+            RouterMetrics().recordDroppedToolCallMarker()
+        }
     }
 
     /// Claims the recording root before a write when no claim is held yet,

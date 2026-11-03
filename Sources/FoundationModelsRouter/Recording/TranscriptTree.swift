@@ -276,6 +276,24 @@ package struct TranscriptTree: Sendable {
         nodesById[id]
     }
 
+    /// The completion tokens of the sub-agent children of `parent` that the
+    /// host did not mark as ended
+    /// (``SessionRecord/AgentSpawn/parentToolCallId``). A child is any
+    /// session of the loaded recording whose agent spawn names `parent`, at
+    /// any depth.
+    ///
+    /// - Parameter parent: The id of the spawning session.
+    /// - Returns: The tokens of the unended children, or empty.
+    func unendedSpawnTokens(of parent: ULID) -> Set<String> {
+        Set(
+            nodesById.values.compactMap { node in
+                guard let spawn = node.record.agentSpawn, spawn.parentSessionId == parent,
+                    node.record.facts.end == nil
+                else { return nil }
+                return spawn.parentToolCallId
+            })
+    }
+
     /// A session's direct forks, ordered by id. Empty if `id` is unknown or a leaf.
     func children(of id: ULID) -> [SessionNode] {
         nodesById[id]?.children ?? []

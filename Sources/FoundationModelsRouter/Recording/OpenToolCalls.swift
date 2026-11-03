@@ -16,27 +16,54 @@ import Foundation
 ///   each call (``ToolCallOutputPairing``). The real result of a run arrives
 ///   later as run mail, not as this output.
 ///
-/// The text of the placeholder follows the journal. The marker holds the
-/// completion token of the run of its call. A call whose run is orphaned
-/// (``RunStatus/orphaned``) gets ``runningOutput``: its result comes as run
-/// mail. Any other call gets ``interruptedOutput``: the call has no run in the
-/// journal, or its run has a terminal event, so no result comes. A call that
-/// ended inline, and a call that the user cancelled, are such calls. The model
-/// then does not wait for a result that never arrives.
+/// The text of the placeholder follows the journal and the claims of the
+/// host. The marker holds the completion token of the run of its call, and the
+/// restore looks at the run in the journal:
+///
+/// - The run is claimed by the host (``runningOutput``): the host completes
+///   the run, and the result arrives as run mail. A run is claimed when it is
+///   orphaned, or when it wrote no event and an unended child holds its token
+///   (``SessionTreeRestorationError/runNotClaimable(_:)``).
+/// - The run is orphaned and not claimed (``lostOutput``): the restore posts a
+///   lost terminal for it, and no result arrives.
+/// - The run has a terminal event (``endedOutput``): the journal holds the
+///   result.
+/// - The call has no run in the journal (``unrecordedOutput``): an inline
+///   tool may have finished before the crash, so the restore cannot tell if the
+///   call ran. The text does not tell the model to call it again.
+///
+/// A call that has a real `.toolOutput` entry in the recording, and no
+/// `.toolCalls` entry, gets its `.toolCalls` entry from the marker and no
+/// placeholder: the model reads one output for the call.
 enum OpenToolCalls {
     /// The text of the output that a restore gives to an open call whose run
-    /// is orphaned in the journal. The run does not work now, but the restore
-    /// posts its terminal event, or a host that claimed the run completes it.
-    /// That event arrives as run mail.
+    /// the host claimed. The run does not work in this process, but the host
+    /// drives it again and completes it
+    /// (``RoutedSession/completeClaimedRun(_:outcome:detail:)``). That event
+    /// arrives as run mail.
     static let runningOutput =
         "The run of this tool call is still working. Its result will arrive in this "
         + "conversation as a message when it is ready."
 
-    /// The text of the output that a restore gives to an open call that has
-    /// no orphaned run in the journal. No result will arrive for this call.
-    static let interruptedOutput =
-        "This tool call was interrupted before its result was recorded. "
-        + "Call it again if you still need it."
+    /// The text of the output that a restore gives to an open call whose run
+    /// is orphaned and not claimed. The restore posts a lost terminal for the
+    /// run, and the terminal arrives as run mail.
+    static let lostOutput =
+        "The run of this tool call was lost. The process stopped before the run ended. "
+        + "A message in this conversation tells that the run was lost. No result will arrive."
+
+    /// The text of the output that a restore gives to an open call whose run
+    /// has a terminal event in the journal. The terminal is a run message in
+    /// the conversation.
+    static let endedOutput =
+        "The run of this tool call has ended. Its result is in a run message of this conversation."
+
+    /// The text of the output that a restore gives to an open call that has no
+    /// run in the journal. The call may be an inline tool that finished before
+    /// the crash, so the restore cannot tell if it ran.
+    static let unrecordedOutput =
+        "The result of this tool call was not recorded. The tool call may or may not have run. "
+        + "Check the state before you repeat a call that is not safe to repeat."
 
     /// The prefix of the id of the `.toolCalls` entry that a restore makes.
     /// The id ends with the id of the first call, so it is the same at each
@@ -52,11 +79,15 @@ enum OpenToolCalls {
     /// A group is the open markers with no entry-kind event between them. It
     /// goes where its first marker was, ahead of the next entry-kind event.
     ///
-    /// - Parameter events: The events of one session, in `seq` order.
+    /// - Parameters:
+    ///   - events: The events of one session, in `seq` order.
+    ///   - claimedRuns: The runs that the host claimed at the restore. The
+    ///     placeholder of a call of such a run says that the run is working.
     /// - Returns: The events with no marker.
-    static func folding(_ events: [TranscriptEvent]) -> [TranscriptEvent] {
+    static func folding(_ events: [TranscriptEvent], claimedRuns: Set<RunKey> = []) -> [TranscriptEvent] {
         let lastCover = lastCoveringIndex(in: events)
         let statuses = OrphanRunScan(scanning: events).statuses
+        let answered = Set(events.filter { $0.kind == .toolOutput }.compactMap { $0.entry?.entryId })
         var folded: [TranscriptEvent] = []
         var group: [TranscriptEvent] = []
         for (index, event) in events.enumerated() {
@@ -67,12 +98,12 @@ enum OpenToolCalls {
                 continue
             }
             if event.kind.isEntryKind {
-                folded += openEvents(of: group, statuses: statuses)
+                folded += openEvents(of: group, statuses: statuses, claimedRuns: claimedRuns, answered: answered)
                 group = []
             }
             folded.append(event)
         }
-        return folded + openEvents(of: group, statuses: statuses)
+        return folded + openEvents(of: group, statuses: statuses, claimedRuns: claimedRuns, answered: answered)
     }
 
     /// The index of the last `.toolCalls` event that holds each call id.
@@ -95,15 +126,21 @@ enum OpenToolCalls {
     /// - Parameters:
     ///   - group: The open markers, in order.
     ///   - statuses: The status of each run in the journal.
+    ///   - claimedRuns: The runs that the host claimed.
+    ///   - answered: The ids of the `.toolOutput` entries of the recording. A
+    ///     call with a real output in it gets no placeholder.
     /// - Returns: The events, or none for an empty group.
     private static func openEvents(
-        of group: [TranscriptEvent], statuses: [RunKey: RunStatus]
+        of group: [TranscriptEvent], statuses: [RunKey: RunStatus], claimedRuns: Set<RunKey>,
+        answered: Set<String>
     ) -> [TranscriptEvent] {
         let calls = group.compactMap { $0.entry?.toolCalls?.first }
         guard let template = group.first, let first = calls.first else { return [] }
         let entry = TranscriptEntryPayload(entryId: entryIDPrefix + first.id, toolCalls: calls)
-        let outputs = zip(group, calls).map { marker, call in
-            rekinded(marker, as: .toolOutput, entry: placeholderPayload(for: call, statuses: statuses))
+        let outputs = zip(group, calls).filter { !answered.contains($0.1.id) }.map { marker, call in
+            rekinded(
+                marker, as: .toolOutput,
+                entry: placeholderPayload(for: call, statuses: statuses, claimedRuns: claimedRuns))
         }
         return [rekinded(template, as: .toolCalls, entry: entry)] + outputs
     }
@@ -113,24 +150,33 @@ enum OpenToolCalls {
     /// - Parameters:
     ///   - call: The open call.
     ///   - statuses: The status of each run in the journal.
+    ///   - claimedRuns: The runs that the host claimed.
     /// - Returns: The payload, with the id of the call as its entry id.
     private static func placeholderPayload(
-        for call: ToolCallPayload, statuses: [RunKey: RunStatus]
+        for call: ToolCallPayload, statuses: [RunKey: RunStatus], claimedRuns: Set<RunKey>
     ) -> TranscriptEntryPayload {
         TranscriptEntryPayload(
             entryId: call.id,
-            segments: [.text(id: call.id + placeholderSegmentSuffix, content: text(for: call, statuses: statuses))],
+            segments: [.text(id: call.id + placeholderSegmentSuffix, content: text(for: call, statuses: statuses, claimedRuns: claimedRuns))],
             toolName: call.toolName)
     }
 
-    /// The text of the placeholder output of `call`: ``runningOutput`` when
-    /// the run of the call is orphaned in the journal, else
-    /// ``interruptedOutput``.
-    private static func text(for call: ToolCallPayload, statuses: [RunKey: RunStatus]) -> String {
-        guard let correlationID = call.correlationID,
-            statuses[RunKey(tool: call.toolName, correlationID: correlationID)] == .orphaned
-        else { return interruptedOutput }
-        return runningOutput
+    /// The text of the placeholder output of `call`, by the claim and by the
+    /// status of its run in the journal. A claimed run gets ``runningOutput``.
+    /// A run that is not claimed gets ``lostOutput`` when it is orphaned,
+    /// ``endedOutput`` when it has a terminal event, and ``unrecordedOutput``
+    /// when the journal holds no event of it.
+    private static func text(
+        for call: ToolCallPayload, statuses: [RunKey: RunStatus], claimedRuns: Set<RunKey>
+    ) -> String {
+        guard let correlationID = call.correlationID else { return unrecordedOutput }
+        let run = RunKey(tool: call.toolName, correlationID: correlationID)
+        guard !claimedRuns.contains(run) else { return runningOutput }
+        switch statuses[run] {
+        case .orphaned: return lostOutput
+        case .completed: return endedOutput
+        case nil: return unrecordedOutput
+        }
     }
 
     /// `event` as an event of another kind with another payload. The

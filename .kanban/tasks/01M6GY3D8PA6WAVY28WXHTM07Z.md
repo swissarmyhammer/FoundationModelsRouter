@@ -29,8 +29,15 @@ comments:
     - note: an answered-early id of a question that the parent answered itself stays in a per-relay set until the relay closes (small, bounded by the relay life).
     - next: review
   timestamp: 2026-11-03T17:33:20.651796+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6h7p4p13gvk6bzyssbcd3vp
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 7 files reviewed, 0 findings (confirmed 0, refuted 0, failed 0).
+    - next: none. Card moved to done.
+  timestamp: 2026-11-03T17:35:37.153170+00:00
+position_column: done
+position_ordinal: ffffffffe380
 title: An answer at the child ends the relayed copy of the question in the parent
 ---
 ## What

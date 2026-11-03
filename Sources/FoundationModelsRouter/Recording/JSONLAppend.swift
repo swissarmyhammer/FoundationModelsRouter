@@ -31,6 +31,10 @@ enum JSONLAppend {
     /// best-effort append of the transcript and of the message ledger. It
     /// never throws.
     ///
+    /// The append needs no `F_FULLFSYNC` and no `fsync` of the directory: the
+    /// requirement is a process crash and an orderly quit, and not a loss of
+    /// power. `fsync(2)` of the file gives that.
+    ///
     /// - Parameters:
     ///   - record: The record to append.
     ///   - file: The JSONL file.
@@ -41,6 +45,10 @@ enum JSONLAppend {
     ///     sequence number. The log record also holds the type and the code of
     ///     the error (``RouterTelemetry/errorMetadata(_:)``), and never its
     ///     description.
+    /// - Returns: `true` when the record is in the file, and `false` when the
+    ///   append failed and the record was dropped. The caller of a record that
+    ///   must not be lost silently uses it to count the loss.
+    @discardableResult
     static func appendDroppingFailure(
         _ record: some Encodable,
         to file: URL,
@@ -48,13 +56,15 @@ enum JSONLAppend {
         logger: Logger,
         failureMessage: Logger.Message,
         failureMetadata: Logger.Metadata
-    ) {
+    ) -> Bool {
         do {
             try append(record, file)
+            return true
         } catch {
             logger.error(
                 failureMessage,
                 metadata: RouterTelemetry.errorMetadata(error).merging(failureMetadata) { _, new in new })
+            return false
         }
     }
 }

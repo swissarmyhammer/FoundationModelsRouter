@@ -755,13 +755,20 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// runs, unless the session suspended first (``suspend()``): then the claim
     /// stays open in the journal, and this call returns `false`.
     ///
+    /// The claim stays open until the terminal event is in the journal. A
+    /// ``close()`` that runs while this call posts the event finds the claim,
+    /// waits for the post, and ends the run as `.lost` only when the journal
+    /// holds no terminal event of it. Thus the run has one terminal event in
+    /// each order of the two calls.
+    ///
     /// - Parameters:
     ///   - key: The key of the claimed run.
     ///   - outcome: How the run ended.
     ///   - detail: The text of the result for the model, or `nil` for none.
-    /// - Returns: `true` when this call posted the terminal event. `false`
-    ///   when `key` is not an open claim of this session, or its terminal
-    ///   event was posted before.
+    /// - Returns: `true` when this call took the claim and posted the
+    ///   terminal event. `false` when `key` is not an open claim of this
+    ///   session, or its terminal event was posted before, or another call
+    ///   took the claim.
     @discardableResult
     func completeClaimedRun(_ key: RunKey, outcome: OperationOutcome, detail: String?) async -> Bool
 

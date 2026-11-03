@@ -165,7 +165,10 @@ extension RoutedSessionActor {
     private func closeAndAwaitTheEnd() async {
         // The claims are taken first, with no suspension before: a call of
         // ``completeClaimedRun(_:outcome:detail:)`` that comes later finds no
-        // claim and posts nothing, so each claim has one terminal event.
+        // claim and posts nothing. A call that is in its post now has its
+        // claim here too. Its terminal and the `.lost` terminal of this
+        // close meet in the journal, which admits one terminal for each run,
+        // so each claim has one terminal event.
         let unclaimedRuns = takeOpenClaims()
 
         // The signals that wait behind the work that runs now do not run

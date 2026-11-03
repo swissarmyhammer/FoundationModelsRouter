@@ -27,9 +27,12 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// model resident in `slot` on the restoring profile.
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
 
-    /// The host claimed a run that is not an orphan run of any restored
-    /// session: the journal holds a `.completed` event for it, or holds no
-    /// event of it. Only a run with ``RunStatus/orphaned`` can be claimed.
+    /// The host claimed a run that is not claimable in any restored session:
+    /// the journal holds a `.completed` event for it, or holds no event of it
+    /// and no unended child of a restored session holds its token. Only a run
+    /// with ``RunStatus/orphaned``, or a run with no event whose token an
+    /// unended recorded child holds
+    /// (``SessionRecord/AgentSpawn/parentToolCallId``), can be claimed.
     case runNotClaimable(RunKey)
 
     /// A localized message describing what error occurred.
@@ -56,7 +59,7 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
         case .runNotClaimable(let key):
             return """
                 The run \(key.correlationID) of the tool \(key.tool) is not an orphan run of the recorded \
-                sessions, so a restore cannot claim it.
+                sessions, and no unended child holds its token, so a restore cannot claim it.
                 """
         }
     }
@@ -255,9 +258,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     with ``RouterSessionDirectory/runStatuses(of:)``. A claimed key
     ///     that is not an orphan run of the tree throws
     ///     ``SessionTreeRestorationError/runNotClaimable(_:)`` before any
-    ///     session is restored. The open tool call of a claimed run gets the
+    ///     session is restored. A run with no journal event is also
+    ///     claimable when an unended recorded child of a restored session
+    ///     holds its token (``RecordedChild/parentToolCallId``): a crash can
+    ///     come after the write-ahead record of the call and before the first
+    ///     event of the run. The open tool call of a claimed run gets the
     ///     placeholder output ``OpenToolCalls/runningOutput``, and the real
-    ///     result arrives as run mail with the same run key.
+    ///     result arrives as run mail with the same run key. The open call of
+    ///     an orphan run that is not claimed gets ``OpenToolCalls/lostOutput``,
+    ///     and an open call with no run in the journal gets
+    ///     ``OpenToolCalls/unrecordedOutput``.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -421,7 +431,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                     ))
             }
 
-            let transcript = try tree.effectiveTranscript(forSession: node.id)
+            let transcript = try tree.effectiveTranscript(forSession: node.id, claimedRuns: claimingRuns)
 
             // The caller's instructions override (task ^w30hzsy), applied to
             // this node's own transcript before the backend reads it. See
@@ -541,6 +551,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                     claimedTerminals.append(lostEvent)
                 }
             }
+            // A claimed run that wrote no event has no lost terminal to hold.
+            // The node that spawned an unended child with the token of the
+            // run keeps its claim, with a terminal made for it.
+            let eventlessRuns = Self.eventlessClaims(
+                unplacedClaims, in: effectiveEvents, spawnTokens: tree.unendedSpawnTokens(of: node.id))
+            for run in eventlessRuns {
+                unplacedClaims.remove(run)
+                claimedTerminals.append(OrphanRunScan.lostTerminal(withoutEventOf: run))
+            }
 
             let session = makeRoutedSessionActor(
                 profile: owningProfile,
@@ -572,10 +591,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 outbox: outbox,
                 runPlane: runPlane,
                 // The transcript the backend really holds, which an
-                // instructions override can make one entry longer. The next
-                // submission diff must treat every entry of it as persisted, or
-                // it records a substituted entry as new.
-                persistedEntryCount: seedTranscript.count,
+                // instructions override can make one entry longer, and which
+                // the backend can start with an instructions entry for its
+                // tools when the recording holds none: a crash in the first
+                // submission leaves only the write-ahead markers, which the
+                // seed folds into a call and a placeholder output. The next
+                // submission diff must treat every entry of it as persisted,
+                // or it records a substituted entry, or a placeholder
+                // output, as new.
+                persistedEntryCount: backend.transcriptEntries().count,
                 // The restored session's position in its own append-only
                 // recorded history: the raw effective entry-event count —
                 // NOT `seedTranscript.count`, which the checkpoint filter may
@@ -761,29 +785,54 @@ extension TranscriptTree {
 }
 
 extension RoutedModel where Container == any LoadedLLMContainer {
-    /// Checks that each run of `claims` is an orphan run in the recorded
-    /// events of `rootNode` or of a node below it. It reads the events and
-    /// restores nothing, so a failed check leaves no restored session.
+    /// The claims that a node holds without a journal event: the runs of
+    /// `claims` that `events` hold no event of, and whose completion token is
+    /// the token of an unended child of the node.
+    ///
+    /// - Parameters:
+    ///   - claims: The runs that the host claims.
+    ///   - events: The effective events of the node.
+    ///   - spawnTokens: The tokens of the unended children of the node
+    ///     (``TranscriptTree/unendedSpawnTokens(of:)``).
+    /// - Returns: The runs, in order of tool and `correlationID`.
+    fileprivate static func eventlessClaims(
+        _ claims: Set<RunKey>, in events: [TranscriptEvent], spawnTokens: Set<String>
+    ) -> [RunKey] {
+        guard !claims.isEmpty, !spawnTokens.isEmpty else { return [] }
+        let statuses = OrphanRunScan(scanning: events).statuses
+        return claims.filter { statuses[$0] == nil && spawnTokens.contains($0.correlationID) }.sorted {
+            ($0.tool, $0.correlationID) < ($1.tool, $1.correlationID)
+        }
+    }
+
+    /// Checks that each run of `claims` can be claimed: it is an orphan run
+    /// in the recorded events of `rootNode` or of a node below it, or it wrote
+    /// no event there and an unended child of such a node holds its token. It
+    /// reads the events and restores nothing, so a failed check leaves no
+    /// restored session.
     ///
     /// - Parameters:
     ///   - claims: The runs that the host claims.
     ///   - rootNode: The root of the tree to restore.
     ///   - tree: The loaded tree.
     /// - Throws: ``SessionTreeRestorationError/runNotClaimable(_:)`` for the
-    ///   first claimed run, in order of tool and `correlationID`, that is no
-    ///   orphan run of the tree; the errors of
+    ///   first claimed run, in order of tool and `correlationID`, that can not
+    ///   be claimed; the errors of
     ///   ``TranscriptTree/effectiveEntryEvents(forSession:)``.
     fileprivate static func requireClaimable(
         _ claims: Set<RunKey>, in rootNode: SessionNode, of tree: TranscriptTree
     ) throws {
         guard !claims.isEmpty else { return }
-        var orphans: Set<RunKey> = []
+        var claimable: Set<RunKey> = []
         var pending = [rootNode]
         while let node = pending.popLast() {
-            orphans.formUnion(OrphanRunScan(scanning: try tree.effectiveEntryEvents(forSession: node.id)).orphanedRuns)
+            let events = try tree.effectiveEntryEvents(forSession: node.id)
+            claimable.formUnion(OrphanRunScan(scanning: events).orphanedRuns)
+            claimable.formUnion(
+                eventlessClaims(claims, in: events, spawnTokens: tree.unendedSpawnTokens(of: node.id)))
             pending += node.children
         }
-        let unclaimable = claims.subtracting(orphans).sorted {
+        let unclaimable = claims.subtracting(claimable).sorted {
             ($0.tool, $0.correlationID) < ($1.tool, $1.correlationID)
         }
         if let key = unclaimable.first {

@@ -250,16 +250,20 @@ extension TranscriptTree {
     /// - Parameters:
     ///   - id: The session's span id.
     ///   - view: Which view to reconstruct. Defaults to ``TranscriptReconstructionView/restore``.
+    ///   - claimedRuns: The runs that the host claimed at the restore. The
+    ///     placeholder of an open call of such a run says that the run is
+    ///     working (``OpenToolCalls``). Only the restore view uses it.
     /// - Throws: ``TranscriptTreeError`` or ``TranscriptReconstructionError``.
     package func effectiveTranscript(
         forSession id: ULID,
-        view: TranscriptReconstructionView = .restore
+        view: TranscriptReconstructionView = .restore,
+        claimedRuns: Set<RunKey> = []
     ) throws -> Transcript {
         let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: [.repeatedPartRemoval, .toolCallStarted])
         guard view == .restore else {
             return Transcript(entries: try Self.entries(of: renderEvents.filter(\.kind.isEntryKind)))
         }
-        return try ContextRenderer.context(of: renderEvents)
+        return try ContextRenderer.context(of: renderEvents, claimedRuns: claimedRuns)
     }
 
     /// The changes of the render that the

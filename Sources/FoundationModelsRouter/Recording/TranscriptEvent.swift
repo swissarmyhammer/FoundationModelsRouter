@@ -441,3 +441,12 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         }
     }
 }
+
+extension TranscriptEvent {
+    /// The id of the tool call that this event announces, when it is a
+    /// ``Kind/toolCallStarted`` marker that holds a call. `nil` for any
+    /// other event.
+    var toolCallStartedID: String? {
+        kind == .toolCallStarted ? entry?.toolCalls?.first?.id : nil
+    }
+}

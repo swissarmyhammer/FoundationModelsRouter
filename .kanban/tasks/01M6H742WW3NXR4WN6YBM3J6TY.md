@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8880'
+comments:
+- actor: claude-code
+  id: 01m6h8z1cxjv2g3byaayppnr0r
+  text: |-
+    Item 13 result (verified with tests): after a restore, the next end-of-submission diff DID record a folded placeholder as a real entry. Case: a crash in the first submission, before the first diff. The recording then holds only the write-ahead markers, so the seed has two entries (the folded toolCalls and the placeholder toolOutput) and the backend adds a leading instructions entry for its tools. The restore set persistedEntryCount to the seed count, so the baseline was one entry short and the diff recorded the placeholder toolOutput as new (seq after the restore, entry id = call id). The "open-calls-..." toolCalls entry was not recorded. Fix: persistedEntryCount is now the count of entries the backend really holds (SessionTreeRestoration). Second case: a real toolOutput for a started call that has no toolCalls entry gave two outputs for the call (the placeholder and the real one). Fix: OpenToolCalls.folding makes the toolCalls entry from the marker and no placeholder when the recording holds a toolOutput with the id of the call. Both cases have a test in CrashRestoreReviewTests (both failed first).
+
+    Item 10 note: the journal did get the completed event in the forced interleaving even with the old code. What was wrong: the claim left openClaims before the post, so close() found no claim, did not wait for the post, and could return before the terminal event was in the journal (an orderly quit then loses it). Fix: the claim stays in openClaims (isCompleting) until the post returns; close takes it, and its lost terminal waits behind the post in the journal chain; the journal admits one terminal for each run. A gate test (recorder gate, no sleeps) checks that the claim is held while the terminal is on its way, and that the interleaving of close and completion leaves exactly one terminal event.
+  timestamp: 2026-11-03T17:57:57.277246+00:00
+- actor: claude-code
+  id: 01m6h91pzeds29pk3fvnd5jzt9
+  text: |-
+    ### implement — changed
+    - evidence: full swift test run once: 2339 tests, 1 failure (my own edit of a WriteAhead test, a text list that holds the run-event entry); fixed, WriteAheadToolCallTests rerun: 27 of 27 pass. New file CrashRestoreReviewTests.swift: 15 tests, all pass. Each new test failed first (item 10: claim-held test failed on the old code; items 11, 12, 13, 14 failed on the old code).
+    - items 10 to 14 done. Items 12 and 13: see below. Public API change: OpenToolCalls (internal) constants renamed: interruptedOutput removed; runningOutput, lostOutput, endedOutput, unrecordedOutput. The 4th text (endedOutput) is added by me: a call whose run has a terminal event must not get the "not recorded" text, so it says the run ended and the result is in a run message. Undecided: wording of the four texts (STE). No public type changed; RoutedSession.completeClaimedRun doc and SessionTreeRestorationError.runNotClaimable doc changed (a run with no event is claimable with an unended child that holds its token). New metric name toolCallMarkerDropped and log key toolCallId (internal vocabulary).
+    - next: review
+  timestamp: 2026-11-03T17:59:24.910658+00:00
+position_column: review
+position_ordinal: '80'
 title: 'Crash and restore review fixes: atomic claim completion, claimable run with no event, honest placeholders, no double records, visible marker failure'
 ---
 ## What
