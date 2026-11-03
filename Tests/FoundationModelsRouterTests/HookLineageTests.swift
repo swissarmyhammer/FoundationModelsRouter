@@ -189,7 +189,7 @@ struct HookLineageTests {
     ///
     /// - Parameters:
     ///   - model: The model that makes the session.
-    ///   - thenSuspending: Whether the session is suspended before the release.
+    ///   - suspends: Whether the session is suspended before the release.
     /// - Returns: The id of the released session.
     private static func makeAndRelease(on model: RoutedLLM, thenSuspending suspends: Bool) -> ULID {
         let session = model.makeSession()

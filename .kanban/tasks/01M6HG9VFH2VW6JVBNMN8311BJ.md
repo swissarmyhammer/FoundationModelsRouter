@@ -15,6 +15,15 @@ comments:
     - Note: after suspend(), the dispatcher gets no more event of that session (the session phase is ended).
     - next: review
   timestamp: 2026-11-03T20:45:32.197922+00:00
+- actor: claude-code
+  id: 01m6hjvk56fqbt8pzvd55w4b44
+  text: |-
+    ### review — findings
+    - evidence: review sha a944c964~1..a944c964, 1 finding (confirmed 1, refuted 1) — Tests/FoundationModelsRouterTests/HookLineageTests.swift:192
+    - open point 1 (events after suspend() are dropped): not a defect. SessionHooks.post is documented to send no event after the SessionEnd, and a suspend is final for that session object; a restore makes a new session with a resumed SessionStart.
+    - open point 2 (live sub-agent whose root differs from its parent through parentCall): not a defect in the code, which passes parentCall.rootSessionID as is. The live test uses a root parent, so its root equals the parent id and it does not tell the two apart. The recorded-spawn and restored cases do test a root that differs from the parent.
+    - next: implement the finding (swift/doc-parameter-naming), then review again
+  timestamp: 2026-11-03T20:50:50.150179+00:00
 position_column: review
 position_ordinal: '8180'
 title: Router sends SessionEnd with reason suspended or released, and HookSession kind and rootSessionID
@@ -39,3 +48,12 @@ Request from the ACP session (2026-11-03). Hooks main d9019ab has `SessionEnd(re
 
 ## Workflow
 - Use `/tdd`. Queue: after the `markEnded`-on-suspended card (audit item 5). #subagents
+
+## Review Findings (2026-11-03 14:48)
+
+> Scope: `review sha a944c964~1..a944c964` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/HookLineageTests.swift:192` `swift/doc-parameter-naming` — The doc entry `- thenSuspending:` names the external argument label, not the internal parameter name. The internal name is `suspends`. DocC and Xcode resolve `- Parameter` keys against the internal name, so this key does not resolve. Change the doc key at line 192 to `///   - suspends: Whether the session is suspended before the release.`.

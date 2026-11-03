@@ -24,8 +24,15 @@ comments:
     - evidence: review sha 3272fb08~1..3272fb08, 1 finding — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:1722
     - next: implement the finding (swift/preconditions: use guard), then review again
   timestamp: 2026-11-03T20:40:47.812793+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6hjqd61p3tt9dk8kyq9f8ty
+  text: |-
+    ### review — clean
+    - evidence: review sha 6c54b0f0~1..6c54b0f0, 0 findings (confirmed 0, refuted 0). The prior finding (RouterSessionDirectory.swift markEnded, swift/preconditions) is fixed: the check is now a guard. All prior items are checked.
+    - next: done
+  timestamp: 2026-11-03T20:48:32.961210+00:00
+position_column: done
+position_ordinal: ffffffffe980
 title: markEnded must not write an ended marker on a suspended session (audit item 5)
 ---
 ## What
