@@ -149,7 +149,7 @@ extension RoutedSessionActor {
     /// same moment finds either the journal open (its write came before this
     /// call) or closed for terminals (its write comes after).
     nonisolated func suspend() {
-        isSuspended.withLock { $0 = true }
+        suspendedState.withLock { $0 = true }
     }
 
     /// Starts the close for a caller that is the own work of this session,

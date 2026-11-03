@@ -787,7 +787,18 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// parent that closes first cannot let a child write the outcome of its
     /// run (``RouterSessionDirectory/suspendLiveSessions()``). A session does
     /// not leave this state. Idempotent.
+    ///
+    /// A suspended session gets no ended marker: a call of
+    /// ``RouterSessionDirectory/markEnded(_:reason:)`` for it throws
+    /// ``SessionEndedMarkerError/sessionSuspended(_:)`` and writes nothing,
+    /// so a restore still finds the session and its open runs.
     nonisolated func suspend()
+
+    /// Whether ``suspend()`` was called. It never goes back to `false`.
+    ///
+    /// ``RouterSessionDirectory/markEnded(_:reason:)`` reads it: a suspended
+    /// session gets no ended marker.
+    nonisolated var isSuspended: Bool { get }
 
     /// Completes a run that the host claimed at the restore of this session,
     /// with the real result of the host.

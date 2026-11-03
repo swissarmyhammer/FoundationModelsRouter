@@ -810,10 +810,16 @@ actor RoutedSessionActor: RoutedSession {
     /// The lock and the value of ``explicitMetricsFactory``.
     nonisolated let explicitMetricsFactoryState = Mutex<(any MetricsFactory)?>(nil)
 
-    /// Whether ``suspend()`` was called. It stays set. A lock keeps it, because
-    /// the call is `nonisolated` and a run body that ends reads it through the
-    /// journal (``claimJournalWrite(for:)``).
-    nonisolated let isSuspended = Mutex(false)
+    /// Whether ``suspend()`` was called (``RoutedSession/isSuspended``). It
+    /// stays set. A lock keeps it, because the call is `nonisolated` and a run
+    /// body that ends reads it through the journal (``claimJournalWrite(for:)``).
+    nonisolated var isSuspended: Bool {
+        suspendedState.withLock { $0 }
+    }
+
+    /// The lock and the value of ``isSuspended``. Write it through
+    /// ``suspend()`` only.
+    nonisolated let suspendedState = Mutex(false)
 
     /// The `correlationID` of every background run whose ending this session has
     /// already journaled. A second write for one run is a no-op. See

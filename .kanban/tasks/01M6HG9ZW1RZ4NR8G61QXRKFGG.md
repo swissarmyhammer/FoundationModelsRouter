@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+comments:
+- actor: claude-code
+  id: 01m6hhwhw31x9w01ce93mdyvtz
+  text: |-
+    ### implement — changed
+    - evidence: 9 files. New public error SessionEndedMarkerError.sessionSuspended(ULID). New protocol property RoutedSession.isSuspended. markEnded throws that error for a suspended live session and writes nothing. Docs of markEnded, suspend() and suspendLiveSessions() updated. Tests: 1 new in SessionEndedMarkerTests, 1 new in SuspendingCloseTests. Full swift test: 2403 tests in 285 suites passed (plus 38 and 19 in the other two runs).
+    - open item: a child that is suspended and then closed leaves the directory (close unregisters it). A markEnded after that closes is a recorded-session mark and still writes the marker. The card says a recorded session is not affected, so this was left as is.
+    - next: review
+  timestamp: 2026-11-03T20:33:53.027217+00:00
+- actor: claude-code
+  id: 01m6hj4ajntfvn6jy37w8j6t8a
+  text: |-
+    ### implement — changed
+    - evidence: gap fixed. The directory keeps the ids of suspended sessions (suspendLiveSessions and unregister of a suspended session). markEnded throws sessionSuspended for them also after the close. New test: aMarkOnASuspendedThenClosedSessionWritesNothing. Full swift test: 2404 tests in 285 suites passed.
+    - next: review
+  timestamp: 2026-11-03T20:38:07.701726+00:00
+position_column: review
+position_ordinal: '80'
 title: markEnded must not write an ended marker on a suspended session (audit item 5)
 ---
 ## What

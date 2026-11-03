@@ -122,6 +122,54 @@ struct SessionEndedMarkerTests {
         await session.close()
     }
 
+    /// The production change that makes this test fail: a mark that writes
+    /// the marker on a suspended live session, so a child that ends by itself
+    /// after the suspend is ended on disk while its result mail is lost.
+    @Test("a mark on a suspended live session throws sessionSuspended and writes no marker")
+    func aMarkOnASuspendedLiveSessionWritesNothing() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let session = fixture.recordingProfile.standard.makeSession(configuration: SessionConfiguration())
+        let directory = fixture.recordingRouter.sessionDirectory
+        session.suspend()
+
+        await #expect(throws: SessionEndedMarkerError.sessionSuspended(session.id)) {
+            try await directory.markEnded(session.id, reason: .finished)
+        }
+
+        let onDisk = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
+        #expect(session.facts.end == nil)
+        #expect(onDisk.facts.end == nil)
+        #expect(try await directory.endMarker(of: session.id) == nil)
+        await session.close()
+    }
+
+    /// The production change that makes this test fail: a directory that
+    /// forgets a suspended session when it is closed, so the mark of the
+    /// orderly shutdown (suspend, close, then mark) takes the recorded path
+    /// and writes the marker that hides the child from the restore.
+    @Test("a mark on a session that was suspended and then closed throws and the restore finds it unended")
+    func aMarkOnASuspendedThenClosedSessionWritesNothing() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let parent = ULID.generate()
+        let session = fixture.recordingProfile.standard.makeSession(configuration: Self.childConfiguration(of: parent))
+        let directory = fixture.recordingRouter.sessionDirectory
+        let root = session.recordingDirectory.deletingLastPathComponent()
+        await directory.useRecordingRoots { [root] }
+        session.suspend()
+        await session.close()
+
+        await #expect(throws: SessionEndedMarkerError.sessionSuspended(session.id)) {
+            try await directory.markEnded(session.id, reason: .finished)
+        }
+
+        let onDisk = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
+        let children = try await directory.unendedChildren(of: parent)
+        #expect(onDisk.facts.end == nil)
+        #expect(children.map(\.id) == [session.id])
+    }
+
     /// The production change that makes this test fail: a close that marks
     /// the session as ended, so a session closed at the shutdown of the
     /// process, while its run works, is no longer restorable.

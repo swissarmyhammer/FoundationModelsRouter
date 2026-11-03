@@ -526,6 +526,23 @@ struct SuspendingCloseTests {
         #expect(try await recording.statuses().values.map { $0 } == [.orphaned])
     }
 
+    @Test("a mark after the suspend writes no marker, so the restore finds the session unended and its calls orphaned")
+    func markAfterSuspendLeavesTheSessionRestorable() async throws {
+        let recording = try await ShutdownRecording.make(calling: [Self.openRunOp, Self.openRunOp])
+        defer { await recording.end() }
+        let answering = try await Self.openTwoRuns(in: recording)
+        recording.recordingRouter.sessionDirectory.suspendLiveSessions()
+
+        await #expect(throws: SessionEndedMarkerError.sessionSuspended(recording.session.id)) {
+            try await recording.recordingRouter.sessionDirectory.markEnded(recording.session.id, reason: .finished)
+        }
+        await recording.session.close()
+        _ = try? await answering.value
+
+        #expect(try await recording.statuses().values.allSatisfy { $0 == .orphaned })
+        #expect(try await recording.directory.endMarker(of: recording.session.id) == nil)
+    }
+
     // MARK: - The restore
 
     @Test("a restore accepts a claim for each open run, and the host completes both original runs")

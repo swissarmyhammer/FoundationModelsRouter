@@ -1,4 +1,5 @@
 import Foundation
+import ULID
 
 /// Why a host marked a session as ended.
 ///
@@ -37,6 +38,17 @@ public struct SessionEndedMarker: Sendable, Codable, Equatable {
         self.endedAt = endedAt
         self.reason = reason
     }
+}
+
+/// Why ``RouterSessionDirectory/markEnded(_:reason:)`` wrote no marker.
+public enum SessionEndedMarkerError: Error, Sendable, Equatable {
+    /// The session was suspended (``RoutedSession/suspend()``), and it may be
+    /// closed since. The call wrote no marker. The runs of the session stay open in the
+    /// journal for a restore, so an ended marker would hide the session from
+    /// that restore and lose the result of its runs. A host that gets this
+    /// error does not mark the session again; the next process restores the
+    /// session and finishes its runs.
+    case sessionSuspended(ULID)
 }
 
 extension SessionFacts {

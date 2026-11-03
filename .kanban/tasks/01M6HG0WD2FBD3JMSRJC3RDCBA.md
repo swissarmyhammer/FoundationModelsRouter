@@ -13,8 +13,16 @@ comments:
     - Full swift test: 2401 tests in 285 suites passed.
     - next: review
   timestamp: 2026-11-03T20:26:27.236363+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6hhp1xqadkxn5fp0mwb61p9
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 0 findings (0 confirmed, 2 refuted, 14 attempted, 10 files reviewed; 4 kanban files ignored by .reviewignore).
+    - judged undecided items, none a defect: (1) A run with no open record at the cancel counts as detached. Its call gets the model-call cancel and returns the pending envelope, so the run is in the background list from then on; this matches the ACP rule that work in the background list is spared. The window is only between run start and its open record, and the rule is written in the cancelForeground() doc. (2) An inline run body that swallows the cancel and ends succeeded is the choice of that body; the cancel is delivered through ToolContext.cancel and the journal records the real end. (3) Router-side ForegroundToolCalls is needed because the Extras wait count and RunPlane.cancel are internal; the open record names the run before any suspension point, the inline tokens are read before stopRunningAnswer, and an ended call names no more runs.
+    - next: done
+  timestamp: 2026-11-03T20:30:20.087937+00:00
+position_column: done
+position_ordinal: ffffffffe880
 title: Cancel the foreground work of a session and spare the detached background runs
 ---
 ## What

@@ -57,7 +57,7 @@ extension RoutedSessionActor {
     /// - Returns: `true` when this call took the claim. A close at the same
     ///   time can still end the run as `.lost`.
     func completeClaimedRun(_ key: RunKey, outcome: OperationOutcome, detail: String?) async -> Bool {
-        guard !isSuspended.withLock({ $0 }) else { return false }
+        guard !isSuspended else { return false }
         guard let claim = openClaims[key], !claim.isCompleting else { return false }
         openClaims[key]?.isCompleting = true
         await attachOutboxJournalIfNeeded()

@@ -150,6 +150,15 @@ public actor RouterSessionDirectory: SessionDirectory {
 
         /// The open streams of ``RouterSessionDirectory/events()``.
         var fanout = SessionDirectoryEventFanout()
+
+        /// The ids of the sessions that this process saw suspended
+        /// (``RoutedSession/suspend()``): when ``RouterSessionDirectory/suspendLiveSessions()``
+        /// ran, or when the session left the live list while it was suspended.
+        /// A close takes a session off the live list, so this set is what
+        /// keeps the suspend known to ``RouterSessionDirectory/markEnded(_:reason:)``
+        /// after the close. It is never cleared, but a new live registration
+        /// of an id removes the id: a restored session starts not suspended.
+        var suspendedIDs: Set<ULID> = []
     }
 
     /// The registry and the event streams. A lock keeps them, so the
@@ -247,6 +256,7 @@ public actor RouterSessionDirectory: SessionDirectory {
                 return false
             }
             registry.entries[session.id]?.cancelFeeds()
+            registry.suspendedIDs.remove(session.id)
             entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
             entry.inboxWatcher = watcher
             registry.entries[session.id] = entry
@@ -287,8 +297,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// not hold changes nothing.
     ///
     /// - Parameter id: The session id.
+    ///
+    /// A session that is suspended when it leaves is remembered as suspended
+    /// (``Registry/suspendedIDs``), so a later ``markEnded(_:reason:)`` for
+    /// it still throws.
     nonisolated func unregister(_ id: ULID) {
-        state.withLock { $0.entries.removeValue(forKey: id)?.cancelFeeds() }
+        state.withLock { registry in
+            guard let entry = registry.entries.removeValue(forKey: id) else { return }
+            if entry.session?.isSuspended == true {
+                registry.suspendedIDs.insert(id)
+            }
+            entry.cancelFeeds()
+        }
     }
 
     /// The summaries of every live session, in no order. An entry whose
@@ -1487,8 +1507,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// those of a child that ends its work while the parent closes. The call
     /// does not wait, and it closes nothing. A session that left the live list
     /// (a closed session) is not suspended: it has no open run to keep.
+    ///
+    /// A suspended session gets no ended marker
+    /// (``markEnded(_:reason:)``), so a child that ends by itself after this
+    /// call stays restorable, with its result still to be given. The
+    /// directory keeps the ids of these sessions, so the marker is refused
+    /// also after the session is closed.
     public nonisolated func suspendLiveSessions() {
-        let sessions = state.withLock { $0.entries.values.compactMap(\.session) }
+        let sessions = state.withLock { registry in
+            let sessions = registry.entries.values.compactMap(\.session)
+            registry.suspendedIDs.formUnion(sessions.map(\.id))
+            return sessions
+        }
         for session in sessions {
             session.suspend()
         }
@@ -1663,17 +1693,35 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// A session that is ended already gives its first marker again, and its
     /// `index.md` is not written.
     ///
+    /// A live session that is suspended (``RoutedSession/suspend()``) gets no
+    /// marker. The call writes nothing, sends no event, and throws
+    /// ``SessionEndedMarkerError/sessionSuspended(_:)``. The journal refuses
+    /// the result of a run after the suspend, so a marker would hide the
+    /// session from the restore and lose that result. The host treats the
+    /// error as "left open on purpose": it does not retry, and the next
+    /// process restores the session. The check is made before the write,
+    /// as the journal check is: a suspend that comes after it does not undo
+    /// the marker. A session that was suspended and then closed is refused in
+    /// the same way: the directory keeps the id of a session that left the
+    /// live list while suspended, because the orderly shutdown suspends and
+    /// closes the child before the host marks it. A recorded session that
+    /// this process never suspended is marked as before.
+    ///
     /// - Parameters:
     ///   - id: The session id.
     ///   - reason: Why the session ended.
     /// - Returns: The marker the session holds: the new one, or the first one
     ///   when the session was ended already.
     /// - Throws: `SessionDirectoryError.unknownSession` when no live or
-    ///   recorded session has the id; the error of the recording roots of the
-    ///   host; or the error of the read or the save of the `index.md` of a
-    ///   recorded session.
+    ///   recorded session has the id; ``SessionEndedMarkerError/sessionSuspended(_:)``
+    ///   when the session is suspended, or was suspended before its close; the error of the recording roots
+    ///   of the host; or the error of the read or the save of the `index.md`
+    ///   of a recorded session.
     @discardableResult
     public func markEnded(_ id: ULID, reason: SessionEndReason) async throws -> SessionEndedMarker {
+        if wasSuspended(id) {
+            throw SessionEndedMarkerError.sessionSuspended(id)
+        }
         let endedAt = MillisecondDate.rounded(Date())
         _ = try await changeRecord(of: id) { record in
             guard record.facts.end == nil else { return }
@@ -1681,6 +1729,12 @@ public actor RouterSessionDirectory: SessionDirectory {
             record.facts.endReason = reason
         }
         return try await requireEndMarker(of: id)
+    }
+
+    /// Whether the session `id` is suspended now, or this process saw it
+    /// suspended before it left the live list.
+    private nonisolated func wasSuspended(_ id: ULID) -> Bool {
+        state.withLock { $0.suspendedIDs.contains(id) || $0.entries[id]?.session?.isSuspended == true }
     }
 
     /// The ended marker of the session `id`, or `nil` when the session is not

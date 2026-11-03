@@ -263,7 +263,7 @@ extension RoutedSessionActor: OperationEventJournal {
     ///   already recorded, or when the session suspended; `true` otherwise.
     func claimJournalWrite(for event: OperationEvent) -> Bool {
         guard event.kind == .completed else { return true }
-        guard !isSuspended.withLock({ $0 }) else { return false }
+        guard !isSuspended else { return false }
         return journaledTerminalCorrelationIDs.insert(event.correlationID).inserted
     }
 
