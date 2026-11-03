@@ -128,14 +128,8 @@ struct OrphanRunScan {
     func lostTerminalEvents() -> [OperationEvent] {
         orphanedRuns.compactMap { run in
             guard let newest = newestNonTerminalByRun[run] else { return nil }
-            return OperationEvent(
-                tool: run.tool,
-                op: newest.op,
-                correlationID: run.correlationID,
-                kind: .completed,
-                detail: Self.lostDetail(of: newest),
-                outcome: .lost
-            )
+            return Self.lostTerminal(
+                of: run, op: newest.op, detail: Self.lostDetail(of: newest))
         }
     }
 
@@ -153,9 +147,21 @@ struct OrphanRunScan {
     /// - Parameter run: The claimed run.
     /// - Returns: The terminal event.
     static func lostTerminal(withoutEventOf run: RunKey) -> OperationEvent {
+        lostTerminal(of: run, op: eventlessLostOp, detail: eventlessLostDetail)
+    }
+
+    /// The one `.completed` event with outcome ``OperationOutcome/lost`` that
+    /// a restore manufactures for a run.
+    ///
+    /// - Parameters:
+    ///   - run: The run that the terminal ends.
+    ///   - op: The op of the terminal.
+    ///   - detail: The detail of the terminal.
+    /// - Returns: The terminal event.
+    private static func lostTerminal(of run: RunKey, op: String, detail: String) -> OperationEvent {
         OperationEvent(
-            tool: run.tool, op: eventlessLostOp, correlationID: run.correlationID, kind: .completed,
-            detail: eventlessLostDetail, outcome: .lost)
+            tool: run.tool, op: op, correlationID: run.correlationID, kind: .completed,
+            detail: detail, outcome: .lost)
     }
 
     /// The `detail` of the lost terminal of a run whose newest kept event

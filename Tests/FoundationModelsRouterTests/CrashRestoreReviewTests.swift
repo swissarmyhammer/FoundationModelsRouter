@@ -333,20 +333,6 @@ struct CrashRestoreReviewTests {
         }
     }
 
-    /// The text of the `.toolOutput` entries of `session`, in order. An
-    /// entry with no text segment, as the entry of a run event is, is passed
-    /// over.
-    private static func toolOutputTexts(of session: any RoutedSession) async -> [String] {
-        await session.transcript.compactMap { entry -> String? in
-            guard case .toolOutput(let output) = entry else { return nil }
-            let texts = output.segments.compactMap { segment -> String? in
-                guard case .text(let text) = segment else { return nil }
-                return text.content
-            }
-            return texts.isEmpty ? nil : texts.joined()
-        }
-    }
-
     // MARK: - Item 11: a run with no event is claimable
 
     @Test("a crash before the first event leaves a claimable run when an unended child holds its token")
@@ -373,7 +359,7 @@ struct CrashRestoreReviewTests {
         let tree = try await crash.restore(claiming: [crash.key])
         defer { await tree.root.close() }
 
-        #expect(await Self.toolOutputTexts(of: tree.root) == [OpenToolCalls.runningOutput])
+        #expect(ScriptedToolCallingModel.Executor.toolOutputTexts(in: await tree.root.transcript) == [OpenToolCalls.runningOutput])
     }
 
     @Test("the host completes a claimed run that wrote no event")
@@ -430,7 +416,7 @@ struct CrashRestoreReviewTests {
         let tree = try await crash.restore(claiming: [crash.key])
         defer { await tree.root.close() }
 
-        #expect(await Self.toolOutputTexts(of: tree.root) == [OpenToolCalls.runningOutput])
+        #expect(ScriptedToolCallingModel.Executor.toolOutputTexts(in: await tree.root.transcript) == [OpenToolCalls.runningOutput])
         #expect(OpenToolCalls.runningOutput.contains("still working"))
         #expect(OpenToolCalls.runningOutput.contains("as a message"))
     }
@@ -447,7 +433,7 @@ struct CrashRestoreReviewTests {
         let tree = try await crash.restore()
         defer { await tree.root.close() }
 
-        #expect(await Self.toolOutputTexts(of: tree.root) == [OpenToolCalls.lostOutput])
+        #expect(ScriptedToolCallingModel.Executor.toolOutputTexts(in: await tree.root.transcript) == [OpenToolCalls.lostOutput])
         #expect(OpenToolCalls.lostOutput.contains("was lost"))
         #expect(!OpenToolCalls.lostOutput.contains("still working"))
     }
@@ -461,7 +447,7 @@ struct CrashRestoreReviewTests {
         let tree = try await crash.restore()
         defer { await tree.root.close() }
 
-        #expect(await Self.toolOutputTexts(of: tree.root) == [OpenToolCalls.unrecordedOutput])
+        #expect(ScriptedToolCallingModel.Executor.toolOutputTexts(in: await tree.root.transcript) == [OpenToolCalls.unrecordedOutput])
         #expect(OpenToolCalls.unrecordedOutput.contains("not recorded"))
         #expect(OpenToolCalls.unrecordedOutput.contains("may or may not"))
         #expect(OpenToolCalls.unrecordedOutput.contains("not safe to repeat"))
@@ -491,15 +477,6 @@ struct CrashRestoreReviewTests {
         #expect(placeholders.isEmpty)
     }
 
-    /// The call ids that the `.toolOutput` entries of `transcript` answer,
-    /// in order.
-    private static func toolOutputIDs(in transcript: Transcript) -> [String] {
-        transcript.compactMap { entry -> String? in
-            guard case .toolOutput(let output) = entry else { return nil }
-            return output.id
-        }
-    }
-
     @Test("a real output of a started call that has no .toolCalls entry gives one output, not two")
     func realOutputOfAStartedCallGivesOneOutput() throws {
         let routerID = ULID.generate()
@@ -516,7 +493,7 @@ struct CrashRestoreReviewTests {
 
         let transcript = try ContextRenderer.context(of: [marker, output])
 
-        #expect(Self.toolOutputIDs(in: transcript) == [Self.callID])
+        #expect(TranscriptEntrySegments.toolOutputIDs(in: transcript) == [Self.callID])
     }
 
     // MARK: - Item 14: a failed marker write is visible
@@ -600,13 +577,14 @@ struct CrashRestoreReviewTests {
 
         _ = try await session.respond(to: "run the tool")
 
-        let outputs = await Self.toolOutputTexts(of: session)
+        let outputs = ScriptedToolCallingModel.Executor.toolOutputTexts(in: await session.transcript)
         #expect(outputs.count == 1)
     }
 }
 
 /// A box that a `@Sendable` closure of a test writes to, and the test reads
 /// after the closure ran.
+// swiftlint:disable:next no_unchecked_sendable  value is written once by the closure inside recordAndRestore, which the test awaits, and read only after that await returned
 private final class ObjectBox<Value: Sendable>: @unchecked Sendable {
     /// The value, or `nil` before the closure ran.
     var value: Value?

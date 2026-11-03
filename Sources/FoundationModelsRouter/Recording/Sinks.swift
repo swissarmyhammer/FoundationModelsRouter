@@ -110,25 +110,28 @@ package actor JSONLRecorder: TranscriptRecorder {
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
         let target = (directory ?? self.directory).appendingPathComponent(transcriptFileName, isDirectory: false)
-        if let markedCallID = event.toolCallStartedID {
-            appendMarker(event, ofCall: markedCallID, to: target)
-            return
-        }
-        JSONLAppend.appendDroppingFailure(
+        let markedCallID = event.toolCallStartedID
+        let written = JSONLAppend.appendDroppingFailure(
             event,
             to: target,
             through: appendLine,
             logger: RouterTelemetry.makeLogger(.recording),
-            failureMessage: "dropping a transcript event",
-            failureMetadata: [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
+            failureMessage: markedCallID == nil ? "dropping a transcript event" : "dropping a tool call marker",
+            failureMetadata: Self.failureMetadata(of: event, markedCallID: markedCallID)
         )
+        if !written, markedCallID != nil {
+            RouterMetrics().recordDroppedToolCallMarker()
+        }
     }
 
-    /// Appends the write-ahead marker of a tool call. A write that fails is
-    /// not silent: the error log names the id of the call, and a counter
-    /// counts the loss (``RouterMetrics/recordDroppedToolCallMarker()``). The
-    /// tool is not blocked: the call goes on without the marker, and a
-    /// restore after a crash in this call then finds no open call.
+    /// The metadata of the error log of a dropped event. For the write-ahead
+    /// marker of a tool call, it also names the id of the call.
+    ///
+    /// A write that fails is not silent: the error log names the id of the
+    /// call, and a counter counts the loss
+    /// (``RouterMetrics/recordDroppedToolCallMarker()``). The tool is not
+    /// blocked: the call goes on without the marker, and a restore after a
+    /// crash in this call then finds no open call.
     ///
     /// The marker needs no `F_FULLFSYNC` and no `fsync` of the directory. The
     /// requirement is a process crash and an orderly quit, and not a loss of
@@ -136,24 +139,16 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// that.
     ///
     /// - Parameters:
-    ///   - event: The stamped marker event.
-    ///   - callID: The id of the tool call of the marker.
-    ///   - target: The `transcript.jsonl` to append to.
-    private func appendMarker(_ event: TranscriptEvent, ofCall callID: String, to target: URL) {
-        let written = JSONLAppend.appendDroppingFailure(
-            event,
-            to: target,
-            through: appendLine,
-            logger: RouterTelemetry.makeLogger(.recording),
-            failureMessage: "dropping a tool call marker",
-            failureMetadata: [
-                RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)",
-                RouterTelemetry.LogMetadataKey.toolCallId: "\(callID)",
-            ]
-        )
-        if !written {
-            RouterMetrics().recordDroppedToolCallMarker()
+    ///   - event: The stamped event.
+    ///   - markedCallID: The id of the tool call of the marker, or `nil` when
+    ///     the event is not a marker.
+    /// - Returns: The log metadata.
+    private static func failureMetadata(of event: TranscriptEvent, markedCallID: String?) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
+        if let markedCallID {
+            metadata[RouterTelemetry.LogMetadataKey.toolCallId] = "\(markedCallID)"
         }
+        return metadata
     }
 
     /// Claims the recording root before a write when no claim is held yet,

@@ -40,4 +40,16 @@ enum TranscriptEntrySegments {
             return (try? OperationEventSegment(structuredSegment: structure))??.content
         }
     }
+
+    /// The call ids that the `.toolOutput` entries of `entries` answer, in
+    /// order.
+    ///
+    /// - Parameter entries: The entries of a transcript.
+    /// - Returns: The id of each `.toolOutput` entry.
+    static func toolOutputIDs(in entries: some Sequence<Transcript.Entry>) -> [String] {
+        entries.compactMap { entry in
+            guard case .toolOutput(let output) = entry else { return nil }
+            return output.id
+        }
+    }
 }

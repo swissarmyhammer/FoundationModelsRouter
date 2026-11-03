@@ -17,6 +17,20 @@ comments:
     - items 10 to 14 done. Items 12 and 13: see below. Public API change: OpenToolCalls (internal) constants renamed: interruptedOutput removed; runningOutput, lostOutput, endedOutput, unrecordedOutput. The 4th text (endedOutput) is added by me: a call whose run has a terminal event must not get the "not recorded" text, so it says the run ended and the result is in a run message. Undecided: wording of the four texts (STE). No public type changed; RoutedSession.completeClaimedRun doc and SessionTreeRestorationError.runNotClaimable doc changed (a run with no event is claimable with an unended child that holds its token). New metric name toolCallMarkerDropped and log key toolCallId (internal vocabulary).
     - next: review
   timestamp: 2026-11-03T17:59:24.910658+00:00
+- actor: claude-code
+  id: 01m6h9d5k3dv3sndqade0wa09h
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD: 5 findings (5 confirmed, 1 refuted). Sources/FoundationModelsRouter/Recording/OrphanRunScan.swift:156, Sources/FoundationModelsRouter/Recording/Sinks.swift:143, Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:339, :496, :610
+    - next: implement the 5 open findings, then review again
+  timestamp: 2026-11-03T18:05:40.323367+00:00
+- actor: claude-code
+  id: 01m6h9j07ptkc2832pwgjx9vs5
+  text: |-
+    ### implement — changed
+    - evidence: 6 files — OrphanRunScan.swift, Sinks.swift, CrashRestoreReviewTests.swift, WriteAheadToolCallTests.swift, Helpers/TranscriptEntrySegments.swift; full swift test passed (2339 tests in 282 suites, plus 38 and 19), no warnings
+    - next: review
+  timestamp: 2026-11-03T18:08:18.678260+00:00
 position_column: review
 position_ordinal: '80'
 title: 'Crash and restore review fixes: atomic claim completion, claimable run with no event, honest placeholders, no double records, visible marker failure'
@@ -54,3 +68,16 @@ Verify, and write the result on the card: after a restore, the next end-of-submi
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. Do after the relay follow-up and before the live tool-call events card. #subagents
+
+## Review Findings (2026-11-03 12:01)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 17 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Recording/OrphanRunScan.swift:156` `reuse/reuse` — `lostTerminal(withoutEventOf:)` builds a `.completed` / `.lost` `OperationEvent` by hand. The same construction already exists in `lostTerminalEvents()`, which builds the lost terminal for a run that wrote events. The two copies can drift apart, for example if the lost terminal shape changes in one place only. Add one private factory, for example `lostTerminal(tool:op:correlationID:detail:)`, that returns the `.completed` / `.lost` event. Have `lostTerminalEvents()` and `lostTerminal(withoutEventOf:)` both call it with their own `op` and `detail`.
+- [x] `Sources/FoundationModelsRouter/Recording/Sinks.swift:143` `reuse/reuse` — `appendMarker` repeats the best-effort append call that `append` already makes. It passes the same `appendLine`, the same `RouterTelemetry.makeLogger(.recording)` logger, and the same `JSONLAppend.appendDroppingFailure` call. Only the failure message, the extra `toolCallId` metadata, and the counter differ. Two copies of this call can drift apart, for example in how the logger or the target file is chosen. Extend the existing path instead of copying it. Give `append` (or a private helper it calls) parameters for the failure message and the extra metadata, and let it return the `Bool` result. `append` can then call the counter on a `false` result when the marker path needs it. Keep one call to `JSONLAppend.appendDroppingFailure` in the file.
+- [x] `Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:339` `reuse/reuse` — toolOutputTexts(of:) rebuilds the text of each .toolOutput entry. An existing helper already does this on a transcript, so this copy repeats the same logic and can drift from it. Call ScriptedToolCallingModel's toolOutputTexts(in:) with `await session.transcript` and remove the local copy, or move the helper to a shared test support file if the nested location is awkward to reach.
+- [x] `Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:496` `reuse/reuse` — toolOutputIDs(in:) collects the output ids of .toolOutput entries. The same function already exists in another test suite, so there are now two copies of one mapping. Move one shared helper into a common test support file, make both suites call it, and remove the duplicate. A near-match in a `private` member is not a reuse path until it is hoisted.
+- [x] `Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:610` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.

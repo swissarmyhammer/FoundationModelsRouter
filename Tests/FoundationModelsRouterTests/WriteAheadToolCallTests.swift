@@ -134,15 +134,6 @@ struct WriteAheadToolCallTests {
         }
     }
 
-    /// The call ids that the `.toolOutput` entries of `entries` answer, in
-    /// order.
-    private static func toolOutputIDs(in entries: [Transcript.Entry]) -> [String] {
-        entries.compactMap { entry in
-            guard case .toolOutput(let output) = entry else { return nil }
-            return output.id
-        }
-    }
-
     /// The text of the `.toolOutput` entries of `entries`, in order.
     private static func toolOutputTexts(in entries: [Transcript.Entry]) -> [String] {
         entries.compactMap { entry in
@@ -227,7 +218,7 @@ struct WriteAheadToolCallTests {
         defer { await restored.session.close() }
         let entries = Array(await restored.session.transcript)
 
-        #expect(Self.toolOutputIDs(in: entries) == [Self.firstCallID])
+        #expect(TranscriptEntrySegments.toolOutputIDs(in: entries) == [Self.firstCallID])
         #expect(Self.toolOutputTexts(in: entries) == [OpenToolCalls.unrecordedOutput])
     }
 
@@ -615,7 +606,7 @@ struct WriteAheadToolCallTests {
 
         let entries = Array(try ContextRenderer.context(of: events))
 
-        let outputID = try #require(Self.toolOutputIDs(in: entries).first)
+        let outputID = try #require(TranscriptEntrySegments.toolOutputIDs(in: entries).first)
         #expect(
             ToolCallOutputPairing.completedToolCallId(
                 forOutputEntryId: outputID, dispatched: [Self.firstCallID], completed: []) == Self.firstCallID)
