@@ -34,6 +34,13 @@ comments:
     - Note: the SDK shape of a transcript that ends with an unanswered user prompt is unverified offline.
     - Tests: full swift test, 2383 tests in 283 suites passed.
   timestamp: 2026-11-03T19:40:59.566409+00:00
+- actor: claude-code
+  id: 01m6hf30chjsxb6hsxttz7607p
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (f3a122cc). Engine: 2 findings (OpenPrompts.swift:83 duplication/duplication; OpenPrompts.swift:129 swift/fluent-usage). The four findings of the pass before are fixed: RouterMetrics duplication and reuse (one helper), fork cut loses open prompt (FoldedHistory), firstPrompt reads a cancelled mail (PromptSearch with the shared cover rule). No new finding on them. The SDK shape of a transcript that ends with an unanswered user prompt is unverified offline (note already on the card).
+    - next: implementer fixes the 2 open items; re-review.
+  timestamp: 2026-11-03T19:44:58.769396+00:00
 position_column: review
 position_ordinal: '80'
 title: 'Write-ahead of the prompt that starts a submission: a crash must not lose the user message in flight'
@@ -72,3 +79,13 @@ HIGH priority (coordinator, 2026-11-03). The Agents session found that a child c
 - [x] `Sources/FoundationModelsRouter/Tracing/RouterMetrics.swift:204` `reuse/reuse` — recordDroppedPromptMarker() is a near-copy of recordDroppedToolCallMarker() (lines 198-200). Both build one Counter with a single metric label and call increment(). The only difference is the label. The second function repeats the first instead of sharing one helper that takes the label as a parameter. Two copies of the counting logic can drift apart. Add one private helper, for example `private func recordDroppedMarker(_ label: String)`, that builds the Counter and calls increment(). Make recordDroppedToolCallMarker() and recordDroppedPromptMarker() both call it with their metric name. Keep both public entry points, so the call sites in the recorder do not change.
 - [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift` `correctness/known-limit` — (reviewer judgment, a real defect.) A fork cut at the end of a restored parent that has an open prompt loses that prompt. The fork cut counts entry events on disk (`historyOrdinal` is `effectiveEvents.count`), and `forkPrefix` drops a `.promptStarted` marker after the last kept entry. But the live transcript of the fork is seeded from the parent backend, which holds the open prompt, and `persistedEntryCount` counts it as saved. So the fork answers a user message that its recording never holds: the next restore of the fork has a response with no prompt. This is the case that this card exists to prevent. Make the fork keep the open prompt of the parent: for example, count a marker with open mail at the end of the parent in the fork cut, or write the open prompt of a restored session as a `.prompt` entry.
 - [x] `Sources/FoundationModelsRouter/Recording/FirstPromptReader.swift` `correctness/known-limit` — (reviewer judgment, a real defect.) `firstPrompt` stops at the first `.promptStarted` marker. When a later `.mail` record `.cancelled` or `.answerEnded` ends the mail of that marker, `OpenPrompts.folding` drops the marker, so the transcript has no such prompt. But `firstPrompt` returns the text of the cancelled mail. If a later submission has a real `.prompt` entry, `firstPrompt` still returns the cancelled text and not the first prompt of the transcript. The two readers disagree. Make `firstPrompt` apply the same cover rule as `OpenPrompts` (read on to find a delivery or terminal record of the mail of the marker), and add a test with a cancelled first mail.
+
+## Review Findings (2026-11-03 13:41)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 10 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Recording/OpenPrompts.swift:83` `duplication/duplication` — The new loop in OpenPrompts.lastCoveringIndex repeats the fold of OpenToolCalls.lastCoveringIndex. Both walk the events in order and store the index of the newest covering event under a key. Only the key source and the filter differ (mail ids from coveredMailIDs(by:) here, call ids from event.entry?.toolCalls there). The two copies can drift apart, and a later fix to one will be missed in the other. Extract one generic helper that takes the events and a closure returning the keys an event covers, for example `static func lastIndex<Key: Hashable>(in events: [TranscriptEvent], coveredKeys: (TranscriptEvent) -> [Key]) -> [Key: Int]`. Call it from OpenPrompts.lastCoveringIndex with `coveredMailIDs(by:)`. Keep the OpenToolCalls counterpart as a separate follow-up task, because it is outside this change. Do not edit it in this change.
+- [x] `Sources/FoundationModelsRouter/Recording/OpenPrompts.swift:129` `swift/fluent-usage` — `static func open(in:isCovered:)` is a pure function with no side effect, but its name is an imperative verb. At a call site, `OpenPrompts.open(in: marker, ...)` reads as an action that changes state. Name the side-effect-free result as a noun phrase, for example `openMail(in:isCovered:)`, or `openMailOf(_:isCovered:)`. Keep the shape of the return value.

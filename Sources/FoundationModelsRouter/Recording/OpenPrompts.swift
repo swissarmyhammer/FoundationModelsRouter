@@ -66,26 +66,11 @@ enum OpenPrompts {
     /// - Parameter events: The events of one session, in `seq` order.
     /// - Returns: The events with no prompt marker.
     static func folding(_ events: [TranscriptEvent]) -> [TranscriptEvent] {
-        let coveredAt = lastCoveringIndex(in: events)
+        let coveredAt = EventCover.lastIndex(in: events, coveredKeys: coveredMailIDs(by:))
         return events.enumerated().compactMap { index, event in
             guard event.kind == .promptStarted else { return event }
             return openPrompt(of: event, at: index, coveredAt: coveredAt)
         }
-    }
-
-    /// The index of the last event that covers each mail id: a `.prompt`
-    /// event that delivers the mail, or a `.mail` event that ends it.
-    ///
-    /// - Parameter events: The events of one session.
-    /// - Returns: The index of the newest covering event, by mail id.
-    private static func lastCoveringIndex(in events: [TranscriptEvent]) -> [MailID: Int] {
-        var coveredAt: [MailID: Int] = [:]
-        for (index, event) in events.enumerated() {
-            for id in coveredMailIDs(by: event) {
-                coveredAt[id] = index
-            }
-        }
-        return coveredAt
     }
 
     /// The ids of the mail that `event` covers: the mail that a `.prompt`
@@ -126,7 +111,7 @@ enum OpenPrompts {
     /// - Returns: The id of the first open mail and the text of the open
     ///   mail, or `nil` when no mail of the marker is open or the open mail
     ///   has no text.
-    static func open(
+    static func openMail(
         in marker: TranscriptEvent, isCovered: (MailID) -> Bool
     ) -> (firstID: MailID, text: String)? {
         let open = marker.takenMail.filter { !isCovered($0.id) }
@@ -147,7 +132,7 @@ enum OpenPrompts {
     private static func openPrompt(
         of marker: TranscriptEvent, at index: Int, coveredAt: [MailID: Int]
     ) -> TranscriptEvent? {
-        guard let open = open(in: marker, isCovered: { (coveredAt[$0] ?? -1) > index }) else { return nil }
+        guard let open = openMail(in: marker, isCovered: { (coveredAt[$0] ?? -1) > index }) else { return nil }
         let entryID = openEntryIDPrefix + "\(open.firstID)"
         return OpenToolCalls.rekinded(
             marker, as: .prompt, text: open.text,

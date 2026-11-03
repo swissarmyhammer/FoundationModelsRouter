@@ -84,7 +84,7 @@ enum FirstPromptReader {
         ///   when the search goes on.
         mutating func read(_ event: TranscriptEvent) -> FirstPrompt? {
             if event.kind == .promptStarted {
-                if OpenPrompts.open(in: event, isCovered: { _ in false }) != nil {
+                if OpenPrompts.openMail(in: event, isCovered: { _ in false }) != nil {
                     pending.append(PendingMarker(marker: event))
                 }
                 return nil
@@ -108,7 +108,7 @@ enum FirstPromptReader {
             for index in pending.indices {
                 pending[index].covered.formUnion(ids)
             }
-            pending.removeAll { OpenPrompts.open(in: $0.marker, isCovered: $0.covered.contains) == nil }
+            pending.removeAll { OpenPrompts.openMail(in: $0.marker, isCovered: $0.covered.contains) == nil }
         }
 
         /// The first prompt when the events of the folder end.
@@ -119,7 +119,7 @@ enum FirstPromptReader {
         /// - Returns: The first prompt, or `nil` when the events hold none.
         func finish(keepingOpenMarkers: Bool) -> FirstPrompt? {
             guard keepingOpenMarkers, let first = pending.first,
-                let open = OpenPrompts.open(in: first.marker, isCovered: first.covered.contains)
+                let open = OpenPrompts.openMail(in: first.marker, isCovered: first.covered.contains)
             else { return firstEntry }
             return FirstPrompt(body: open.text)
         }

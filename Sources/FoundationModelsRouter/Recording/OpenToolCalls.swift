@@ -85,7 +85,7 @@ enum OpenToolCalls {
     ///     placeholder of a call of such a run says that the run is working.
     /// - Returns: The events with no marker.
     static func folding(_ events: [TranscriptEvent], claimedRuns: Set<RunKey> = []) -> [TranscriptEvent] {
-        let lastCover = lastCoveringIndex(in: events)
+        let lastCover = EventCover.lastIndex(in: events, coveredKeys: coveredCallIDs(by:))
         let statuses = OrphanRunScan(scanning: events).statuses
         let answered = Set(events.filter { $0.kind == .toolOutput }.compactMap { $0.entry?.entryId })
         var folded: [TranscriptEvent] = []
@@ -106,18 +106,15 @@ enum OpenToolCalls {
         return folded + openEvents(of: group, statuses: statuses, claimedRuns: claimedRuns, answered: answered)
     }
 
-    /// The index of the last `.toolCalls` event that holds each call id.
+    /// The ids of the calls that `event` covers: the calls of a `.toolCalls`
+    /// event.
     ///
-    /// - Parameter events: The events of one session.
-    /// - Returns: The index of the newest covering event, by call id.
-    private static func lastCoveringIndex(in events: [TranscriptEvent]) -> [String: Int] {
-        var lastCover: [String: Int] = [:]
-        for (index, event) in events.enumerated() where event.kind == .toolCalls {
-            for call in event.entry?.toolCalls ?? [] {
-                lastCover[call.id] = index
-            }
-        }
-        return lastCover
+    /// - Parameter event: An event of one session.
+    /// - Returns: The ids of the covered calls, or none for an event of
+    ///   another kind.
+    private static func coveredCallIDs(by event: TranscriptEvent) -> [String] {
+        guard event.kind == .toolCalls else { return [] }
+        return (event.entry?.toolCalls ?? []).map(\.id)
     }
 
     /// The `.toolCalls` event of one group of open markers, then one
