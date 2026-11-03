@@ -510,6 +510,15 @@ struct CrashRestoreReviewTests {
                 toolCalls: [ToolCallPayload(id: callID, toolName: tool, argumentsJSON: "{}", correlationID: "token")]))
     }
 
+    /// Asserts that the capture holds the log of a dropped marker with the id
+    /// of its call, and that the counter counted the loss once.
+    private static func expectMarkerDropped(in context: TelemetryCapture.Context) throws {
+        context.expectLogged(
+            containing: "tool call marker", metadata: [RouterTelemetry.LogMetadataKey.toolCallId: callID])
+        let counter = try context.metricsFactory.expectCounter(RouterTelemetry.MetricName.toolCallMarkerDropped, [])
+        #expect(counter.totalValue == 1)
+    }
+
     @Test("a marker write that fails is logged with the call id and counted")
     func failedMarkerWriteIsLoggedAndCounted() async throws {
         let directory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
@@ -521,10 +530,7 @@ struct CrashRestoreReviewTests {
             return context
         }
 
-        context.expectLogged(
-            containing: "tool call marker", metadata: [RouterTelemetry.LogMetadataKey.toolCallId: Self.callID])
-        let counter = try context.metricsFactory.expectCounter(RouterTelemetry.MetricName.toolCallMarkerDropped, [])
-        #expect(counter.totalValue == 1)
+        try Self.expectMarkerDropped(in: context)
     }
 
     @Test("a marker that the recording root refuses is logged with the call id and counted")
@@ -540,10 +546,7 @@ struct CrashRestoreReviewTests {
         }
         withExtendedLifetime(owner) {}
 
-        context.expectLogged(
-            containing: "tool call marker", metadata: [RouterTelemetry.LogMetadataKey.toolCallId: Self.callID])
-        let counter = try context.metricsFactory.expectCounter(RouterTelemetry.MetricName.toolCallMarkerDropped, [])
-        #expect(counter.totalValue == 1)
+        try Self.expectMarkerDropped(in: context)
     }
 
     @Test("an event that is not a marker and fails to write is not counted as a lost marker")

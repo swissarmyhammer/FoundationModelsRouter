@@ -115,15 +115,45 @@ package actor JSONLRecorder: TranscriptRecorder {
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
         let target = (directory ?? self.directory).appendingPathComponent(transcriptFileName, isDirectory: false)
+        Self.attemptCountingDroppedMarker(of: event, cause: "") { message, metadata in
+            JSONLAppend.appendDroppingFailure(
+                event,
+                to: target,
+                through: appendLine,
+                logger: RouterTelemetry.makeLogger(.recording),
+                failureMessage: message,
+                failureMetadata: metadata
+            )
+        }
+    }
+
+    /// The one drop policy of the recorder, for a failed write and for a
+    /// refusal of the recording root alike: it chooses the log message and the
+    /// log metadata of the event, and it counts the loss of a marker.
+    ///
+    /// The message is "dropping a tool call marker" for the write-ahead marker
+    /// of a tool call, and "dropping a transcript event" for each other
+    /// event. The counter
+    /// (``RouterMetrics/recordDroppedToolCallMarker()``) counts a marker that
+    /// is not written, and no other event.
+    ///
+    /// - Parameters:
+    ///   - event: The stamped event.
+    ///   - cause: The wording that follows the message, for example
+    ///     `": the recording root has another owner"`. Empty when the
+    ///     message stands alone.
+    ///   - attempt: The write or the log of the drop. It gets the message and
+    ///     the metadata, and returns `true` when the event is in the file.
+    private static func attemptCountingDroppedMarker(
+        of event: TranscriptEvent,
+        cause: String,
+        attempt: (_ message: Logger.Message, _ metadata: Logger.Metadata) -> Bool
+    ) {
         let markedCallID = event.toolCallStartedID
-        let written = JSONLAppend.appendDroppingFailure(
-            event,
-            to: target,
-            through: appendLine,
-            logger: RouterTelemetry.makeLogger(.recording),
-            failureMessage: markedCallID == nil ? "dropping a transcript event" : "dropping a tool call marker",
-            failureMetadata: Self.failureMetadata(of: event, markedCallID: markedCallID)
-        )
+        let subject = markedCallID == nil ? "dropping a transcript event" : "dropping a tool call marker"
+        let written = attempt(
+            Logger.Message(stringLiteral: subject + cause),
+            failureMetadata(of: event, markedCallID: markedCallID))
         if !written, markedCallID != nil {
             RouterMetrics().recordDroppedToolCallMarker()
         }
@@ -173,7 +203,7 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// Logs the drop of an event that the recording root refused. For the
     /// write-ahead marker of a tool call, the log names the id of the call and
     /// the counter counts the loss, as for a failed write (see
-    /// ``failureMetadata(of:markedCallID:)``). The event is stamped only for
+    /// ``attemptCountingDroppedMarker(of:cause:attempt:)``). The event is stamped only for
     /// this log: `seq` spends nothing on a refused append.
     ///
     /// - Parameters:
@@ -181,15 +211,11 @@ package actor JSONLRecorder: TranscriptRecorder {
     ///   - partial: The event that drops.
     private func logRefusal(_ error: Error, of partial: TranscriptEvent.Partial) {
         let event = partial.stamped(seq: seq, ts: now())
-        let markedCallID = event.toolCallStartedID
-        RouterTelemetry.makeLogger(.recording).error(
-            markedCallID == nil
-                ? "dropping a transcript event: the recording root has another owner"
-                : "dropping a tool call marker: the recording root has another owner",
-            metadata: RouterTelemetry.errorMetadata(error)
-                .merging(Self.failureMetadata(of: event, markedCallID: markedCallID)) { _, new in new })
-        if markedCallID != nil {
-            RouterMetrics().recordDroppedToolCallMarker()
+        Self.attemptCountingDroppedMarker(of: event, cause: ": the recording root has another owner") {
+            message, metadata in
+            RouterTelemetry.makeLogger(.recording).error(
+                message, metadata: RouterTelemetry.errorMetadata(error).merging(metadata) { _, new in new })
+            return false
         }
     }
 }
