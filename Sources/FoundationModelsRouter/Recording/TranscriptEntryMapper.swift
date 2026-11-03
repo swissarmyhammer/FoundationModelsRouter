@@ -423,7 +423,13 @@ enum TranscriptEntryMapper {
         )
     }
 
-    private static func toolCallPayload(_ call: Transcript.ToolCall) -> ToolCallPayload {
+    /// Maps one SDK tool call to its on-disk mirror. The one place that builds
+    /// the payload of a call, for the recorded entry and for the live
+    /// announcement of the call.
+    ///
+    /// - Parameter call: The SDK tool call.
+    /// - Returns: The payload with the id, the tool name and the arguments text.
+    static func toolCallPayload(_ call: Transcript.ToolCall) -> ToolCallPayload {
         ToolCallPayload(id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString)
     }
 

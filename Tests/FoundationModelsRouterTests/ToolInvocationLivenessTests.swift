@@ -388,6 +388,43 @@ struct ToolInvocationLivenessTests {
         #expect(leftover.isEmpty)
     }
 
+    @Test("a call that completes in a submission with no event sink gets no failed toolStatus")
+    @MainActor
+    func completedCallInNilSinkSubmissionIsNotReportedFailed() async throws {
+        let tool = GatedMarkerTool()
+        tool.openGate()
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: Self.oneCallScript(calling: tool, id: "call-done"),
+            mounting: [tool],
+            tempDirPrefix: "ToolInvocationLivenessTests")
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let actor = try #require(fixture.session as? RoutedSessionActor)
+        let feed = await fixture.session.streamSessionEvents()
+
+        await actor.attachOutboxJournalIfNeeded()
+        let contextTokens = 4_096
+        let ceiling = ResponseTokenCeiling(
+            requested: nil, contextTokens: contextTokens, repetitionDetection: RepetitionDetection())
+        _ = try await actor.runSubmission(
+            grammar: nil, deliveredMail: [], ownPrompt: ScriptedToolFixture.prompt,
+            responseTokenCeiling: ceiling, onEvent: nil, allowOverflowRetry: false,
+            actor.respondBody(grammar: nil, responseTokenCeiling: ceiling.resolved))
+        let leftover = await actor.announcedToolCallIDs
+        await fixture.session.close()
+
+        var events: [SessionEvent] = []
+        for try await output in feed { events.append(output.event) }
+
+        #expect(tool.completedSteps.count == 1)
+        #expect(!events.contains(.toolStatus(id: "call-done", status: .failed, summary: nil, output: nil)))
+        #expect(
+            events.contains {
+                if case .toolStatus("call-done", .completed, _, _) = $0 { return true }
+                return false
+            })
+        #expect(leftover.isEmpty)
+    }
+
     @Test("invocation records are delivery-only: nothing extra is staged and nothing extra is recorded")
     @MainActor
     func invocationRecordsAreDeliveryOnlyAndChangeNoRecording() async throws {

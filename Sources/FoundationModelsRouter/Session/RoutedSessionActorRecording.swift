@@ -315,6 +315,14 @@ extension RoutedSessionActor {
         var dispatchedToolCallIds: [String] = []
         var completedToolCallIds: Set<String> = []
 
+        // With no event sink, a call that the session announced at its start
+        // still ends: the collector keeps the end status of each announced
+        // call, and the session sends it on its own path afterward.
+        var collectedEvents: [SessionEvent] = []
+        let announcedBeforeDiff = announcedToolCallIDs
+        let sink: ((SessionEvent) -> Void)? =
+            onEvent ?? (announcedBeforeDiff.isEmpty ? nil : { collectedEvents.append($0) })
+
         for (index, recordedPartial) in recordedPartials.enumerated() {
             let isSubmissionClose = index == lastResponseIndex
             let stampSince = (since != nil && isSubmissionClose) ? since : nil
@@ -335,11 +343,14 @@ extension RoutedSessionActor {
                 dispatchedToolCallIds: &dispatchedToolCallIds,
                 completedToolCallIds: &completedToolCallIds,
                 announcedToolCallIds: &announcedToolCallIDs,
-                onEvent: onEvent
+                onEvent: sink
             )
         }
         for id in dispatchedToolCallIds where !completedToolCallIds.contains(id) {
-            onEvent?(.toolStatus(id: id, status: .failed, summary: nil, output: nil))
+            sink?(.toolStatus(id: id, status: .failed, summary: nil, output: nil))
+        }
+        if onEvent == nil {
+            deliverEndStatuses(in: collectedEvents, ofAnnounced: announcedBeforeDiff)
         }
         if let divergence {
             await appendDivergenceMarker(divergence, grammar: grammar)
@@ -429,7 +440,8 @@ extension RoutedSessionActor {
     ///   - completedToolCallIds: Tool-call ids resolved in this diff; inserted into.
     ///   - announcedToolCallIds: Tool-call ids announced when the call started;
     ///     each id this diff uses is removed. With no `onEvent` the diff
-    ///     removes none (``settleAnnouncedToolCalls()`` settles them).
+    ///     removes none. The caller then gives a collecting sink, so the
+    ///     ids are removed and the end statuses are kept.
     ///   - onEvent: The sink for derived events, or `nil` to do nothing.
     private static func emitSessionEvents(
         for partial: TranscriptEvent.Partial,
@@ -518,7 +530,7 @@ extension RoutedSessionActor {
     /// - Parameter call: The SDK tool call that starts.
     func announceStart(of call: Transcript.ToolCall) {
         guard announcedToolCallIDs.insert(call.id).inserted else { return }
-        let payload = ToolCallPayload(id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString)
+        let payload = TranscriptEntryMapper.toolCallPayload(call)
         Self.announcedCallEvents(for: payload).forEach(deliverPost)
     }
 
@@ -542,11 +554,28 @@ extension RoutedSessionActor {
         ]
     }
 
+    /// Sends the end status of each call that the session announced and that
+    /// a diff without an event sink recorded. The host that saw such a call
+    /// running sees it end with the status that the diff gave: completed when
+    /// the diff recorded the output of the call, failed when it did not.
+    ///
+    /// - Parameters:
+    ///   - events: The events that the diff derived.
+    ///   - announced: The ids of the calls that the session announced before the diff.
+    private func deliverEndStatuses(in events: [SessionEvent], ofAnnounced announced: Set<String>) {
+        for event in events {
+            guard case .toolStatus(let id, let status, _, _) = event, status != .running, announced.contains(id)
+            else { continue }
+            deliverPost(event)
+        }
+    }
+
     /// Settles each call that ``announceStart(of:)`` announced and that no
     /// diff resolved: it sends a failed
     /// ``SessionEvent/toolStatus(id:status:summary:output:)`` and forgets the
     /// id. A call is still announced when its attempt was rolled back before
-    /// the diff recorded its entry, or when the submission has no event sink.
+    /// the diff recorded its entry. A call that a diff without an event sink
+    /// recorded has its end status already (``deliverEndStatuses(in:ofAnnounced:)``).
     ///
     /// The event goes through ``deliverPost(_:)``, the path of the
     /// announcement, so the host that saw the call running sees it end.
