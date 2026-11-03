@@ -31,6 +31,13 @@ comments:
     - evidence: 6 files — OrphanRunScan.swift, Sinks.swift, CrashRestoreReviewTests.swift, WriteAheadToolCallTests.swift, Helpers/TranscriptEntrySegments.swift; full swift test passed (2339 tests in 282 suites, plus 38 and 19), no warnings
     - next: review
   timestamp: 2026-11-03T18:08:18.678260+00:00
+- actor: claude-code
+  id: 01m6h9pcew46zq8n89w4eyn2tw
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD: 1 finding (1 confirmed, 0 refuted). Sources/FoundationModelsRouter/Recording/Sinks.swift:130. The five earlier findings are fixed and checked: OrphanRunScan.swift (one lostTerminal factory), Sinks.swift (one appendDroppingFailure call), toolOutputTexts (shared helper), toolOutputIDs (hoisted to Helpers/TranscriptEntrySegments.swift), ObjectBox (swiftlint disable with invariant).
+    - next: the implementer fixes the open finding in the 2026-11-03 12:08 section.
+  timestamp: 2026-11-03T18:10:42.268376+00:00
 position_column: review
 position_ordinal: '80'
 title: 'Crash and restore review fixes: atomic claim completion, claimable run with no event, honest placeholders, no double records, visible marker failure'
@@ -81,3 +88,12 @@ Verify, and write the result on the card: after a restore, the next end-of-submi
 - [x] `Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:339` `reuse/reuse` — toolOutputTexts(of:) rebuilds the text of each .toolOutput entry. An existing helper already does this on a transcript, so this copy repeats the same logic and can drift from it. Call ScriptedToolCallingModel's toolOutputTexts(in:) with `await session.transcript` and remove the local copy, or move the helper to a shared test support file if the nested location is awkward to reach.
 - [x] `Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:496` `reuse/reuse` — toolOutputIDs(in:) collects the output ids of .toolOutput entries. The same function already exists in another test suite, so there are now two copies of one mapping. Move one shared helper into a common test support file, make both suites call it, and remove the duplicate. A near-match in a `private` member is not a reuse path until it is hoisted.
 - [x] `Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:610` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+
+## Review Findings (2026-11-03 12:08)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Recording/Sinks.swift:130` `completeness/invariant-propagation` — The new doc comment says a failed tool-call marker write is never silent: the error log names the call id and a counter counts the loss. That holds only for a write that reaches JSONLAppend. When the recording root is held by another live owner, `append` returns at `guard ensureRootOwnership() else { return }` (line 109). The refusal is logged by `ensureRootOwnership` (lines 168-170) with the generic message and no call id, and `recordDroppedToolCallMarker()` is not called. A dropped tool-call marker on this path is silent, so a restore after a crash in that call finds no open call and no counter records the loss. The fix is applied at one drop site and not at its sibling. When the event is a tool-call marker (`event.toolCallStartedID != nil`) and `ensureRootOwnership()` refuses, log the refusal with the call id in the metadata (use `failureMetadata(of:markedCallID:)`) and call `RouterMetrics().recordDroppedToolCallMarker()`. Alternatively, narrow the doc comment at Sinks.swift:127-134 so it does not claim the guarantee for the ownership-refusal path. Add a test where a second owner holds the root and a marker is refused, then assert the call-id log and the counter.

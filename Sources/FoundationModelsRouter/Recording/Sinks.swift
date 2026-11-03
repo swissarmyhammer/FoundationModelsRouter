@@ -106,7 +106,12 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// before it is stamped, so no line ever interleaves into a root this
     /// recorder does not own and `seq` spends nothing on refused appends.
     package func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
-        guard ensureRootOwnership() else { return }
+        do {
+            try claimRootIfNeeded()
+        } catch {
+            logRefusal(error, of: partial)
+            return
+        }
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
         let target = (directory ?? self.directory).appendingPathComponent(transcriptFileName, isDirectory: false)
@@ -127,8 +132,9 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// The metadata of the error log of a dropped event. For the write-ahead
     /// marker of a tool call, it also names the id of the call.
     ///
-    /// A write that fails is not silent: the error log names the id of the
-    /// call, and a counter counts the loss
+    /// A marker that drops is not silent, whether its write fails or the
+    /// recording root refuses it: the error log names the id of the call, and
+    /// a counter counts the loss
     /// (``RouterMetrics/recordDroppedToolCallMarker()``). The tool is not
     /// blocked: the call goes on without the marker, and a restore after a
     /// crash in this call then finds no open call.
@@ -152,23 +158,38 @@ package actor JSONLRecorder: TranscriptRecorder {
     }
 
     /// Claims the recording root before a write when no claim is held yet,
-    /// matching the best-effort append policy: a refusal is logged, never
-    /// thrown. Retried on every refused append, so this recorder takes the root
-    /// over once its current owner releases it (or dies and leaves a stale
-    /// marker).
+    /// matching the best-effort append policy: the caller logs a refusal and
+    /// never throws it. Retried on every refused append, so this recorder takes
+    /// the root over once its current owner releases it (or dies and leaves a
+    /// stale marker).
     ///
-    /// - Returns: `false` when another live writer holds the root and the event
-    ///   must drop.
-    private func ensureRootOwnership() -> Bool {
-        if rootOwnership != nil { return true }
-        do {
-            rootOwnership = try RecordingRootOwnership.acquire(root: directory)
-            return true
-        } catch {
-            RouterTelemetry.makeLogger(.recording).error(
-                "dropping a transcript event: the recording root has another owner",
-                metadata: RouterTelemetry.errorMetadata(error))
-            return false
+    /// - Throws: The refusal, when another live writer holds the root and the
+    ///   event must drop.
+    private func claimRootIfNeeded() throws {
+        if rootOwnership != nil { return }
+        rootOwnership = try RecordingRootOwnership.acquire(root: directory)
+    }
+
+    /// Logs the drop of an event that the recording root refused. For the
+    /// write-ahead marker of a tool call, the log names the id of the call and
+    /// the counter counts the loss, as for a failed write (see
+    /// ``failureMetadata(of:markedCallID:)``). The event is stamped only for
+    /// this log: `seq` spends nothing on a refused append.
+    ///
+    /// - Parameters:
+    ///   - error: The refusal of the claim.
+    ///   - partial: The event that drops.
+    private func logRefusal(_ error: Error, of partial: TranscriptEvent.Partial) {
+        let event = partial.stamped(seq: seq, ts: now())
+        let markedCallID = event.toolCallStartedID
+        RouterTelemetry.makeLogger(.recording).error(
+            markedCallID == nil
+                ? "dropping a transcript event: the recording root has another owner"
+                : "dropping a tool call marker: the recording root has another owner",
+            metadata: RouterTelemetry.errorMetadata(error)
+                .merging(Self.failureMetadata(of: event, markedCallID: markedCallID)) { _, new in new })
+        if markedCallID != nil {
+            RouterMetrics().recordDroppedToolCallMarker()
         }
     }
 }

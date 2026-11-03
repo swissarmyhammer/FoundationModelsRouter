@@ -527,6 +527,25 @@ struct CrashRestoreReviewTests {
         #expect(counter.totalValue == 1)
     }
 
+    @Test("a marker that the recording root refuses is logged with the call id and counted")
+    func refusedMarkerIsLoggedAndCounted() async throws {
+        let directory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let owner = try JSONLRecorder(owningDirectory: directory)
+        let refused = JSONLRecorder(directory: directory)
+
+        let context = try await TelemetryCapture.run(forbidding: []) { context in
+            await refused.append(Self.markerPartial(callID: Self.callID), to: nil)
+            return context
+        }
+        withExtendedLifetime(owner) {}
+
+        context.expectLogged(
+            containing: "tool call marker", metadata: [RouterTelemetry.LogMetadataKey.toolCallId: Self.callID])
+        let counter = try context.metricsFactory.expectCounter(RouterTelemetry.MetricName.toolCallMarkerDropped, [])
+        #expect(counter.totalValue == 1)
+    }
+
     @Test("an event that is not a marker and fails to write is not counted as a lost marker")
     func failedOtherWriteIsNotCountedAsAMarker() async throws {
         let directory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
