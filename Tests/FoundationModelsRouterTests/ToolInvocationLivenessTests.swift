@@ -242,8 +242,9 @@ struct ToolInvocationLivenessTests {
         // The tool completed once the gate opened.
         #expect(slowTool.completedSteps == [ScriptedToolFixture.firstStepName])
 
-        // Ordering: open before close, close before the diff's .toolCall,
-        // .toolCall before its completed .toolStatus, and every one of them
+        // Ordering: the .toolCall (sent when the call starts) before the open
+        // record, open before close, close before the completed .toolStatus
+        // (sent by the diff), and every one of them
         // after the submissionStarted and before the submissionEnded of the
         // one submission. The answer frame is correct.
         _ = eventsInsideAnswerFrame(events)
@@ -261,10 +262,10 @@ struct ToolInvocationLivenessTests {
                 if case .toolStatus(_, .completed, _, _) = $0 { return true }
                 return false
             })
+        #expect(submissionStartIndex < toolCallIndex)
+        #expect(toolCallIndex < openIndex)
         #expect(openIndex < closeIndex)
-        #expect(closeIndex < toolCallIndex)
-        #expect(toolCallIndex < completedIndex)
-        #expect(submissionStartIndex < openIndex)
+        #expect(closeIndex < completedIndex)
         #expect(completedIndex < submissionEndIndex)
 
         // The diff's ids stay Apple's Transcript.ToolCall.id space: the
@@ -284,6 +285,57 @@ struct ToolInvocationLivenessTests {
         }
         #expect(closed.correlationID == open.correlationID)
         #expect(try #require(closed.duration) >= 0)
+    }
+
+    @Test("a call is announced with toolCall and a running toolStatus when it starts, and only one time")
+    @MainActor
+    func callIsAnnouncedWhenItStartsAndOnlyOneTime() async throws {
+        let slowTool = GatedMarkerTool()
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: Self.oneCallScript(calling: slowTool, id: "call-slow"),
+            mounting: [slowTool],
+            tempDirPrefix: "ToolInvocationLivenessTests")
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await Self.releaseAndClose(slowTool, fixture.session) }
+
+        let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
+        var events: [SessionEvent] = []
+        var iterator = stream.makeAsyncIterator()
+        while let event = try await iterator.next() {
+            events.append(event)
+            if event.isOpenInvocation { break }
+        }
+
+        // The tool still runs: the gate is closed. The host already has the
+        // call and its running status.
+        #expect(slowTool.completedSteps.isEmpty)
+        #expect(events.contains(.toolCall(id: "call-slow", name: GatedMarkerTool.toolName, argumentsJSON: try #require(Self.announcedArguments(in: events)))))
+        #expect(events.contains(.toolStatus(id: "call-slow", status: .running, summary: nil, output: nil)))
+
+        slowTool.openGate()
+        while let event = try await iterator.next() {
+            events.append(event)
+        }
+
+        // The diff at the end of the submission does not announce it again.
+        let announcements = events.filter {
+            if case .toolCall = $0 { return true }
+            return false
+        }
+        let runningStatuses = events.filter {
+            if case .toolStatus(_, .running, _, _) = $0 { return true }
+            return false
+        }
+        #expect(announcements.count == 1)
+        #expect(runningStatuses.count == 1)
+    }
+
+    /// The arguments text of the first ``SessionEvent/toolCall(id:name:argumentsJSON:)`` in `events`.
+    private static func announcedArguments(in events: [SessionEvent]) -> String? {
+        for event in events {
+            if case .toolCall(_, _, let argumentsJSON) = event { return argumentsJSON }
+        }
+        return nil
     }
 
     @Test("invocation records are delivery-only: nothing extra is staged and nothing extra is recorded")
@@ -579,13 +631,15 @@ struct ToolInvocationLivenessTests {
     /// One scripted round that calls `tool` one time, naming
     /// ``ScriptedToolFixture/firstStepName``.
     ///
-    /// - Parameter tool: The tool the one call names.
+    /// - Parameters:
+    ///   - tool: The tool the one call names.
+    ///   - id: The id of the call.
     /// - Returns: The one-round script.
-    private static func oneCallScript(calling tool: any Tool) -> ScriptedAnswerScript {
+    private static func oneCallScript(calling tool: any Tool, id: String = "call-1") -> ScriptedAnswerScript {
         ScriptedAnswerScript(rounds: [
             [
                 ScriptedToolCall(
-                    id: "call-1", toolName: tool.name,
+                    id: id, toolName: tool.name,
                     argument: .literal(ScriptedToolFixture.firstStepName))
             ]
         ])

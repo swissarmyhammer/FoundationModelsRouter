@@ -348,6 +348,49 @@ struct SessionObserverSeedingTests {
         #expect(group.context.map(\.id) == ["reasoning-1", "resp-pre-tool"])
     }
 
+    @Test("an early call row, sent when the call starts, does not break the group of the narration of its pass")
+    @MainActor
+    func earlyCallRowKeepsTheNarrationInItsCallGroup() throws {
+        let call = Transcript.ToolCall(
+            id: "call-1", toolName: "search", arguments: try GeneratedContent(json: #"{"city":"NYC"}"#))
+        let entries: [Transcript.Entry] = [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "weather?"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-pre-tool",
+                    segments: [.text(Transcript.TextSegment(content: "Let me check. "))])),
+            .toolCalls(Transcript.ToolCalls(id: "calls-1", [call])),
+            .toolOutput(
+                Transcript.ToolOutput(
+                    id: "call-1", toolName: "search", segments: [.text(Transcript.TextSegment(id: "s-out", content: "NYC: sunny"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-final",
+                    segments: [.text(Transcript.TextSegment(content: "The final answer."))])),
+        ]
+        let seeded = SessionObserver()
+        seeded.seed(from: Transcript(entries: entries))
+
+        // The live order of a call that is announced at its start: the call
+        // row comes while the narration of its pass is the open text row, and
+        // before the model starts the next pass.
+        let live = SessionObserver()
+        live.apply(.textDelta("Let me check. "))
+        live.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: call.arguments.jsonString))
+        live.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
+        live.apply(.textReset)
+        live.apply(.textDelta("The final answer."))
+        live.apply(.entryRecorded(id: "resp-pre-tool", kind: .response))
+        live.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
+        live.apply(
+            .toolStatus(
+                id: "call-1", status: .completed, summary: "NYC: sunny",
+                output: [.text(id: "s-out", content: "NYC: sunny")]))
+        live.apply(.entryRecorded(id: "resp-final", kind: .response))
+
+        #expect(live.groupedRows == seeded.groupedRows)
+    }
+
     // MARK: - seed(from:)
 
     @Test("seed installs the grouped rows, and a live answer after the seed appends a new row without duplication")

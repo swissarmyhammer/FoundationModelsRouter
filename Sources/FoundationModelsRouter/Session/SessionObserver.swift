@@ -663,10 +663,21 @@ public final class SessionObserver {
     /// Each recorded entry id's arrival ordinal, which is its transcript order.
     private var recordedEntryOrdinals: [String: Int] = [:]
 
-    /// Marks the open text row superseded. A no-op when the last row is not
-    /// an open text row.
+    /// Marks the open text row of the pass that just ended as superseded.
+    ///
+    /// A call row can come before the next pass starts: the session sends it
+    /// when the call starts (``SessionEvent/toolCall(id:name:argumentsJSON:)``).
+    /// So this call skips the open call rows at the end of ``transcript``. The
+    /// grouping follows the pass, not the order of the rows. A no-op when the
+    /// row before those call rows is not an open text row.
     private func markOpenTextRowSuperseded() {
-        guard let last = transcript.last, last.sourceEntryId == nil, case .text = last.kind else { return }
+        guard
+            let last = transcript.last(where: { row in
+                if case .toolCall = row.kind, row.sourceEntryId == nil { return false }
+                return true
+            }),
+            last.sourceEntryId == nil, case .text = last.kind
+        else { return }
         supersededTextRowIds.insert(last.id)
     }
 

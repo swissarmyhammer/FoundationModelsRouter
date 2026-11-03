@@ -635,6 +635,13 @@ actor RoutedSessionActor: RoutedSession {
     /// (``deliverPost(_:)``).
     var currentAnswerEventSink: ((SessionEvent) -> Void)?
 
+    /// The ids of the SDK tool calls that the session announced live when the
+    /// call started: ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and a
+    /// running ``SessionEvent/toolStatus(id:status:summary:output:)`` went out
+    /// from ``deliver(invocation:)``. The diff at the end of the submission
+    /// does not announce these calls again, and it removes each id it uses.
+    var announcedToolCallIDs: Set<String> = []
+
     /// The join of the live tool run records of this session to the SDK tool
     /// calls that started them. ``deliver(invocation:)`` reads it for each
     /// record. See ``ToolCallRunJoin``.

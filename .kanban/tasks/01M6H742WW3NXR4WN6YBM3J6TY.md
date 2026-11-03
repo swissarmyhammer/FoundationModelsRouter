@@ -45,8 +45,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD, 2 findings (2 confirmed, 2 refuted): Sources/FoundationModelsRouter/Recording/Sinks.swift:186, Tests/FoundationModelsRouterTests/CrashRestoreReviewTests.swift:530. The prior finding at Sinks.swift:130 is not raised again.
     - next: fix the two open findings, then review again.
   timestamp: 2026-11-03T18:15:21.152250+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6ha6ha9pe0d6ybdhqgstqs5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD, 0 findings (0 confirmed, 0 refuted). Both findings of the 12:14 pass (Sinks.swift:186 and CrashRestoreReviewTests.swift:530) are fixed and not raised again. All prior review findings are checked.
+    - next: none. Card moved to done.
+  timestamp: 2026-11-03T18:19:31.529034+00:00
+position_column: done
+position_ordinal: ffffffffe480
 title: 'Crash and restore review fixes: atomic claim completion, claimable run with no event, honest placeholders, no double records, visible marker failure'
 ---
 ## What

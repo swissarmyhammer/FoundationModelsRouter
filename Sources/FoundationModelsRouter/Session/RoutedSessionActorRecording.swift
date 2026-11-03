@@ -331,6 +331,7 @@ extension RoutedSessionActor {
                 for: recordedPartial,
                 dispatchedToolCallIds: &dispatchedToolCallIds,
                 completedToolCallIds: &completedToolCallIds,
+                announcedToolCallIds: &announcedToolCallIDs,
                 onEvent: onEvent
             )
         }
@@ -412,7 +413,8 @@ extension RoutedSessionActor {
     /// Recording-level gating does not apply to these live events.
     ///
     /// A `.toolCalls` partial emits a `toolCall` and a running `toolStatus`
-    /// per call, then an `entryRecorded`. A `.toolOutput` partial emits a
+    /// per call, then an `entryRecorded`. A call that the session announced
+    /// when it started (``announceStart(of:)``) gets neither event again. A `.toolOutput` partial emits a
     /// completed `toolStatus` with an id from
     /// ``ToolCallOutputPairing/completedToolCallId(forOutputEntryId:dispatched:completed:)``.
     /// A `.reasoning` partial emits a `reasoningDelta` and an `entryRecorded`.
@@ -422,19 +424,24 @@ extension RoutedSessionActor {
     ///   - partial: The diff partial just recorded.
     ///   - dispatchedToolCallIds: Tool-call ids announced in this diff; appended to.
     ///   - completedToolCallIds: Tool-call ids resolved in this diff; inserted into.
+    ///   - announcedToolCallIds: Tool-call ids announced when the call started;
+    ///     each id this diff uses is removed.
     ///   - onEvent: The sink for derived events, or `nil` to do nothing.
     private static func emitSessionEvents(
         for partial: TranscriptEvent.Partial,
         dispatchedToolCallIds: inout [String],
         completedToolCallIds: inout Set<String>,
+        announcedToolCallIds: inout Set<String>,
         onEvent: ((SessionEvent) -> Void)?
     ) {
         guard let onEvent, let entry = partial.entry else { return }
         switch partial.kind {
         case .toolCalls:
             for call in entry.toolCalls ?? [] {
-                onEvent(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON))
-                onEvent(.toolStatus(id: call.id, status: .running, summary: nil, output: nil))
+                if announcedToolCallIds.remove(call.id) == nil {
+                    onEvent(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON))
+                    onEvent(.toolStatus(id: call.id, status: .running, summary: nil, output: nil))
+                }
                 dispatchedToolCallIds.append(call.id)
             }
             onEvent(.entryRecorded(id: entry.entryId, kind: .toolCalls))
@@ -470,11 +477,9 @@ extension RoutedSessionActor {
     /// recorder, which flushes it. A crash in the tool run then leaves the
     /// call in the recording. The `.toolCalls` entry of the call is still
     /// recorded at the end of the submission, by the diff
-    /// (``recordTranscriptDelta(grammar:since:usage:deliveredMail:entryIdsBeforeAttempt:onEvent:)``),
-    /// and so are the live events of the call. This call sends no live event:
-    /// the projection of the session (``SessionObserver``) closes the
-    /// narration text of a pass when the next text starts, and it needs the
-    /// call row to come after that close.
+    /// (``recordTranscriptDelta(grammar:since:usage:deliveredMail:entryIdsBeforeAttempt:onEvent:)``).
+    /// This call sends no live event. The caller announces the call
+    /// (``announceStart(of:)``) after the write.
     ///
     /// The caller got `call` from the entries of the submission in flight,
     /// while the SDK waits in the tool call. This call reads no transcript.
@@ -498,6 +503,20 @@ extension RoutedSessionActor {
             partial: makePartialEvent(
                 kind: .toolCallStarted,
                 entry: TranscriptEntryPayload(entryId: Self.startedEntryIDPrefix + call.id, toolCalls: [payload])))
+    }
+
+    /// Announces the SDK tool call `call` to the host when the call starts:
+    /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and a running
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)``. A call that was
+    /// announced before is not announced again. The diff at the end of the
+    /// submission skips the announced calls (``announcedToolCallIDs``) and
+    /// announces each other call, for example a call with no started marker.
+    ///
+    /// - Parameter call: The SDK tool call that starts.
+    func announceStart(of call: Transcript.ToolCall) {
+        guard announcedToolCallIDs.insert(call.id).inserted else { return }
+        deliverPost(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.arguments.jsonString))
+        deliverPost(.toolStatus(id: call.id, status: .running, summary: nil, output: nil))
     }
 
     /// Records the `session` meta event once, before the first recorded entry.
