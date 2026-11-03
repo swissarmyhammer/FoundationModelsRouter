@@ -214,7 +214,7 @@ struct RecordedChildLookupTests {
                     == RecordedChild(
                         sessionID: recording.interrupted.id, agentID: Self.childAgentID,
                         agentName: Self.interruptedAgent, parentSessionId: recording.parent.id,
-                        parentToolCallId: recording.interrupted.token, ended: nil))
+                        parentToolCallId: recording.interrupted.token, ended: nil, firstPrompt: nil))
         }
     }
 

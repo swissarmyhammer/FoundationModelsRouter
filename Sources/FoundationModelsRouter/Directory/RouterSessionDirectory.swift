@@ -1725,12 +1725,50 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameter parent: The id of the parent session.
     /// - Returns: The recorded children, newest first.
-    /// - Throws: The error of the recording roots of the host, or the read
-    ///   error of an `index.md`.
+    /// - Throws: The error of the recording roots of the host, the read
+    ///   error of an `index.md`, or the errors of ``firstPrompt(of:)`` for the
+    ///   transcript of a child.
     public func recordedChildren(of parent: ULID) async throws -> [RecordedChild] {
-        try RecordedSessions(roots: try await recordingRoots()).nestedRecords()
-            .filter { $0.agentSpawn?.parentSessionId == parent }
-            .compactMap(RecordedChild.init(record:))
+        try RecordedSessions(roots: try await recordingRoots()).nestedEntries()
+            .filter { $0.record.agentSpawn?.parentSessionId == parent }
+            .compactMap { entry in
+                RecordedChild(
+                    record: entry.record,
+                    firstPrompt: try FirstPromptReader.firstPrompt(ofSessionIn: entry.folder, record: entry.record))
+            }
+    }
+
+    /// The text of the first prompt of the recorded session `session`, read
+    /// without a restore. The call restores nothing, writes nothing and
+    /// starts nothing.
+    ///
+    /// The read goes through the `transcript.jsonl` of the session line by
+    /// line, and stops at the first `.prompt` event. It loads no other event,
+    /// no other session and no tree. A fork reads the events of its parents up
+    /// to its cut, as a restore of the fork does, and then its own events.
+    ///
+    /// The text is the prompt body as recorded. A submission can deliver mail
+    /// with its prompt: the run mail that comes before the prompt, and the
+    /// mail records that the prompt entry carries, are no part of the text.
+    /// When the submission has user mail and no other prompt text, the text
+    /// of that mail is the prompt.
+    ///
+    /// - Parameter session: The id of the recorded session.
+    /// - Returns: The first prompt, or `nil` when the transcript holds no
+    ///   prompt, or when its first prompt has no text.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no recording
+    ///   root holds the session; the error of the recording roots of the
+    ///   host; ``TranscriptTreeError`` (`indexUnreadable`, `indexMissing`,
+    ///   `duplicateSessionId`);
+    ///   ``RecordingSchemaVersionError`` for a record of a newer router; and
+    ///   `JSONLFileError.readFailed(description:)` for a transcript that does
+    ///   not read.
+    public func firstPrompt(of session: ULID) async throws -> String? {
+        for root in try await recordingRoots() where FileManager.default.fileExists(atPath: root.path) {
+            guard let folder = try TranscriptTree.sessionFolder(of: session, under: root) else { continue }
+            return try FirstPromptReader.firstPrompt(ofSessionIn: folder)
+        }
+        throw SessionDirectoryError.unknownSession(session)
     }
 
     /// The status of each journaled run of the recorded session `session`:

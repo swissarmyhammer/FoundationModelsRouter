@@ -34,6 +34,14 @@ public struct RecordedChild: Sendable, Equatable {
     /// (``RouterSessionDirectory/markEnded(_:reason:)``).
     public let ended: SessionEndedMarker?
 
+    /// The text of the first prompt of the recorded transcript of the child,
+    /// or `nil` when the transcript holds no prompt yet. It is the prompt
+    /// body as recorded, without the run mail or the user mail that the
+    /// submission delivered with it. A host that restores the child uses it as
+    /// the arguments of the agent. See
+    /// ``RouterSessionDirectory/firstPrompt(of:)``.
+    public let firstPrompt: String?
+
     /// Makes a recorded child.
     ///
     /// - Parameters:
@@ -43,9 +51,10 @@ public struct RecordedChild: Sendable, Equatable {
     ///   - parentSessionId: The session that spawned the child.
     ///   - parentToolCallId: The completion token of the spawning call.
     ///   - ended: The ended marker of the child, or `nil`.
+    ///   - firstPrompt: The first prompt of the child, or `nil`.
     public init(
         sessionID: ULID, agentID: String, agentName: String?, parentSessionId: ULID, parentToolCallId: String,
-        ended: SessionEndedMarker?
+        ended: SessionEndedMarker?, firstPrompt: String?
     ) {
         self.sessionID = sessionID
         self.agentID = agentID
@@ -53,13 +62,16 @@ public struct RecordedChild: Sendable, Equatable {
         self.parentSessionId = parentSessionId
         self.parentToolCallId = parentToolCallId
         self.ended = ended
+        self.firstPrompt = firstPrompt
     }
 
     /// Makes the recorded child of a record that holds an agent spawn.
     ///
-    /// - Parameter record: The record of a session.
+    /// - Parameters:
+    ///   - record: The record of a session.
+    ///   - firstPrompt: The first prompt of the session, or `nil`.
     /// - Returns: The child, or `nil` when the record holds no agent spawn.
-    init?(record: SessionRecord) {
+    init?(record: SessionRecord, firstPrompt: String?) {
         guard let spawn = record.agentSpawn else { return nil }
         self.init(
             sessionID: record.sessionId,
@@ -67,6 +79,7 @@ public struct RecordedChild: Sendable, Equatable {
             agentName: record.facts.agentName,
             parentSessionId: spawn.parentSessionId,
             parentToolCallId: spawn.parentToolCallId,
-            ended: record.facts.end)
+            ended: record.facts.end,
+            firstPrompt: firstPrompt)
     }
 }

@@ -36,10 +36,17 @@ comments:
     - evidence: full swift test: 2300 tests in 278 suites passed (main target), 0 failures. New: ClaimOrphanRunsTests (13 tests), 8 new tests in WriteAheadToolCallTests. Files: Recording/OpenToolCalls.swift, Recording/TranscriptEntryPayload.swift, Recording/SessionTreeRestoration.swift, Recording/SessionRestoration.swift, Session/RoutedSession.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorClaimedRuns.swift (new), Session/RoutedSessionActorClosing.swift, Session/RoutedSessionActorRecording.swift, Session/RoutedSessionActorRunJournal.swift, Session/RoutedSessionActorWorkEvents.swift, doc link updates, Tests/ClaimOrphanRunsTests.swift, Tests/WriteAheadToolCallTests.swift.
     - next: review. No commit, no push.
   timestamp: 2026-11-03T16:41:29.668858+00:00
+- actor: claude-code
+  id: 01m6h4tqk8c99ryyq4cv4kg5wy
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD; counts findings 0, confirmed 0, refuted 4, attempted 14, failed 0. 16 files reviewed.
+    - next: none. The card moves to done.
+  timestamp: 2026-11-03T16:45:41.864958+00:00
 depends_on:
 - 01M6GK7RHHHC6B6QMJ25FT1QDT
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffe080
 title: Let a host claim orphan runs at restore, so the restore does not post lost and the host can post the real completed
 ---
 ## What

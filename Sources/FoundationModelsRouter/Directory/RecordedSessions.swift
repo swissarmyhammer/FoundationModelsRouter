@@ -38,7 +38,7 @@ struct RecordedSessions {
     /// - Throws: The error of a listing of a root that exists, or the read
     ///   error of an `index.md` that exists (``SessionIndexFile/read(in:)``).
     func records() throws -> [SessionRecord] {
-        try readRecords(depth: .direct)
+        try readEntries(depth: .direct).map(\.record)
     }
 
     /// The records of the sessions recorded under ``roots`` at any depth: the
@@ -53,7 +53,25 @@ struct RecordedSessions {
     /// - Throws: The read error of an `index.md` that exists
     ///   (``SessionIndexFile/read(in:)``).
     func nestedRecords() throws -> [SessionRecord] {
-        try readRecords(depth: .nested)
+        try nestedEntries().map(\.record)
+    }
+
+    /// The sessions recorded under ``roots`` at any depth, each with its
+    /// record and its folder. The same walk as ``nestedRecords()``.
+    ///
+    /// - Returns: One entry for each recorded session, newest first.
+    /// - Throws: What ``nestedRecords()`` throws.
+    func nestedEntries() throws -> [Entry] {
+        try readEntries(depth: .nested)
+    }
+
+    /// A recorded session: its record and the folder that holds it.
+    struct Entry {
+        /// The record of the session, from its `index.md`.
+        let record: SessionRecord
+
+        /// The recording folder of the session.
+        let folder: URL
     }
 
     /// The summaries of the root sessions recorded under ``roots``.
@@ -97,20 +115,20 @@ struct RecordedSessions {
         case nested
     }
 
-    /// The records of the sessions that ``roots`` hold at `depth`. This is the
-    /// one root walk of ``records()`` and ``nestedRecords()``: if two roots
-    /// hold a folder with one id, the first root wins.
+    /// The sessions that ``roots`` hold at `depth`. This is the one root walk
+    /// of ``records()`` and ``nestedEntries()``: if two roots hold a folder
+    /// with one id, the first root wins.
     ///
     /// - Parameter depth: How deep the listing of each root looks.
-    /// - Returns: One record for each recorded session, newest first.
+    /// - Returns: One entry for each recorded session, newest first.
     /// - Throws: The error of a listing of a root that exists, or the read
     ///   error of an `index.md` that exists.
-    private func readRecords(depth: Depth) throws -> [SessionRecord] {
+    private func readEntries(depth: Depth) throws -> [Entry] {
         let folders = try roots.flatMap { try Self.sessionFolders(under: $0, depth: depth) }
         let firstFolders = Dictionary(folders, uniquingKeysWith: { first, _ in first })
         return try firstFolders.values
-            .compactMap(SessionIndexFile.read(in:))
-            .sorted { $0.sessionId > $1.sessionId }
+            .compactMap { folder in try SessionIndexFile.read(in: folder).map { Entry(record: $0, folder: folder) } }
+            .sorted { $0.record.sessionId > $1.record.sessionId }
     }
 
     /// The session folders of `root` at `depth`: each folder named by a ULID,
