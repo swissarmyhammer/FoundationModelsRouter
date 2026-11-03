@@ -141,6 +141,29 @@ struct ToolCallRunJoinTests {
         #expect(join.toolCallID(for: close, in: entries) == nil)
     }
 
+    // MARK: - The announce order
+
+    @Test("the calls to announce for a started call are all calls of its entry, in the order of the model")
+    func announceOrderFollowsTheCallListNotTheStartOrder() throws {
+        let entries = [
+            try Self.toolCallsEntry([(Self.firstCallID, Self.toolName), (Self.secondCallID, Self.otherToolName)])
+        ]
+        let startedSecond = Transcript.ToolCall(
+            id: Self.secondCallID, toolName: Self.otherToolName, arguments: try GeneratedContent(json: "{}"))
+
+        #expect(
+            ToolCallRunJoin.callsToAnnounce(whenStarted: startedSecond, in: entries).map(\.id)
+                == [Self.firstCallID, Self.secondCallID])
+    }
+
+    @Test("the calls to announce for a call that no entry holds are that call alone")
+    func announceOrderOfAnUnheldCallIsTheCallAlone() throws {
+        let startedCall = Transcript.ToolCall(
+            id: Self.secondCallID, toolName: Self.toolName, arguments: try GeneratedContent(json: "{}"))
+
+        #expect(ToolCallRunJoin.callsToAnnounce(whenStarted: startedCall, in: []).map(\.id) == [Self.secondCallID])
+    }
+
     // MARK: - Helpers
 
     /// The ids of the ``SessionEvent/toolCall(id:name:argumentsJSON:)`` events

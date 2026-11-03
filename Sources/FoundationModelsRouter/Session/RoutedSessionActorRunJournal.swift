@@ -405,6 +405,10 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// The open record is also the start of a tool call. The call is then
     /// recorded (``recordStart(of:correlationID:)``), before the tool body runs,
     /// and announced to the host (``announceStart(of:)``), before this record.
+    /// The announcement covers every call of the entry of the call, in the
+    /// order of the model (``ToolCallRunJoin/callsToAnnounce(whenStarted:in:)``),
+    /// so the order of the announcements does not depend on the start order
+    /// of the parallel tool tasks.
     ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
@@ -416,7 +420,12 @@ extension RoutedSessionActor: ToolInvocationObserver {
             toolCallID = call?.id
             if let call {
                 await recordStart(of: call, correlationID: record.correlationID)
-                announceStart(of: call)
+                // Parallel tool tasks start in any order. The host sees the
+                // calls in the order of the model, so the first start
+                // announces the whole call list of the entry.
+                for announced in ToolCallRunJoin.callsToAnnounce(whenStarted: call, in: submissionEntries) {
+                    announceStart(of: announced)
+                }
             }
         } else {
             toolCallID = toolCallRunJoin.toolCallID(for: record, in: submissionEntries)

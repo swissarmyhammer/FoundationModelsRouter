@@ -50,6 +50,30 @@ struct ToolCallRunJoin {
         return openedCall(for: record, in: entries)?.id
     }
 
+    /// The calls to announce to the host when `call` starts, in the order of
+    /// the model.
+    ///
+    /// The parallel tool tasks of one `.toolCalls` entry start in any order.
+    /// The announce order must not follow the start order. It follows the
+    /// call list of the entry, so this returns every call of the entry that
+    /// holds `call`, in list order. A call that no entry holds is returned
+    /// alone.
+    ///
+    /// - Parameters:
+    ///   - call: The SDK tool call that starts.
+    ///   - entries: The transcript entries that the submission in flight
+    ///     appended.
+    /// - Returns: The calls to announce, in call-list order.
+    static func callsToAnnounce(
+        whenStarted call: Transcript.ToolCall, in entries: [Transcript.Entry]
+    ) -> [Transcript.ToolCall] {
+        for entry in entries {
+            guard case .toolCalls(let calls) = entry, calls.contains(where: { $0.id == call.id }) else { continue }
+            return Array(calls)
+        }
+        return [call]
+    }
+
     /// The SDK tool call that the run of an open `record` joins, and the join.
     ///
     /// The call is the first call of `entries` that has the tool name of the
