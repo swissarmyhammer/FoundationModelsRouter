@@ -17,6 +17,13 @@ comments:
     - evidence: gap fixed. The directory keeps the ids of suspended sessions (suspendLiveSessions and unregister of a suspended session). markEnded throws sessionSuspended for them also after the close. New test: aMarkOnASuspendedThenClosedSessionWritesNothing. Full swift test: 2404 tests in 285 suites passed.
     - next: review
   timestamp: 2026-11-03T20:38:07.701726+00:00
+- actor: claude-code
+  id: 01m6hj96y4tvphjc5mh3knrsjb
+  text: |-
+    ### review — findings
+    - evidence: review sha 3272fb08~1..3272fb08, 1 finding — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:1722
+    - next: implement the finding (swift/preconditions: use guard), then review again
+  timestamp: 2026-11-03T20:40:47.812793+00:00
 position_column: review
 position_ordinal: '80'
 title: markEnded must not write an ended marker on a suspended session (audit item 5)
@@ -40,3 +47,9 @@ Audit item 5 (2026-11-03). `RouterSessionDirectory.markEnded(_:reason:)` is not 
 
 ## Workflow
 - Use `/tdd`. Queue: after `cancelForeground`, before the SessionEnd/HookSession card. #subagents
+
+## Review Findings (2026-11-03 14:38)
+
+> Scope: `review sha 3272fb08~1..3272fb08` — reviewed the diffs only — lines this change added or modified. 9 file(s) reviewed, 4 not reviewed.
+
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:1722` `swift/preconditions` — The suspended-session precondition in markEnded is checked with an `if` that throws, not with a `guard`. The rule asks for precondition checks written as `guard` at the head of the scope, so the requirement reads as a precondition and the happy path stays unindented. Write `guard !wasSuspended(id) else { throw SessionEndedMarkerError.sessionSuspended(id) }` at the same position.

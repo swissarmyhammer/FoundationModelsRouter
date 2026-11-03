@@ -1719,9 +1719,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   of a recorded session.
     @discardableResult
     public func markEnded(_ id: ULID, reason: SessionEndReason) async throws -> SessionEndedMarker {
-        if wasSuspended(id) {
-            throw SessionEndedMarkerError.sessionSuspended(id)
-        }
+        guard !wasSuspended(id) else { throw SessionEndedMarkerError.sessionSuspended(id) }
         let endedAt = MillisecondDate.rounded(Date())
         _ = try await changeRecord(of: id) { record in
             guard record.facts.end == nil else { return }
