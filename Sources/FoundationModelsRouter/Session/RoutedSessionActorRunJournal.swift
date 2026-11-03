@@ -410,8 +410,17 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// so the order of the announcements does not depend on the start order
     /// of the parallel tool tasks.
     ///
+    /// An open record also names its run in the tool call that sends it, when
+    /// the record comes from inside a tool call of a model call
+    /// (``ForegroundToolCalls/noteRun(token:)``). That is how
+    /// ``cancelForeground()`` finds the runs that a call still waits for. The
+    /// naming comes first, with no suspension point before it.
+    ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
+        if record.closedAt == nil {
+            ForegroundToolCalls.noteRun(token: record.correlationID)
+        }
         noteGenerationProgress(record.closedAt == nil ? .toolCall : .toolResult)
         let submissionEntries = record.closedAt == nil ? unrecordedTranscriptEntries() : []
         let toolCallID: String?

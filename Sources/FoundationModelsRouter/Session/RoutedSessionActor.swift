@@ -604,6 +604,11 @@ actor RoutedSessionActor: RoutedSession {
     /// earlier one.
     var sweepTask: Task<Void, Never>?
 
+    /// The tool calls of this session that are in flight, and the runs that
+    /// they wait for. ``cancelForeground()`` reads it to spare the detached
+    /// runs. See ``ForegroundToolCalls``.
+    nonisolated let foregroundCalls = ForegroundToolCalls()
+
     /// The in-flight model call of the work the pump runs, the task
     /// ``requestCancelOfRunningWork()`` cancels, or `nil` when no model call
     /// is outstanding. Only the model call runs in this task; the recording

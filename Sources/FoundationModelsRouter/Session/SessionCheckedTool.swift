@@ -32,7 +32,8 @@ struct SessionCheckedTool<Wrapped: Tool>: Tool, SubmissionBoundaryTool, ToolDeco
     /// Whether the wrapped tool puts its schema in the instructions.
     var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
-    /// Runs the checks of the current model call, then the wrapped tool.
+    /// Runs the checks of the current model call, then the wrapped tool as a
+    /// call in flight (``ForegroundToolCalls``).
     ///
     /// The no-op check gets the name of the tool and the generated content
     /// of `arguments`. The repetition check gets the identity of this call:
@@ -45,7 +46,7 @@ struct SessionCheckedTool<Wrapped: Tool>: Tool, SubmissionBoundaryTool, ToolDeco
     func call(arguments: Wrapped.Arguments) async throws -> Wrapped.Output {
         try await ToolCallNoOpCheck.current?.run(toolName: name, arguments: ToolArgumentsContent.of(arguments))
         try await ToolCallRepetitionCheck.current?.run(for: ToolCallIdentity(toolName: name, arguments: arguments))
-        return try await wrapped.call(arguments: arguments)
+        return try await ForegroundToolCalls.run { try await wrapped.call(arguments: arguments) }
     }
 }
 
@@ -65,8 +66,13 @@ struct ModelCallToolChecks: Sendable {
     /// session of a router with no dispatcher.
     let hooks: ToolCallHooks?
 
-    /// Runs `body` with both checks and the tool hooks bound as those of the
-    /// current model call. `HookSession.current` is the hook session of the
+    /// The tool calls of the session that are in flight. A foreground cancel
+    /// reads it to tell the runs that a call waits for from the detached
+    /// runs (``ForegroundToolCalls``).
+    let foregroundCalls: ForegroundToolCalls
+
+    /// Runs `body` with both checks, the tool hooks and the tracker of the
+    /// calls in flight bound as those of the current model call. `HookSession.current` is the hook session of the
     /// session, so a tool body reads the session of its call at call time.
     /// With no hooks, both hook task-locals are bound to `nil`, so a model
     /// call of a session never sees the hooks of another session.
@@ -79,7 +85,9 @@ struct ModelCallToolChecks: Sendable {
             try await ToolCallRepetitionCheck.$current.withValue(repetition) {
                 try await ToolCallHooks.$current.withValue(hooks) {
                     try await HookSession.$current.withValue(hooks?.hooks.session) {
-                        try await body()
+                        try await ForegroundToolCalls.$current.withValue(foregroundCalls) {
+                            try await body()
+                        }
                     }
                 }
             }

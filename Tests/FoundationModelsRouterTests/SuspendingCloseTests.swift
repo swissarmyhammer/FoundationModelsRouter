@@ -6,7 +6,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The tool of this file: four background operations of one `OperationTool`.
+/// The tool of this file and of ``CancelForegroundTests``: five background operations of one `OperationTool`.
 /// A body waits until the host cancels its run, or until the gate of the
 /// context opens, and then ends in its own way.
 enum ShutdownRunFixtures {
@@ -43,7 +43,7 @@ enum ShutdownRunFixtures {
         }
     }
 
-    /// Makes the fused tool over the four operations.
+    /// Makes the fused tool over the five operations.
     ///
     /// - Parameter gate: The latch of the body of ``IgnoreCancelRun``.
     /// - Returns: The tool.
@@ -56,6 +56,7 @@ enum ShutdownRunFixtures {
             operations: [
                 AnyOperation(SwallowCancelRun.self), AnyOperation(ThrowCancellationRun.self),
                 AnyOperation(ThrowLostRun.self), AnyOperation(IgnoreCancelRun.self),
+                AnyOperation(AskQuestionRun.self),
             ]
         )
     }
@@ -435,7 +436,7 @@ struct SuspendingCloseTests {
     /// - Parameter recording: A recording made for two calls.
     /// - Returns: The task of the answer, which ends when the session ends.
     /// - Throws: ``FailureEventCameFirst`` when the answer ended first.
-    private static func openTwoRuns(in recording: ShutdownRecording) async throws -> Task<String, any Error> {
+    static func openTwoRuns(in recording: ShutdownRecording) async throws -> Task<String, any Error> {
         let answering = recording.startAnswering()
         try await recording.awaitInlineCall(of: answering)
         recording.endSettlePeriod()
@@ -445,7 +446,7 @@ struct SuspendingCloseTests {
 
     /// Suspends the session of `recording`, closes it, and waits for the end
     /// of `answering`.
-    private static func suspendAndClose(_ recording: ShutdownRecording, ending answering: Task<String, any Error>) async {
+    static func suspendAndClose(_ recording: ShutdownRecording, ending answering: Task<String, any Error>) async {
         recording.session.suspend()
         await recording.session.close()
         _ = try? await answering.value
@@ -457,7 +458,7 @@ struct SuspendingCloseTests {
     /// - Parameter recording: A recording that was suspended and closed.
     /// - Returns: The restored tree.
     /// - Throws: What the status read or the restore throws.
-    private static func restoreClaimingEveryRun(of recording: ShutdownRecording) async throws -> RestoredSessionTree {
+    static func restoreClaimingEveryRun(of recording: ShutdownRecording) async throws -> RestoredSessionTree {
         let keys = Set(try await recording.statuses().keys)
         return try await recording.restoringProfile.standard.restoreSessionTree(
             root: recording.session.id, recordingRoot: recording.recordingRoot,

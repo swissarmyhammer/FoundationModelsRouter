@@ -846,7 +846,7 @@ extension RoutedSessionActor {
             checks: ModelCallToolChecks(
                 noOp: ToolCallNoOpCheck { try await self.checkToolCallForNoOp(toolName: $0, arguments: $1) },
                 repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) },
-                hooks: makeToolCallHooks()),
+                hooks: makeToolCallHooks(), foregroundCalls: foregroundCalls),
             context: ambientToolContext,
             serviceContext: submissionServiceContext,
             origin: origin,

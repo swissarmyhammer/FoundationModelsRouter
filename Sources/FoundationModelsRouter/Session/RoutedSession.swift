@@ -523,6 +523,59 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     @discardableResult
     nonisolated func cancelAll() -> SignalID
 
+    /// Stops the foreground work of this session, and spares the runs that
+    /// went to the background. It is the `session/cancel` of a client: the
+    /// work that the person waits for stops, and the background runs, which
+    /// the person sees in the latest `background` list, go on.
+    /// ``cancelAll()`` stays the stop of ``close()``, of a shutdown and of an
+    /// archive.
+    ///
+    /// A run is **inline** while the tool call that started it still waits
+    /// for it, inside the settle period of the call
+    /// (``SessionConfiguration/inlineSettleGrace``). A run is **detached**
+    /// when its call returned the pending envelope and the run goes on. The
+    /// session tells the two apart: a run is inline from its open record to
+    /// the end of its call. A run that is open in the run plane and is not
+    /// inline is detached.
+    ///
+    /// The call is a signal, with the rules of ``cancelAll()``: it returns a
+    /// new ``SignalID`` at once, the session runs the work of its signals one
+    /// at a time, and the signal ends with ``SessionEvent/signalDone(_:)``
+    /// after all its other events. The work, in this order:
+    ///
+    /// 1. Each queued mail of all kinds leaves the queue and gets
+    ///    ``SessionEvent/cancelled(_:)``, as in ``cancelAll()``.
+    /// 2. The running answer stops, as in ``cancelAll()``: its mail gets
+    ///    ``SessionEvent/answerFailed(_:)`` with the reason
+    ///    ``AnswerFailure/Reason/cancelled`` at once, and its model call gets
+    ///    a cancel.
+    /// 3. Each inline run makes no more mail, and gets a cancel (the cancel
+    ///    of one run of the run plane). The call does not wait for the
+    ///    cancel of a run: each run gets its terminal event when its cancel
+    ///    ends, with its own journal write.
+    /// 4. Each open question ends with ``SessionEvent/elicitationEnded(_:)``,
+    ///    as in ``cancelAll()``, except the question of a detached run. The
+    ///    end comes before the ``SessionEvent/signalDone(_:)`` of the signal.
+    ///
+    /// A detached run is not touched. It keeps its lease, its claim, its
+    /// journal, its open questions and its right to make mail. A host that
+    /// wants it stopped cancels the run itself, or calls ``cancelAll()``.
+    ///
+    /// A run that opens in the moment of the cancel, before its open record
+    /// arrived, counts as detached. Its call gets the cancel of the model
+    /// call, returns the pending envelope, and the run is in the background
+    /// list from then on, so the rule holds for it too.
+    ///
+    /// The signal never interferes with signal work, as ``cancelAll()``
+    /// never does. After the signal the session is usable: ``MailSink/mail(_:)``
+    /// and the other signals work as usual, and the pump takes new mail when
+    /// the stopped work ended. Safe at any time and any number of times,
+    /// from any task.
+    ///
+    /// - Returns: The id of the signal.
+    @discardableResult
+    nonisolated func cancelForeground() -> SignalID
+
     /// Changes the body of one queued mail. The id, the sender and the place
     /// in the queue do not change.
     ///

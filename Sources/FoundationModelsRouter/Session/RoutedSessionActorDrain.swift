@@ -2,7 +2,8 @@ import FoundationModelsExtras
 
 /// ``RoutedSessionActor``'s stop of all work: the signal
 /// ``RoutedSession/cancelAll()`` (`mailbox.md`, section 5, "Decision:
-/// cancelAll() stops all of it"), and the wait until all work ended, which
+/// cancelAll() stops all of it"), the signal ``RoutedSession/cancelForeground()``
+/// that spares the detached runs, and the wait until all work ended, which
 /// only ``RoutedSession/close()`` uses.
 extension RoutedSessionActor {
     /// The work of the signal ``RoutedSession/cancelAll()``: stops all work
@@ -80,6 +81,76 @@ extension RoutedSessionActor {
         await awaitQuestionPosts(of: postsOnTheirWay)
     }
 
+    /// The work of the signal ``RoutedSession/cancelForeground()``: stops the
+    /// foreground work of the session now, and spares the runs that went to
+    /// the background. ``signals`` runs it with the origin of the signal.
+    ///
+    /// The steps, in this order:
+    ///
+    /// 1. Each queued mail of all kinds leaves the queue and gets its
+    ///    terminal event ``SessionEvent/cancelled(_:)`` (``cancelQueuedMail()``).
+    /// 2. The call reads the runs that a tool call waits for now
+    ///    (``ForegroundToolCalls/inlineRunTokens``), with no suspension
+    ///    before step 3. The read comes first: the cancel of the model call
+    ///    ends the wait of each call, and each call then returns its pending
+    ///    envelope and leaves the list.
+    /// 3. The running answer stops (``stopRunningAnswer()``), as in
+    ///    ``performCancelAll()``.
+    /// 4. The open runs of the run plane split in two. A run that a call
+    ///    waits for is **inline**. Each other open run is **detached**: its
+    ///    call returned the pending envelope. Each inline run makes no more
+    ///    mail (``ignoreRunMail(of:)``). A detached run makes mail as before.
+    /// 5. Each open question ends, except the questions of the detached runs
+    ///    (``endQuestions(sparing:)``). The ends use the same path as the
+    ///    ends of ``performCancelAll()``: the run plane posts each end, and
+    ///    the journal sends the ``SessionEvent/elicitationEnded(_:)`` with
+    ///    the origin of the signal.
+    /// 6. The call reads the end posts and the completion posts that are on
+    ///    their way now (``questionPostsOnTheirWay()``).
+    /// 7. The cancel of the inline runs starts (``startCancel(ofRuns:)``).
+    ///    It is the cancel of one run of the run plane for each token, in a
+    ///    task of its own, so the call does not wait for the canceler of a
+    ///    run. A token that names a call with no run, for example the call
+    ///    of a tool that runs to completion inside the answer, ends only the
+    ///    questions of that call and marks the token as cancelled.
+    /// 8. The call waits until the journal handled each post of step 6
+    ///    (``awaitQuestionPosts(of:)``).
+    ///
+    /// A detached run keeps its lease in the work registry, its claim, its
+    /// journal and its open questions. The sweep does not run: only
+    /// ``close()`` and ``performCancelAll()`` start it.
+    ///
+    /// The waits of this call are bounded by sink posts only, as the waits of
+    /// ``performCancelAll()`` are. The call never interferes with signal work,
+    /// and never changes the pause of the mail queue.
+    func performCancelForeground() async {
+        cancelQueuedMail()
+        let inlineTokens = foregroundCalls.inlineRunTokens
+        stopRunningAnswer()
+        let openTokens = await runPlane.backgroundRuns().map(\.completionToken)
+        let detachedTokens = Set(openTokens).subtracting(inlineTokens)
+        await ignoreRunMail(of: openTokens.filter { !detachedTokens.contains($0) })
+        await endQuestions(sparing: detachedTokens)
+        let postsOnTheirWay = await questionPostsOnTheirWay()
+        startCancel(ofRuns: inlineTokens)
+        await awaitQuestionPosts(of: postsOnTheirWay)
+    }
+
+    /// Ends each open question with the cancel of a stopped run
+    /// (`RunPlane.runCancelledReason`), except the questions of the runs in
+    /// `spared`. The run plane posts each end and gives the cancel to the
+    /// run only after the post returned, as `RunPlane.cancelOpenElicitations()`
+    /// does. A question that an answer or a completion took first gets no end.
+    ///
+    /// - Parameter spared: The completion tokens of the runs whose questions
+    ///   stay open.
+    private func endQuestions(sparing spared: Set<String>) async {
+        for question in await runPlane.openElicitations() where !spared.contains(question.runToken) {
+            _ = await runPlane.endElicitation(
+                question.elicitationId, with: .cancel(reason: RunPlane.runCancelledReason))
+        }
+    }
+
     /// Stops the answer that runs now, or the take of the next batch, and
     /// waits for nothing. A running compaction does not stop: it is the work
     /// of a signal.
@@ -144,15 +215,63 @@ extension RoutedSessionActor {
     /// waits only for the user, and is no work. The end of the sweep is a
     /// change of the work of the session (``signalWorkChange()``).
     private func startSweep() {
+        chainOnSweepTask { await self.sweepBackgroundRuns() }
+    }
+
+    /// Starts the cancel of the runs of `tokens` in the task of the sweep
+    /// (``sweepTask``), after the work that runs there now, if any. The
+    /// cancel of a run is the cancel of one run of the run plane: the run
+    /// stays open until its body ends, and it settles by itself. ``close()``
+    /// waits for the task. The lease of the task is the lease of a sweep
+    /// (``startSweep()``).
+    ///
+    /// - Parameter tokens: The completion tokens of the runs, or of calls
+    ///   that started none.
+    private func startCancel(ofRuns tokens: [String]) {
+        guard !tokens.isEmpty else { return }
+        chainOnSweepTask { await self.cancelRuns(of: tokens) }
+    }
+
+    /// Runs `stop` in a new ``sweepTask``, after the earlier one. It holds one
+    /// `WorkKind.sweep` lease while it runs, when the session has work, and it
+    /// signals the change of the work at its end.
+    ///
+    /// - Parameter stop: The stop of the runs.
+    private func chainOnSweepTask(_ stop: @escaping @Sendable () async -> Void) {
         let earlier = sweepTask
         let lease = workRegistry.hasWork ? beginWork(.sweep, id: ULID.generate().description) : nil
         sweepTask = Task {
             defer { lease?.end() }
             await earlier?.value
-            await self.sweepBackgroundRuns()
+            await stop()
             self.signalWorkChange()
         }
     }
+
+    /// Cancels the run of each token, one at a time, with the cancel of one
+    /// run of the run plane. The cancel ends the questions of the run, runs
+    /// its canceler, and leaves the run open until its body ends.
+    ///
+    /// The run plane takes this cancel through a ``ToolContext``, which is
+    /// the public way to it. The context is the context of the session with
+    /// the stamps of this signal; it runs no tool.
+    ///
+    /// - Parameter tokens: The completion tokens of the runs, or of calls
+    ///   that started none.
+    private func cancelRuns(of tokens: [String]) async {
+        let control = ToolContext(
+            sessionID: id, runPlane: runPlane, sink: outbox, tool: Self.runControlToolStamp,
+            op: Self.runControlOpStamp, completionToken: RunPlane.makeCompletionToken(), isCancelled: { false })
+        for token in tokens {
+            _ = await control.cancel(completionToken: token)
+        }
+    }
+
+    /// The tool stamp of the context that cancels runs.
+    private static let runControlToolStamp = "session"
+
+    /// The op stamp of the context that cancels runs.
+    private static let runControlOpStamp = "cancel foreground"
 
     /// The end of all work that ``close()`` waits for. Starts it when it does
     /// not run, and gives its task. Two callers share one.

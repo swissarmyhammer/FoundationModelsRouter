@@ -169,6 +169,14 @@ extension RoutedSessionActor {
         runSignal { session in await session.performCancelAll() }
     }
 
+    /// See ``RoutedSession/cancelForeground()``.
+    ///
+    /// - Returns: The id of the signal.
+    @discardableResult
+    nonisolated func cancelForeground() -> SignalID {
+        runSignal { session in await session.performCancelForeground() }
+    }
+
     /// See ``RoutedSession/replace(_:with:)``.
     ///
     /// - Parameters:
