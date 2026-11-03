@@ -39,6 +39,21 @@ enum MillisecondDate {
         guard let time = try? DateTime(rfc3339: text), time.rfc3339 == text else { return nil }
         return time.date
     }
+
+    /// The date of `text` as ``date(fromText:)`` reads it, or an error.
+    ///
+    /// - Parameters:
+    ///   - text: The text of a date.
+    ///   - codingPath: The coding path of the text, for the error.
+    /// - Returns: The date.
+    /// - Throws: `DecodingError.dataCorrupted` when the text is another form.
+    static func requiredDate(fromText text: String, codingPath: [any CodingKey]) throws -> Date {
+        guard let date = date(fromText: text) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: codingPath, debugDescription: notMillisecondTextDescription))
+        }
+        return date
+    }
 }
 
 extension KeyedDecodingContainer {
@@ -73,10 +88,6 @@ extension KeyedDecodingContainer {
     /// - Throws: `DecodingError.dataCorrupted` when the text is not ISO 8601
     ///   in UTC with milliseconds.
     private func millisecondDate(fromText text: String, forKey key: Key) throws -> Date {
-        guard let date = MillisecondDate.date(fromText: text) else {
-            throw DecodingError.dataCorruptedError(
-                forKey: key, in: self, debugDescription: MillisecondDate.notMillisecondTextDescription)
-        }
-        return date
+        try MillisecondDate.requiredDate(fromText: text, codingPath: codingPath + [key])
     }
 }

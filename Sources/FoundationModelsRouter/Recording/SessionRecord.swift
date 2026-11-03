@@ -107,6 +107,18 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     /// coordinates, or `nil` for a root session.
     public internal(set) var forkedAtHistoryOrdinal: Int?
 
+    /// The cut point of the fork in the append-only coordinates of the
+    /// recorded history of the parent, or `nil` for a root session.
+    ///
+    /// It is ``forkedAtHistoryOrdinal``. A recording made before that field
+    /// existed falls back to the legacy ``forkedAtEntryCount``: that count was
+    /// captured before any post-fork compaction could rewind it, so on such a
+    /// recording it names the same position in these coordinates. Every
+    /// reader of a fork cut uses this one property.
+    var effectiveForkCut: Int? {
+        forkedAtHistoryOrdinal ?? forkedAtEntryCount
+    }
+
     // MARK: - Facts
 
     /// The facts of the session that change after it starts (ROUTER-1).

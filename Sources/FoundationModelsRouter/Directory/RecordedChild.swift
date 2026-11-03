@@ -54,7 +54,7 @@ public struct RecordedChild: Sendable, Equatable {
     ///   - firstPrompt: The first prompt of the child, or `nil`.
     public init(
         sessionID: ULID, agentID: String, agentName: String?, parentSessionId: ULID, parentToolCallId: String,
-        ended: SessionEndedMarker?, firstPrompt: String?
+        ended: SessionEndedMarker?, firstPrompt: String? = nil
     ) {
         self.sessionID = sessionID
         self.agentID = agentID

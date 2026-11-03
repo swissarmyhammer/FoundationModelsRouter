@@ -10,8 +10,14 @@ import FoundationModelsExtras
 /// the read goes up the folders of its parents, up to the cut of each fork,
 /// as ``TranscriptTree/effectiveEntryEvents(forSession:alongWith:)`` does.
 enum FirstPromptReader {
+    /// The number of bytes in one kibibyte.
+    private static let bytesPerKibibyte = 1024
+
+    /// The number of kibibytes of one read of the transcript.
+    private static let chunkKibibytes = 64
+
     /// The number of bytes of one read of the transcript.
-    private static let chunkByteCount = 64 * 1024
+    private static let chunkByteCount = chunkKibibytes * bytesPerKibibyte
 
     /// The byte that ends each line of a JSONL file.
     private static let lineEnd = UInt8(ascii: "\n")
@@ -68,7 +74,7 @@ enum FirstPromptReader {
     /// - Returns: The first prompt, or the count of the entry-kind events.
     private static func scan(_ folder: URL, record: SessionRecord, entryLimit: Int?) throws -> Scan {
         var entries = 0
-        if let cut = record.forkedAtHistoryOrdinal ?? record.forkedAtEntryCount {
+        if let cut = record.effectiveForkCut {
             let parentFolder = folder.deletingLastPathComponent()
             let parentRecord = try requiredRecord(in: parentFolder)
             switch try scan(parentFolder, record: parentRecord, entryLimit: min(cut, entryLimit ?? cut)) {
@@ -158,12 +164,7 @@ enum FirstPromptReader {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let text = try decoder.singleValueContainer().decode(String.self)
-            guard let date = MillisecondDate.date(fromText: text) else {
-                throw DecodingError.dataCorrupted(
-                    DecodingError.Context(
-                        codingPath: decoder.codingPath, debugDescription: MillisecondDate.notMillisecondTextDescription))
-            }
-            return date
+            return try MillisecondDate.requiredDate(fromText: text, codingPath: decoder.codingPath)
         }
         return decoder
     }

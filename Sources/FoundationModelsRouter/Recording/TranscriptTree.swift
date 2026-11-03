@@ -373,12 +373,7 @@ package struct TranscriptTree: Sendable {
         guard let parent = nodesById[parentId] else {
             preconditionFailure("a loaded node's parentId always names another loaded node")
         }
-        // The cut point in the recorded history's own append-only
-        // coordinates. A recording made before `forkedAtHistoryOrdinal`
-        // existed falls back to the legacy `forkedAtEntryCount`: that count
-        // was captured before any post-fork compaction could rewind it, so on such
-        // a recording it names the same position in these coordinates.
-        guard let cut = node.record.forkedAtHistoryOrdinal ?? node.record.forkedAtEntryCount else {
+        guard let cut = node.record.effectiveForkCut else {
             throw TranscriptTreeError.forkCutPointMissing(session: node.id, directory: node.directory)
         }
         let parentEffective = try effectiveEvents(for: parent, keeping: isKept)
