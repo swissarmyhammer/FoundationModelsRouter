@@ -15,7 +15,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
     /// ``divergence``, ``generationCall``, ``repeatedPartRemoval``,
-    /// ``watchStop`` and ``mail`` are router-only. ``unknown``
+    /// ``watchStop``, ``mail``, ``promptStarted`` and ``toolCallStarted`` are
+    /// router-only. ``unknown``
     /// carries a newer SDK case.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
@@ -89,6 +90,25 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// the markers that no entry covers into one `.toolCalls` entry with a
         /// placeholder `.toolOutput` for each call (``OpenToolCalls``).
         case toolCallStarted
+        /// A submission took user messages (the write-ahead record of the
+        /// prompt). Router-only. The session records it when the pump takes
+        /// the user-type mail of a submission, before the model runs, so a
+        /// crash in the submission leaves the message on disk. A mail that
+        /// only waits in the queue has no such record.
+        /// ``TranscriptEvent/text`` holds the text of the messages, and
+        /// ``TranscriptEvent/entry`` holds one mail record segment
+        /// (`MailRecordSegment`, ``MailRecord/mailDelivered(_:)``) for each
+        /// message, so the id of each mail is on disk.
+        /// The marker mirrors no entry. The `.prompt` entry of the
+        /// submission still follows at the end of the submission, with the
+        /// same mail records. A restore drops a marker whose mail a later
+        /// `.prompt` entry delivers, or a later terminal record ends. It
+        /// turns the mail that no record covers into one `.prompt` entry
+        /// ahead of the open tool calls (``OpenPrompts``). A reader of the
+        /// first prompt of a session (``RouterSessionDirectory/firstPrompt(of:)``)
+        /// reads the text of the first marker when the session has no
+        /// `.prompt` entry yet.
+        case promptStarted
         /// A tool invocation was requested. Deprecated: ``toolCalls`` replaces
         /// it. Kept so pre-v2 recordings decode.
         case toolCall
@@ -105,7 +125,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
             case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail,
-                .toolCallStarted, .toolCall:
+                .promptStarted, .toolCallStarted, .toolCall:
                 return false
             }
         }
@@ -174,10 +194,11 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let outputBuffered: Bool?
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records. `nil` for v1 recordings, and for each router-only kind
-    /// except ``Kind/repeatedPartRemoval``, ``Kind/watchStop`` and
-    /// ``Kind/mail``, whose payload carries its ``RepeatedPartRemovalSegment``,
-    /// its ``WatchStopSegment`` or its mail record segments and mirrors no
-    /// entry.
+    /// except ``Kind/repeatedPartRemoval``, ``Kind/watchStop``,
+    /// ``Kind/mail``, ``Kind/promptStarted`` and ``Kind/toolCallStarted``,
+    /// whose payload carries its ``RepeatedPartRemovalSegment``, its
+    /// ``WatchStopSegment``, its mail record segments, or its tool call, and
+    /// mirrors no entry.
     public let entry: TranscriptEntryPayload?
     /// The parent session and tool call that spawned this event's session.
     /// Set only on the ``Kind/session`` event of a session made with an
@@ -209,7 +230,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// that a reader can rebuild: an entry kind that is not the router's
     /// close of a failed submission. `false` for every router-only marker (``Kind/session``,
     /// ``Kind/embedding``, ``Kind/divergence``, ``Kind/generationCall``,
-    /// ``Kind/repeatedPartRemoval``, ``Kind/watchStop``, ``Kind/mail``, the legacy ``Kind/toolCall``)
+    /// ``Kind/repeatedPartRemoval``, ``Kind/watchStop``, ``Kind/mail``,
+    /// ``Kind/promptStarted``, ``Kind/toolCallStarted``, the legacy ``Kind/toolCall``)
     /// and for the close, none of which mirrors an entry. A reader that
     /// rebuilds the SDK's transcript skips an event where this is `false`. An
     /// entry-kind event with no `entry` (a v1 line) still reads `true`, so that
@@ -439,14 +461,5 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 agentSpawn: agentSpawn
             )
         }
-    }
-}
-
-extension TranscriptEvent {
-    /// The id of the tool call that this event announces, when it is a
-    /// ``Kind/toolCallStarted`` marker that holds a call. `nil` for any
-    /// other event.
-    var toolCallStartedID: String? {
-        kind == .toolCallStarted ? entry?.toolCalls?.first?.id : nil
     }
 }

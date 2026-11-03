@@ -238,7 +238,7 @@
             // nondeterministic key ordering, so compare the stamped grammar to the
             // derived schema *semantically* (parsed) rather than byte-for-byte.
             let events = await recorder.events.withoutMailRecords
-            #expect(events.map(\.kind) == [.session, .prompt, .response])
+            #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
             let derived = try GuidedShapes.parse(GuidedShapes.derivedSchema(for: Person.self))
             for event in events {
                 let stamped = try #require(event.grammar)
@@ -264,7 +264,7 @@
             #expect(value == .object(["name": .string("ok")]))
 
             let events = await recorder.events.withoutMailRecords
-            #expect(events.map(\.kind) == [.session, .prompt, .response])
+            #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
             #expect(events.allSatisfy { $0.grammar == Self.objectSchema })
         }
 

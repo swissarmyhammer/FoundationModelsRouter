@@ -5,8 +5,13 @@ import FoundationModelsExtras
 ///
 /// The read opens the `transcript.jsonl` of the session and reads it in
 /// chunks. It decodes line by line and stops at the first
-/// ``TranscriptEvent/Kind/prompt`` event, so it loads no later line, no other
-/// session and no tree. A fork has no prompt of its own before its cut, so
+/// ``TranscriptEvent/Kind/prompt`` event or the first
+/// ``TranscriptEvent/Kind/promptStarted`` marker, so it loads no later line,
+/// no other session and no tree. The session writes the marker when the pump
+/// takes the message, and the `.prompt` entry only at the end of the
+/// submission, so a session that a crash cut in its first submission has the
+/// marker and no entry. A marker and the entry of the same message have the
+/// same body. A fork has no prompt of its own before its cut, so
 /// the read goes up the folders of its parents, up to the cut of each fork,
 /// as ``TranscriptTree/effectiveEntryEvents(forSession:alongWith:)`` does.
 enum FirstPromptReader {
@@ -28,7 +33,7 @@ enum FirstPromptReader {
 
     /// What a scan of the effective events of one session found.
     private enum Scan {
-        /// The first prompt event, with its body.
+        /// The first prompt event or prompt marker, with its body.
         case found(String?)
 
         /// No prompt event in the events that the scan was allowed to read.
@@ -86,11 +91,15 @@ enum FirstPromptReader {
         }
         var body: String??
         try forEachEvent(in: folder.appendingPathComponent(transcriptFileName, isDirectory: false)) { event in
+            // A marker after the last entry that the cut keeps belongs to a
+            // submission that the fork does not inherit
+            // (``TranscriptTree/forkPrefix(of:entryCount:)``).
+            let atCut = entryLimit.map { entries >= $0 } ?? false
+            if atCut && (event.kind.isEntryKind || event.kind == .promptStarted) { return false }
             if event.kind.isEntryKind {
-                if let entryLimit, entries >= entryLimit { return false }
                 entries += 1
             }
-            guard event.kind == .prompt else { return true }
+            guard event.kind == .prompt || event.kind == .promptStarted else { return true }
             body = .some(event.promptBody)
             return false
         }

@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m6hd810n0j9cf943knkgvaf0
+  text: |-
+    ### implement — changed
+    - New kind: TranscriptEvent.Kind.promptStarted (public). The pump writes it when it takes user mail: in runFirstSubmission (first submission) and in the continuation branch of runSubmission (mail that joins a running answer). A queued mail has no marker. One append call per take.
+    - The marker holds the text of the user messages and one mailDelivered record for each mail (id and content). TranscriptEvent.mailRecords skips the marker. TranscriptEvent.takenMail reads it.
+    - Restore: OpenPrompts.folding. A mail is covered by a later .prompt entry that delivers it, or by a later cancelled or answerEnded record. A lost record does not cover. An open mail becomes a .prompt entry at the place of the marker. Open tool calls come after it. ContextRenderer runs OpenPrompts before OpenToolCalls. effectiveTranscript now also reads .promptStarted and .mail events.
+    - FirstPromptReader stops at the first .prompt or .promptStarted. A marker after the fork cut is not read.
+    - forkPrefix drops a .promptStarted marker after the last kept entry, like .toolCallStarted.
+    - Drop policy: WriteAheadMarker (new) names the marker; same single policy helper in Sinks. New log key mailId, new counter promptMarkerDropped, RouterMetrics.recordDroppedPromptMarker().
+    - Skip lists: TranscriptEntryMapper, SessionObserver (2), RoutedSessionActorRecording emitSessionEvents.
+    - Tests: new PromptWriteAheadTests (27 tests). Existing tests that assert exact event kinds now list .promptStarted. Full swift test: 2373 tests passed.
+    - Known limit: a fork cut at the end of a restored parent that still has an open prompt keeps no open prompt on a later restore of the fork (the cut counts entry events, as for open tool calls).
+    - Note: SessionAnswerTests "the answer carries the diff's tool calls ..." failed in 2 of 3 full runs with the two parallel calls in swapped order, and passed alone. The order of parallel tool starts is a race that this change does not touch.
+  timestamp: 2026-11-03T19:12:46.101862+00:00
+position_column: review
+position_ordinal: '80'
 title: 'Write-ahead of the prompt that starts a submission: a crash must not lose the user message in flight'
 ---
 ## What

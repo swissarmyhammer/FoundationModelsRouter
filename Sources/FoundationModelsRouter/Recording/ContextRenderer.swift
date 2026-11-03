@@ -98,23 +98,29 @@ enum ContextRenderer {
     /// seeds from this render, so it does not give the question to the
     /// model.
     ///
-    /// Before all this, it folds the open tool calls of a crash into entries
-    /// (``OpenToolCalls/folding(_:)``), so the render holds a call and an
-    /// output for each ``TranscriptEvent/Kind/toolCallStarted`` marker that
-    /// no later `.toolCalls` entry covers.
+    /// Before all this, it folds the open user messages of a crash into
+    /// `.prompt` entries (``OpenPrompts/folding(_:)``), and then the open tool
+    /// calls into entries (``OpenToolCalls/folding(_:claimedRuns:)``). So the
+    /// render holds a user message for each
+    /// ``TranscriptEvent/Kind/promptStarted`` marker with a mail that no later
+    /// record covers, and a call and an output for each
+    /// ``TranscriptEvent/Kind/toolCallStarted`` marker that no later
+    /// `.toolCalls` entry covers. The messages come before the calls.
     ///
     /// - Parameters:
     ///   - events: The effective events of the session, in `seq` order, with
     ///     the ``TranscriptEvent/Kind/repeatedPartRemoval`` events and the
-    ///     ``TranscriptEvent/Kind/toolCallStarted`` markers. Each other
-    ///     router-only event is passed over.
+    ///     ``TranscriptEvent/Kind/promptStarted`` and
+    ///     ``TranscriptEvent/Kind/toolCallStarted`` markers, and the
+    ///     ``TranscriptEvent/Kind/mail`` events. Each other router-only event
+    ///     is passed over.
     ///   - claimedRuns: The runs that the host claimed at the restore. See
     ///     ``OpenToolCalls/folding(_:claimedRuns:)``.
     /// - Returns: The context.
     /// - Throws: ``TranscriptReconstructionError`` for an event that does not
     ///   rebuild.
     static func context(of events: [TranscriptEvent], claimedRuns: Set<RunKey> = []) throws -> Transcript {
-        let folded = OpenToolCalls.folding(events, claimedRuns: claimedRuns)
+        let folded = OpenToolCalls.folding(OpenPrompts.folding(events), claimedRuns: claimedRuns)
         let entries = try TranscriptTree.entries(
             of: TranscriptTree.reconstructableEvents(folded.filter(\.kind.isEntryKind), view: .restore))
         let render = RepeatedPartRemoval.render(of: entries, applying: try TranscriptTree.renderCut(in: folded))

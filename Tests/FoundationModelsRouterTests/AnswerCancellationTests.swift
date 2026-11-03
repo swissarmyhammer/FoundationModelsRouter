@@ -233,7 +233,7 @@ struct AnswerCancellationTests {
         let events = await feed.eventsToTheFirstAnswerEnd()
         #expect(events.answers.map(\.reply) == ["ok-caller-cancels"])
         #expect(events.answerFailures.isEmpty)
-        #expect(await fixture.recorder.events.withoutMailRecords.map(\.kind) == [.session, .prompt, .response])
+        #expect(await fixture.recorder.events.withoutMailRecords.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(await fixture.recorder.events.withoutMailRecords.last?.text == "ok-caller-cancels")
         #expect(await session.becomesIdle())
     }
@@ -263,7 +263,7 @@ struct AnswerCancellationTests {
         // synthetic bodyless `.response` every failed submission gets, never two
         // and never none.
         let cancelledSubmissionEvents = await fixture.recorder.events.withoutMailRecords
-        #expect(cancelledSubmissionEvents.map(\.kind) == [.session, .prompt, .response])
+        #expect(cancelledSubmissionEvents.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         let close = try #require(cancelledSubmissionEvents.last)
         #expect(close.text == nil)
         #expect(close.ms != nil)
@@ -274,7 +274,7 @@ struct AnswerCancellationTests {
         // that its model call ended.
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
         let afterEvents = await fixture.recorder.events.withoutMailRecords
-        #expect(afterEvents.map(\.kind) == [.session, .prompt, .response, .prompt, .response])
+        #expect(afterEvents.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .response])
         #expect(afterEvents.last?.text == "ok-after")
     }
 

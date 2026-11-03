@@ -336,6 +336,7 @@ extension RoutedSessionActor {
             return try await runOpenedSubmission(attempt, deliveredMail: deliveredMail, sessionText: sessionText, body)
         }
         let joining = takeMailJoiningTheAnswer()
+        await recordPromptStart(of: joining)
         await notifySubmissionBoundaryTools()
         let joiningIds = joining.map(\.id)
         // Mail that joins the answer adds its id to the origin of the rest of

@@ -16,6 +16,9 @@ enum MailRecord: Codable, Equatable, Sendable {
     /// the recorded `.prompt` entry of that submission, in take order, and
     /// the text of that entry is the render of these records
     /// (``ContextRenderer/promptText(delivering:followedBy:)``).
+    /// A ``TranscriptEvent/Kind/promptStarted`` marker holds the same record
+    /// for each user message the pump took, before the `.prompt` entry
+    /// exists (``TranscriptEvent/takenMail``).
     case mailDelivered(Mail)
 
     /// The signal ``RoutedSession/replace(_:with:)`` changed the body of the
@@ -182,7 +185,27 @@ extension TranscriptEvent {
     ///
     /// The read is total. A segment under another schema name, and a segment
     /// whose body does not decode, are each passed over.
+    ///
+    /// A ``Kind/promptStarted`` marker holds none of these records: its
+    /// mail is not yet delivered. The mail of a marker is ``takenMail``.
     var mailRecords: [MailRecord] {
+        kind == .promptStarted ? [] : segmentRecords
+    }
+
+    /// The mail that a ``Kind/promptStarted`` marker holds, in take order:
+    /// the pump took it for a submission, and no `.prompt` entry delivers it
+    /// yet. Empty for each other event.
+    var takenMail: [Mail] {
+        guard kind == .promptStarted else { return [] }
+        return segmentRecords.compactMap { record in
+            guard case .mailDelivered(let mail) = record else { return nil }
+            return mail
+        }
+    }
+
+    /// The decoded record of each mail record segment of this event's entry,
+    /// whatever the kind of the event.
+    private var segmentRecords: [MailRecord] {
         structureContents(named: MailRecordSegment.schemaName, as: MailRecord.self)
     }
 

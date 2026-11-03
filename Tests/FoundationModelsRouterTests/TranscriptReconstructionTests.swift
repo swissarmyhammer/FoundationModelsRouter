@@ -726,8 +726,9 @@ struct TranscriptReconstructionTests {
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let rawEvents = try tree.events(forSession: root.id).withoutMailRecords
         // Only the session meta line and the synthetic bodyless close were
-        // ever recorded — no `.prompt`/`.instructions` at all.
-        #expect(rawEvents.map(\.kind) == [.session, .response])
+        // ever recorded, with the prompt marker the pump wrote — no
+        // `.prompt`/`.instructions` at all.
+        #expect(rawEvents.map(\.kind) == [.session, .promptStarted, .response])
         let closeEvent = try #require(rawEvents.last)
         let closeEntry = try #require(closeEvent.entry)
         #expect(closeEntry.segments?.isEmpty == true)

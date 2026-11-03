@@ -251,7 +251,7 @@ struct TranscriptNestingTests {
         _ = try await root.respond(to: "hello")
 
         let recorded = try events(in: root.recordingDirectory)
-        #expect(recorded.map(\.kind) == [.session, .prompt, .response])
+        #expect(recorded.map(\.kind) == [.session, .promptStarted, .prompt, .response])
 
         // Full provenance is stamped onto every event.
         #expect(recorded.allSatisfy { $0.routerId == router.id })
@@ -291,7 +291,7 @@ struct TranscriptNestingTests {
         for try await _ in await root.streamResponse(to: "hello") {}
 
         let recorded = try events(in: root.recordingDirectory)
-        #expect(recorded.map(\.kind) == [.session, .prompt, .response])
+        #expect(recorded.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(recorded.allSatisfy { $0.routerId == router.id })
         #expect(recorded.allSatisfy { $0.sessionId == root.id })
         #expect(recorded.allSatisfy { $0.parentId == nil })
@@ -331,7 +331,7 @@ struct TranscriptNestingTests {
         // so the entry-derived sequence gains a case the old hand-built bracket
         // never recorded at all.
         let recorded = try events(in: root.recordingDirectory)
-        #expect(recorded.map(\.kind) == [.session, .instructions, .prompt, .response])
+        #expect(recorded.map(\.kind) == [.session, .promptStarted, .instructions, .prompt, .response])
         #expect(recorded.allSatisfy { $0.entry != nil || $0.kind == .session })
     }
 
@@ -363,7 +363,7 @@ struct TranscriptNestingTests {
         for try await _ in await root.streamResponse(to: "hello") {}
 
         let recorded = try events(in: root.recordingDirectory)
-        #expect(recorded.map(\.kind) == [.session, .instructions, .prompt, .response])
+        #expect(recorded.map(\.kind) == [.session, .promptStarted, .instructions, .prompt, .response])
         #expect(recorded.allSatisfy { $0.entry != nil || $0.kind == .session })
     }
 
@@ -412,7 +412,7 @@ struct TranscriptNestingTests {
         )
 
         let recorded = try events(in: root.recordingDirectory)
-        #expect(recorded.map(\.kind) == [.session, .prompt, .response])
+        #expect(recorded.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(recorded.allSatisfy { $0.routerId == router.id })
         #expect(recorded.allSatisfy { $0.sessionId == root.id })
     }

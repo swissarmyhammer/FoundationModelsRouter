@@ -438,6 +438,7 @@ extension RoutedSessionActor: SessionMailObserver {
             ? Self.mailDeliveryPrompt(for: runEvents) : userPrompts.joined(separator: Self.messageSeparator)
         await attachOutboxJournalIfNeeded()
         await recordSessionMetaIfNeeded()
+        await recordPromptStart(of: batch.mail)
         await notifySubmissionBoundaryTools()
         await runAnswerChain(
             grammar: work.grammar, deliveredMail: batch.mail, ownPrompt: ownPrompt,

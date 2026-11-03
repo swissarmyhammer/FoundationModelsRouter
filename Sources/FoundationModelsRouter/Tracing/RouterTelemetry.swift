@@ -553,6 +553,9 @@ enum RouterTelemetry {
         /// The id of a tool call, as the SDK gave it.
         static let toolCallId = prefix + "tool.call_id"
 
+        /// The id of a mail, or the ids of some mail, joined by a comma.
+        static let mailId = prefix + "mail.id"
+
         /// Every key above.
         static let allKeys = [
             category, sessionId, archivedBy, entryId, segmentId, responseFormatName, entryCase, userPresence,
@@ -561,7 +564,7 @@ enum RouterTelemetry {
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,
-            spanName, toolCallId,
+            spanName, toolCallId, mailId,
         ]
     }
 
@@ -711,12 +714,17 @@ enum RouterTelemetry {
         /// recorder could not write (``TranscriptEvent/Kind/toolCallStarted``).
         static let toolCallMarkerDropped = prefix + "recording.tool_call_marker.dropped"
 
+        /// The counter of the write-ahead markers of prompts that the
+        /// recorder could not write (``TranscriptEvent/Kind/promptStarted``).
+        static let promptMarkerDropped = prefix + "recording.prompt_marker.dropped"
+
         /// Every name above.
         static let allNames = [
             generationTokensIn, generationTokensCached, generationTokensOut, generationTokensPerSecond,
             submissionTimeToFirstToken, generationCallTimeToFirstToken, generationCallDecodeTime,
             generationCallDuration, loadDuration, residentBytes, sessionQueueDepth,
             compactionCount, mailQueuePauseDuration, mailCancelled, toolCallMarkerDropped,
+            promptMarkerDropped,
         ]
     }
 

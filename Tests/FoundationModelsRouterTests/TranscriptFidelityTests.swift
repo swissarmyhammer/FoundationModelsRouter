@@ -255,7 +255,7 @@ struct TranscriptFidelityTests {
         // session meta, then (prompt, response) for each answer, in
         // stub-transcript order — never the old hand-built single
         // prompt/response pair.
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .response])
 
         let promptEvents = events.filter { $0.kind == .prompt }
         #expect(promptEvents.map(\.text) == ["first", "second"])
@@ -316,7 +316,7 @@ struct TranscriptFidelityTests {
         // diff runs exactly once, after the chunk loop completes.
         #expect(respondEvents.map(\.kind) == streamEvents.map(\.kind))
         #expect(respondEvents.map(\.text) == streamEvents.map(\.text))
-        #expect(streamEvents.map(\.kind) == [.session, .prompt, .response])
+        #expect(streamEvents.map(\.kind) == [.session, .promptStarted, .prompt, .response])
     }
 
     // MARK: - Grammar stamping (guided path)
@@ -346,7 +346,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "hello")
 
         let events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == grammar.source })
 
         let promptEvent = try #require(events.first { $0.kind == .prompt })
@@ -375,7 +375,7 @@ struct TranscriptFidelityTests {
         try await answer("message1")
 
         var events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
 
         // Answer 2: the backend's transcript *shrinks* to one entry the record
         // has never seen — fewer entries than the 2 already persisted. A
@@ -388,7 +388,7 @@ struct TranscriptFidelityTests {
         try await answer("message2")
 
         events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .divergence])
         let recordedAfterShrink = events.filter { $0.text == "post-shrink prompt" }
         #expect(recordedAfterShrink.count == 1)
         let marker = try #require(events.last)
@@ -412,7 +412,10 @@ struct TranscriptFidelityTests {
 
         events = await recorder.events.withoutMailRecords
         #expect(
-            events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .toolCalls, .response])
+            events.map(\.kind) == [
+                .session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .divergence, .promptStarted,
+                .toolCalls, .response,
+            ])
         #expect(events.last?.text == "answer3 response")
     }
 
@@ -483,7 +486,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message1")
 
         var events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
 
         // Answer 2: the backend rewrites the recorded `.response` in place. The
         // recorded id is already in the record, so no entry is new and the
@@ -497,7 +500,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message2")
 
         events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .divergence])
         let marker = try #require(events.first { $0.kind == .divergence })
         #expect(marker.text != nil)
         #expect(marker.entry == nil)
@@ -509,7 +512,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message3")
 
         events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .divergence, .promptStarted, .response])
         #expect(events.last?.text == "answer3 response")
     }
 
@@ -538,7 +541,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message1")
 
         var events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
 
         // Answer 2: the backend inserts an entry MID-transcript, so the count
         // grows but the new entry is not at the tail. A purely positional
@@ -554,7 +557,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message2")
 
         events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .divergence])
         #expect(events.filter { $0.text == "inserted prompt" }.count == 1)
         #expect(events.filter { $0.text == "answer1 response" }.count == 1)
 
@@ -565,7 +568,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message3")
 
         events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .divergence, .promptStarted, .response])
         #expect(events.last?.text == "answer3 response")
     }
 
@@ -611,7 +614,7 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "message2")
 
         let events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .toolCalls, .response, .divergence])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .toolCalls, .response, .divergence])
         #expect(events.filter { $0.text == "answer1 response" }.count == 1)
 
         let secondPrompt = try #require(events.first { $0.text == "message2 prompt" })
@@ -695,7 +698,8 @@ struct TranscriptFidelityTests {
         let events = await recorder.events.withoutMailRecords
         #expect(
             events.map(\.kind) == [
-                .session, .prompt, .response, .prompt, .toolCalls, .toolOutput, .response, .divergence,
+                .session, .promptStarted, .prompt, .response, .promptStarted, .prompt, .toolCalls, .toolOutput, .response,
+                .divergence,
             ])
     }
 
@@ -790,7 +794,7 @@ struct TranscriptFidelityTests {
         // Exactly one `.response` event — the SDK's own, not a duplicated
         // synthetic close — proving `generate(grammar:_:)` does not double up
         // when `recordTranscriptDelta` already persisted a real `.response`.
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         let responseEvent = try #require(events.first { $0.kind == .response })
         // It is the SDK's own entry (an entry with a segment, its real text),
         // not the router-only synthetic close (an entry with no segment and
@@ -834,7 +838,7 @@ struct TranscriptFidelityTests {
         // Exactly one `.response` event — the SDK's own, not a duplicated
         // synthetic close — proving the streaming path does not double up
         // when `recordTranscriptDelta` already persisted a real `.response`.
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         let responseEvent = try #require(events.first { $0.kind == .response })
         #expect(responseEvent.entry != nil)
         #expect(responseEvent.text == "got this far")

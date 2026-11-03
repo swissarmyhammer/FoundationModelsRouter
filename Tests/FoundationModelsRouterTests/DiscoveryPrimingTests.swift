@@ -382,7 +382,7 @@ struct DiscoveryPrimingTests {
         #expect(fixture.log.submittedPrompts == [Self.prompt])
 
         let events = await fixture.recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
     }
 
     @Test("seeded entries round-trip through the recorded transcript with no special-casing")
@@ -401,7 +401,7 @@ struct DiscoveryPrimingTests {
         // entries up as the genuinely new entries they are: the seeded triple,
         // then the own prompt and response of the submission.
         let events = await fixture.recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .toolCalls, .toolOutput, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .toolCalls, .toolOutput, .prompt, .response])
 
         let toolCallsEvent = try #require(events.first { $0.kind == .toolCalls })
         let recordedCall = try #require(toolCallsEvent.entry?.toolCalls?.first)

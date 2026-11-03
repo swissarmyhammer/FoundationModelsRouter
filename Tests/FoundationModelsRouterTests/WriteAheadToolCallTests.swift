@@ -41,7 +41,8 @@ struct WriteAheadToolCallTests {
     // MARK: - Fixture
 
     /// A recorded session over a scripted model, with the recording on disk.
-    private struct Fixture {
+    /// The suite of the write-ahead prompt shares it (``PromptWriteAheadTests``).
+    struct Fixture {
         /// The session and the router that keeps its model resident.
         let started: SessionFixtureLifecycle.Started
 
@@ -117,7 +118,7 @@ struct WriteAheadToolCallTests {
     }
 
     /// A scripted container whose model plays `rounds`, one call in each.
-    private static func container(calling toolName: String, in callIDs: [String]) -> ScriptedToolCallingContainer {
+    static func container(calling toolName: String, in callIDs: [String]) -> ScriptedToolCallingContainer {
         let script = ScriptedAnswerScript(
             rounds: callIDs.map { id in
                 [ScriptedToolCall(id: id, toolName: toolName, argument: .literal(argumentValue))]

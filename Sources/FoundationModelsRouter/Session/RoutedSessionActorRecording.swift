@@ -474,7 +474,7 @@ extension RoutedSessionActor {
         case .response:
             onEvent(.entryRecorded(id: entry.entryId, kind: .response))
         case .session, .instructions, .prompt, .embedding, .divergence, .generationCall, .repeatedPartRemoval,
-            .watchStop, .mail, .toolCallStarted, .toolCall, .unknown:
+            .watchStop, .mail, .promptStarted, .toolCallStarted, .toolCall, .unknown:
             break
         }
     }
@@ -518,6 +518,33 @@ extension RoutedSessionActor {
             partial: makePartialEvent(
                 kind: .toolCallStarted,
                 entry: TranscriptEntryPayload(entryId: Self.startedEntryIDPrefix + call.id, toolCalls: [payload])))
+    }
+
+    /// Records the take of the user messages among `mail` before the model
+    /// runs.
+    ///
+    /// The write is one ``TranscriptEvent/Kind/promptStarted`` event with the
+    /// text and the mail records of the user-type mail, through the
+    /// recorder, which flushes it. A crash in the submission then leaves the
+    /// message in the recording. The `.prompt` entry of the submission is
+    /// still recorded at the end of the submission, by the diff
+    /// (``recordTranscriptDelta(grammar:since:usage:deliveredMail:entryIdsBeforeAttempt:onEvent:)``).
+    /// A mail that only waits in the queue has no record: the caller gives
+    /// the mail that the pump took. Run mail and catalog-change mail are not
+    /// user messages. The call writes nothing when `mail` has none.
+    ///
+    /// A write that fails does not block the submission. The recorder logs
+    /// the error with the ids of the mail and counts the loss
+    /// (``RouterTelemetry/MetricName/promptMarkerDropped``).
+    ///
+    /// - Parameter mail: The mail that the pump took for the submission, in
+    ///   take order.
+    func recordPromptStart(of mail: [Mail]) async {
+        let userMail = mail.filter(\.isUserMail)
+        guard !userMail.isEmpty else { return }
+        let marker = OpenPrompts.marker(of: userMail)
+        await append(
+            partial: makePartialEvent(kind: .promptStarted, grammar: grammar, text: marker.text, entry: marker.entry))
     }
 
     /// Announces the SDK tool call `call` to the host when the call starts:

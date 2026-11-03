@@ -258,13 +258,13 @@ struct RecordedForkTreeRestoreTests {
         let tree = try recording.tree()
 
         let forkAEvents = try tree.events(forSession: ids.forkA).filter { $0.kind != .mail }
-        #expect(forkAEvents.map(\.kind) == [.session, .prompt, .response])
+        #expect(forkAEvents.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(forkAEvents.first { $0.kind == .prompt }?.text == "forkA-message-1")
         #expect(!forkAEvents.contains { $0.text == "root-message-1" })
         #expect(!forkAEvents.contains { $0.text == "grandfork-message-1" })
         #expect(forkAEvents.allSatisfy { $0.sessionId == ids.forkA && $0.parentId == ids.root })
         let rootEvents = try tree.events(forSession: ids.root).filter { $0.kind != .mail }
-        #expect(rootEvents.map(\.kind) == [.session, .prompt, .response])
+        #expect(rootEvents.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(rootEvents.allSatisfy { $0.sessionId == ids.root && $0.parentId == nil })
     }
 

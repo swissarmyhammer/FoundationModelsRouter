@@ -688,7 +688,7 @@ struct SessionEventStreamTests {
         // `.response` — the richer live event stream changes nothing about
         // what lands on disk.
         let events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(events.first { $0.kind == .prompt }?.text == "hi")
         #expect(events.first { $0.kind == .response }?.text == "hello")
     }

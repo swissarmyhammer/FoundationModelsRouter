@@ -415,7 +415,7 @@ struct RoutedSessionCompactTests {
         let afterAnswerEvents = await recorder.events.withoutMailRecords
         #expect(Array(afterAnswerEvents.prefix(beforeAnswerEvents.count)) == beforeAnswerEvents)
         let newEvents = Array(afterAnswerEvents.suffix(from: beforeAnswerEvents.count))
-        #expect(newEvents.map(\.kind) == [.prompt, .response])
+        #expect(newEvents.map(\.kind) == [.promptStarted, .prompt, .response])
         #expect(newEvents.allSatisfy { $0.sessionId == session.id })
     }
 

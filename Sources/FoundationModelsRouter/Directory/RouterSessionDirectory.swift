@@ -1758,8 +1758,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// starts nothing.
     ///
     /// The read goes through the `transcript.jsonl` of the session line by
-    /// line, and stops at the first `.prompt` event. It loads no other event,
-    /// no other session and no tree. A fork reads the events of its parents up
+    /// line, and stops at the first `.prompt` event or the first
+    /// ``TranscriptEvent/Kind/promptStarted`` marker. The marker is the
+    /// write-ahead record of the prompt: a session that a crash cut in its
+    /// first submission has the marker and no `.prompt` entry. It loads no
+    /// other event, no other session and no tree. A fork reads the events of its parents up
     /// to its cut, as a restore of the fork does, and then its own events.
     ///
     /// The text is the prompt body as recorded. A submission can deliver mail

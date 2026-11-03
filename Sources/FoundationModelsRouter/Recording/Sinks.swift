@@ -132,10 +132,12 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// log metadata of the event, and it counts the loss of a marker.
     ///
     /// The message is "dropping a tool call marker" for the write-ahead marker
-    /// of a tool call, and "dropping a transcript event" for each other
-    /// event. The counter
-    /// (``RouterMetrics/recordDroppedToolCallMarker()``) counts a marker that
-    /// is not written, and no other event.
+    /// of a tool call, "dropping a prompt marker" for the write-ahead marker
+    /// of a prompt, and "dropping a transcript event" for each other event
+    /// (``WriteAheadMarker``). The counter of the kind of the marker
+    /// (``RouterMetrics/recordDroppedToolCallMarker()``,
+    /// ``RouterMetrics/recordDroppedPromptMarker()``) counts a marker that is
+    /// not written, and no other event.
     ///
     /// - Parameters:
     ///   - event: The stamped event.
@@ -149,25 +151,25 @@ package actor JSONLRecorder: TranscriptRecorder {
         cause: String,
         attempt: (_ message: Logger.Message, _ metadata: Logger.Metadata) -> Bool
     ) {
-        let markedCallID = event.toolCallStartedID
-        let subject = markedCallID == nil ? "dropping a transcript event" : "dropping a tool call marker"
-        let written = attempt(
-            Logger.Message(stringLiteral: subject + cause),
-            failureMetadata(of: event, markedCallID: markedCallID))
-        if !written, markedCallID != nil {
-            RouterMetrics().recordDroppedToolCallMarker()
+        let marker = event.writeAheadMarker
+        let subject = marker.map { "dropping a \($0.subject)" } ?? "dropping a transcript event"
+        let written = attempt(Logger.Message(stringLiteral: subject + cause), failureMetadata(of: event, marker: marker))
+        if !written {
+            marker?.countLoss()
         }
     }
 
-    /// The metadata of the error log of a dropped event. For the write-ahead
-    /// marker of a tool call, it also names the id of the call.
+    /// The metadata of the error log of a dropped event. For a write-ahead
+    /// marker, it also names what the marker announced: the id of the call,
+    /// or the ids of the mail (``WriteAheadMarker/metadata``).
     ///
     /// A marker that drops is not silent, whether its write fails or the
-    /// recording root refuses it: the error log names the id of the call, and
-    /// a counter counts the loss
-    /// (``RouterMetrics/recordDroppedToolCallMarker()``). The tool is not
-    /// blocked: the call goes on without the marker, and a restore after a
-    /// crash in this call then finds no open call.
+    /// recording root refuses it: the error log names the id of the call or of
+    /// the mail, and a counter counts the loss
+    /// (``RouterMetrics/recordDroppedToolCallMarker()``,
+    /// ``RouterMetrics/recordDroppedPromptMarker()``). The work is not
+    /// blocked: the tool, or the submission, goes on without the marker, and
+    /// a restore after a crash then finds no open call and no open message.
     ///
     /// The marker needs no `F_FULLFSYNC` and no `fsync` of the directory. The
     /// requirement is a process crash and an orderly quit, and not a loss of
@@ -176,15 +178,12 @@ package actor JSONLRecorder: TranscriptRecorder {
     ///
     /// - Parameters:
     ///   - event: The stamped event.
-    ///   - markedCallID: The id of the tool call of the marker, or `nil` when
-    ///     the event is not a marker.
+    ///   - marker: The marker that the event is, or `nil` when the event is
+    ///     not a marker.
     /// - Returns: The log metadata.
-    private static func failureMetadata(of event: TranscriptEvent, markedCallID: String?) -> Logger.Metadata {
-        var metadata: Logger.Metadata = [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
-        if let markedCallID {
-            metadata[RouterTelemetry.LogMetadataKey.toolCallId] = "\(markedCallID)"
-        }
-        return metadata
+    private static func failureMetadata(of event: TranscriptEvent, marker: WriteAheadMarker?) -> Logger.Metadata {
+        let metadata: Logger.Metadata = [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
+        return metadata.merging(marker?.metadata ?? [:]) { _, new in new }
     }
 
     /// Claims the recording root before a write when no claim is held yet,

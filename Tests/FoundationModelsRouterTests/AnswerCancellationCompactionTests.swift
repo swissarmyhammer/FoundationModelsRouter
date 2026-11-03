@@ -770,7 +770,7 @@ extension AnswerCancellationTests {
         // The session records the stopped answer as each other failed answer:
         // one close with no body.
         let recorded = await fixture.recorder.events.withoutMailRecords
-        #expect(recorded.count == recordedBefore + 1)
+        #expect(recorded.count == recordedBefore + 2)
         #expect(recorded.last?.kind == .response)
         #expect(recorded.last?.text == nil)
     }
@@ -820,7 +820,7 @@ extension AnswerCancellationTests {
         // having been cut short in a compaction: exactly one close, bodyless,
         // with no `.prompt` of its own because the model was never called.
         let recorded = await fixture.recorder.events.withoutMailRecords
-        #expect(recorded.count == recordedBefore + 1)
+        #expect(recorded.count == recordedBefore + 2)
         #expect(recorded.last?.kind == .response)
         #expect(recorded.last?.text == nil)
     }

@@ -467,8 +467,8 @@ struct ToolInvocationLivenessTests {
         let recordedKinds = await fixture.recorder.events.withoutMailRecords.map(\.kind)
         #expect(
             recordedKinds == [
-                .session, .toolCallStarted, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput,
-                .response, .generationCall,
+                .session, .promptStarted, .toolCallStarted, .generationCall, .instructions, .prompt, .toolCalls,
+                .toolOutput, .response, .generationCall,
             ])
     }
 
@@ -873,8 +873,8 @@ struct ToolInvocationLivenessTests {
         let recordedKinds = await fixture.recorder.events.withoutMailRecords.map(\.kind)
         #expect(
             recordedKinds == [
-                .session, .toolCallStarted, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput,
-                .response, .generationCall,
+                .session, .promptStarted, .toolCallStarted, .generationCall, .instructions, .prompt, .toolCalls,
+                .toolOutput, .response, .generationCall,
             ])
     }
 

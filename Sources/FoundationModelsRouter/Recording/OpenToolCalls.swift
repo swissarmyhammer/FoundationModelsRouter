@@ -181,11 +181,18 @@ enum OpenToolCalls {
 
     /// `event` as an event of another kind with another payload. The
     /// provenance, the `seq` and the time stay.
-    private static func rekinded(
-        _ event: TranscriptEvent, as kind: TranscriptEvent.Kind, entry: TranscriptEntryPayload
+    ///
+    /// - Parameters:
+    ///   - event: The event to turn.
+    ///   - kind: The kind of the new event.
+    ///   - text: The body text of the new event, or `nil`.
+    ///   - entry: The payload of the new event.
+    /// - Returns: The new event.
+    static func rekinded(
+        _ event: TranscriptEvent, as kind: TranscriptEvent.Kind, text: String? = nil, entry: TranscriptEntryPayload
     ) -> TranscriptEvent {
         TranscriptEvent(
             routerId: event.routerId, sessionId: event.sessionId, parentId: event.parentId, slot: event.slot,
-            model: event.model, seq: event.seq, ts: event.ts, kind: kind, entry: entry)
+            model: event.model, seq: event.seq, ts: event.ts, kind: kind, text: text, entry: entry)
     }
 }

@@ -37,7 +37,10 @@ public struct RecordedChild: Sendable, Equatable {
     /// The text of the first prompt of the recorded transcript of the child,
     /// or `nil` when the transcript holds no prompt yet. It is the prompt
     /// body as recorded, without the run mail or the user mail that the
-    /// submission delivered with it. A host that restores the child uses it as
+    /// submission delivered with it. A child that a crash cut in its first
+    /// submission has no `.prompt` entry, and its prompt comes from the
+    /// write-ahead record of the prompt
+    /// (``TranscriptEvent/Kind/promptStarted``). A host that restores the child uses it as
     /// the arguments of the agent. See
     /// ``RouterSessionDirectory/firstPrompt(of:)``.
     public let firstPrompt: String?

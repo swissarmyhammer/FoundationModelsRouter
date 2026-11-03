@@ -326,7 +326,7 @@ struct GuidedGenerationTests {
         #expect(text == Self.canned)
 
         let events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == Self.smallSchema })
     }
 
@@ -363,7 +363,7 @@ struct GuidedGenerationTests {
         #expect(text == Self.canned)
 
         let events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == Self.smallSchema })
     }
 
@@ -386,7 +386,7 @@ struct GuidedGenerationTests {
         // The chokepoint still brackets the failed submission: a `session` meta line,
         // then one open + one close.
         let events = await recorder.events.withoutMailRecords
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .promptStarted, .prompt, .response])
     }
 
     @Test("makeGuidedSession forwards budget/compactionPrompt to the vended session (task 8213x39)")

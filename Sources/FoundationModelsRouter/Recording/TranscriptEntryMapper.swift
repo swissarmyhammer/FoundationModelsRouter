@@ -182,7 +182,7 @@ enum TranscriptEntryMapper {
                 )
             )
         case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail,
-            .toolCallStarted, .toolCall:
+            .promptStarted, .toolCallStarted, .toolCall:
             throw TranscriptEntryReconstructionError.unsupportedKind(kind)
         }
     }

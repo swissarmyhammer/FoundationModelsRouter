@@ -344,6 +344,16 @@ package struct TranscriptTree: Sendable {
     ///   no marker after the last entry that the fork cut point keeps: the
     ///   later entry of that marker is not in the fork, and the call would
     ///   look open (``forkPrefix(of:entryCount:)``).
+    /// - ``TranscriptEvent/Kind/promptStarted``: the events
+    ///   ``effectiveTranscript(forSession:view:)`` folds into the open user
+    ///   messages of a crash (``OpenPrompts``). The session records a marker
+    ///   when the pump takes the mail, ahead of the entries of its
+    ///   submission. A fork keeps no marker after the last entry that the
+    ///   fork cut point keeps, for the reason above.
+    /// - ``TranscriptEvent/Kind/mail``: the events that end a mail. A
+    ///   `.promptStarted` marker is open until a delivery or a terminal
+    ///   record of its mail follows it, and the terminal records are
+    ///   ``TranscriptEvent/Kind/mail`` events.
     ///
     /// - Parameters:
     ///   - id: The session's span id.
@@ -405,12 +415,14 @@ package struct TranscriptTree: Sendable {
     ///
     /// For a list of entry-kind events only, this is the first `cut` events.
     ///
-    /// A ``TranscriptEvent/Kind/toolCallStarted`` marker after the last
+    /// A ``TranscriptEvent/Kind/toolCallStarted`` marker, or a
+    /// ``TranscriptEvent/Kind/promptStarted`` marker, after the last
     /// entry-kind event that the prefix keeps is not in the prefix. The
     /// marker belongs to the submission of the next entry, which the fork
     /// does not inherit. The entry that covers the marker is in that
-    /// submission, so the marker alone would make an open call of a finished
-    /// call (``OpenToolCalls``).
+    /// submission, so the marker alone would make an open call, or an open
+    /// user message, of a finished submission (``OpenToolCalls``,
+    /// ``OpenPrompts``).
     ///
     /// - Parameters:
     ///   - events: A parent's effective events, oldest first.
@@ -422,8 +434,19 @@ package struct TranscriptTree: Sendable {
         let lastKeptEntry = entryIndices.last { $0 < end }
         let nextSubmissionStart = lastKeptEntry.map { $0 + 1 } ?? events.startIndex
         return events[..<end].enumerated().compactMap { index, event in
-            index >= nextSubmissionStart && event.kind == .toolCallStarted ? nil : event
+            index >= nextSubmissionStart && Self.isWriteAheadMarker(event.kind) ? nil : event
         }
+    }
+
+    /// Whether `kind` is a write-ahead marker: the record that a session
+    /// writes when a submission, or a tool call of it, starts. A restore folds
+    /// an open marker into entries (``OpenPrompts``, ``OpenToolCalls``).
+    ///
+    /// - Parameter kind: The kind of an event.
+    /// - Returns: `true` for ``TranscriptEvent/Kind/promptStarted`` and
+    ///   ``TranscriptEvent/Kind/toolCallStarted``.
+    private static func isWriteAheadMarker(_ kind: TranscriptEvent.Kind) -> Bool {
+        kind == .promptStarted || kind == .toolCallStarted
     }
 
     // MARK: - Event decoding
