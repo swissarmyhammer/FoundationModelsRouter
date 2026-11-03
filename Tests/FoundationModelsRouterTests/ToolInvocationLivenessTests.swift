@@ -309,7 +309,11 @@ struct ToolInvocationLivenessTests {
         // The tool still runs: the gate is closed. The host already has the
         // call and its running status.
         #expect(slowTool.completedSteps.isEmpty)
-        #expect(events.contains(.toolCall(id: "call-slow", name: GatedMarkerTool.toolName, argumentsJSON: try #require(Self.announcedArguments(in: events)))))
+        #expect(
+            events.contains(
+                .toolCall(
+                    id: "call-slow", name: GatedMarkerTool.toolName,
+                    argumentsJSON: Self.scriptedArgumentsJSON)))
         #expect(events.contains(.toolStatus(id: "call-slow", status: .running, summary: nil, output: nil)))
 
         slowTool.openGate()
@@ -330,12 +334,58 @@ struct ToolInvocationLivenessTests {
         #expect(runningStatuses.count == 1)
     }
 
-    /// The arguments text of the first ``SessionEvent/toolCall(id:name:argumentsJSON:)`` in `events`.
-    private static func announcedArguments(in events: [SessionEvent]) -> String? {
-        for event in events {
-            if case .toolCall(_, _, let argumentsJSON) = event { return argumentsJSON }
-        }
-        return nil
+    /// The arguments text of the scripted call of ``oneCallScript(calling:id:)``:
+    /// the `value` property holds the step name of the script.
+    private static let scriptedArgumentsJSON = #"{"value": "\#(ScriptedToolFixture.firstStepName)"}"#
+
+    /// The id of the call that the settle tests announce.
+    private static let unsettledCallID = "call-unsettled"
+
+    /// Announces one call on a session that runs no answer, ends a
+    /// submission that has no entry for the call (the attempt was rolled
+    /// back), and reads the whole session feed.
+    ///
+    /// - Parameter hasSink: Whether the ended submission has an event sink.
+    /// - Returns: The events of the session feed, and the ids that the session
+    ///   still holds as announced.
+    private static func eventsOfRolledBackAnnouncement(
+        hasSink: Bool
+    ) async throws -> (events: [SessionEvent], leftover: Set<String>) {
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: ScriptedAnswerScript(rounds: []), mounting: [], tempDirPrefix: tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let actor = try #require(fixture.session as? RoutedSessionActor)
+        let feed = await fixture.session.streamSessionEvents()
+
+        await actor.announceStart(
+            of: Transcript.ToolCall(
+                id: unsettledCallID, toolName: GatedMarkerTool.toolName,
+                arguments: GeneratedContent(properties: ["value": ScriptedToolFixture.firstStepName])))
+        _ = await actor.finishSubmissionAndRequeueIfUnattached(
+            grammar: nil, since: Date(), usageBefore: nil, responseTokenCeiling: nil, deliveredMail: [],
+            entryIdsBeforeAttempt: [], onEvent: hasSink ? { _ in } : nil)
+        let leftover = await actor.announcedToolCallIDs
+        await fixture.session.close()
+
+        var events: [SessionEvent] = []
+        for try await output in feed { events.append(output.event) }
+        return (events, leftover)
+    }
+
+    @Test("a rolled-back attempt settles an announced call with a failed toolStatus and forgets its id")
+    func rolledBackAttemptSettlesAnnouncedCall() async throws {
+        let (events, leftover) = try await Self.eventsOfRolledBackAnnouncement(hasSink: true)
+
+        #expect(events.contains(.toolStatus(id: Self.unsettledCallID, status: .failed, summary: nil, output: nil)))
+        #expect(leftover.isEmpty)
+    }
+
+    @Test("a submission with no event sink still settles an announced call with a failed toolStatus")
+    func nilSinkSubmissionSettlesAnnouncedCall() async throws {
+        let (events, leftover) = try await Self.eventsOfRolledBackAnnouncement(hasSink: false)
+
+        #expect(events.contains(.toolStatus(id: Self.unsettledCallID, status: .failed, summary: nil, output: nil)))
+        #expect(leftover.isEmpty)
     }
 
     @Test("invocation records are delivery-only: nothing extra is staged and nothing extra is recorded")

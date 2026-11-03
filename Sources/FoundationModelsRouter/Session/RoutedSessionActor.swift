@@ -640,6 +640,8 @@ actor RoutedSessionActor: RoutedSession {
     /// running ``SessionEvent/toolStatus(id:status:summary:output:)`` went out
     /// from ``deliver(invocation:)``. The diff at the end of the submission
     /// does not announce these calls again, and it removes each id it uses.
+    /// The end of the submission settles each id that is left
+    /// (``settleAnnouncedToolCalls()``).
     var announcedToolCallIDs: Set<String> = []
 
     /// The join of the live tool run records of this session to the SDK tool

@@ -79,6 +79,9 @@ extension RoutedSessionActor {
         let (diffIncludedResponse, deliveredMailAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, deliveredMail: deliveredMail,
             entryIdsBeforeAttempt: entryIdsBeforeAttempt, onEvent: onEvent)
+        // Each call that the session announced and that the diff did not
+        // resolve ends as failed, with or without an event sink.
+        settleAnnouncedToolCalls()
         // The submission ended, with success or failure, and its entries are
         // recorded: a settled point.
         settleTranscript()
@@ -425,7 +428,8 @@ extension RoutedSessionActor {
     ///   - dispatchedToolCallIds: Tool-call ids announced in this diff; appended to.
     ///   - completedToolCallIds: Tool-call ids resolved in this diff; inserted into.
     ///   - announcedToolCallIds: Tool-call ids announced when the call started;
-    ///     each id this diff uses is removed.
+    ///     each id this diff uses is removed. With no `onEvent` the diff
+    ///     removes none (``settleAnnouncedToolCalls()`` settles them).
     ///   - onEvent: The sink for derived events, or `nil` to do nothing.
     private static func emitSessionEvents(
         for partial: TranscriptEvent.Partial,
@@ -439,8 +443,7 @@ extension RoutedSessionActor {
         case .toolCalls:
             for call in entry.toolCalls ?? [] {
                 if announcedToolCallIds.remove(call.id) == nil {
-                    onEvent(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON))
-                    onEvent(.toolStatus(id: call.id, status: .running, summary: nil, output: nil))
+                    Self.announcedCallEvents(for: call).forEach(onEvent)
                 }
                 dispatchedToolCallIds.append(call.id)
             }
@@ -515,8 +518,45 @@ extension RoutedSessionActor {
     /// - Parameter call: The SDK tool call that starts.
     func announceStart(of call: Transcript.ToolCall) {
         guard announcedToolCallIDs.insert(call.id).inserted else { return }
-        deliverPost(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.arguments.jsonString))
-        deliverPost(.toolStatus(id: call.id, status: .running, summary: nil, output: nil))
+        let payload = ToolCallPayload(id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString)
+        Self.announcedCallEvents(for: payload).forEach(deliverPost)
+    }
+
+    /// The live events that announce one tool call to the host: a
+    /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and then a running
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)``.
+    ///
+    /// The one place that builds the pair. The start of the call
+    /// (``announceStart(of:)``) and the diff at the end of the submission
+    /// (``emitSessionEvents(for:dispatchedToolCallIds:completedToolCallIds:announcedToolCallIds:onEvent:)``)
+    /// both send it. The arguments text of a call in the transcript and of
+    /// the same call at its start is the same text
+    /// (`GeneratedContent.jsonString`).
+    ///
+    /// - Parameter call: The call to announce.
+    /// - Returns: The two events, in send order.
+    static func announcedCallEvents(for call: ToolCallPayload) -> [SessionEvent] {
+        [
+            .toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON),
+            .toolStatus(id: call.id, status: .running, summary: nil, output: nil),
+        ]
+    }
+
+    /// Settles each call that ``announceStart(of:)`` announced and that no
+    /// diff resolved: it sends a failed
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)`` and forgets the
+    /// id. A call is still announced when its attempt was rolled back before
+    /// the diff recorded its entry, or when the submission has no event sink.
+    ///
+    /// The event goes through ``deliverPost(_:)``, the path of the
+    /// announcement, so the host that saw the call running sees it end.
+    /// Without this, the host keeps a running row that never ends, and the id
+    /// stays in ``announcedToolCallIDs`` for the life of the session.
+    func settleAnnouncedToolCalls() {
+        for id in announcedToolCallIDs.sorted() {
+            deliverPost(.toolStatus(id: id, status: .failed, summary: nil, output: nil))
+        }
+        announcedToolCallIDs.removeAll()
     }
 
     /// Records the `session` meta event once, before the first recorded entry.
