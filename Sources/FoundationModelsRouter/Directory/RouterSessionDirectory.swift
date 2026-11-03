@@ -1479,6 +1479,21 @@ public actor RouterSessionDirectory: SessionDirectory {
         state.withLock { $0.entries[id]?.session }
     }
 
+    /// Suspends every live session of the directory (``RoutedSession/suspend()``),
+    /// in one step.
+    ///
+    /// A host that quits the process calls this before it closes the first
+    /// session. The runs of every session then stay open in the journal, also
+    /// those of a child that ends its work while the parent closes. The call
+    /// does not wait, and it closes nothing. A session that left the live list
+    /// (a closed session) is not suspended: it has no open run to keep.
+    public nonisolated func suspendLiveSessions() {
+        let sessions = state.withLock { $0.entries.values.compactMap(\.session) }
+        for session in sessions {
+            session.suspend()
+        }
+    }
+
     // MARK: - Record changes
 
     /// Sets the folders a host added to the working folder of the session

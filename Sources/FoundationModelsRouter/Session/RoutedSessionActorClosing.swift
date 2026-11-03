@@ -27,7 +27,9 @@ extension RoutedSessionActor {
     /// ``record(event:)``, and so the same ``makeRunEventPartial(toolName:events:)``, a
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
-    /// background run, no orphans, no holes. The end of all work then waits
+    /// background run, no orphans, no holes. After ``suspend()`` this is not
+    /// so: the journal refuses each terminal event (``claimJournalWrite(for:)``),
+    /// and each open run stays an orphan for the next restore. The end of all work then waits
     /// until the pump, the body of each run, each generation pass of the
     /// session (``GenerationPassObserver/awaitNoOpenPass()``), the task of
     /// each signal (``SignalExecutor/awaitNoTask()``) and each helper task of
@@ -139,6 +141,15 @@ extension RoutedSessionActor {
         }
         await closeFromOwnWork?.value
         await closeAndAwaitTheEnd()
+    }
+
+    /// See ``RoutedSession/suspend()``.
+    ///
+    /// The flag is set with no suspension point, so a body that ends in the
+    /// same moment finds either the journal open (its write came before this
+    /// call) or closed for terminals (its write comes after).
+    nonisolated func suspend() {
+        isSuspended.withLock { $0 = true }
     }
 
     /// Starts the close for a caller that is the own work of this session,

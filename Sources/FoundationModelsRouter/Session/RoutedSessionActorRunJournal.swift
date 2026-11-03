@@ -252,11 +252,18 @@ extension RoutedSessionActor: OperationEventJournal {
     /// so each message of a run is journaled and delivered live. The
     /// claim is taken synchronously, before any suspension.
     ///
+    /// After ``suspend()``, no terminal is admitted: the sweep of the close,
+    /// the body of a run that ends, the settlement of the run plane and the
+    /// completion of a claim all find the journal closed for terminals. The
+    /// run stays open in the record, so a restore finds an orphan. The claim
+    /// is not taken, so a terminal that came before the call keeps its place.
+    ///
     /// - Parameter event: The event about to be journaled.
     /// - Returns: `false` when `event` is a terminal for a run whose ending is
-    ///   already recorded; `true` otherwise.
+    ///   already recorded, or when the session suspended; `true` otherwise.
     func claimJournalWrite(for event: OperationEvent) -> Bool {
         guard event.kind == .completed else { return true }
+        guard !isSuspended.withLock({ $0 }) else { return false }
         return journaledTerminalCorrelationIDs.insert(event.correlationID).inserted
     }
 

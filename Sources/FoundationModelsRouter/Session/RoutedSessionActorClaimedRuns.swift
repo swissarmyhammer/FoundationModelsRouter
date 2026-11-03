@@ -31,6 +31,10 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/completeClaimedRun(_:outcome:detail:)``.
     ///
+    /// After ``suspend()`` the call posts nothing and returns `false`: the
+    /// claim stays open, and the journal keeps the run as an orphan for the
+    /// next restore.
+    ///
     /// The claim leaves ``openClaims`` before the first suspension, so two
     /// calls for one key post one terminal event. The terminal goes through
     /// the outbox, as the terminal of any run does. The lease of the claim
@@ -38,6 +42,7 @@ extension RoutedSessionActor {
     /// before the work of the claim ends, and the session has no idle moment
     /// between the two.
     func completeClaimedRun(_ key: RunKey, outcome: OperationOutcome, detail: String?) async -> Bool {
+        guard !isSuspended.withLock({ $0 }) else { return false }
         guard let claim = openClaims.removeValue(forKey: key) else { return false }
         await attachOutboxJournalIfNeeded()
         let terminal = claim.lostTerminal
@@ -61,7 +66,9 @@ extension RoutedSessionActor {
 
     /// Journals the `.lost` terminal of each of `claims`, and ends the
     /// lease of each. The close calls it after the drain. The terminal makes
-    /// no mail: the queue is closed.
+    /// no mail: the queue is closed. After ``suspend()`` the journal refuses
+    /// the terminal (``claimJournalWrite(for:)``), so the claim stays open in
+    /// the record and only its lease ends.
     ///
     /// - Parameter claims: The claims that no call completed.
     func journalLostTerminals(of claims: [OpenClaim]) async {

@@ -215,8 +215,11 @@ struct ScriptedToolCallingModel: LanguageModel {
         private static func argumentsJSON(
             for call: ScriptedToolCall, toolOutputs: [String]
         ) -> String {
-            let value = call.argument.resolved(againstToolOutputs: toolOutputs)
-            return #"{"value":"\#(value)"}"#
+            let resolved = call.argument.resolved(againstToolOutputs: toolOutputs)
+            if case .json = call.argument {
+                return resolved
+            }
+            return #"{"value":"\#(resolved)"}"#
         }
     }
 }

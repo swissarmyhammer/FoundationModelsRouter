@@ -85,6 +85,14 @@ enum ScriptedCallArgument: Sendable, Hashable {
     ///   every tool output in the transcript in order from zero.
     case priorToolOutput(index: Int)
 
+    /// The whole arguments object of the call, as JSON. A tool whose
+    /// arguments have no `value` property (for example an `OperationTool`,
+    /// whose arguments name an `op`) needs this case, because the other cases
+    /// write only a `value` property.
+    ///
+    /// - Parameter json: The arguments, as a JSON object.
+    case json(String)
+
     /// The `value` a ``priorToolOutput(index:)`` argument resolves to when the
     /// output it names is not in the transcript — a visible, assertable stand-in
     /// rather than a silent empty string.
@@ -100,6 +108,8 @@ enum ScriptedCallArgument: Sendable, Hashable {
         switch self {
         case .literal(let value):
             return value
+        case .json(let json):
+            return json
         case .priorToolOutput(let index):
             guard toolOutputs.indices.contains(index) else { return Self.unresolvedArgument }
             return toolOutputs[index]

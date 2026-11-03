@@ -693,9 +693,48 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// this session, also a tool of a child session of this session that a
     /// host asked.
     ///
+    /// This is the close that a user asks for: each open run ends as
+    /// `cancelled`. A host that quits the whole process calls ``suspend()``
+    /// first, so the open runs stay open in the journal.
+    ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.
     func close() async
+
+    /// Prepares an orderly quit of the process: from this call on, the journal
+    /// of this session writes no terminal event for any run. The runs that are
+    /// open stay open, so a restore finds them as orphans (``RunStatus/orphaned``),
+    /// as after a crash. A host that claimed them
+    /// (``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``)
+    /// then completes the ORIGINAL calls with ``completeClaimedRun(_:outcome:detail:)``.
+    ///
+    /// Call it before ``close()``. The close then does what it does for each
+    /// session, and it stops all work, but these parts differ:
+    ///
+    /// - The sweep of the runs gives each open body its cancel, and the journal
+    ///   drops the terminal event of the sweep. A body that swallows the cancel
+    ///   and returns text, or throws, writes no outcome: the first write of a
+    ///   terminal event does not win, because no write wins. The same holds
+    ///   for a body that ends by itself after this call.
+    /// - A claim that the host did not complete (``completeClaimedRun(_:outcome:detail:)``)
+    ///   stays open in the journal. The close gives it no `.lost` terminal
+    ///   event, and a call of ``completeClaimedRun(_:outcome:detail:)`` after
+    ///   this call posts nothing and returns `false`.
+    /// - The transcript stays valid. The tool call of each open run has its
+    ///   write-ahead record (``TranscriptEvent/Kind/toolCallStarted``), and a
+    ///   restore answers it.
+    ///
+    /// A close that the user asks for (for example the close of an ACP session)
+    /// does not call this method. It cancels the work, and the outcome of each
+    /// open run is `cancelled`.
+    ///
+    /// The call does not wait, and it is not a signal. It changes no work,
+    /// so a session that suspended still works until ``close()``. A host that
+    /// quits suspends every session before it closes the first one, so a
+    /// parent that closes first cannot let a child write the outcome of its
+    /// run (``RouterSessionDirectory/suspendLiveSessions()``). A session does
+    /// not leave this state. Idempotent.
+    nonisolated func suspend()
 
     /// Completes a run that the host claimed at the restore of this session,
     /// with the real result of the host.
@@ -713,7 +752,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// and ends the claim. A later call for the same key posts nothing. A
     /// call for a key that is not an open claim of this session posts nothing
     /// too. A claim that no call completes ends as `.lost` when ``close()``
-    /// runs.
+    /// runs, unless the session suspended first (``suspend()``): then the claim
+    /// stays open in the journal, and this call returns `false`.
     ///
     /// - Parameters:
     ///   - key: The key of the claimed run.
