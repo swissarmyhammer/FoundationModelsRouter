@@ -342,7 +342,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             guard let routerHooks = routedLLM.hooks else { return nil }
             let parent =
                 node.parentId.flatMap { hooksById[$0]?.forkParent }
-                ?? node.record.agentSpawn.map { routerHooks.subagentParent(of: $0.parentSessionId) }
+                ?? node.record.agentSpawn.map {
+                    routerHooks.subagentParent(of: $0.parentSessionId, rootSessionID: $0.rootSessionId)
+                }
             let hooks = routerHooks.makeSessionHooks(
                 sessionID: node.id, workingDirectory: node.record.workingDirectory, parent: parent,
                 requestedKey: node.id == rootId ? hookSessionKey : nil, isRestored: true)

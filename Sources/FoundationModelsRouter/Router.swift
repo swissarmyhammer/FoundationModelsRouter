@@ -142,7 +142,11 @@ public actor Router {
     ///   - hooks: The hook dispatcher that each session of this router sends
     ///     its hook events to, or `nil` (the default) for no hooks. Each
     ///     session sends `SessionStart` when it is made or restored,
-    ///     and `SessionEnd` when it closes. When the value is `nil`, or when
+    ///     and `SessionEnd` when it ends, once: with the reason `completed`
+    ///     when it closes, `suspended` when it is suspended, and `released`
+    ///     when the last reference to it goes with no close. Each
+    ///     `HookSession` has its `kind` (root, subagent or fork) and the id of
+    ///     the root session of its family. When the value is `nil`, or when
     ///     the dispatcher has no visitor, no session sends an event.
     public init(
         id: ULID = .generate(),

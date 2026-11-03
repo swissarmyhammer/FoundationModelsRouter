@@ -792,6 +792,10 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``RouterSessionDirectory/markEnded(_:reason:)`` for it throws
     /// ``SessionEndedMarkerError/sessionSuspended(_:)`` and writes nothing,
     /// so a restore still finds the session and its open runs.
+    ///
+    /// A router with hooks sends the `SessionEnd` of the session with the
+    /// reason `suspended` at the first call. A later close sends no second
+    /// `SessionEnd`.
     nonisolated func suspend()
 
     /// Whether ``suspend()`` was called. It never goes back to `false`.

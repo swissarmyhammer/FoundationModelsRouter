@@ -10,17 +10,33 @@ enum HookParent: Sendable, Equatable {
     /// The session that started the new session as a sub-agent: the session
     /// of the parent call (``SessionConfiguration/parentCall``), or the
     /// recorded spawn parent (``SessionRecord/AgentSpawn/parentSessionId``).
-    case subagent(sessionID: String, sessionKey: String)
+    case subagent(sessionID: String, sessionKey: String, rootSessionID: String)
 
     /// The session that a restored fork node of a recording is a fork of,
     /// with the working directory of that session.
-    case fork(sessionID: String, sessionKey: String, workingDirectory: URL)
+    case fork(sessionID: String, sessionKey: String, rootSessionID: String, workingDirectory: URL)
 
     /// The id of the parent session.
     var sessionID: String {
         switch self {
-        case .subagent(let sessionID, _), .fork(let sessionID, _, _):
+        case .subagent(let sessionID, _, _), .fork(let sessionID, _, _, _):
             sessionID
+        }
+    }
+
+    /// The id of the root session of the family of the parent session.
+    var rootSessionID: String {
+        switch self {
+        case .subagent(_, _, let rootSessionID), .fork(_, _, let rootSessionID, _):
+            rootSessionID
+        }
+    }
+
+    /// How a session that comes from this parent relates to it.
+    var kind: HookSessionKind {
+        switch self {
+        case .subagent: .subagent
+        case .fork: .fork
         }
     }
 }
@@ -49,6 +65,10 @@ struct HookLineage: Sendable, Equatable {
     ///   with a fork parent that a restore did not make is `.forked`, and each
     ///   other session is `.new`.
     /// - The parent session id is the id of `parent`, or `nil`.
+    /// - The root session id is the root of `parent`, or the id of the
+    ///   session when it has no parent.
+    /// - The kind is `.subagent` or `.fork` as `parent` says, or `.root` when
+    ///   the session has no parent.
     ///
     /// - Parameters:
     ///   - sessionID: The id of the session.
@@ -75,6 +95,8 @@ struct HookLineage: Sendable, Equatable {
             sessionID: ownKey,
             sessionKey: requestedKey ?? derivedKey(ownKey: ownKey, workingDirectory: workingDirectory, parent: parent),
             parentSessionID: parent?.sessionID,
+            rootSessionID: parent?.rootSessionID ?? ownKey,
+            kind: parent?.kind ?? .root,
             workingDirectory: workingDirectory,
             dataDirectory: dataDirectory)
         let origin = requestedOrigin ?? (isRestored ? .resumed : derivedOrigin(of: parent))
@@ -92,9 +114,9 @@ struct HookLineage: Sendable, Equatable {
         switch parent {
         case nil:
             ownKey
-        case .subagent(_, let parentKey):
+        case .subagent(_, let parentKey, _):
             parentKey
-        case .fork(_, let parentKey, let parentDirectory):
+        case .fork(_, let parentKey, _, let parentDirectory):
             isSameDirectory(workingDirectory, parentDirectory) ? parentKey : ownKey
         }
     }
@@ -169,10 +191,10 @@ package final class RouterHooks: Sendable {
     ///
     /// - Parameter parentID: The id of the parent session.
     /// - Returns: The sub-agent parent.
-    func subagentParent(of parentID: ULID) -> HookParent {
+    func subagentParent(of parentID: ULID, rootSessionID: ULID) -> HookParent {
         let sessionID = parentID.description
         let sessionKey = openSessions.withLock { $0[sessionID]?.sessionKey } ?? sessionID
-        return .subagent(sessionID: sessionID, sessionKey: sessionKey)
+        return .subagent(sessionID: sessionID, sessionKey: sessionKey, rootSessionID: rootSessionID.description)
     }
 
     /// Makes the hooks of one session, with the lineage rules of
@@ -222,11 +244,16 @@ package final class RouterHooks: Sendable {
 /// The hooks of one session: its hook lineage, and the once-only
 /// `SessionStart` and `SessionEnd` of the session.
 ///
-/// The session factory calls ``start()`` when it made the session, and the
-/// close of the session calls ``end()``. When the dispatcher has no visitor
-/// at the start, the session sends no `SessionStart`, and then it also sends
-/// no `SessionEnd`, so the dispatcher never gets an end of a session that it
-/// did not see start. A session that is released with no close sends its
+/// The session factory calls ``start()`` when it made the session. The
+/// session ends once, and the first end sets the reason of the `SessionEnd`:
+/// the close of the session ends it with `.completed`, a suspend of the
+/// session (``RoutedSession/suspend()``) ends it with `.suspended`, and the
+/// release of the hooks with no end before ends it with `.released`. A later
+/// end does nothing. After the end of a suspended session, the dispatcher
+/// gets no more event of the session. When the dispatcher has no visitor at
+/// the start, the session sends no `SessionStart`, and then it also sends no
+/// `SessionEnd`, so the dispatcher never gets an end of a session that it did
+/// not see start. A session that is released with no end sends its
 /// `SessionEnd` when the hooks are released, so the dispatcher does not keep
 /// a queue for a session that no longer exists.
 final class SessionHooks: Sendable {
@@ -265,9 +292,10 @@ final class SessionHooks: Sendable {
         self.lineage = lineage
     }
 
-    /// Sends the `SessionEnd` of a session that was released with no close.
+    /// Sends the `SessionEnd` of a session that was released with no end.
+    /// The call does not wait and holds no reference to the hooks.
     deinit {
-        end()
+        end(reason: .released)
     }
 
     /// The hook session of the session.
@@ -277,7 +305,9 @@ final class SessionHooks: Sendable {
 
     /// The parent that a restored fork node of this session has.
     var forkParent: HookParent {
-        .fork(sessionID: session.sessionID, sessionKey: session.sessionKey, workingDirectory: session.workingDirectory)
+        .fork(
+            sessionID: session.sessionID, sessionKey: session.sessionKey, rootSessionID: session.rootSessionID,
+            workingDirectory: session.workingDirectory)
     }
 
     /// Records the session as open, and sends its `SessionStart` when the
@@ -308,13 +338,18 @@ final class SessionHooks: Sendable {
     }
 
     /// Sends the `SessionEnd` of the session when its `SessionStart` went
-    /// out, and forgets the session. Only the first call does this.
-    func end() {
+    /// out, and forgets the session. Only the first call does this: a later
+    /// call, with any reason, does nothing.
+    ///
+    /// - Parameter reason: Why the session ended. The name of the type is
+    ///   qualified, because the router has a type with the same name (the
+    ///   reason of an ended marker).
+    func end(reason: FoundationModelsHooks.SessionEndReason) {
         phase.withLock { phase in
             if case .open(let postedStart) = phase {
                 routerHooks.didClose(session)
                 if postedStart {
-                    routerHooks.dispatcher.post(SessionEnd(), session: session)
+                    routerHooks.dispatcher.post(SessionEnd(reason: reason), session: session)
                 }
             }
             phase = .ended

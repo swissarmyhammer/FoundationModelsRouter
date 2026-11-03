@@ -25,6 +25,11 @@ struct HookLineageTests {
     /// The session key that a host gives to a model-switch replacement.
     private static let replacementKey = "k"
 
+    /// Why a session ended, as the hook vocabulary names it. The Router has a
+    /// type with the name `SessionEndReason` too (the reason of an ended
+    /// marker), so the name is qualified.
+    typealias HookEndReason = FoundationModelsHooks.SessionEndReason
+
     /// The tool call id that the recorded spawn of a sub-agent names.
     private static let spawnToolCallID = "start-agent-call"
 
@@ -35,14 +40,14 @@ struct HookLineageTests {
         enum Event: Equatable {
             /// A `SessionStart` with its session and its origin.
             case start(HookSession, SessionOrigin)
-            /// A `SessionEnd` with its session.
-            case end(HookSession)
+            /// A `SessionEnd` with its session and its reason.
+            case end(HookSession, HookEndReason)
 
             /// The id of the Router session of the event.
             var sessionID: String {
                 switch self {
                 case .start(let session, _): session.sessionID
-                case .end(let session): session.sessionID
+                case .end(let session, _): session.sessionID
                 }
             }
         }
@@ -74,7 +79,7 @@ struct HookLineageTests {
         ///
         /// - Parameter context: The session and the event.
         func post(_ context: HookContext<SessionEnd>) async {
-            recorded.withLock { $0.append(.end(context.session)) }
+            recorded.withLock { $0.append(.end(context.session, context.event.reason)) }
         }
     }
 
@@ -163,6 +168,47 @@ struct HookLineageTests {
         }
     }
 
+    /// The reasons of the `SessionEnd` events of one session, in the order
+    /// of delivery.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the session.
+    ///   - visitor: The visitor that recorded the events.
+    /// - Returns: One reason for each `SessionEnd` of the session.
+    private static func endReasons(of id: ULID, in visitor: RecordingHookVisitor) -> [HookEndReason] {
+        visitor.events(of: id).compactMap { event in
+            if case .end(_, let reason) = event {
+                return reason
+            }
+            return nil
+        }
+    }
+
+    /// Makes a session, optionally suspends it, and drops the only reference
+    /// to it, so that the session is released with no close.
+    ///
+    /// - Parameters:
+    ///   - model: The model that makes the session.
+    ///   - thenSuspending: Whether the session is suspended before the release.
+    /// - Returns: The id of the released session.
+    private static func makeAndRelease(on model: RoutedLLM, thenSuspending suspends: Bool) -> ULID {
+        let session = model.makeSession()
+        if suspends {
+            session.suspend()
+        }
+        return session.id
+    }
+
+    /// Makes a session, closes it, and drops the only reference to it.
+    ///
+    /// - Parameter model: The model that makes the session.
+    /// - Returns: The id of the released session.
+    private static func makeCloseAndRelease(on model: RoutedLLM) async -> ULID {
+        let session = model.makeSession()
+        await session.close()
+        return session.id
+    }
+
     // MARK: - No dispatcher
 
     @Test("a router with no dispatcher gives its sessions no hooks")
@@ -201,8 +247,84 @@ struct HookLineageTests {
 
             let hookSession = HookSession(
                 sessionID: session.id.description, sessionKey: session.id.description, parentSessionID: nil,
+                rootSessionID: session.id.description, kind: .root,
                 workingDirectory: session.workingDirectory, dataDirectory: hooked.dispatcher.dataDirectory)
-            #expect(hooked.visitor.events(of: session.id) == [.start(hookSession, .new), .end(hookSession)])
+            #expect(
+                hooked.visitor.events(of: session.id) == [.start(hookSession, .new), .end(hookSession, .completed)])
+        }
+    }
+
+    @Test("suspend gives one SessionEnd with the reason suspended, and the close after it gives none")
+    func suspendGivesOneEndWithSuspended() async throws {
+        try await Self.withHookedProfile { hooked in
+            let session = hooked.profile.standard.makeSession()
+            session.suspend()
+            session.suspend()
+            await session.close()
+            await hooked.dispatcher.drain()
+
+            let reasons = Self.endReasons(of: session.id, in: hooked.visitor)
+            #expect(reasons == [.suspended])
+        }
+    }
+
+    @Test("suspendLiveSessions gives one SessionEnd with the reason suspended to each live session")
+    func suspendLiveSessionsGivesSuspendedToEachLiveSession() async throws {
+        try await Self.withHookedProfile { hooked in
+            let first = hooked.profile.standard.makeSession()
+            let second = hooked.profile.flash.makeSession()
+            hooked.router.sessionDirectory.suspendLiveSessions()
+            await first.close()
+            await second.close()
+            await hooked.dispatcher.drain()
+
+            #expect(Self.endReasons(of: first.id, in: hooked.visitor) == [.suspended])
+            #expect(Self.endReasons(of: second.id, in: hooked.visitor) == [.suspended])
+        }
+    }
+
+    @Test("a session that the last reference releases with no close gives one SessionEnd with the reason released")
+    func aReleasedSessionGivesOneEndWithReleased() async throws {
+        try await Self.withHookedProfile { hooked in
+            let id = Self.makeAndRelease(on: hooked.profile.standard, thenSuspending: false)
+            await hooked.dispatcher.drain()
+
+            #expect(Self.endReasons(of: id, in: hooked.visitor) == [.released])
+        }
+    }
+
+    @Test("a session that a close ended gives no SessionEnd with the reason released when it is released")
+    func aClosedSessionGivesNoReleasedEnd() async throws {
+        try await Self.withHookedProfile { hooked in
+            let id = await Self.makeCloseAndRelease(on: hooked.profile.standard)
+            await hooked.dispatcher.drain()
+
+            #expect(Self.endReasons(of: id, in: hooked.visitor) == [.completed])
+        }
+    }
+
+    @Test("a session that a suspend ended gives no SessionEnd with the reason released when it is released")
+    func aSuspendedSessionGivesNoReleasedEnd() async throws {
+        try await Self.withHookedProfile { hooked in
+            let id = Self.makeAndRelease(on: hooked.profile.standard, thenSuspending: true)
+            await hooked.dispatcher.drain()
+
+            #expect(Self.endReasons(of: id, in: hooked.visitor) == [.suspended])
+        }
+    }
+
+    // MARK: - Kind and root
+
+    @Test("a root session has the kind root and is its own root")
+    func aRootSessionHasTheKindRootAndIsItsOwnRoot() async throws {
+        try await Self.withHookedProfile { hooked in
+            let session = hooked.profile.standard.makeSession()
+            await hooked.dispatcher.drain()
+
+            let start = try Self.start(of: session.id, in: hooked.visitor)
+            #expect(start.session.kind == .root)
+            #expect(start.session.rootSessionID == session.id.description)
+            await session.close()
         }
     }
 
@@ -247,6 +369,42 @@ struct HookLineageTests {
             #expect(start.origin == .subagent)
             #expect(start.session.sessionKey == Self.replacementKey)
             #expect(start.session.parentSessionID == parent.id.description)
+            await child.close()
+            await parent.close()
+        }
+    }
+
+    @Test("a sub-agent session has the kind subagent and the root of the call that starts it")
+    func aSubagentSessionHasTheKindSubagentAndTheRootOfItsCall() async throws {
+        try await Self.withHookedProfile { hooked in
+            let parent = hooked.profile.standard.makeSession()
+            let parentCall = ToolContext.startAgentCall(of: parent)
+            let child = hooked.profile.standard.makeSession(configuration: SessionConfiguration(parentCall: parentCall))
+            await hooked.dispatcher.drain()
+
+            let start = try Self.start(of: child.id, in: hooked.visitor)
+            #expect(start.session.kind == .subagent)
+            #expect(start.session.rootSessionID == parentCall.rootSessionID.description)
+            await child.close()
+            await parent.close()
+        }
+    }
+
+    @Test("a sub-agent session of a recorded spawn has the recorded root, which is not its parent")
+    func aSubagentSessionOfARecordedSpawnHasTheRecordedRoot() async throws {
+        try await Self.withHookedProfile { hooked in
+            let parent = hooked.profile.standard.makeSession()
+            let recordedRoot = ULID.generate()
+            let child = hooked.profile.standard.makeSession(
+                configuration: SessionConfiguration(
+                    agentSpawn: SessionRecord.AgentSpawn(
+                        parentSessionId: parent.id, parentToolCallId: Self.spawnToolCallID,
+                        rootSessionId: recordedRoot)))
+            await hooked.dispatcher.drain()
+
+            let start = try Self.start(of: child.id, in: hooked.visitor)
+            #expect(start.session.kind == .subagent)
+            #expect(start.session.rootSessionID == recordedRoot.description)
             await child.close()
             await parent.close()
         }
@@ -319,6 +477,30 @@ struct HookLineageTests {
         }
     }
 
+    @Test("a restored sub-agent has the kind subagent and the root of its recorded spawn")
+    func aRestoredSubagentHasTheKindSubagentAndTheRecordedRoot() async throws {
+        try await Self.withHookedProfile { hooked in
+            let parent = hooked.profile.standard.makeSession()
+            let recordedRoot = ULID.generate()
+            let child = hooked.profile.standard.makeSession(
+                configuration: SessionConfiguration(
+                    agentSpawn: SessionRecord.AgentSpawn(
+                        parentSessionId: parent.id, parentToolCallId: Self.spawnToolCallID,
+                        rootSessionId: recordedRoot)))
+            await child.close()
+            await parent.close()
+
+            let restoredChild = try await hooked.profile.standard.restoreSession(id: child.id)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events(of: child.id))
+            let session = try #require(resumed.first)
+            #expect(session.kind == .subagent)
+            #expect(session.rootSessionID == recordedRoot.description)
+            await restoredChild.session.close()
+        }
+    }
+
     /// The production change that makes this test fail: a restore that does
     /// not give a recorded fork the fork rule against its restored parent,
     /// or that gives a restored node an origin that is not `resumed`.
@@ -340,6 +522,29 @@ struct HookLineageTests {
             #expect(restoredFork.parentSessionID == root.id.description)
             // The fork works in its own folder, not in the folder of its parent.
             #expect(restoredFork.sessionKey == forkId.description)
+            await SessionFixtureLifecycle.close(tree)
+        }
+    }
+
+    @Test("a restored fork has the kind fork and the root of its fork parent chain")
+    func aRestoredForkHasTheKindForkAndTheRootOfItsParent() async throws {
+        try await Self.withHookedProfile { hooked in
+            let root = hooked.profile.standard.makeSession()
+            await root.close()
+            let forkDirectory = try RecordedForkFixtures.writeFork(
+                under: root.recordingDirectory, cut: RecordedForkCut(historyOrdinal: 0, entryCount: 0))
+            let forkId = try #require(ULID(forkDirectory.lastPathComponent))
+
+            let tree = try await hooked.profile.standard.restoreSessionTree(root: root.id)
+            await hooked.dispatcher.drain()
+
+            let resumed = Self.resumedSessions(in: hooked.visitor.events)
+            let restoredRoot = try #require(resumed.first { $0.sessionID == root.id.description })
+            let restoredFork = try #require(resumed.first { $0.sessionID == forkId.description })
+            #expect(restoredRoot.kind == .root)
+            #expect(restoredRoot.rootSessionID == root.id.description)
+            #expect(restoredFork.kind == .fork)
+            #expect(restoredFork.rootSessionID == root.id.description)
             await SessionFixtureLifecycle.close(tree)
         }
     }
@@ -377,12 +582,16 @@ struct HookLineageTests {
     func aRestoredForkNodeInTheSameDirectoryInAnotherFormGetsTheKeyOfItsParent() {
         let directory = URL(fileURLWithPath: "/tmp/hook-lineage/work", isDirectory: true)
         let sameDirectory = URL(fileURLWithPath: "/tmp/hook-lineage/other/../work", isDirectory: false)
+        let parentID = ULID.generate().description
         let parent = HookParent.fork(
-            sessionID: ULID.generate().description, sessionKey: Self.replacementKey, workingDirectory: directory)
+            sessionID: parentID, sessionKey: Self.replacementKey, rootSessionID: parentID,
+            workingDirectory: directory)
         let lineage = HookLineage.make(
             sessionID: ULID.generate(), workingDirectory: sameDirectory, dataDirectory: directory,
             parent: parent, requestedKey: nil, requestedOrigin: nil, isRestored: false)
         #expect(lineage.session.sessionKey == Self.replacementKey)
         #expect(lineage.origin == .forked)
+        #expect(lineage.session.kind == .fork)
+        #expect(lineage.session.rootSessionID == parentID)
     }
 }

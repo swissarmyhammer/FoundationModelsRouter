@@ -148,8 +148,13 @@ extension RoutedSessionActor {
     /// The flag is set with no suspension point, so a body that ends in the
     /// same moment finds either the journal open (its write came before this
     /// call) or closed for terminals (its write comes after).
+    ///
+    /// The suspend also ends the hooks of the session with the reason
+    /// `.suspended`, so the `SessionEnd` goes out at once. A later close, or
+    /// the release of the session, sends no second `SessionEnd`.
     nonisolated func suspend() {
         suspendedState.withLock { $0 = true }
+        hooks?.end(reason: .suspended)
     }
 
     /// Starts the close for a caller that is the own work of this session,
@@ -254,6 +259,6 @@ extension RoutedSessionActor {
         endRelayWaits()
         // After all work of the session ended: the `SessionEnd` of the hooks.
         // A second close finds the hooks ended, so it sends no second one.
-        hooks?.end()
+        hooks?.end(reason: .completed)
     }
 }

@@ -236,10 +236,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // A session that a parent call or a recorded spawn starts is a
         // sub-agent of that parent session.
         let subagentParentID = parentCall?.sessionID ?? agentSpawn?.parentSessionId
+        // The root of the family: the root of the parent call, else the root
+        // that the record of the spawn names.
+        let subagentRootID = parentCall?.rootSessionID ?? agentSpawn?.rootSessionId
         let sessionHooks = hooks.map { routerHooks in
             routerHooks.makeSessionHooks(
                 sessionID: sessionId, workingDirectory: effectiveWorkingDirectory,
-                parent: subagentParentID.map(routerHooks.subagentParent(of:)),
+                parent: subagentParentID.map {
+                    routerHooks.subagentParent(of: $0, rootSessionID: subagentRootID ?? $0)
+                },
                 requestedKey: hookSessionKey, requestedOrigin: hookOrigin, isRestored: false)
         }
 

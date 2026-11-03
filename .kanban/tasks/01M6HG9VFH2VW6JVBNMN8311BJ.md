@@ -1,7 +1,21 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m6hjhwn5th5vr123k8tx31xe
+  text: |-
+    ### implement - changed
+    - Hooks checkout updated to 35e8810 (contains d9019ab). HookParent carries rootSessionID and gives the kind. HookLineage.make passes kind and rootSessionID to HookSession.
+    - SessionHooks.end(reason:): close sends completed, suspend() sends suspended, deinit sends released. The first end wins; later ends do nothing.
+    - Root of a live sub-agent: parentCall.rootSessionID, else the recorded AgentSpawn.rootSessionId. Restored sub-agent: recorded AgentSpawn.rootSessionId. Restored fork: root of the restored fork parent.
+    - Files: Session/SessionHooks.swift, Session/RoutedSessionActorClosing.swift, Session/RoutedSession.swift, RoutedLLM.swift, Recording/SessionTreeRestoration.swift, Router.swift, Tests/HookLineageTests.swift.
+    - Tests: swift test full run, 2414 + 38 + 19 tests, all passed. HookLineageTests has 22 tests, 11 new or changed.
+    - Note: the Router has its own SessionEndReason type (ended marker), so the Hooks type is named FoundationModelsHooks.SessionEndReason.
+    - Note: after suspend(), the dispatcher gets no more event of that session (the session phase is ended).
+    - next: review
+  timestamp: 2026-11-03T20:45:32.197922+00:00
+position_column: review
 position_ordinal: '8180'
 title: Router sends SessionEnd with reason suspended or released, and HookSession kind and rootSessionID
 ---
