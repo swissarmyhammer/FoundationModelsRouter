@@ -733,6 +733,12 @@ actor RoutedSessionActor: RoutedSession {
     /// ``AgentDelegationAdvisor``.
     nonisolated let delegationAdvisorSlot = Mutex<AgentDelegationAdvisor?>(nil)
 
+    /// The witness that reads the final result of each tool call of the
+    /// session, or `nil` for a session of a live parent call. The vending
+    /// site binds it before it returns the session (``bind(resultWitness:)``).
+    /// See ``ToolResultWitness``.
+    nonisolated let resultWitnessSlot = Mutex<ToolResultWitness?>(nil)
+
     /// The stop marker of the model call in flight when the delegate hint
     /// stopped it, else `nil`. See ``DelegationHintStop``.
     var delegationHintStop: DelegationHintStop?

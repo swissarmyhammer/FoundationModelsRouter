@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsHooks
 import Tracing
 
@@ -65,6 +66,9 @@ struct ScriptedSessionFixture: SessionDirectoryFixture {
     ///     time.
     ///   - hooks: The hook dispatcher of the router, or `nil` (the default)
     ///     for a router with no hooks.
+    ///   - inlineSettleGrace: The settle period of each background call, in
+    ///     seconds. The default is the default of Extras. With `0`, a
+    ///     background call answers with its pending envelope at once.
     /// - Returns: The vended session, its scripted model's log, and the temp
     ///   directory. The caller ends the fixture.
     /// - Throws: Whatever profile resolution throws. Before it throws, it
@@ -75,7 +79,8 @@ struct ScriptedSessionFixture: SessionDirectoryFixture {
         tempDirPrefix: String,
         budget: TokenBudget? = nil,
         tracer: (any Tracer)? = nil,
-        hooks: HookDispatcher? = nil
+        hooks: HookDispatcher? = nil,
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace
     ) async throws -> ScriptedSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = ScriptedAnswerLog()
@@ -94,7 +99,9 @@ struct ScriptedSessionFixture: SessionDirectoryFixture {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
         return ScriptedSessionFixture(
-            session: profile.standard.makeSession(tools: tools, budget: budget),
+            session: profile.standard.makeSession(
+                configuration: SessionConfiguration(
+                    tools: tools, compaction: CompactionSettings(budget: budget), inlineSettleGrace: inlineSettleGrace)),
             log: log,
             directory: directory,
             vendedBackends: container.vendedBackends,

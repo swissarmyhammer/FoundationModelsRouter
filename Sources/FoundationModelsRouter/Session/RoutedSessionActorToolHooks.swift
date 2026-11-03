@@ -11,7 +11,18 @@ extension RoutedSessionActor {
     ///   ``claimHookedToolCall(named:)``.
     func makeToolCallHooks() -> ToolCallHooks? {
         guard let hooks else { return nil }
-        return ToolCallHooks(hooks: hooks) { await self.claimHookedToolCall(named: $0) }
+        return ToolCallHooks(hooks: hooks, readsFinalResult: resultWitnessSlot.withLock { $0 } != nil) {
+            await self.claimHookedToolCall(named: $0)
+        }
+    }
+
+    /// Binds the witness of the final results. The vending site calls it one
+    /// time, before it returns the session.
+    ///
+    /// - Parameter witness: The witness, or `nil` for a session of a live
+    ///   parent call.
+    nonisolated func bind(resultWitness witness: ToolResultWitness?) {
+        resultWitnessSlot.withLock { $0 = witness }
     }
 
     /// Claims the SDK tool call of a hooked tool body that runs now: the

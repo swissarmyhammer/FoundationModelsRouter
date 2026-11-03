@@ -481,7 +481,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // headless session stays headless. A record with no envelope,
             // with no presence, or with a presence that this version does
             // not know restores interactive, the default.
-            let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
+            let (outbox, runPlane, instancedTools, resultWitness) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
@@ -655,6 +655,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // `index.md`. Construction writes nothing.
                 record: .restored(node.record)
             )
+            session.bind(resultWitness: resultWitness)
             // Crash-edge mail durability (`mailbox.md`, section 5, problem
             // 14): each mail of this node that the transcript holds as queued
             // or delivered, with no terminal record, was cut off with the

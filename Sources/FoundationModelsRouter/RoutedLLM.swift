@@ -218,7 +218,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `outbox` — not the bare originals.
         let delegationAdvisor = AgentDelegationAdvisor.make(
             hint: agentDelegationHint, tools: tools, isRoot: parentCall == nil && agentSpawn == nil)
-        let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
+        let (outbox, runPlane, instancedTools, resultWitness) = makeSessionToolWiring(
             tools,
             sessionID: sessionId,
             cappedToTokenLimit: budget?.toolOutputLimit,
@@ -306,6 +306,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         )
         // Before the session is returned, so no answer runs yet.
         session.bind(delegationAdvisor: delegationAdvisor)
+        session.bind(resultWitness: resultWitness)
         // Before the session is returned, so a query right after this call
         // finds it.
         registerVendedSession(session: session, subagentParentID: subagentParentID, requestedByClient: requestedByClient)
@@ -362,7 +363,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tokenCounter: any TokenCounter,
         inlineSettleGrace: TimeInterval,
         userPresence: UserPresence
-    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
+    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool], resultWitness: ToolResultWitness?) {
         makeSessionToolWiring(
             tools, sessionID: sessionID, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter,
             inlineSettleGrace: inlineSettleGrace, userPresence: userPresence, parentCall: nil)
@@ -396,8 +397,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - delegationAdvisor: The advisor of the hint to give a code change
     ///     to an agent, or `nil` for no hint. It is the call witness of the
     ///     root site, and each `String`-output tool counts its calls in it.
-    /// - Returns: The outbox and the run plane of the session, and the
-    ///   mounted tools.
+    /// - Returns: The outbox and the run plane of the session, the mounted
+    ///   tools, and the witness that reads the final result of each tool call
+    ///   (``ToolResultWitness``), or `nil` for a session of a live parent call.
     func makeSessionToolWiring(
         _ tools: [any Tool],
         sessionID: ULID,
@@ -408,10 +410,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         parentCall: ToolContext?,
         recordedSpawn: SessionRecord.AgentSpawn? = nil,
         delegationAdvisor: AgentDelegationAdvisor? = nil
-    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
+    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool], resultWitness: ToolResultWitness?) {
         let outbox = SessionOutbox(model: chosen)
         let runPlane = RunPlane(
             clock: runClock, userPresence: userPresence, workRegistry: WorkRegistry(sessionID: sessionID))
+        // A live child site drops the witness (`ToolContext.childSite`), so a
+        // session made from a `parentCall` has no result witness.
+        let resultWitness = parentCall == nil ? ToolResultWitness() : nil
+        let callWitness = ToolCallWitnesses(
+            [delegationAdvisor as (any ToolCallWitness)?, resultWitness as (any ToolCallWitness)?].compactMap { $0 })
         let site =
             parentCall.map { call in
                 call.settling(within: inlineSettleGrace).childSite(sessionID: sessionID, runPlane: runPlane, sink: outbox)
@@ -422,17 +429,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 MountSite(
                     sessionID: sessionID, runPlane: runPlane, parentSessionID: spawn.parentSessionId,
                     rootSessionID: spawn.rootSessionId, rootRunPlane: runPlane, sink: outbox, tracer: tracer,
-                    inlineSettleGrace: inlineSettleGrace)
+                    inlineSettleGrace: inlineSettleGrace, callWitness: callWitness)
             }
             ?? MountSite(
                 sessionID: sessionID, runPlane: runPlane, sink: outbox, tracer: tracer,
-                inlineSettleGrace: inlineSettleGrace, callWitness: delegationAdvisor)
+                inlineSettleGrace: inlineSettleGrace, callWitness: callWitness)
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool, site: site, cappedToTokenLimit: tokenLimit, tokenCounter: tokenCounter,
                 delegationAdvisor: delegationAdvisor)
         }
-        return (outbox, runPlane, instancedTools)
+        return (outbox, runPlane, instancedTools, resultWitness)
     }
 
     /// The recording directory a fresh session nests under.

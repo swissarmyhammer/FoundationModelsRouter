@@ -19,7 +19,7 @@ import FoundationModelsRouter
 /// backend, through the same code path: the no-op check and the repetition
 /// check outermost, then the hook layer, then the failure delivery of the
 /// mount. A block on `PreToolUse` thus does not run the tool body, and a
-/// tool body that throws gives `PostToolUse` with `succeeded: false`.
+/// tool body that throws gives `PostToolUse` with a failed result.
 ///
 /// Wrap only a container whose backends call the tools that they get. Do not
 /// wrap a container whose backends put the layer on by themselves (a live

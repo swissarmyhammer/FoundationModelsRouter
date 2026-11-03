@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsHooks
 import FoundationModelsRouter
 import FoundationModelsRouterTestSupport
@@ -146,7 +147,7 @@ struct ScriptedToolHookLayerTests {
                     .post(
                         PostToolUse(
                             toolCallID: use.toolCallID, toolName: name, argumentsJSON: use.argumentsJSON,
-                            output: Self.markerOutput, succeeded: true)),
+                            output: Self.markerOutput, result: OperationResult(outcome: .succeeded))),
                 ])
         }
     }
@@ -168,7 +169,7 @@ struct ScriptedToolHookLayerTests {
             #expect(answer == Self.blockReason)
             let post = try #require(harness.visitor.posts.first)
             #expect(post.output == Self.blockReason)
-            #expect(!post.succeeded)
+            #expect(post.result.outcome == .failed)
         }
     }
 
@@ -177,7 +178,7 @@ struct ScriptedToolHookLayerTests {
     /// The production change that makes this test fail: a layer above the
     /// failure delivery, which does not see the throw of the tool body, or a
     /// layer that says that the call succeeded.
-    @Test("a tool that throws through the container gives PostToolUse with succeeded false")
+    @Test("a tool that throws through the container gives PostToolUse with a failed result")
     func aThrowingToolGivesAFailedPostToolUse() async throws {
         try await Self.withSession(calling: ThrowingMarkerTool()) { harness in
             let answer = try await harness.session.respond(to: Self.prompt)
@@ -193,7 +194,8 @@ struct ScriptedToolHookLayerTests {
                     .post(
                         PostToolUse(
                             toolCallID: use.toolCallID, toolName: ThrowingMarkerTool.toolName,
-                            argumentsJSON: use.argumentsJSON, output: failure, succeeded: false)),
+                            argumentsJSON: use.argumentsJSON, output: failure,
+                            result: OperationResult(outcome: .failed, value: .string(failure)))),
                 ])
         }
     }

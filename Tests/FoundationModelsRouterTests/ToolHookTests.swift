@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsHooks
 import Synchronization
 import Testing
@@ -173,6 +174,66 @@ struct ToolHookTests {
         }
     }
 
+    /// A tool that reports a failure with an exit code (`reportFailure`) and
+    /// then returns, as a shell tool does for a nonzero exit.
+    final class ExitCodeReportingTool: Tool, Sendable {
+        /// The model-facing name of the tool.
+        static let toolName = "exit-code-report"
+
+        /// The exit code that every call reports.
+        static let exitCode = 2
+
+        /// The `Tool` name requirement, bound to ``toolName``.
+        let name = ExitCodeReportingTool.toolName
+
+        /// The `Tool` description requirement.
+        let description = "test-only tool that reports a failure with an exit code and returns"
+
+        /// Reports the failure, and returns the marker of the step.
+        ///
+        /// - Parameter arguments: The arguments of the call; `value` is the
+        ///   step.
+        /// - Returns: ``ScriptedToolFixture/marker(for:)`` for the step.
+        func call(arguments: AmbientToolArguments) async throws -> String {
+            ToolContext.current?.reportFailure(value: .int(Self.exitCode))
+            return ScriptedToolFixture.marker(for: arguments.value)
+        }
+    }
+
+    /// A background tool whose body waits for its gate, then returns the
+    /// marker of the step.
+    struct GatedBackgroundTool: Tool, BackgroundTool {
+        /// The model-facing name of the tool.
+        static let toolName = "gated-background-job"
+
+        /// The `Tool` name requirement, bound to ``toolName``.
+        let name = GatedBackgroundTool.toolName
+
+        /// The `Tool` description requirement.
+        let description = "test-only background tool that waits for its gate"
+
+        /// The latch that the body of the run waits on.
+        let gate: RunLatch
+
+        /// The background mount of the tool, with no timeout.
+        var mount: ToolMount? {
+            ToolMount(mode: .background, timeout: nil)
+        }
+
+        /// Waits for the gate, then returns the marker of the step.
+        ///
+        /// - Parameter arguments: The arguments of the call; `value` is the
+        ///   step.
+        /// - Returns: ``ScriptedToolFixture/marker(for:)`` for the step.
+        func call(arguments: AmbientToolArguments) async throws -> String {
+            await gate.waitUntilOpen()
+            return ScriptedToolFixture.marker(for: arguments.value)
+        }
+    }
+
+    /// The error of a run whose outcome is unknowable.
+    struct LostMarkerFailure: LostRunError {}
+
     /// A scripted session of a router with a dispatcher, and what the test
     /// reads.
     private struct HookedToolSession: HookedSessionFixture {
@@ -204,6 +265,7 @@ struct ToolHookTests {
         calling toolName: String,
         mounting tools: [any Tool],
         visitor: ToolRecordingVisitor = ToolRecordingVisitor(),
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         _ body: (HookedToolSession) async throws -> Void
     ) async throws {
         let hookData = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -211,7 +273,8 @@ struct ToolHookTests {
         let dispatcher = HookDispatcher(dataDirectory: hookData)
         dispatcher.register(visitor)
         let fixture = try await ScriptedSessionFixture.make(
-            playing: oneCall(to: toolName), mounting: tools, tempDirPrefix: tempDirPrefix, hooks: dispatcher)
+            playing: oneCall(to: toolName), mounting: tools, tempDirPrefix: tempDirPrefix, hooks: dispatcher,
+            inlineSettleGrace: inlineSettleGrace)
         defer { await fixture.end() }
         try await body(HookedToolSession(fixture: fixture, dispatcher: dispatcher, visitor: visitor))
     }
@@ -223,15 +286,19 @@ struct ToolHookTests {
     /// - Parameters:
     ///   - tool: The one tool of the session, which the scripted call names.
     ///   - visitor: The visitor of the dispatcher.
+    ///   - inlineSettleGrace: The settle period of each background call.
     ///   - check: The assertions of the test. It gets the hooked session and
     ///     the events of the answer.
     /// - Throws: What the resolve, the answer or `check` throws.
     private static func withAnswer(
         calling tool: some Tool,
         visitor: ToolRecordingVisitor = ToolRecordingVisitor(),
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         _ check: (HookedToolSession, [SessionEvent]) async throws -> Void
     ) async throws {
-        try await withHookedSession(calling: tool.name, mounting: [tool], visitor: visitor) { hooked in
+        try await withHookedSession(
+            calling: tool.name, mounting: [tool], visitor: visitor, inlineSettleGrace: inlineSettleGrace
+        ) { hooked in
             let events = try await collectEvents(hooked.session, prompt: ScriptedToolFixture.prompt)
             try await check(hooked, events)
         }
@@ -248,6 +315,26 @@ struct ToolHookTests {
             #expect(hooked.fixture.log.deliveredToolOutputs == [replacedOutput])
             #expect(recordedToolOutputs(of: hooked.fixture) == [replacedOutput])
         }
+    }
+
+    /// Runs the one scripted answer that calls `tool`, and gives the one
+    /// `PostToolUse` that the call sent.
+    ///
+    /// - Parameters:
+    ///   - tool: The one tool of the session.
+    ///   - visitor: The visitor of the dispatcher.
+    /// - Returns: The `PostToolUse` of the call.
+    /// - Throws: What the answer throws, or when the call sent no
+    ///   `PostToolUse`.
+    private static func postToolUse(
+        of tool: some Tool, visitor: ToolRecordingVisitor = ToolRecordingVisitor()
+    ) async throws -> PostToolUse {
+        var posted: PostToolUse?
+        try await withAnswer(calling: tool, visitor: visitor) { hooked, _ in
+            await hooked.closeAndDrain()
+            posted = hooked.visitor.posts.first
+        }
+        return try #require(posted)
     }
 
     /// A script with one round that calls `toolName` one time with
@@ -377,7 +464,7 @@ struct ToolHookTests {
                     .post(
                         PostToolUse(
                             toolCallID: call.id, toolName: name, argumentsJSON: call.argumentsJSON, output: output,
-                            succeeded: true)),
+                            result: OperationResult(outcome: .succeeded))),
                 ])
         }
     }
@@ -456,7 +543,7 @@ struct ToolHookTests {
             #expect(hooked.fixture.log.deliveredToolOutputs == [Self.blockReason])
             let post = try #require(hooked.visitor.posts.first)
             #expect(post.output == Self.blockReason)
-            #expect(!post.succeeded)
+            #expect(post.result == OperationResult(outcome: .failed, value: .string(Self.blockReason)))
         }
     }
 
@@ -509,7 +596,7 @@ struct ToolHookTests {
 
     /// The production change that makes this test fail: a tool body that
     /// throws and gives no `PostToolUse`, or one that says it succeeded.
-    @Test("a tool body that throws gives PostToolUse with succeeded false")
+    @Test("a tool body that throws gives PostToolUse with a failed result and the error text")
     func aThrowingBodyGivesAFailedPostToolUse() async throws {
         try await Self.withAnswer(calling: ThrowingMarkerTool()) { hooked, events in
             await hooked.closeAndDrain()
@@ -523,9 +610,97 @@ struct ToolHookTests {
                     .post(
                         PostToolUse(
                             toolCallID: call.id, toolName: name, argumentsJSON: call.argumentsJSON, output: failure,
-                            succeeded: false)),
+                            result: OperationResult(outcome: .failed, value: .string(failure)))),
                 ])
             #expect(hooked.fixture.log.deliveredToolOutputs == [failure])
+        }
+    }
+
+    // MARK: - The result of PostToolUse
+
+    /// The production change that makes this test fail: a `PostToolUse` of a
+    /// body that returned with no report that is not `succeeded` with no
+    /// value.
+    @Test("a tool body that returns and reports nothing gives PostToolUse succeeded with no value")
+    func aReturningBodyGivesASucceededResult() async throws {
+        let post = try await Self.postToolUse(of: MarkerEmittingTool())
+        #expect(post.result == OperationResult(outcome: .succeeded, value: nil))
+    }
+
+    /// The production change that makes this test fail: a hook layer that
+    /// drops the value that the tool reported, or sends `succeeded` for a
+    /// nonzero exit.
+    @Test("a tool that reports a failure with an int gives PostToolUse failed with that int")
+    func aReportedFailureGivesTheReportedValue() async throws {
+        let post = try await Self.postToolUse(of: ExitCodeReportingTool())
+        #expect(post.result == OperationResult(outcome: .failed, value: .int(ExitCodeReportingTool.exitCode)))
+    }
+
+    /// The production change that makes this test fail: a reported failure
+    /// that changes the output text that the model gets.
+    @Test("a tool that reports a failure still gives the model its own output")
+    func aReportedFailureKeepsTheModelOutput() async throws {
+        let post = try await Self.postToolUse(of: ExitCodeReportingTool())
+        #expect(post.output == ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName))
+    }
+
+    /// The production change that makes this test fail: a cancel of the body
+    /// that does not map to `cancelled`.
+    @Test("a tool body that throws CancellationError gives PostToolUse cancelled")
+    func aCancelGivesACancelledResult() async throws {
+        let post = try await Self.postToolUse(of: ThrowingMarkerTool(failingWith: { _ in CancellationError() }))
+        #expect(post.result.outcome == .cancelled)
+    }
+
+    /// The production change that makes this test fail: a timeout of the
+    /// body that does not map to `timedOut`.
+    @Test("a tool body that throws a timeout gives PostToolUse timedOut")
+    func aTimeoutGivesATimedOutResult() async throws {
+        let timeout = ToolMountError.timedOut(tool: ThrowingMarkerTool.toolName, timeoutSeconds: 1)
+        let post = try await Self.postToolUse(of: ThrowingMarkerTool(failingWith: { _ in timeout }))
+        #expect(post.result == OperationResult(outcome: .timedOut, value: .string(String(describing: timeout))))
+    }
+
+    /// The production change that makes this test fail: a lost run that does
+    /// not map to `lost`.
+    @Test("a tool body that throws a lost-run error gives PostToolUse lost")
+    func aLostRunGivesALostResult() async throws {
+        let post = try await Self.postToolUse(of: ThrowingMarkerTool(failingWith: { _ in LostMarkerFailure() }))
+        #expect(post.result.outcome == .lost)
+    }
+
+    /// The production change that makes this test fail: a block on
+    /// `PreToolResult` that sends `succeeded` to `PostToolUse`.
+    @Test("a block on PreToolResult gives PostToolUse failed with the reason, and the model gets the reason")
+    func aResultBlockGivesAFailedResult() async throws {
+        let visitor = ToolRecordingVisitor(decideResult: { _ in .block(reason: Self.blockReason) })
+        try await Self.withAnswer(calling: MarkerEmittingTool(), visitor: visitor) { hooked, _ in
+            await hooked.closeAndDrain()
+
+            let post = try #require(hooked.visitor.posts.first)
+            #expect(post.result == OperationResult(outcome: .failed, value: .string(Self.blockReason)))
+            #expect(post.output == Self.blockReason)
+            #expect(hooked.fixture.log.deliveredToolOutputs == [Self.blockReason])
+        }
+    }
+
+    /// The production change that makes this test fail: a background call
+    /// that sends `PostToolUse` when it returns its pending envelope, or that
+    /// never sends it at the end of its run.
+    @Test("a background call gives PostToolUse at the end of its run, not when it returns the pending envelope")
+    func aBackgroundCallPostsAtTheEndOfItsRun() async throws {
+        let gate = RunLatch()
+        try await Self.withAnswer(calling: GatedBackgroundTool(gate: gate), inlineSettleGrace: 0) { hooked, _ in
+            await hooked.dispatcher.drain()
+            #expect(hooked.visitor.posts.isEmpty)
+
+            await gate.open()
+            let posted = await hooked.visitor.recorder.changes.waitUntil { !hooked.visitor.posts.isEmpty }
+            #expect(posted)
+
+            let post = try #require(hooked.visitor.posts.first)
+            #expect(post.result == OperationResult(outcome: .succeeded, value: nil))
+            #expect([post.output] == hooked.fixture.log.deliveredToolOutputs)
         }
     }
 

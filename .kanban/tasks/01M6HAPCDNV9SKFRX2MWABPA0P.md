@@ -41,8 +41,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD (f3a122cc). Engine: 2 findings (OpenPrompts.swift:83 duplication/duplication; OpenPrompts.swift:129 swift/fluent-usage). The four findings of the pass before are fixed: RouterMetrics duplication and reuse (one helper), fork cut loses open prompt (FoldedHistory), firstPrompt reads a cancelled mail (PromptSearch with the shared cover rule). No new finding on them. The SDK shape of a transcript that ends with an unanswered user prompt is unverified offline (note already on the card).
     - next: implementer fixes the 2 open items; re-review.
   timestamp: 2026-11-03T19:44:58.769396+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6hfe992ppch0drkxej9pqt1
+  text: |-
+    ### review — clean
+    - evidence: review sha ce6a248c~1..ce6a248c: 0 findings (confirmed 0, refuted 0, 7 attempted, 0 failed). The finding at OpenPrompts.swift:83 is fixed: the loop now lives in one helper, EventCover.lastIndex, used by OpenPrompts and OpenToolCalls. The finding at OpenPrompts.swift:129 is fixed: open(in:isCovered:) is now openMail(in:isCovered:). All prior findings are checked.
+    - next: card moves to done.
+  timestamp: 2026-11-03T19:51:08.322304+00:00
+position_column: done
+position_ordinal: ffffffffe680
 title: 'Write-ahead of the prompt that starts a submission: a crash must not lose the user message in flight'
 ---
 ## What

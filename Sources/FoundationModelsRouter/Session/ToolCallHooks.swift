@@ -14,6 +14,15 @@ import FoundationModelsHooks
 /// pre PreToolUse -> tool body -> pre PreToolResult -> output to the model -> post PostToolUse
 /// ```
 ///
+/// The `PostToolUse` carries the final result of the call
+/// (`OperationResult`). A session with a ``ToolResultWitness`` reads the
+/// result that the tool reported. A foreground call has it when the body
+/// returns. A background call returns its pending envelope first, so its
+/// `PostToolUse` goes out at the end of its run. A session without the
+/// witness (a session of a live parent call) sends `PostToolUse` when the
+/// body returns, with `succeeded`, or with the outcome of the error that the
+/// body threw.
+///
 /// A tool call outside a model call, where nothing is bound, runs no hook.
 /// A dispatcher with no visitor runs no hook either.
 struct ToolCallHooks: Sendable {
@@ -23,6 +32,11 @@ struct ToolCallHooks: Sendable {
 
     /// The hooks of the session that makes the model call.
     let hooks: SessionHooks
+
+    /// Whether the session has a ``ToolResultWitness``, which gives the final
+    /// result of each call to the probe of the call (``ToolCallEndProbe``).
+    /// Without one, `PostToolUse` goes out when the tool body returns.
+    let readsFinalResult: Bool
 
     /// Finds and claims the SDK tool call of a tool body that runs now, by
     /// the name of its tool (``RoutedSessionActor/claimHookedToolCall(named:)``).
@@ -96,19 +110,21 @@ struct ToolCallHooks: Sendable {
         let admitted: Arguments
         switch await admit(&call, arguments: arguments) {
         case .refused(let text):
-            post(call, output: text, succeeded: false)
+            post(call, output: text, result: .failed(because: text))
             return form.replaced(text)
         case .admitted(let finalArguments):
             admitted = finalArguments
         }
+        let probe = readsFinalResult ? ToolCallEndProbe() : nil
         let output: Output
         do {
-            output = try await body(admitted)
+            output = try await ToolCallEndProbe.$current.withValue(probe) { try await body(admitted) }
         } catch {
-            post(call, output: String(describing: error), succeeded: false)
+            let text = String(describing: error)
+            post(call, output: text, result: OperationResult(outcome: OperationOutcome(thrown: error), value: .string(text)))
             throw error
         }
-        return await screenResult(of: call, output: output, form: form)
+        return await screenResult(of: call, output: output, form: form, endProbe: probe)
     }
 
     /// What `PreToolUse` lets the tool body do.
@@ -153,28 +169,52 @@ struct ToolCallHooks: Sendable {
     /// that returned.
     ///
     /// A replaced `output` is what the model gets. A block gives the model
-    /// its reason, and the `PostToolUse` then tells that the call did not
-    /// succeed. With no change, the model gets `output` itself.
+    /// its reason, and the `PostToolUse` then tells that the call failed, with
+    /// the reason as the value. With no change, the model gets `output`
+    /// itself, and the `PostToolUse` carries the final result of the call: at
+    /// once when the call ended, else at the end of its run.
     ///
     /// - Parameters:
     ///   - call: The identity of the call.
     ///   - output: The output of the tool body.
     ///   - form: How the output becomes text, and text becomes an output.
+    ///   - endProbe: The probe that gets the final result of the call, or
+    ///     `nil` when the session has no ``ToolResultWitness``.
     /// - Returns: The output that the model gets.
     private func screenResult<Output>(
-        of call: HookedToolCall, output: Output, form: HookedOutputForm<Output>
+        of call: HookedToolCall, output: Output, form: HookedOutputForm<Output>, endProbe: ToolCallEndProbe?
     ) async -> Output {
         let text = form.text(output)
         let event = PreToolResult(
             toolCallID: call.id, toolName: call.toolName, argumentsJSON: call.argumentsJSON, output: text)
         switch await hooks.routerHooks.dispatcher.pre(event, session: hooks.session) {
         case .blocked(let reason):
-            post(call, output: reason, succeeded: false)
+            post(call, output: reason, result: .failed(because: reason))
             return form.replaced(reason)
         case .proceed(let final), .approved(let final):
-            post(call, output: final.output, succeeded: true)
+            postWhenEnded(call, output: final.output, probe: endProbe)
             return final.output == text ? output : form.replaced(final.output)
         }
+    }
+
+    /// Sends the `PostToolUse` of a call whose body returned and whose output
+    /// no hook blocked.
+    ///
+    /// With a probe, the result is the final result of the call, and it goes
+    /// out when the call ends: at once for a foreground call, and at the end
+    /// of the run for a background call. With no probe, the call is a success
+    /// that reported nothing.
+    ///
+    /// - Parameters:
+    ///   - call: The identity of the call.
+    ///   - output: The final output of the call, as text.
+    ///   - probe: The probe that gets the final result, or `nil`.
+    private func postWhenEnded(_ call: HookedToolCall, output: String, probe: ToolCallEndProbe?) {
+        guard let probe else {
+            post(call, output: output, result: OperationResult(outcome: .succeeded))
+            return
+        }
+        probe.whenEnded { result in post(call, output: output, result: result) }
     }
 
     /// Sends the `PostToolUse` of `call`.
@@ -182,17 +222,17 @@ struct ToolCallHooks: Sendable {
     /// - Parameters:
     ///   - call: The identity of the call.
     ///   - output: The final output of the call, as text.
-    ///   - succeeded: Whether the call succeeded.
-    private func post(_ call: HookedToolCall, output: String, succeeded: Bool) {
+    ///   - result: How the call ended, and its own value.
+    private func post(_ call: HookedToolCall, output: String, result: OperationResult) {
         hooks.post(
             PostToolUse(
                 toolCallID: call.id, toolName: call.toolName, argumentsJSON: call.argumentsJSON, output: output,
-                succeeded: succeeded))
+                result: result))
     }
 }
 
 /// The identity of one hooked tool call, as its tool events carry it.
-private struct HookedToolCall {
+private struct HookedToolCall: Sendable {
     /// The JSON text of a call whose arguments give no JSON: an empty object.
     static let emptyArgumentsJSON = "{}"
 
@@ -345,7 +385,7 @@ struct HookedResultTool<Wrapped: Tool>: Tool, SubmissionBoundaryTool, ToolDecora
 /// The failure delivery of FoundationModelsExtras is the outermost layer of a
 /// mounted tool: it gives a failure to the model as the output of the call,
 /// so a throw of the tool body never leaves it. The tool events must see that
-/// throw (`PostToolUse` with `succeeded: false`). Thus the hook layer goes
+/// throw (`PostToolUse` with a failed result). Thus the hook layer goes
 /// beneath the failure delivery: on the tool that still throws, with a new
 /// failure delivery over it. The failure delivery then gives the final
 /// output, after a hook replaced it, to the tool-result append boundary.
@@ -376,5 +416,15 @@ enum ToolCallHooking {
             return HookedResultTool(wrapped: tool)
         }
         return HookedTextTool(wrapped: textTool)
+    }
+}
+
+extension OperationResult {
+    /// The result of a call that failed, with the reason as its value.
+    ///
+    /// - Parameter reason: Why the call failed.
+    /// - Returns: A failed result with `reason` as the value.
+    fileprivate static func failed(because reason: String) -> OperationResult {
+        OperationResult(outcome: .failed, value: .string(reason))
     }
 }
