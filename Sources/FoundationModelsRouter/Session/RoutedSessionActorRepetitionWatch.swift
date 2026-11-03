@@ -398,15 +398,25 @@ extension RoutedSessionActor {
     /// The check does not apply the reasoning token limit: a pass that wrote
     /// a tool call acts, and the limit stops only a pass that does not act.
     ///
-    /// Nothing happens when the detection is not enabled, when no watch is
-    /// active, or when the tool body is not in an open model call of this
+    /// A tool body of this session whose model call already ended must not
+    /// run. The task of the tool body waits for the actor, and the watch can
+    /// stop the call, and the call can return, before the actor serves this
+    /// check. The stop marker is then gone, so the closed mark of the call
+    /// stops the body.
+    ///
+    /// Nothing else happens when the detection is not enabled, when no watch
+    /// is active, or when the tool body is not in a model call of this
     /// session.
     ///
     /// - Parameter call: The identity of the tool call whose body is about to
     ///   run, or `nil` when its arguments cannot be compared.
     /// - Throws: `CancellationError` when the watch stopped the call, before
-    ///   or in this check. The tool body must then not run.
+    ///   or in this check, or when the model call of the tool body ended. The
+    ///   tool body must then not run.
     func checkToolCallForRepetition(_ call: ToolCallIdentity?) throws {
+        if let mark = SessionCallMark.current, mark.sessionID == id, !mark.isOpenCall(of: id) {
+            throw CancellationError()
+        }
         guard repetitionDetection.isEnabled, let watchId = repetitionWatch.activeWatchId,
             SessionCallMark.current?.isOpenCall(of: id) == true
         else { return }

@@ -97,6 +97,29 @@ struct ToolCallRepetitionStopTests {
         #expect(!Self.holdsToolCalls(continuation))
     }
 
+    /// The check of a tool body that the actor serves after its model call
+    /// ended. The watch stopped the call, the call returned and its mark
+    /// closed, and only then did the actor serve the check of the tool task.
+    /// The check must stop the body: the stop that the watch recorded is
+    /// gone by then.
+    @Test("a tool body whose model call already ended does not run")
+    func checkAfterTheModelCallEndedStopsTheBody() async throws {
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: ScriptedAnswerScript(rounds: []), mounting: [], tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
+        let actor = try #require(fixture.session as? RoutedSessionActor)
+        let endedCall = SessionCallMark(sessionID: actor.id)
+        endedCall.close()
+
+        await #expect(throws: CancellationError.self) {
+            try await SessionCallMark.$current.withValue(endedCall) {
+                try await actor.checkToolCallForRepetition(
+                    ToolCallIdentity(toolName: CountingRunCodeTool.toolName, argumentsJSON: "{}"))
+            }
+        }
+    }
+
     @Test("a tool call whose snippet holds 30 different lines is not stopped, and the tool runs")
     func differentSnippetRuns() async throws {
         let (fixture, events) = try await Self.runAnswer(snippetLines: Self.differentLines)
