@@ -638,10 +638,31 @@ struct WriteAheadToolCallTests {
         let events = [
             Self.textEvent(seq: 1, kind: .prompt, entryID: "p1"),
             Self.markerEvent(seq: 2, callID: Self.firstCallID),
-            Self.textEvent(seq: 3, kind: .prompt, entryID: "p2"),
+            Self.toolCallsEvent(seq: 3, callIDs: [Self.firstCallID]),
+            Self.textEvent(seq: 4, kind: .prompt, entryID: "p2"),
         ]
 
         #expect(TranscriptTree.forkPrefix(of: events, entryCount: 2).map(\.seq) == [1, 2, 3])
+    }
+
+    @Test("a fork keeps an open call marker at the end with its call and its output when its cut counts them")
+    func forkKeepsAnOpenCallAtTheEnd() {
+        let events = [
+            Self.textEvent(seq: 1, kind: .prompt, entryID: "p1"),
+            Self.markerEvent(seq: 2, callID: Self.firstCallID),
+        ]
+
+        #expect(TranscriptTree.forkPrefix(of: events, entryCount: 3).map(\.seq) == [1, 2])
+    }
+
+    @Test("a fork keeps no open call marker at the end when its cut does not count the call")
+    func forkKeepsNoOpenCallBeyondItsCut() {
+        let events = [
+            Self.textEvent(seq: 1, kind: .prompt, entryID: "p1"),
+            Self.markerEvent(seq: 2, callID: Self.firstCallID),
+        ]
+
+        #expect(TranscriptTree.forkPrefix(of: events, entryCount: 1).map(\.seq) == [1])
     }
 
     // MARK: - No read of the transcript between the passes

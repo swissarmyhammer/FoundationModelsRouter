@@ -196,13 +196,21 @@ struct RouterMetrics: Sendable {
     /// Counts one write-ahead marker of a tool call that the recorder could
     /// not write. The counter has no dimension.
     func recordDroppedToolCallMarker() {
-        Counter(label: RouterTelemetry.MetricName.toolCallMarkerDropped, factory: factory).increment()
+        recordDroppedMarker(label: RouterTelemetry.MetricName.toolCallMarkerDropped)
     }
 
     /// Counts one write-ahead marker of a prompt that the recorder could not
     /// write. The counter has no dimension.
     func recordDroppedPromptMarker() {
-        Counter(label: RouterTelemetry.MetricName.promptMarkerDropped, factory: factory).increment()
+        recordDroppedMarker(label: RouterTelemetry.MetricName.promptMarkerDropped)
+    }
+
+    /// Counts one write-ahead marker that the recorder could not write, in
+    /// the counter with the label `label`. The counter has no dimension.
+    ///
+    /// - Parameter label: The label of the counter of the kind of marker.
+    private func recordDroppedMarker(label: String) {
+        Counter(label: label, factory: factory).increment()
     }
 
     /// Counts one compaction.

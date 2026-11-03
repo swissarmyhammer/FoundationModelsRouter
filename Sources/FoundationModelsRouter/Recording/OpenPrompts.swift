@@ -80,12 +80,25 @@ enum OpenPrompts {
     /// - Returns: The index of the newest covering event, by mail id.
     private static func lastCoveringIndex(in events: [TranscriptEvent]) -> [MailID: Int] {
         var coveredAt: [MailID: Int] = [:]
-        for (index, event) in events.enumerated() where event.kind == .prompt || event.kind == .mail {
-            for record in event.mailRecords where covers(record) {
-                coveredAt[record.mailID] = index
+        for (index, event) in events.enumerated() {
+            for id in coveredMailIDs(by: event) {
+                coveredAt[id] = index
             }
         }
         return coveredAt
+    }
+
+    /// The ids of the mail that `event` covers: the mail that a `.prompt`
+    /// event delivers, and the mail that a `.mail` event ends. The one rule
+    /// of the cover: the fold of the events (``folding(_:)``) and the read of
+    /// the first prompt (``FirstPromptReader``) both use it.
+    ///
+    /// - Parameter event: An event of one session.
+    /// - Returns: The ids of the covered mail, or none for an event of
+    ///   another kind.
+    static func coveredMailIDs(by event: TranscriptEvent) -> [MailID] {
+        guard event.kind == .prompt || event.kind == .mail else { return [] }
+        return event.mailRecords.filter(covers).map(\.mailID)
     }
 
     /// Whether `record` covers the open marker of its mail.
@@ -101,6 +114,27 @@ enum OpenPrompts {
         }
     }
 
+    /// The first mail id and the text of the open mail of `marker`: the mail
+    /// of the marker that no record covers, with the text of each joined as
+    /// the `.prompt` entry of their submission joins them. The one rule of
+    /// the open mail: the fold of the events (``folding(_:)``) and the read of
+    /// the first prompt (``FirstPromptReader``) both use it.
+    ///
+    /// - Parameters:
+    ///   - marker: A ``TranscriptEvent/Kind/promptStarted`` event.
+    ///   - isCovered: Whether a record covers the mail with this id.
+    /// - Returns: The id of the first open mail and the text of the open
+    ///   mail, or `nil` when no mail of the marker is open or the open mail
+    ///   has no text.
+    static func open(
+        in marker: TranscriptEvent, isCovered: (MailID) -> Bool
+    ) -> (firstID: MailID, text: String)? {
+        let open = marker.takenMail.filter { !isCovered($0.id) }
+        let texts = open.compactMap(\.promptText)
+        guard let first = open.first, !texts.isEmpty else { return nil }
+        return (first.id, texts.joined(separator: ContextRenderer.blockSeparator))
+    }
+
     /// The `.prompt` event that replaces `marker`, or `nil` when no mail of
     /// the marker is open.
     ///
@@ -113,14 +147,11 @@ enum OpenPrompts {
     private static func openPrompt(
         of marker: TranscriptEvent, at index: Int, coveredAt: [MailID: Int]
     ) -> TranscriptEvent? {
-        let open = marker.takenMail.filter { (coveredAt[$0.id] ?? -1) < index }
-        let texts = open.compactMap(\.promptText)
-        guard let first = open.first, !texts.isEmpty else { return nil }
-        let entryID = openEntryIDPrefix + "\(first.id)"
-        let text = texts.joined(separator: ContextRenderer.blockSeparator)
+        guard let open = open(in: marker, isCovered: { (coveredAt[$0] ?? -1) > index }) else { return nil }
+        let entryID = openEntryIDPrefix + "\(open.firstID)"
         return OpenToolCalls.rekinded(
-            marker, as: .prompt, text: text,
+            marker, as: .prompt, text: open.text,
             entry: TranscriptEntryPayload(
-                entryId: entryID, segments: [.text(id: entryID + textSegmentSuffix, content: text)]))
+                entryId: entryID, segments: [.text(id: entryID + textSegmentSuffix, content: open.text)]))
     }
 }

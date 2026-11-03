@@ -17,6 +17,23 @@ comments:
     - Known limit: a fork cut at the end of a restored parent that still has an open prompt keeps no open prompt on a later restore of the fork (the cut counts entry events, as for open tool calls).
     - Note: SessionAnswerTests "the answer carries the diff's tool calls ..." failed in 2 of 3 full runs with the two parallel calls in swapped order, and passed alone. The order of parallel tool starts is a race that this change does not touch.
   timestamp: 2026-11-03T19:12:46.101862+00:00
+- actor: claude-code
+  id: 01m6he35x0ngf7s4v0na6hp90v
+  text: |-
+    ### review — findings
+    - evidence: review sha 313b3890~1..313b3890. Engine: 2 findings (RouterMetrics.swift:204, duplication and reuse). Reviewer judgment on the known limits: fork cut at the end of a restored parent loses the open prompt = real defect, recorded; firstPrompt returns the text of a later cancelled mail = real defect, recorded; the SDK shape of a transcript that ends with an unanswered user prompt = cannot be checked offline, not a code defect, no finding. 4 open findings in the description.
+    - next: implementer fixes the 4 items; re-review.
+  timestamp: 2026-11-03T19:27:35.840420+00:00
+- actor: claude-code
+  id: 01m6hevpse3trb8216zpksxgey
+  text: |-
+    ### implement (review findings) — changed
+    - Findings 1 and 2: one private helper recordDroppedMarker(label:) in RouterMetrics; both public entry points stay.
+    - Finding 3: the cut of a fork now counts the entries of the folded history (new FoldedHistory). forkPrefix keeps an open prompt marker or open tool call marker when the cut counts its entries. A restored session starts its historyOrdinal at the folded count. Tool call markers use the same rule.
+    - Finding 4: FirstPromptReader uses a PromptSearch that reads on after a marker until a record covers it. It shares coveredMailIDs(by:) and open(in:isCovered:) with OpenPrompts.
+    - Note: the SDK shape of a transcript that ends with an unanswered user prompt is unverified offline.
+    - Tests: full swift test, 2383 tests in 283 suites passed.
+  timestamp: 2026-11-03T19:40:59.566409+00:00
 position_column: review
 position_ordinal: '80'
 title: 'Write-ahead of the prompt that starts a submission: a crash must not lose the user message in flight'
@@ -44,3 +61,14 @@ HIGH priority (coordinator, 2026-11-03). The Agents session found that a child c
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #subagents
+## Review Findings (2026-11-03 13:16)
+
+> Scope: `review sha 313b3890~1..313b3890` — reviewed the diffs only — lines this change added or modified. 36 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Tracing/RouterMetrics.swift:204` `duplication/duplication` — recordDroppedPromptMarker repeats the body of recordDroppedToolCallMarker. Both functions build one Counter with a label and call increment() with no dimension. Only the metric label differs. A later change to one counter pattern can drift from the other copy. Extract one private helper, for example `recordDroppedMarker(named label: String)`, that builds the Counter and increments it. Have recordDroppedPromptMarker and recordDroppedToolCallMarker call it with their own label. Weigh the gain against the cost: each body is one line, so skip this change if you judge the pattern too small to be worth a helper.
+- [x] `Sources/FoundationModelsRouter/Tracing/RouterMetrics.swift:204` `reuse/reuse` — recordDroppedPromptMarker() is a near-copy of recordDroppedToolCallMarker() (lines 198-200). Both build one Counter with a single metric label and call increment(). The only difference is the label. The second function repeats the first instead of sharing one helper that takes the label as a parameter. Two copies of the counting logic can drift apart. Add one private helper, for example `private func recordDroppedMarker(_ label: String)`, that builds the Counter and calls increment(). Make recordDroppedToolCallMarker() and recordDroppedPromptMarker() both call it with their metric name. Keep both public entry points, so the call sites in the recorder do not change.
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift` `correctness/known-limit` — (reviewer judgment, a real defect.) A fork cut at the end of a restored parent that has an open prompt loses that prompt. The fork cut counts entry events on disk (`historyOrdinal` is `effectiveEvents.count`), and `forkPrefix` drops a `.promptStarted` marker after the last kept entry. But the live transcript of the fork is seeded from the parent backend, which holds the open prompt, and `persistedEntryCount` counts it as saved. So the fork answers a user message that its recording never holds: the next restore of the fork has a response with no prompt. This is the case that this card exists to prevent. Make the fork keep the open prompt of the parent: for example, count a marker with open mail at the end of the parent in the fork cut, or write the open prompt of a restored session as a `.prompt` entry.
+- [x] `Sources/FoundationModelsRouter/Recording/FirstPromptReader.swift` `correctness/known-limit` — (reviewer judgment, a real defect.) `firstPrompt` stops at the first `.promptStarted` marker. When a later `.mail` record `.cancelled` or `.answerEnded` ends the mail of that marker, `OpenPrompts.folding` drops the marker, so the transcript has no such prompt. But `firstPrompt` returns the text of the cancelled mail. If a later submission has a real `.prompt` entry, `firstPrompt` still returns the cancelled text and not the first prompt of the transcript. The two readers disagree. Make `firstPrompt` apply the same cover rule as `OpenPrompts` (read on to find a delivery or terminal record of the mail of the marker), and add a test with a cancelled first mail.

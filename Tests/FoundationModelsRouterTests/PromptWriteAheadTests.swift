@@ -508,11 +508,12 @@ struct PromptWriteAheadTests {
 
     @Test("a fork inherits no prompt marker that follows the last entry of its cut point")
     func forkInheritsNoPromptMarkerOfALaterSubmission() {
+        let queued = Self.mail(Self.queuedPrompt)
         let events = [
             Self.entryEvent(seq: 1, kind: .prompt, entryID: "p1"),
             Self.entryEvent(seq: 2, kind: .response, entryID: "r1"),
-            Self.markerEvent(seq: 3, mails: [Self.mail(Self.queuedPrompt)]),
-            Self.entryEvent(seq: 4, kind: .prompt, entryID: "p2"),
+            Self.markerEvent(seq: 3, mails: [queued]),
+            Self.promptEvent(seq: 4, delivering: [queued]),
         ]
 
         #expect(TranscriptTree.forkPrefix(of: events, entryCount: 2).map(\.seq) == [1, 2])
@@ -520,12 +521,116 @@ struct PromptWriteAheadTests {
 
     @Test("a fork keeps a prompt marker that a later entry of its cut point follows")
     func forkKeepsAPromptMarkerBeforeItsCut() {
+        let message = Self.mail(Self.prompt)
         let events = [
-            Self.markerEvent(seq: 1, mails: [Self.mail(Self.prompt)]),
-            Self.entryEvent(seq: 2, kind: .prompt, entryID: "p1"),
+            Self.markerEvent(seq: 1, mails: [message]),
+            Self.promptEvent(seq: 2, delivering: [message]),
             Self.entryEvent(seq: 3, kind: .response, entryID: "r1"),
         ]
 
         #expect(TranscriptTree.forkPrefix(of: events, entryCount: 1).map(\.seq) == [1, 2])
+    }
+
+    @Test("a fork keeps a prompt marker that no entry covers when its cut counts the user message of the marker")
+    func forkKeepsAnOpenPromptMarkerAtTheEnd() {
+        let events = [
+            Self.entryEvent(seq: 1, kind: .prompt, entryID: "p1"),
+            Self.entryEvent(seq: 2, kind: .response, entryID: "r1"),
+            Self.markerEvent(seq: 3, mails: [Self.mail(Self.queuedPrompt)]),
+        ]
+
+        #expect(TranscriptTree.forkPrefix(of: events, entryCount: 3).map(\.seq) == [1, 2, 3])
+    }
+
+    @Test("a fork keeps no open prompt marker that its cut does not count")
+    func forkKeepsNoOpenPromptMarkerBeyondItsCut() {
+        let events = [
+            Self.entryEvent(seq: 1, kind: .prompt, entryID: "p1"),
+            Self.entryEvent(seq: 2, kind: .response, entryID: "r1"),
+            Self.markerEvent(seq: 3, mails: [Self.mail(Self.queuedPrompt)]),
+        ]
+
+        #expect(TranscriptTree.forkPrefix(of: events, entryCount: 2).map(\.seq) == [1, 2])
+    }
+
+    @Test("a fork of a restored parent with an open prompt keeps the prompt, the open call and its output before its response")
+    @MainActor
+    func forkOfARestoredParentKeepsTheOpenPrompt() async throws {
+        let held = try await Self.holdFirstSubmission()
+        defer { await held.fixture.end() }
+        let parentID = held.fixture.started.session.id
+        let cut = try RecordedForkFixtures.cut(atEndOf: parentID, under: held.fixture.routerDirectory)
+        let forkID = ULID.generate()
+        let forkDirectory = try RecordedForkFixtures.writeFork(
+            id: forkID, under: held.fixture.started.session.recordingDirectory, cut: cut)
+        let transcript = forkDirectory.appendingPathComponent(transcriptFileName, isDirectory: false)
+        for event in [
+            Self.entryEvent(seq: 1_000, kind: .prompt, entryID: "fork-prompt"),
+            Self.entryEvent(seq: 1_001, kind: .response, entryID: "fork-response"),
+        ] {
+            try JSONLAppend.toDisk(event, transcript)
+        }
+
+        let restored = Array(
+            try TranscriptTree.load(under: held.fixture.routerDirectory).effectiveTranscript(forSession: forkID))
+
+        #expect(Self.kinds(of: restored).suffix(5) == [.prompt, .toolCalls, .toolOutput, .prompt, .response])
+        #expect(Self.promptTexts(in: restored) == [Self.prompt, "fork-prompt"])
+    }
+
+    @Test("the first prompt of a fork of a restored parent with an open prompt is the open prompt")
+    @MainActor
+    func firstPromptOfAForkReadsTheOpenPromptOfItsParent() async throws {
+        let held = try await Self.holdFirstSubmission()
+        defer { await held.fixture.end() }
+        let cut = try RecordedForkFixtures.cut(
+            atEndOf: held.fixture.started.session.id, under: held.fixture.routerDirectory)
+        let forkDirectory = try RecordedForkFixtures.writeFork(
+            under: held.fixture.started.session.recordingDirectory, cut: cut)
+
+        #expect(try FirstPromptReader.firstPrompt(ofSessionIn: forkDirectory) == Self.prompt)
+    }
+
+    // MARK: - The first prompt of a session whose first message was cancelled
+
+    @Test("the first prompt skips the marker of a message that a later cancelled record ended")
+    func firstPromptSkipsACancelledMarker() throws {
+        let cancelled = Self.mail(Self.queuedPrompt)
+        let answered = Self.mail(Self.prompt)
+        let events = [
+            Self.markerEvent(seq: 1, mails: [cancelled]),
+            Self.mailEvent(seq: 2, record: .cancelled(cancelled.id)),
+            Self.markerEvent(seq: 3, mails: [answered]),
+            Self.promptEvent(seq: 4, delivering: [answered]),
+        ]
+
+        #expect(try Self.firstPrompt(of: events) == Self.prompt)
+    }
+
+    @Test("the first prompt keeps the marker of a message that no record ends")
+    func firstPromptKeepsAnOpenMarker() throws {
+        let open = Self.mail(Self.queuedPrompt)
+        let later = Self.mail(Self.prompt)
+        let events = [
+            Self.markerEvent(seq: 1, mails: [open]),
+            Self.markerEvent(seq: 2, mails: [later]),
+            Self.promptEvent(seq: 3, delivering: [later]),
+        ]
+
+        #expect(try Self.firstPrompt(of: events) == Self.queuedPrompt)
+    }
+
+    /// The first prompt that the reader finds in a root session folder that
+    /// holds `events`.
+    private static func firstPrompt(of events: [TranscriptEvent]) throws -> String? {
+        let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+            .appendingPathComponent(ULID.generate().description, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        try SessionRecordFixtures.write(SessionRecordFixtures.record(in: directory), to: directory)
+        let transcript = directory.appendingPathComponent(transcriptFileName, isDirectory: false)
+        for event in events {
+            try JSONLAppend.toDisk(event, transcript)
+        }
+        return try FirstPromptReader.firstPrompt(ofSessionIn: directory)
     }
 }

@@ -4,14 +4,20 @@ import FoundationModelsExtras
 /// Reads the first prompt of a recorded session without a restore.
 ///
 /// The read opens the `transcript.jsonl` of the session and reads it in
-/// chunks. It decodes line by line and stops at the first
-/// ``TranscriptEvent/Kind/prompt`` event or the first
-/// ``TranscriptEvent/Kind/promptStarted`` marker, so it loads no later line,
-/// no other session and no tree. The session writes the marker when the pump
-/// takes the message, and the `.prompt` entry only at the end of the
-/// submission, so a session that a crash cut in its first submission has the
-/// marker and no entry. A marker and the entry of the same message have the
-/// same body. A fork has no prompt of its own before its cut, so
+/// chunks. It decodes line by line, so it loads no other session and no tree.
+/// It stops at the first ``TranscriptEvent/Kind/prompt`` event that no
+/// pending marker precedes. The session writes a
+/// ``TranscriptEvent/Kind/promptStarted`` marker when the pump takes the
+/// message, and the `.prompt` entry only at the end of the submission, so a
+/// session that a crash cut in its first submission has the marker and no
+/// entry. A marker and the entry of the same message have the same body.
+///
+/// A marker holds the place of the first prompt only while its mail is open.
+/// The read applies the rule of ``OpenPrompts``: a later `.prompt` entry that
+/// delivers the mail, or a later `.mail` record that ends it, covers the
+/// marker, and the marker is then no prompt of the transcript. So the read
+/// goes on after a marker until a record covers it, or until the end of the
+/// events that it may read. A fork has no prompt of its own before its cut, so
 /// the read goes up the folders of its parents, up to the cut of each fork,
 /// as ``TranscriptTree/effectiveEntryEvents(forSession:alongWith:)`` does.
 enum FirstPromptReader {
@@ -31,6 +37,13 @@ enum FirstPromptReader {
     /// file gives the first, a read of one gives the second.
     private static let missingFileCodes: Set<CocoaError.Code> = [.fileNoSuchFile, .fileReadNoSuchFile]
 
+    /// The first prompt of a session.
+    private struct FirstPrompt {
+        /// The body of the prompt, or `nil` for a prompt event with no prompt
+        /// text of its own.
+        let body: String?
+    }
+
     /// What a scan of the effective events of one session found.
     private enum Scan {
         /// The first prompt event or prompt marker, with its body.
@@ -39,6 +52,77 @@ enum FirstPromptReader {
         /// No prompt event in the events that the scan was allowed to read.
         /// Holds the count of entry-kind events that the scan counted.
         case exhausted(entries: Int)
+    }
+
+    /// The search for the first prompt in the events of one folder, in order.
+    ///
+    /// It holds the markers that may still be open, and it ends them by the
+    /// cover rule of ``OpenPrompts``.
+    private struct PromptSearch {
+        /// A marker that no record has covered yet, with the mail that later
+        /// records covered.
+        private struct PendingMarker {
+            /// The ``TranscriptEvent/Kind/promptStarted`` event.
+            let marker: TranscriptEvent
+
+            /// The ids of the mail of the marker that a later record covered.
+            var covered: Set<MailID> = []
+        }
+
+        /// The markers that have open mail, in event order.
+        private var pending: [PendingMarker] = []
+
+        /// The first `.prompt` event that a pending marker preceded. It is
+        /// the first prompt when each such marker is covered. `nil` when
+        /// there is no such event yet.
+        private var firstEntry: FirstPrompt?
+
+        /// Takes the next event of the folder.
+        ///
+        /// - Parameter event: The event.
+        /// - Returns: The first prompt when this event settles it, or `nil`
+        ///   when the search goes on.
+        mutating func read(_ event: TranscriptEvent) -> FirstPrompt? {
+            if event.kind == .promptStarted {
+                if OpenPrompts.open(in: event, isCovered: { _ in false }) != nil {
+                    pending.append(PendingMarker(marker: event))
+                }
+                return nil
+            }
+            cover(by: event)
+            let entry = event.kind == .prompt ? FirstPrompt(body: event.promptBody) : nil
+            guard pending.isEmpty else {
+                firstEntry = firstEntry ?? entry
+                return nil
+            }
+            return firstEntry ?? entry
+        }
+
+        /// Applies the records of `event` to the pending markers: a marker
+        /// with no open mail left leaves the search.
+        ///
+        /// - Parameter event: An event of the folder.
+        mutating func cover(by event: TranscriptEvent) {
+            let ids = OpenPrompts.coveredMailIDs(by: event)
+            guard !ids.isEmpty else { return }
+            for index in pending.indices {
+                pending[index].covered.formUnion(ids)
+            }
+            pending.removeAll { OpenPrompts.open(in: $0.marker, isCovered: $0.covered.contains) == nil }
+        }
+
+        /// The first prompt when the events of the folder end.
+        ///
+        /// - Parameter keepingOpenMarkers: Whether the pending markers still
+        ///   count as prompts. They do not when the events end at the cut of
+        ///   a fork that keeps no marker.
+        /// - Returns: The first prompt, or `nil` when the events hold none.
+        func finish(keepingOpenMarkers: Bool) -> FirstPrompt? {
+            guard keepingOpenMarkers, let first = pending.first,
+                let open = OpenPrompts.open(in: first.marker, isCovered: first.covered.contains)
+            else { return firstEntry }
+            return FirstPrompt(body: open.text)
+        }
     }
 
     /// The first prompt of the session in `folder`.
@@ -89,21 +173,32 @@ enum FirstPromptReader {
                 entries = parentEntries
             }
         }
-        var body: String??
+        var search = PromptSearch()
+        var found: FirstPrompt?
         try forEachEvent(in: folder.appendingPathComponent(transcriptFileName, isDirectory: false)) { event in
-            // A marker after the last entry that the cut keeps belongs to a
-            // submission that the fork does not inherit
+            // The first entry-kind event after the cut ends the events that
+            // the fork inherits. A submission that its entry delivers can
+            // still cover a marker before the cut, so the stop covers first
             // (``TranscriptTree/forkPrefix(of:entryCount:)``).
-            let atCut = entryLimit.map { entries >= $0 } ?? false
-            if atCut && (event.kind.isEntryKind || event.kind == .promptStarted) { return false }
+            if let limit = entryLimit, entries >= limit, event.kind.isEntryKind {
+                search.cover(by: event)
+                return false
+            }
             if event.kind.isEntryKind {
                 entries += 1
             }
-            guard event.kind == .prompt || event.kind == .promptStarted else { return true }
-            body = .some(event.promptBody)
-            return false
+            found = search.read(event)
+            return found == nil
         }
-        return body.map(Scan.found) ?? .exhausted(entries: entries)
+        // The cut of a fork counts the entries that it keeps and the open
+        // markers that it keeps. A marker that waits at the end of the
+        // events before the cut is in the cut only when the cut counts more
+        // than the entries of this folder.
+        let keepsOpenMarkers = entryLimit.map { entries < $0 } ?? true
+        guard let body = found ?? search.finish(keepingOpenMarkers: keepsOpenMarkers) else {
+            return .exhausted(entries: entries)
+        }
+        return .found(body.body)
     }
 
     /// The record of the session in `folder`.

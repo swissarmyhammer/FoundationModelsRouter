@@ -61,8 +61,9 @@ struct RecordedForkCut: Equatable {
 /// no profile and no agent spawn.
 enum RecordedForkFixtures {
     /// The cut at the end of the recorded history of a session now: the
-    /// count of its effective entry-kind events, and the count of the
-    /// entries of its restored transcript.
+    /// position of the session as a restore counts it (the effective
+    /// entry-kind events, and the entries that the fold of the open markers
+    /// makes), and the count of the entries of its restored transcript.
     ///
     /// - Parameters:
     ///   - sessionId: The id of the session.
@@ -73,7 +74,7 @@ enum RecordedForkFixtures {
     static func cut(atEndOf sessionId: ULID, under recordingRoot: URL) throws -> RecordedForkCut {
         let tree = try TranscriptTree.load(under: recordingRoot)
         return RecordedForkCut(
-            historyOrdinal: try tree.effectiveEntryEvents(forSession: sessionId).count,
+            historyOrdinal: try tree.restoredHistoryOrdinal(forSession: sessionId),
             entryCount: try tree.effectiveTranscript(forSession: sessionId).count)
     }
 

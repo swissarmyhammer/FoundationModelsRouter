@@ -601,11 +601,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // output, as new.
                 persistedEntryCount: backend.transcriptEntries().count,
                 // The restored session's position in its own append-only
-                // recorded history: the raw effective entry-event count —
+                // recorded history: the effective entry-event count, with
+                // the entries that the fold of the open markers makes —
                 // NOT `seedTranscript.count`, which the checkpoint filter may
                 // have shrunk to the compaction's live window (see
                 // ``RoutedSessionActor/historyOrdinal``).
-                historyOrdinal: effectiveEvents.count,
+                historyOrdinal: try tree.restoredHistoryOrdinal(forSession: node.id),
                 // The run-level writer of the restoring handle: a later
                 // change of this session rewrites its `index.md`.
                 indexWriter: routedLLM.durableRecording?.indexWriter,

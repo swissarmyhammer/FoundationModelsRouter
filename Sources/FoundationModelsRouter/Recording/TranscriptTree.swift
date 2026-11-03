@@ -321,6 +321,9 @@ package struct TranscriptTree: Sendable {
     /// `routerKinds` when the caller names some. The cut point is
     /// ``SessionRecord/forkedAtHistoryOrdinal``, or
     /// ``SessionRecord/forkedAtEntryCount`` when the record holds no ordinal.
+    /// It counts the entries of the folded history of the parent
+    /// (``FoldedHistory``), so a fork keeps the open marker of a restored
+    /// parent.
     ///
     /// A router-only kind that a caller names:
     /// - ``TranscriptEvent/Kind/generationCall``: the events
@@ -341,15 +344,16 @@ package struct TranscriptTree: Sendable {
     ///   ``effectiveTranscript(forSession:view:)`` folds into the open calls
     ///   of a crash (``OpenToolCalls``). The session records a marker when a
     ///   call starts, ahead of the entries of its submission. So a fork keeps
-    ///   no marker after the last entry that the fork cut point keeps: the
-    ///   later entry of that marker is not in the fork, and the call would
-    ///   look open (``forkPrefix(of:entryCount:)``).
+    ///   no covered marker after the last entry that the fork cut point
+    ///   keeps: the later entry of that marker is not in the fork, and the
+    ///   call would look open. A marker that no entry covers is open, and the
+    ///   cut counts its entries (``forkPrefix(of:entryCount:)``).
     /// - ``TranscriptEvent/Kind/promptStarted``: the events
     ///   ``effectiveTranscript(forSession:view:)`` folds into the open user
     ///   messages of a crash (``OpenPrompts``). The session records a marker
     ///   when the pump takes the mail, ahead of the entries of its
-    ///   submission. A fork keeps no marker after the last entry that the
-    ///   fork cut point keeps, for the reason above.
+    ///   submission. A fork keeps no covered marker after the last entry that
+    ///   the fork cut point keeps, for the reason above.
     /// - ``TranscriptEvent/Kind/mail``: the events that end a mail. A
     ///   `.promptStarted` marker is open until a delivery or a terminal
     ///   record of its mail follows it, and the terminal records are
@@ -391,7 +395,20 @@ package struct TranscriptTree: Sendable {
     private func effectiveEvents(
         for node: SessionNode, keeping isKept: (TranscriptEvent.Kind) -> Bool
     ) throws -> [TranscriptEvent] {
-        let ownEvents = try Self.decodeEvents(in: node.directory).filter { isKept($0.kind) }
+        try foldableEvents(for: node, keeping: isKept).filter { isKept($0.kind) }
+    }
+
+    /// The effective events of `node`, with the events that the fold of the
+    /// markers reads (``FoldedHistory/extraKinds``) besides the kinds that
+    /// `isKept` keeps. The cut of a fork counts the entries that the fold
+    /// makes, so each level reads these events before it cuts, and the
+    /// caller filters them out after.
+    private func foldableEvents(
+        for node: SessionNode, keeping isKept: (TranscriptEvent.Kind) -> Bool
+    ) throws -> [TranscriptEvent] {
+        let ownEvents = try Self.decodeEvents(in: node.directory).filter {
+            isKept($0.kind) || FoldedHistory.extraKinds.contains($0.kind)
+        }
         guard let parentId = node.parentId else {
             return ownEvents
         }
@@ -404,37 +421,60 @@ package struct TranscriptTree: Sendable {
         guard let cut = node.record.effectiveForkCut else {
             throw TranscriptTreeError.forkCutPointMissing(session: node.id, directory: node.directory)
         }
-        let parentEffective = try effectiveEvents(for: parent, keeping: isKept)
+        let parentEffective = try foldableEvents(for: parent, keeping: isKept)
         return Self.forkPrefix(of: parentEffective, entryCount: cut) + ownEvents
     }
 
-    /// The events of `events` before its entry-kind event at position `cut`
-    /// among the entry-kind events: the first `cut` entry-kind events and
-    /// each other event before the next entry-kind event. All of `events`
-    /// when it holds `cut` entry-kind events or fewer.
+    /// The position of the session `id` in its own recorded history, as a
+    /// restore counts it: the entry-kind events of its effective events, and
+    /// the entries that the fold of its open markers makes
+    /// (``FoldedHistory``). It is the cut of a fork of the session now.
+    ///
+    /// - Parameter id: The session's span id.
+    /// - Returns: The position.
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
+    ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
+    func restoredHistoryOrdinal(forSession id: ULID) throws -> Int {
+        FoldedHistory.entryOrigins(of: try effectiveEntryEvents(forSession: id, alongWith: FoldedHistory.extraKinds)).count
+    }
+
+    /// The events of `events` before its entry at position `cut` in the
+    /// folded history (``FoldedHistory``): the first `cut` entries, and each
+    /// other event before the next entry. All of `events` when its folded
+    /// history holds `cut` entries or fewer.
     ///
     /// For a list of entry-kind events only, this is the first `cut` events.
+    /// An open marker counts as the entries that the fold of the restore
+    /// makes from it. So a fork of a restored parent keeps the open marker of
+    /// the parent: the backend of the parent holds its entries when the fork
+    /// is made, and the fork must hold them too. A cut inside the entries of
+    /// one group of open tool calls keeps the markers of the group that come
+    /// before the first marker whose entry is beyond the cut.
     ///
     /// A ``TranscriptEvent/Kind/toolCallStarted`` marker, or a
     /// ``TranscriptEvent/Kind/promptStarted`` marker, after the last
-    /// entry-kind event that the prefix keeps is not in the prefix. The
-    /// marker belongs to the submission of the next entry, which the fork
-    /// does not inherit. The entry that covers the marker is in that
-    /// submission, so the marker alone would make an open call, or an open
-    /// user message, of a finished submission (``OpenToolCalls``,
-    /// ``OpenPrompts``).
+    /// entry-kind event that the prefix keeps is not in the prefix, unless it
+    /// is open and the cut counts its entries. Otherwise the marker belongs to
+    /// the submission of the next entry, which the fork does not inherit. The
+    /// entry that covers the marker is in that submission, so the marker alone
+    /// would make an open call, or an open user message, of a finished
+    /// submission (``OpenToolCalls``, ``OpenPrompts``).
     ///
     /// - Parameters:
-    ///   - events: A parent's effective events, oldest first.
-    ///   - cut: The fork cut point, as a count of entry-kind events.
+    ///   - events: A parent's effective events, oldest first, with the
+    ///     markers and the records of ``FoldedHistory/extraKinds``.
+    ///   - cut: The fork cut point, as a count of entries of the folded
+    ///     history.
     /// - Returns: The events the fork inherits.
     static func forkPrefix(of events: [TranscriptEvent], entryCount cut: Int) -> [TranscriptEvent] {
-        let entryIndices = events.indices.lazy.filter { events[$0].kind.isEntryKind }
-        let end = entryIndices.dropFirst(cut).first ?? events.endIndex
-        let lastKeptEntry = entryIndices.last { $0 < end }
+        let origins = FoldedHistory.entryOrigins(of: events)
+        let end = origins.dropFirst(cut).first ?? events.endIndex
+        let countedMarkers = Set(origins.prefix(cut))
+        let lastKeptEntry = events.indices.last { $0 < end && events[$0].kind.isEntryKind }
         let nextSubmissionStart = lastKeptEntry.map { $0 + 1 } ?? events.startIndex
         return events[..<end].enumerated().compactMap { index, event in
-            index >= nextSubmissionStart && Self.isWriteAheadMarker(event.kind) ? nil : event
+            let isLaterMarker = index >= nextSubmissionStart && Self.isWriteAheadMarker(event.kind)
+            return isLaterMarker && !countedMarkers.contains(index) ? nil : event
         }
     }
 

@@ -833,9 +833,10 @@ actor RoutedSessionActor: RoutedSession {
     var persistedBaseline: TranscriptDiffer.Baseline
 
     /// This session's position in its own append-only recorded history: how
-    /// many entry-kind events its effective recorded stream holds. Starts at
-    /// `0` for a root, and at the reconstructed count for a restored session.
-    /// It never rewinds.
+    /// many entry-kind events its effective recorded stream holds, and for a
+    /// restored session, the entries that the fold of its open markers makes
+    /// (``FoldedHistory``). Starts at `0` for a root, and at the reconstructed
+    /// count for a restored session. It never rewinds.
     var historyOrdinal: Int
 
     /// The run-level facts of this session's `index.md`, or `nil` for a
