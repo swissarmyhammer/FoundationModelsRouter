@@ -152,8 +152,11 @@ public struct SessionConfiguration: Sendable {
     /// settle period of the session is ``inlineSettleGrace``.
     ///
     /// The value is a live context, thus ``persistable`` does not record it.
-    /// ``agentSpawn`` records the lineage. A restore gives a root
-    /// session.
+    /// ``agentSpawn`` records the lineage: the parent session, the root
+    /// session and the id of the call. A restore builds the ids of the
+    /// session from that record, so the tools of a restored sub-agent
+    /// session see the same ``ToolContext/parentSessionID`` and
+    /// ``ToolContext/rootSessionID`` as before.
     public var parentCall: ToolContext?
 
     /// The key of the hook lineage of the session, or `nil` (the default) to

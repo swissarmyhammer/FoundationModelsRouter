@@ -76,6 +76,7 @@ struct RecordedSessionsPublicSurfaceTests {
                 "agentSpawn:",
                 "  parentSessionId: \(parent)",
                 "  parentToolCallId: \(Self.parentToolCallId)",
+                "  rootSessionId: \(parent)",
             ])
         try HandWrittenSessionIndex.write(
             id: quiet, under: root, workingDirectory: Self.workingDirectoryPath,

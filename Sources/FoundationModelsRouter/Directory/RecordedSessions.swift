@@ -45,6 +45,32 @@ struct RecordedSessions {
             .sorted { $0.sessionId > $1.sessionId }
     }
 
+    /// The records of the sessions recorded under ``roots`` at any depth: the
+    /// root sessions, and also each session whose folder sits inside the
+    /// folder of another session, as a recorded fork or a sub-agent can.
+    ///
+    /// Each `index.md` under a root, in a folder named by a ULID, is a
+    /// record. If two roots hold a folder with one id, the first root wins.
+    ///
+    /// - Returns: One record for each recorded session, newest first
+    ///   (``SessionRecord/sessionId`` descending).
+    /// - Throws: The read error of an `index.md` that exists
+    ///   (``SessionIndexFile/read(in:)``).
+    func nestedRecords() throws -> [SessionRecord] {
+        var seen: Set<ULID> = []
+        var records: [SessionRecord] = []
+        for root in roots where FileManager.default.fileExists(atPath: root.path) {
+            for indexURL in TranscriptFileDiscovery.fileURLs(named: SessionIndexFile.fileName, under: root) {
+                let folder = indexURL.deletingLastPathComponent()
+                guard let id = ULID(ulidString: folder.lastPathComponent), seen.insert(id).inserted,
+                    let record = try SessionIndexFile.read(in: folder)
+                else { continue }
+                records.append(record)
+            }
+        }
+        return records.sorted { $0.sessionId > $1.sessionId }
+    }
+
     /// The summaries of the root sessions recorded under ``roots``.
     ///
     /// - Returns: One summary for each recorded root session, newest first.

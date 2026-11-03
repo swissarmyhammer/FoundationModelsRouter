@@ -36,6 +36,15 @@ public struct SessionFacts: Sendable, Equatable {
     /// that is not archived.
     public var archivedAt: Date?
 
+    /// The instant the host that owns the run marked the session as ended,
+    /// or `nil` for a session that is not ended. It is not an archive: an
+    /// ended session stays visible as history (``SessionEndedMarker``).
+    public var endedAt: Date?
+
+    /// Why the host marked the session as ended, or `nil` for a session that
+    /// is not ended.
+    public var endReason: SessionEndReason?
+
     /// Makes the facts of a session. Every field defaults to its absent
     /// value.
     ///
@@ -47,6 +56,8 @@ public struct SessionFacts: Sendable, Equatable {
     ///   - startedBy: The session that started this one. The default is `nil`.
     ///   - origin: How the session started. The default is `nil`.
     ///   - archivedAt: The archive instant. The default is `nil`.
+    ///   - endedAt: The instant of the ended marker. The default is `nil`.
+    ///   - endReason: The reason of the ended marker. The default is `nil`.
     public init(
         agentID: String? = nil,
         agentName: String? = nil,
@@ -54,7 +65,9 @@ public struct SessionFacts: Sendable, Equatable {
         title: String? = nil,
         startedBy: ULID? = nil,
         origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil,
-        archivedAt: Date? = nil
+        archivedAt: Date? = nil,
+        endedAt: Date? = nil,
+        endReason: SessionEndReason? = nil
     ) {
         self.agentID = agentID
         self.agentName = agentName
@@ -63,5 +76,7 @@ public struct SessionFacts: Sendable, Equatable {
         self.startedBy = startedBy
         self.origin = origin
         self.archivedAt = archivedAt
+        self.endedAt = endedAt
+        self.endReason = endReason
     }
 }

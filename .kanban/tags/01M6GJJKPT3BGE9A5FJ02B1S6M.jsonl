@@ -1,0 +1,1 @@
+{"id":"01M6GJJKPV9MSQE9G2AMN06C7P","timestamp":"2026-11-03T11:26:41.371269Z","op":"create","item_id":"01M6GJJKPT3BGE9A5FJ02B1S6M","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: fbca04\n+tag_name: subagents\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: fbca04\n-tag_name: subagents\n","transaction_id":null}

@@ -8,7 +8,7 @@ import FoundationModelsExtras
 ///
 /// - **The facts** (ROUTER-1): ``facts``, written flat at the top level of
 ///   the frontmatter: `agentID`, `agentName`, `origin`, `startedBy`, `tags`,
-///   `title` and `archivedAt`.
+///   `title`, `archivedAt`, `endedAt` and `endReason`.
 /// - **The listing data**: ``sessionId`` (the name of the folder),
 ///   ``workingDirectory`` (the key `cwd`, a path), ``updatedAt``,
 ///   ``additionalDirectories``, the fork parent and its cut
@@ -39,17 +39,37 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         let context: Int
     }
 
-    /// The parent session and the tool call that spawned this session.
+    /// The parent session, the root session and the tool call that spawned
+    /// this session. A restore builds the identity of the session from it.
     public struct AgentSpawn: Codable, Sendable, Equatable {
         /// The id of the session whose submission spawned this session.
         public let parentSessionId: ULID
         /// The tool-call id, in the submission of the parent, that spawned this session.
         public let parentToolCallId: String
+        /// The id of the root session of the tree of this session. For a
+        /// session that the root spawned itself, it is ``parentSessionId``.
+        public let rootSessionId: ULID
 
         /// Creates an agent-spawn record.
-        public init(parentSessionId: ULID, parentToolCallId: String) {
+        ///
+        /// - Parameters:
+        ///   - parentSessionId: The session whose submission spawned the session.
+        ///   - parentToolCallId: The tool-call id that spawned the session.
+        ///   - rootSessionId: The root session of the tree, or `nil` when the
+        ///     parent is the root. A session that a ``SessionConfiguration/parentCall``
+        ///     starts gets the root of that call, and not this value.
+        public init(parentSessionId: ULID, parentToolCallId: String, rootSessionId: ULID? = nil) {
             self.parentSessionId = parentSessionId
             self.parentToolCallId = parentToolCallId
+            self.rootSessionId = rootSessionId ?? parentSessionId
+        }
+
+        /// This spawn record, with `root` as the root session.
+        ///
+        /// - Parameter root: The root session of the tree.
+        /// - Returns: The record with the new root.
+        func rooted(at root: ULID) -> AgentSpawn {
+            AgentSpawn(parentSessionId: parentSessionId, parentToolCallId: parentToolCallId, rootSessionId: root)
         }
     }
 
@@ -225,7 +245,7 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         case workingDirectory = "cwd"
         case updatedAt, firstActivityAt, additionalDirectories
         case forkParentId, forkedAtEntryCount, forkedAtHistoryOrdinal
-        case agentID, agentName, origin, startedBy, tags, title, archivedAt
+        case agentID, agentName, origin, startedBy, tags, title, archivedAt, endedAt, endReason
         case slot, model, context, instructions, grammar, recordingLevel, agentSpawn, routerId
         case compactionCount, profile, configuration, schemaVersion
     }
@@ -277,7 +297,9 @@ public struct SessionRecord: Codable, Sendable, Equatable {
             startedBy: try container.decodeIfPresent(ULID.self, forKey: .startedBy),
             origin: try container.decodeIfPresent(
                 FoundationModelsExtras.SessionDirectoryOrigin.self, forKey: .origin),
-            archivedAt: try container.decodeMillisecondDateIfPresent(forKey: .archivedAt))
+            archivedAt: try container.decodeMillisecondDateIfPresent(forKey: .archivedAt),
+            endedAt: try container.decodeMillisecondDateIfPresent(forKey: .endedAt),
+            endReason: try container.decodeIfPresent(SessionEndReason.self, forKey: .endReason))
     }
 
     /// Encodes the record as its frontmatter: the facts flat, the folders as
@@ -323,6 +345,8 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         try container.encode(facts.tags.sorted(), forKey: .tags)
         try container.encodeIfPresent(facts.title, forKey: .title)
         try container.encodeIfPresent(facts.archivedAt.map(MillisecondDate.text(of:)), forKey: .archivedAt)
+        try container.encodeIfPresent(facts.endedAt.map(MillisecondDate.text(of:)), forKey: .endedAt)
+        try container.encodeIfPresent(facts.endReason, forKey: .endReason)
     }
 
     /// The path a folder is written as: the path with no percent encoding,

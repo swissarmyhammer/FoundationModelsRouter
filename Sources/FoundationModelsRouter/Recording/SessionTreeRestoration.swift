@@ -170,7 +170,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// a typed error. `instructions`, ``Grammar``, and the recorded
     /// configuration envelope are re-applied. A recorded grammar always
     /// restores as ``Grammar/jsonSchema(_:)``. ``SessionRecord/agentSpawn`` is
-    /// not re-applied. A recorded context that differs from the live one is
+    /// re-applied: the tools of a restored sub-agent session see the recorded
+    /// parent session and root session, also when the parent is not
+    /// restored. A recorded context that differs from the live one is
     /// reported in ``RestoredSessionTree/contextMismatches``.
     ///
     /// The restore writes no `index.md`: each restored node holds the record
@@ -446,7 +448,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
                 tokenCounter: routedLLM.container.tokenCounter,
                 inlineSettleGrace: inlineSettleGrace,
-                userPresence: userPresence ?? configuration?.restoredUserPresence ?? .interactive
+                userPresence: userPresence ?? configuration?.restoredUserPresence ?? .interactive,
+                parentCall: nil,
+                recordedSpawn: node.record.agentSpawn
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
@@ -554,6 +558,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // no envelope gets the defaults.
                 autoCompactionBudget: compaction.budget,
                 autoCompactionPrompt: compaction.prompt,
+                // The recorded spawn re-applied: the tools of the node see the
+                // recorded parent and root, and the session meta event keeps it.
+                agentSpawn: node.record.agentSpawn,
                 discoveryPriming: configuration?.discoveryPriming,
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.
@@ -687,46 +694,6 @@ extension SessionNode {
 }
 
 extension TranscriptTree {
-    /// The identity of one journaled operation run: the tool's name plus its
-    /// tool-assigned `correlationID`. A correlation id is unique only within
-    /// one tool.
-    private struct RunKey: Hashable {
-        let tool: String
-        let correlationID: String
-    }
-
-    /// Orphan-detection state over a recorded stream: which runs completed,
-    /// each run's newest non-terminal event, and the order of first
-    /// non-terminal appearance.
-    private struct OrphanRunScan {
-        var completedRuns: Set<RunKey> = []
-        var newestNonTerminalByRun: [RunKey: OperationEvent] = [:]
-        var orphanCandidateOrder: [RunKey] = []
-
-        /// Applies one journaled event to the scan.
-        ///
-        /// A question that a relay sent up from a child
-        /// (``ElicitationRequest/isRelayed``) is not model input (rule R5),
-        /// so it does not take the place of an older event of its run: the
-        /// detail of a lost terminal comes from the own events of the run.
-        /// When a relayed question is the first event of its run, it makes
-        /// the run a candidate, and a later event of the run takes its place.
-        mutating func observe(_ event: OperationEvent) {
-            let run = RunKey(tool: event.tool, correlationID: event.correlationID)
-            switch event.kind {
-            case .completed:
-                completedRuns.insert(run)
-            case .progress, .elicitation, .message:
-                if event.elicitation?.isRelayed == true, newestNonTerminalByRun[run] != nil {
-                    return
-                }
-                if newestNonTerminalByRun.updateValue(event, forKey: run) == nil {
-                    orphanCandidateOrder.append(run)
-                }
-            }
-        }
-    }
-
     /// The terminal `.completed` events with outcome ``OperationOutcome/lost``
     /// that a restore manufactures for the orphaned journaled runs in
     /// `events`. A run is orphaned when the stream carries a non-terminal
@@ -734,7 +701,12 @@ extension TranscriptTree {
     /// for that pair. One event is made per orphaned run, in order of first
     /// appearance. Its `detail` is the message of a question that the run
     /// asked itself, or the newest event's `detail`, as the journal holds it
-    /// (``lostDetail(of:)``). A relayed question gives no detail (rule R5).
+    /// (``OrphanRunScan/lostTerminalEvents()``). A relayed question gives no
+    /// detail (rule R5).
+    ///
+    /// The scan is ``OrphanRunScan``, which ``RouterSessionDirectory/runStatuses(of:)``
+    /// shares. So the orphan set of a read and the lost set of a restore are
+    /// one set.
     ///
     /// The journaled events are read through ``TranscriptEvent/operationEvents``,
     /// which passes over a stripped or undecodable segment. Transcript
@@ -744,40 +716,6 @@ extension TranscriptTree {
     /// - Parameter events: A session's effective recorded events, in order.
     /// - Returns: The manufactured terminal events, or empty.
     static func lostRunTerminalEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
-        var scan = OrphanRunScan()
-        for event in events {
-            for operationEvent in event.operationEvents {
-                scan.observe(operationEvent)
-            }
-        }
-        return scan.orphanCandidateOrder.compactMap { run in
-            guard !scan.completedRuns.contains(run), let newest = scan.newestNonTerminalByRun[run] else {
-                return nil
-            }
-            return OperationEvent(
-                tool: run.tool,
-                op: newest.op,
-                correlationID: run.correlationID,
-                kind: .completed,
-                detail: lostDetail(of: newest),
-                outcome: .lost
-            )
-        }
-    }
-
-    /// The `detail` of the lost terminal of a run whose newest kept event
-    /// is `newest`: the message of its question, or its own `detail`.
-    ///
-    /// The lost terminal goes to the model as run mail. A question that a
-    /// relay sent up from a child (``ElicitationRequest/isRelayed``) is not
-    /// model input (rule R5), so its message is never the detail. The scan
-    /// keeps a relayed question as the newest event only when the run has no
-    /// other event, and then the detail is the `detail` of that event.
-    ///
-    /// - Parameter newest: The newest kept non-terminal event of the run.
-    /// - Returns: The detail.
-    private static func lostDetail(of newest: OperationEvent) -> String {
-        guard let question = newest.elicitation, !question.isRelayed else { return newest.detail }
-        return question.message
+        OrphanRunScan(scanning: events).lostTerminalEvents()
     }
 }

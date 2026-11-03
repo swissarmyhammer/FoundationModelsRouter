@@ -917,7 +917,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     private func deliver(
         _ message: OutgoingSessionMessage, chainDepth: Int, to id: ULID
     ) throws -> SessionSendReceipt {
-        guard let session = liveSession(id), let outcome = deliveryOutcome(of: id) else {
+        guard let session = session(id: id), let outcome = deliveryOutcome(of: id) else {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.notLiveReason)
         }
         guard message.from.sessionID != nil, let folder = Self.ledgerDirectory(of: session) else {
@@ -1173,7 +1173,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameter id: The session id.
     func scanInbox(of id: ULID) {
-        guard let session = liveSession(id), let folder = Self.ledgerDirectory(of: session) else { return }
+        guard let session = session(id: id), let folder = Self.ledgerDirectory(of: session) else { return }
         let files: [URL]
         do {
             files = try SessionInboxFile.pending(in: folder)
@@ -1370,7 +1370,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - ids: The ids of the messages that the inbox marked read.
     ///   - id: The session id of their target.
     private func withdrawWaitingMail(_ ids: [MailID], from id: ULID) async {
-        guard !ids.isEmpty, let session = liveSession(id) else { return }
+        guard !ids.isEmpty, let session = session(id: id) else { return }
         let waiting = Set(await session.pendingMessages().map(\.id))
         for mailID in ids where waiting.contains(mailID) {
             session.cancel(mailID)
@@ -1403,7 +1403,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: The error of a read of the ledger, or the error of the
     ///   recording roots of the host.
     private func knownLedger(of id: ULID) async throws -> SessionMessageLedger? {
-        if let session = liveSession(id) {
+        if let session = session(id: id) {
             return try ledger(of: id, in: Self.ledgerDirectory(of: session))
         }
         guard let folder = try await recordedFolder(of: id) else { return nil }
@@ -1455,12 +1455,27 @@ public actor RouterSessionDirectory: SessionDirectory {
         return session.recordingDirectory
     }
 
-    /// The live session `id`.
+    /// The live session `id`, at any depth of the session tree.
+    ///
+    /// A host uses it for a sub-agent session it reads from a `started`
+    /// event of ``events()``. The session gives its own feed
+    /// (``RoutedSession/streamSessionEvents()``) and its answer path
+    /// (``RoutedSession/respond(elicitationId:response:)``). The directory is
+    /// flat: each vended or restored session has one entry, so a root, a
+    /// sub-agent and a sub-agent of a sub-agent follow the same rule.
+    ///
+    /// The directory holds each session weakly, so this call does not keep
+    /// the session alive. A host that wants the session to stay must hold the
+    /// result. A session that closed gives `nil`.
+    ///
+    /// The session is registered before its `started` event goes out. So a
+    /// host that reads `started` and then calls this method finds the
+    /// session, unless it closed in the meantime.
     ///
     /// - Parameter id: The session id.
     /// - Returns: The session, or `nil` when the directory holds no live
     ///   session with the id.
-    private nonisolated func liveSession(_ id: ULID) -> (any RoutedSession)? {
+    public nonisolated func session(id: ULID) -> (any RoutedSession)? {
         state.withLock { $0.entries[id]?.session }
     }
 
@@ -1510,7 +1525,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     private func changeRecord(
         of id: ULID, _ change: @Sendable (inout SessionRecord) -> Void
     ) async throws -> SessionSummary {
-        if let session = liveSession(id) {
+        if let session = session(id: id) {
             return try changeLiveRecord(of: session, change)
         }
         let (summary, changed) = try await changeRecordedRecord(of: id, change)
@@ -1614,6 +1629,166 @@ public actor RouterSessionDirectory: SessionDirectory {
         return summary
     }
 
+    // MARK: - Ended marker
+
+    /// Marks the session `id` as ended (``SessionEndedMarker``), for the host that
+    /// owns the run lifecycle: the host calls it after a run reaches a
+    /// terminal state. An ended session has no work to restore, and its
+    /// recording stays for history.
+    ///
+    /// The call writes `endedAt` and `endReason` to the `index.md` of the
+    /// session before it returns, for a live session
+    /// (``RoutedSessionActor/updateRecord(_:)``) and for a recorded session
+    /// that is not live alike (``changeRecord(of:_:)``). It does not close
+    /// the session, stop its work or send `archived`; the one event is the
+    /// `factsChanged` of ``changeRecord(of:_:)``. A close of a session never
+    /// sets the marker, because a close at the shutdown of the process, while
+    /// a run works, must stay restorable.
+    ///
+    /// A session that is ended already gives its first marker again, and its
+    /// `index.md` is not written.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - reason: Why the session ended.
+    /// - Returns: The marker the session holds: the new one, or the first one
+    ///   when the session was ended already.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id; the error of the recording roots of the
+    ///   host; or the error of the read or the save of the `index.md` of a
+    ///   recorded session.
+    @discardableResult
+    public func markEnded(_ id: ULID, reason: SessionEndReason) async throws -> SessionEndedMarker {
+        let endedAt = MillisecondDate.rounded(Date())
+        _ = try await changeRecord(of: id) { record in
+            guard record.facts.end == nil else { return }
+            record.facts.endedAt = endedAt
+            record.facts.endReason = reason
+        }
+        return try await requireEndMarker(of: id)
+    }
+
+    /// The ended marker of the session `id`, or `nil` when the session is not
+    /// ended. A live session answers from its facts; a recorded session that
+    /// is not live answers from the `index.md` of its folder.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The marker, or `nil` for a session that is not ended.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id; the error of the recording roots of the
+    ///   host; or the read error of the `index.md` of a recorded session.
+    public func endMarker(of id: ULID) async throws -> SessionEndedMarker? {
+        if let session = session(id: id) {
+            return session.facts.end
+        }
+        guard let folder = try await recordedFolder(of: id), let record = try SessionIndexFile.read(in: folder) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        return record.facts.end
+    }
+
+    /// The subagent sessions of the parent session `parent` that are not
+    /// ended: the live ones and the recorded ones under the recording roots.
+    /// A host lists the children it can still restore with this call.
+    /// ``RecordedSessions`` lists the sessions whose folder is a direct entry
+    /// of a recording root, so a child whose folder sits inside the folder of
+    /// its parent is not in the answer.
+    ///
+    /// - Parameter parent: The id of the parent session.
+    /// - Returns: The summaries of the unended children, newest first.
+    /// - Throws: The error of ``sessions(matching:)`` or of
+    ///   ``endMarker(of:)``.
+    public func unendedChildren(of parent: ULID) async throws -> [SessionSummary] {
+        let children = try await sessions(
+            matching: SessionQuery(kind: .subagent, parentID: parent, includesRecorded: true, limit: .max))
+        var unended: [SessionSummary] = []
+        for child in children where try await endMarker(of: child.id) == nil {
+            unended.append(child)
+        }
+        return unended
+    }
+
+    // MARK: - Recorded children and run statuses
+
+    /// The recorded sub-agent sessions of the parent session `parent`, read
+    /// from their `index.md` files. The call restores nothing, writes
+    /// nothing and starts nothing.
+    ///
+    /// A child is a record that holds an agent spawn
+    /// (``SessionRecord/agentSpawn``) of `parent`. The call finds a child at
+    /// any depth under a recording root, so a child whose folder sits inside
+    /// the folder of its parent is in the answer too. It reads recorded
+    /// children only: a child with no `index.md` on disk is not in it.
+    ///
+    /// A child whose run wrote no journal event is in this answer and has no
+    /// entry in ``runStatuses(of:)``.
+    ///
+    /// - Parameter parent: The id of the parent session.
+    /// - Returns: The recorded children, newest first.
+    /// - Throws: The error of the recording roots of the host, or the read
+    ///   error of an `index.md`.
+    public func recordedChildren(of parent: ULID) async throws -> [RecordedChild] {
+        try RecordedSessions(roots: try await recordingRoots()).nestedRecords()
+            .filter { $0.agentSpawn?.parentSessionId == parent }
+            .compactMap(RecordedChild.init(record:))
+    }
+
+    /// The status of each journaled run of the recorded session `session`:
+    /// one entry for each run key that has a journal event in the effective
+    /// events of the session. The call restores nothing and posts no `.lost`
+    /// terminal.
+    ///
+    /// A run is ``RunStatus/completed(_:)`` when the journal holds a
+    /// `.completed` event of it, else ``RunStatus/orphaned``. The orphaned
+    /// runs are exactly the runs that a restore of the session marks as lost,
+    /// because both use one scan (``OrphanRunScan``).
+    ///
+    /// A host that restarts restores a child only when the child is not ended
+    /// and the run of its ``RecordedChild/parentToolCallId`` is not completed.
+    /// If the host stopped after the `.completed` event of the run reached
+    /// the journal of the parent and before ``markEnded(_:reason:)``, the
+    /// child looks unended, and the completed status shows it.
+    ///
+    /// - Parameter session: The id of the recorded session.
+    /// - Returns: The status of each run key.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no recording
+    ///   root holds the session; the error of the recording roots of the
+    ///   host; or a typed error for a recording that is damaged: see below.
+    ///
+    /// The call reads the chain of the session only: the session and, for a
+    /// fork, each session it nests under. It does not read a sibling, a
+    /// child or any other session of the recording root. So a damaged record
+    /// of another session does not fail the call. A host can turn the typed
+    /// error of a damaged chain into "unknown" for the affected child, and
+    /// it can still restore the root. The typed errors are
+    /// ``TranscriptTreeError`` (`indexUnreadable`, `indexMissing`,
+    /// `forkCutPointMissing`, `duplicateSessionId`),
+    /// ``RecordingSchemaVersionError`` for a record of a newer router, and
+    /// `JSONLFileError.readFailed(description:)` for a transcript that does
+    /// not read.
+    public func runStatuses(of session: ULID) async throws -> [RunKey: RunStatus] {
+        for root in try await recordingRoots() where FileManager.default.fileExists(atPath: root.path) {
+            guard let folder = try TranscriptTree.sessionFolder(of: session, under: root) else { continue }
+            let tree = try TranscriptTree.loadChain(ofSessionIn: folder, under: root)
+            return OrphanRunScan(scanning: try tree.effectiveEntryEvents(forSession: session)).statuses
+        }
+        throw SessionDirectoryError.unknownSession(session)
+    }
+
+    /// The ended marker of the session `id`, which the caller marked just
+    /// now.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The marker.
+    /// - Throws: What ``endMarker(of:)`` throws; `unknownSession` when the
+    ///   session holds no marker after the mark.
+    private func requireEndMarker(of id: ULID) async throws -> SessionEndedMarker {
+        guard let end = try await endMarker(of: id) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        return end
+    }
+
     // MARK: - Tags and title
 
     /// See `SessionDirectory.addTags(_:to:)`. Checks each tag against the
@@ -1715,7 +1890,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   recorded session.
     @discardableResult
     public func archive(_ id: ULID, by archiver: SessionMessageSender) async throws -> SessionSummary {
-        guard let session = liveSession(id) else {
+        guard let session = session(id: id) else {
             return try await archiveRecorded(id, by: archiver)
         }
         return try await archiveLive(session, by: archiver)
@@ -2009,7 +2184,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Returns: The ids of the open questions, or `nil` when the session is
     ///   gone.
     private nonisolated func openQuestions(of id: ULID) async -> Set<ULID>? {
-        guard let session = liveSession(id) else { return nil }
+        guard let session = session(id: id) else { return nil }
         return Set(await session.openElicitationIds().compactMap { ULID($0) })
     }
 }

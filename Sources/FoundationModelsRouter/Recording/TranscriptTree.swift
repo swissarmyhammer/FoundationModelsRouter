@@ -131,6 +131,63 @@ package struct TranscriptTree: Sendable {
         return TranscriptTree(roots: roots, nodesById: nodesById)
     }
 
+    /// The folder of the session `id` at any depth under a router's recording
+    /// root. The call only lists the file names under the root. It reads no
+    /// `index.md` and no transcript.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - routerDirectory: The router's recording root.
+    /// - Returns: The folder, or `nil` when no folder under the root has an
+    ///   `index.md` and the name of the id.
+    /// - Throws: ``TranscriptTreeError/duplicateSessionId(id:directories:)``
+    ///   when more than one folder has the name of the id.
+    package static func sessionFolder(of id: ULID, under routerDirectory: URL) throws -> URL? {
+        let folders = TranscriptFileDiscovery
+            .fileURLs(named: SessionIndexFile.fileName, under: routerDirectory)
+            .map { $0.deletingLastPathComponent() }
+            .filter { $0.lastPathComponent == id.description }
+        guard folders.count <= 1 else {
+            throw TranscriptTreeError.duplicateSessionId(
+                id: id, directories: folders.sorted { $0.path < $1.path })
+        }
+        return folders.first
+    }
+
+    /// Loads only the chain of one session: the session and each session
+    /// folder that it nests under, up to a root session. The tree holds no
+    /// other session, so ``effectiveEntryEvents(forSession:alongWith:)`` of
+    /// the session gives the same events as it gives on the tree of
+    /// ``load(under:)``, and the call reads no sibling and no other session
+    /// of the recording root.
+    ///
+    /// - Parameters:
+    ///   - folder: The folder of the session, under `routerDirectory`.
+    ///   - routerDirectory: The router's recording root.
+    /// - Returns: The tree of the chain.
+    /// - Throws: ``TranscriptTreeError``, or
+    ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
+    ///   when a record in the chain carries a newer schema version.
+    package static func loadChain(ofSessionIn folder: URL, under routerDirectory: URL) throws -> TranscriptTree {
+        let routerDirectoryPath = routerDirectory.standardizedPath
+        var chain: [URL] = []
+        var current = folder
+        while current.standardizedPath != routerDirectoryPath {
+            chain.append(current)
+            let enclosing = current.deletingLastPathComponent()
+            guard enclosing.path != current.path else {
+                throw TranscriptTreeError.indexMissing(directory: enclosing)
+            }
+            current = enclosing
+        }
+        let chainPaths = Set(chain.map(\.standardizedPath))
+        let rawNodes = try chain.map { directory in
+            try rawNode(in: directory, sessionDirectoryPaths: chainPaths, routerDirectoryPath: routerDirectoryPath)
+        }
+        let (roots, nodesById) = buildTree(from: rawNodes)
+        return TranscriptTree(roots: roots, nodesById: nodesById)
+    }
+
     /// Throws ``TranscriptTreeError/duplicateSessionId(id:directories:)`` when
     /// any session id names more than one discovered directory.
     private static func checkForDuplicateIds(in rawNodes: [RawNode]) throws {

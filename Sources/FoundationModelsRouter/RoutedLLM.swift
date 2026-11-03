@@ -186,6 +186,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
+        // The record of the spawn names the root of the call that starts the
+        // session, so a restore gives the tools the same root.
+        let agentSpawn = parentCall.map { call in agentSpawn?.rooted(at: call.rootSessionID) } ?? agentSpawn
+
         let sessionId = ULID.generate()
         let recordingDirectory = self.recordingDirectory(forSessionId: sessionId, recordingRoot: recordingRoot)
         let effectiveWorkingDirectory = workingDirectory ?? recordingDirectory
@@ -385,6 +389,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session.
     ///   - parentCall: The context of the call that starts the session as a
     ///     child, or `nil` for a root session.
+    ///   - recordedSpawn: The spawn record of a restored sub-agent session, or
+    ///     `nil`. With no `parentCall`, the site takes the parent and root
+    ///     ids from it. The call of the parent is not live after a restore.
     ///   - delegationAdvisor: The advisor of the hint to give a code change
     ///     to an agent, or `nil` for no hint. It is the call witness of the
     ///     root site, and each `String`-output tool counts its calls in it.
@@ -398,6 +405,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         inlineSettleGrace: TimeInterval,
         userPresence: UserPresence,
         parentCall: ToolContext?,
+        recordedSpawn: SessionRecord.AgentSpawn? = nil,
         delegationAdvisor: AgentDelegationAdvisor? = nil
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
@@ -406,6 +414,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let site =
             parentCall.map { call in
                 call.settling(within: inlineSettleGrace).childSite(sessionID: sessionID, runPlane: runPlane, sink: outbox)
+            }
+            ?? recordedSpawn.map { spawn in
+                // The live call of the parent is gone, so the run plane of the
+                // session also stands for the root. Only the ids come from the record.
+                MountSite(
+                    sessionID: sessionID, runPlane: runPlane, parentSessionID: spawn.parentSessionId,
+                    rootSessionID: spawn.rootSessionId, rootRunPlane: runPlane, sink: outbox, tracer: tracer,
+                    inlineSettleGrace: inlineSettleGrace)
             }
             ?? MountSite(
                 sessionID: sessionID, runPlane: runPlane, sink: outbox, tracer: tracer,
