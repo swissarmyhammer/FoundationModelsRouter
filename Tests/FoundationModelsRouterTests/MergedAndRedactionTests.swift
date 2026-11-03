@@ -58,9 +58,7 @@ struct MergedAndRedactionTests {
 
     @Test("merged view is totally ordered by (ts, seq) under concurrent appends across sessions")
     func mergedTotalOrderAcrossConcurrentSessions() async throws {
-        let routerDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MergedTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: routerDir, withIntermediateDirectories: true)
+        let routerDir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: routerDir) }
 
         // One recorder with a fixed clock, so every event shares the same `ts`
@@ -129,21 +127,31 @@ struct MergedAndRedactionTests {
         "the merge refuses a session whose index.md carries a future schema version, with the typed newer-router error"
     )
     func mergeRefusesAFutureVersionIndexWithTheTypedError() async throws {
-        let uncanonicalDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MergedTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: uncanonicalDir, withIntermediateDirectories: true)
-        // Canonicalized (symlinks resolved, `/var` → `/private/var`) because the
-        // typed error names the directory as ``TranscriptFileDiscovery``'s
-        // enumeration spells it — canonically — and this test asserts on the
-        // exact error value.
-        let canonicalPath = try #require(
-            try uncanonicalDir.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath)
-        let routerDir = URL(fileURLWithPath: canonicalPath, isDirectory: true)
+        try await expectFutureVersionRefusal { routerDir, _ in
+            _ = try MergedTranscript.merged(under: routerDir)
+        }
+    }
+
+    /// The production change that makes this test fail: a one-folder read that
+    /// drops the check of the schema version of the folder.
+    @Test("the one-folder read refuses a folder whose index.md carries a future schema version, with the typed error")
+    func oneFolderReadRefusesAFutureVersionIndexWithTheTypedError() async throws {
+        try await expectFutureVersionRefusal { _, sessionDir in
+            _ = try TranscriptEvent.read(sessionDirectory: sessionDir)
+        }
+    }
+
+    /// Builds a router directory with one session folder that holds a recorded
+    /// transcript beside an `index.md` stamped with a version this reader does
+    /// not know (the shape a recording written by a newer router leaves on
+    /// disk), then expects `read` to fail with the typed newer-router error.
+    /// `read` gets the router directory and the session folder.
+    private func expectFutureVersionRefusal(
+        _ read: (_ routerDir: URL, _ sessionDir: URL) throws -> Void
+    ) async throws {
+        let routerDir = try Self.makeCanonicalTempDir()
         defer { try? FileManager.default.removeItem(at: routerDir) }
 
-        // One session directory holding a recorded transcript beside an
-        // index.md stamped with a version this reader does not know — the
-        // shape a recording written by a newer router leaves on disk.
         let recorder: JSONLRecorder = .jsonl(directory: routerDir, now: { Self.fixedInstant })
         let sessionDir = routerDir.appendingPathComponent(ULID.generate().description, isDirectory: true)
         await recorder.append(samplePartial(kind: .prompt, text: "body"), to: sessionDir)
@@ -160,37 +168,7 @@ struct MergedAndRedactionTests {
                 supported: RecordingSchemaVersion.current
             )
         ) {
-            _ = try MergedTranscript.merged(under: routerDir)
-        }
-    }
-
-    /// The production change that makes this test fail: a one-folder read that
-    /// drops the check of the schema version of the folder.
-    @Test("the one-folder read refuses a folder whose index.md carries a future schema version, with the typed error")
-    func oneFolderReadRefusesAFutureVersionIndexWithTheTypedError() async throws {
-        let uncanonicalDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MergedTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: uncanonicalDir, withIntermediateDirectories: true)
-        // Canonicalized as in the test of the merge above, because the typed
-        // error names the directory and the test asserts on the exact value.
-        let canonicalPath = try #require(
-            try uncanonicalDir.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath)
-        let routerDir = URL(fileURLWithPath: canonicalPath, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: routerDir) }
-
-        let recorder: JSONLRecorder = .jsonl(directory: routerDir, now: { Self.fixedInstant })
-        let sessionDir = routerDir.appendingPathComponent(ULID.generate().description, isDirectory: true)
-        await recorder.append(samplePartial(kind: .prompt, text: "body"), to: sessionDir)
-        let futureVersion = RecordingSchemaVersion.current + 1
-        var futureRecord = SessionRecordFixtures.record(in: sessionDir)
-        futureRecord.schemaVersion = futureVersion
-        try SessionRecordFixtures.write(futureRecord, to: sessionDir)
-
-        #expect(
-            throws: RecordingSchemaVersionError.recordingFromNewerRouter(
-                directory: sessionDir, version: futureVersion, supported: RecordingSchemaVersion.current)
-        ) {
-            _ = try TranscriptEvent.read(sessionDirectory: sessionDir)
+            try read(routerDir, sessionDir)
         }
     }
 
@@ -208,8 +186,7 @@ struct MergedAndRedactionTests {
 
     @Test("level off creates no jsonl file")
     func levelOffCreatesNoFile() async throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("OffTests-\(UUID().uuidString)", isDirectory: true)
+        let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let recorder: any TranscriptRecorder = GatingRecorder(
@@ -649,6 +626,17 @@ struct MergedAndRedactionTests {
             .appendingPathComponent("MergedAndRedactionTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// A temp directory with symlinks resolved (`/var` to `/private/var`),
+    /// because a typed error names a directory as the file enumeration spells
+    /// it, canonically, and a test that asserts on the exact error value needs
+    /// the same spelling.
+    private static func makeCanonicalTempDir() throws -> URL {
+        let uncanonicalDir = makeTempDir()
+        let canonicalPath = try #require(
+            try uncanonicalDir.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath)
+        return URL(fileURLWithPath: canonicalPath, isDirectory: true)
     }
 
     /// Builds a router wired with the stubs, an explicit recorder, and a chosen
