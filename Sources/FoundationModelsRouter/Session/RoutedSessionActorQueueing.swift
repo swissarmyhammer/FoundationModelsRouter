@@ -230,6 +230,9 @@ extension RoutedSessionActor {
             if delivery == .delivered, !isRelayed {
                 postElicitationAnswer(id: id, response: mailed)
             }
+            if delivery == .delivered {
+                announceAnswer(to: id)
+            }
             if delivery == .acceptedAwaitingCompletion {
                 await sendAcceptDown(answering: id, with: response)
             }

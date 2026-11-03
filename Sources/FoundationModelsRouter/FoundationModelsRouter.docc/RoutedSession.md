@@ -314,6 +314,12 @@ level one time, and the client answers it with the one id:
   gets the answer as ``MailBody/elicitationAnswer(id:response:)`` mail. A
   URL-mode accept goes down at once, and each level sends one
   ``SessionEvent/elicitationCompleted(_:)`` for the completion.
+- An answer through the child (``RoutedSession/respond(elicitationId:response:)``
+  of the child) ends the copy at the parent at once, one time, with a cancel
+  that gives ``SubagentQuestionRelay/answeredAtChildReason``. A later answer
+  at the parent finds no question and changes nothing. When the parent answers
+  first, the parent copy does not end. A child that is not a Router session
+  gives the relay no answers, so its answer does not end the parent copy.
 - An end with no answer at one level ends the question one time at each level.
   An end that comes up from a child has the origin ``Origin-enum/system``.
 - An answer at the root and an end in the child can cross. Then the root gives

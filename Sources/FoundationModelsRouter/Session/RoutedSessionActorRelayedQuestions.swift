@@ -17,6 +17,10 @@ import FoundationModelsExtras
 ///   ends the copy of the question in the child with the same response.
 /// - The child ended or completed its copy first: the relay sent that end or
 ///   that completion up, and the task does nothing in the child.
+/// - A client answered the copy in the child first: the relay ends the copy
+///   of this session with a cancel that gives
+///   ``SubagentQuestionRelay/answeredAtChildReason``, and the task does
+///   nothing in the child.
 ///
 /// The table also keeps the work state of the child of each relay. The
 /// session holds one `WorkKind.relayedChild` lease while the child of one of
@@ -44,6 +48,10 @@ struct RelayedQuestions: Sendable {
         /// The child completed its copy of the URL-mode question, and the
         /// relay completes the copy of this session.
         case completedBelow
+
+        /// A client answered the copy of the child, and the relay ends the
+        /// copy of this session.
+        case answeredBelow
     }
 
     /// What the task of a relayed question does in the child when it
@@ -87,6 +95,14 @@ struct RelayedQuestions: Sendable {
     /// Each relayed question whose task did not settle, by its id.
     private var questions: [ULID: Question] = [:]
 
+    /// The ids of the questions that a client answered in the child before
+    /// the relay recorded them here, by the id of the relay. The relay reads
+    /// the answers of its child apart from the feed of the child, so an
+    /// answer can come first. The set of a relay also holds the id of a
+    /// question that this level answered itself and that then came back as
+    /// an answer below. The set ends with the relay (``closeRelay(_:)``).
+    private var answeredEarly: [ULID: Set<ULID>] = [:]
+
     // MARK: - Relays
 
     /// Records a relay that starts to send the questions of its child to
@@ -116,6 +132,7 @@ struct RelayedQuestions: Sendable {
     /// - Parameter relay: The id of the relay.
     mutating func closeRelay(_ relay: ULID) {
         childWorks[relay] = nil
+        answeredEarly[relay] = nil
     }
 
     /// Whether the child of an open relay works now. The session then has
@@ -134,8 +151,18 @@ struct RelayedQuestions: Sendable {
     /// - Parameters:
     ///   - request: The question, as the child asked it.
     ///   - relay: The id of the relay.
-    mutating func noteRelayed(_ request: ElicitationRequest, by relay: ULID) {
-        questions[request.elicitationId] = Question(relay: relay, isURL: request.mode == .url)
+    /// - Returns: `true` when a client answered the question in the child
+    ///   before this call: the question is then answered below, and the relay
+    ///   ends the copy of this session when the journal recorded it.
+    @discardableResult
+    mutating func noteRelayed(_ request: ElicitationRequest, by relay: ULID) -> Bool {
+        var question = Question(relay: relay, isURL: request.mode == .url)
+        let wasAnswered = answeredEarly[relay]?.remove(request.elicitationId) != nil
+        if wasAnswered {
+            question.state = .answeredBelow
+        }
+        questions[request.elicitationId] = question
+        return wasAnswered
     }
 
     /// Records that the journal of this session recorded the question `id`.
@@ -192,6 +219,25 @@ struct RelayedQuestions: Sendable {
         mark(id, as: .endedBelow)
     }
 
+    /// Records that a client answered the copy of the child for the question
+    /// `id`, and the answer resumed the run of the child. A question that is
+    /// not in the table yet is kept for ``noteRelayed(_:by:)``.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the question.
+    ///   - relay: The id of the relay of the child.
+    /// - Returns: `true` when the question was open: the relay then ends the
+    ///   copy of this session.
+    mutating func noteAnsweredBelow(_ id: ULID, of relay: ULID) -> Bool {
+        guard questions[id] != nil else {
+            if childWorks[relay] != nil {
+                answeredEarly[relay, default: []].insert(id)
+            }
+            return false
+        }
+        return mark(id, as: .answeredBelow)
+    }
+
     /// Records that the child completed its copy of the open URL-mode
     /// question `id`.
     ///
@@ -230,7 +276,7 @@ struct RelayedQuestions: Sendable {
             return question.isURL && response.action == .accept ? .complete : .answer(response)
         case .endedHere(let ended):
             return .end(ended)
-        case .endedBelow, .completedBelow:
+        case .endedBelow, .completedBelow, .answeredBelow:
             return .nothing
         }
     }
@@ -329,7 +375,10 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - request: The question, as the child asked it.
     ///   - relay: The id of the relay.
-    func noteRelayed(_ request: ElicitationRequest, by relay: ULID) {
+    /// - Returns: `true` when a client answered the question in the child
+    ///   before this call (``RelayedQuestions/noteRelayed(_:by:)``).
+    @discardableResult
+    func noteRelayed(_ request: ElicitationRequest, by relay: ULID) -> Bool {
         relayedQuestions.noteRelayed(request, by: relay)
     }
 
@@ -370,6 +419,18 @@ extension RoutedSessionActor {
     ///   copy of this session.
     func noteRelayedQuestionEndedBelow(_ id: ULID) -> Bool {
         relayedQuestions.noteEndedBelow(id)
+    }
+
+    /// Records that a client answered the copy of the child for the relayed
+    /// question `id` (``RelayedQuestions/noteAnsweredBelow(_:of:)``).
+    ///
+    /// - Parameters:
+    ///   - id: The id of the question.
+    ///   - relay: The id of the relay of the child.
+    /// - Returns: `true` when the question was open: the relay then ends the
+    ///   copy of this session.
+    func noteRelayedQuestionAnsweredBelow(_ id: ULID, of relay: ULID) -> Bool {
+        relayedQuestions.noteAnsweredBelow(id, of: relay)
     }
 
     /// Records that the child completed its copy of the relayed URL-mode
@@ -421,6 +482,34 @@ extension RoutedSessionActor {
         _ = await child.respond(elicitationId: id.description, response: response)
     }
 
+    /// Starts a watch on the answers of this session: the id of each question
+    /// that a client answered with ``respond(elicitationId:response:)`` and
+    /// that resumed its run. A URL-mode accept and a completion give no id.
+    /// A relay watches its child before the first mail of the child.
+    ///
+    /// - Returns: The ids of the answers, and a call that ends the watch.
+    nonisolated func watchAnswers() -> ChildAnswerWatch {
+        let key = ULID.generate()
+        let (answers, continuation) = AsyncStream.makeStream(of: ULID.self)
+        answerWatchers.withLock { $0[key] = continuation }
+        return ChildAnswerWatch(answers: answers) { [weak self] in
+            self?.answerWatchers.withLock { _ = $0.removeValue(forKey: key) }
+            continuation.finish()
+        }
+    }
+
+    /// Gives the id of an answered question to each watch
+    /// (``watchAnswers()``).
+    ///
+    /// - Parameter id: The id of the question that a client answered.
+    nonisolated func announceAnswer(to id: ULID) {
+        answerWatchers.withLock { watchers in
+            for continuation in watchers.values {
+                continuation.yield(id)
+            }
+        }
+    }
+
     /// A feed of this session (``RoutedSession/streamSessionEvents()``), and
     /// the work state that the last work event reported, read in one step.
     /// Each work event goes out under the lock of ``workEvents``, and this
@@ -434,5 +523,31 @@ extension RoutedSessionActor {
             guard state.phase != .closed else { return (nil, .closed) }
             return (outputHub.makeFeed(), state.phase)
         }
+    }
+}
+
+/// The answers of a Router session that a relay watches
+/// (``RoutedSessionActor/watchAnswers()``).
+struct ChildAnswerWatch: Sendable {
+    /// The id of each question that a client answered, and that resumed its
+    /// run. The stream ends when the watch ends.
+    let answers: AsyncStream<ULID>
+
+    /// Ends the watch, and the stream of its answers.
+    let stop: @Sendable () -> Void
+
+    /// Makes a watch.
+    ///
+    /// - Parameters:
+    ///   - answers: The stream of the answered ids.
+    ///   - stop: The call that ends the watch.
+    init(answers: AsyncStream<ULID>, stop: @escaping @Sendable () -> Void) {
+        self.answers = answers
+        self.stop = stop
+    }
+
+    /// A watch that gives no answer: the session is not a Router session.
+    static var none: ChildAnswerWatch {
+        ChildAnswerWatch(answers: AsyncStream { $0.finish() }, stop: {})
     }
 }

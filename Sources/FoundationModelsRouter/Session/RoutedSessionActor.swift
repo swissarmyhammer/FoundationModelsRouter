@@ -514,6 +514,10 @@ actor RoutedSessionActor: RoutedSession {
     /// ``RelayedQuestions``.
     var relayedQuestions = RelayedQuestions()
 
+    /// The watches on the answers of this session, by the id of the watch
+    /// (``watchAnswers()``).
+    nonisolated let answerWatchers = Mutex<[ULID: AsyncStream<ULID>.Continuation]>([:])
+
     /// The child session of each open relay, by the id of the relay. A
     /// relaying level sends a URL accept of the user down to it at once
     /// (``respond(elicitationId:response:)``).

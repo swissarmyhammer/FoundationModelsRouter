@@ -429,6 +429,8 @@ public enum SessionEvent: Sendable, Equatable {
     /// A question that a ``SubagentQuestionRelay`` sent up ends one time at
     /// each level, with the same response: an end at one level goes up to
     /// each parent and down to each child.
+    /// An answer through the child also ends the copy at the parent, with a
+    /// cancel that gives ``SubagentQuestionRelay/answeredAtChildReason``.
     ///
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of
     /// the answer when the question ends inside an answer.

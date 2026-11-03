@@ -731,6 +731,50 @@ struct RelayedQuestionsTableTests {
         #expect(table.settle(id, resumedWith: Self.ended) == .nothing)
     }
 
+    /// The production change that makes this test fail: a table that does not
+    /// end the copy of this level when the child got its answer, or that
+    /// ends it more than one time, or a task that gives the child a second
+    /// answer.
+    @Test("a question that was answered below ends one time and does nothing in the child")
+    func aQuestionThatWasAnsweredBelowEndsOneTime() {
+        var (table, id, relay) = Self.tableWithOneQuestion()
+
+        let firstEnd = table.noteAnsweredBelow(id, of: relay)
+        let secondEnd = table.noteAnsweredBelow(id, of: relay)
+
+        #expect(firstEnd)
+        #expect(secondEnd == false)
+        #expect(table.settle(id, resumedWith: Self.ended) == .nothing)
+    }
+
+    /// The production change that makes this test fail: a table that loses
+    /// an answer that came before the relay sent the question up.
+    @Test("an answer below that comes before the question is recorded ends the question when it is recorded")
+    func anAnswerBelowBeforeTheQuestionIsRecordedEndsItWhenRecorded() {
+        var table = RelayedQuestions()
+        let relay = ULID.generate()
+        let request = MountFixtures.proceedRequest()
+        table.openRelay(relay, childWorks: false)
+
+        let early = table.noteAnsweredBelow(request.elicitationId, of: relay)
+        let answeredAlready = table.noteRelayed(request, by: relay)
+
+        #expect(early == false)
+        #expect(answeredAlready)
+        #expect(table.settle(request.elicitationId, resumedWith: Self.ended) == .nothing)
+    }
+
+    /// The production change that makes this test fail: a table that ends a
+    /// question that this level answered itself, when the answer reaches
+    /// the child and comes back as an answer below.
+    @Test("an answer below for a question that this level settled ends nothing")
+    func anAnswerBelowAfterTheSettleEndsNothing() {
+        var (table, id, relay) = Self.tableWithOneQuestion()
+        _ = table.settle(id, resumedWith: Self.ended)
+
+        #expect(table.noteAnsweredBelow(id, of: relay) == false)
+    }
+
     /// The production change that makes this test fail: a task that
     /// completes the copy in the child after the child completed it itself.
     @Test("a question that completed below does nothing in the child")

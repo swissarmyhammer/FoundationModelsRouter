@@ -17,8 +17,15 @@ comments:
     - evidence: full swift test: 2319 tests passed (plus 38 and 19 in other runs), zero failures. New tests: 8 test functions, 13 cases in Tests/FoundationModelsRouterTests/SuspendingCloseTests.swift.
     - next: /review
   timestamp: 2026-11-03T17:13:20.116506+00:00
-position_column: review
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m6h6ss2hmdmstpv2wnk30sz8
+  text: |-
+    ### review — clean
+    - evidence: review sha e7996d53~1..e7996d53, 0 findings (counts: findings 0, confirmed 0, refuted 6). No prior findings on the task.
+    - next: none, card moved to done
+  timestamp: 2026-11-03T17:20:07.761907+00:00
+position_column: done
+position_ordinal: ffffffffe180
 title: A tool run that the host cancels for a shutdown must not be journaled as succeeded
 ---
 ## What

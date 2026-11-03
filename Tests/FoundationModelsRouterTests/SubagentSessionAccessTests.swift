@@ -37,6 +37,11 @@ struct SubagentSessionAccessTests {
     /// The accepted answer to the form question of the leaf.
     private static let acceptedForm = ElicitationResponse.accept(content: ["ok": .boolean(true)])
 
+    /// The end that the parent copy of a question gets when the question was
+    /// answered at the child.
+    private static let answeredAtChild = ElicitationResponse.cancel(
+        reason: SubagentQuestionRelay.answeredAtChildReason)
+
     // MARK: - Helpers
 
     /// A child session that a host got from the directory the moment the
@@ -249,13 +254,12 @@ struct SubagentSessionAccessTests {
     }
 
     /// The production change that makes this test fail: an answer through
-    /// the child that leaves the relayed copy in the parent open after the
-    /// relaying run ended, or that ends it more than one time. The copy ends
-    /// when the relay ends (the feed of the child ends with the close of the
-    /// child), with a cancel that gives the reason of a stopped run. It does
-    /// not end at the moment of the answer through the child.
-    @Test("an answer through the child: the copy in the parent ends one time, when the relay ends")
-    func anAnswerThroughTheChildEndsTheParentCopyOneTime() async throws {
+    /// the child that leaves the relayed copy in the parent open until the
+    /// relay ends, or that ends it more than one time, or with another
+    /// response than the cancel that says the answer came at the child. The
+    /// copy ends at once, before the relaying run settles.
+    @Test("an answer through the child ends the copy in the parent at once, one time, as answered at the child")
+    func anAnswerThroughTheChildEndsTheParentCopyAtOnce() async throws {
         let rootStep = SubagentRelayStep(agentName: Self.reviewer)
         let (fixture, log) = try await Self.makeAskingFixture(rootStep: rootStep)
         defer { await fixture.end(opening: [rootStep.gate]) }
@@ -270,25 +274,23 @@ struct SubagentSessionAccessTests {
         _ = await Self.outputsThroughQuestion(&rootFeed)
 
         _ = await accessed.session.respond(elicitationId: id.description, response: Self.acceptedForm)
-        _ = try await fixture.box.waitForAnswers(Self.once)
+        // The gate of the relaying run is still closed: the end comes from the answer, not from the close of the child.
+        let atOnce = await SessionWorkEventTests.outputs(
+            from: &rootFeed, through: SessionEventCase.elicitationEnded.matches)
         await rootStep.gate.open()
-        // The relaying run settles after the close of the child, whatever happened to the copy.
-        let rootOutputs = await SessionWorkEventTests.outputs(
-            from: &rootFeed, through: SessionEventCase.runSettled.matches)
+        let rest = await SessionWorkEventTests.outputs(from: &rootFeed, through: SessionEventCase.runSettled.matches)
 
-        let ends = PendingElicitationFixtures.ends(in: rootOutputs)
-        #expect(ends.map(\.end.elicitationId) == [id])
+        let ends = PendingElicitationFixtures.ends(in: atOnce + rest)
+        #expect(ends.map(\.end) == [ElicitationEnd(elicitationId: id, response: Self.answeredAtChild)])
         #expect(await fixture.session.openElicitationIds().isEmpty)
     }
 
     /// A host that answers at both levels: the child first, then the copy in
-    /// the parent. This test records what happens today: an answer through
-    /// the child does not reach the parent copy, so the parent copy stays
-    /// open and still takes an answer (`.delivered`). The relay sends that
-    /// answer down, and the child no longer has the question, so the run of
+    /// the parent. The answer through the child ended the parent copy, so
+    /// the parent finds no question for the second answer, and the run of
     /// the child keeps the first answer only.
-    @Test("an answer at the child and then at the parent copy: the parent takes it, and the run of the child keeps the first answer")
-    func anAnswerAtBothLevelsGivesTheChildRunTheFirstOnly() async throws {
+    @Test("an answer at the child and then at the parent: the later answer changes nothing")
+    func aLaterAnswerAtTheParentChangesNothing() async throws {
         let rootStep = SubagentRelayStep(agentName: Self.reviewer)
         let (fixture, log) = try await Self.makeAskingFixture(rootStep: rootStep)
         defer { await fixture.end(opening: [rootStep.gate]) }
@@ -303,12 +305,43 @@ struct SubagentSessionAccessTests {
         _ = await Self.outputsThroughQuestion(&rootFeed)
 
         _ = await accessed.session.respond(elicitationId: id.description, response: Self.acceptedForm)
+        _ = await SessionWorkEventTests.outputs(from: &rootFeed, through: SessionEventCase.elicitationEnded.matches)
         _ = try await fixture.box.waitForAnswers(Self.once)
         let second = await fixture.session.respond(elicitationId: id.description, response: .decline)
         await rootStep.gate.open()
         _ = await SessionWorkEventTests.outputs(from: &rootFeed, through: SessionEventCase.runSettled.matches)
 
         #expect(fixture.box.answers == [Self.acceptedForm])
-        #expect(second == .delivered)
+        #expect(second == .noPendingElicitation)
+    }
+
+    /// The production change that makes this test fail: a relay that ends the
+    /// parent copy when the parent itself answered first. The parent takes
+    /// its answer and sends it down, and the answer that reaches the child
+    /// is the one that the relay itself gave, so it ends nothing.
+    @Test("an answer at the parent first: the parent copy does not end")
+    func anAnswerAtTheParentFirstEndsNothing() async throws {
+        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
+        let (fixture, log) = try await Self.makeAskingFixture(rootStep: rootStep)
+        defer { await fixture.end(opening: [rootStep.gate]) }
+        var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+        try await fixture.start()
+        _ = try await fixture.box.waitForChildren(Self.once)
+        let accessed = try #require(log.first)
+        var childFeed = accessed.feed.makeAsyncIterator()
+        let id = try #require(
+            try firstQuestion(in: await Self.outputsThroughQuestion(&childFeed)).elicitation
+        ).elicitationId
+        _ = await Self.outputsThroughQuestion(&rootFeed)
+
+        let delivery = await fixture.session.respond(elicitationId: id.description, response: Self.acceptedForm)
+        let answers = try await fixture.box.waitForAnswers(Self.once)
+        await rootStep.gate.open()
+        let rootOutputs = await SessionWorkEventTests.outputs(
+            from: &rootFeed, through: SessionEventCase.runSettled.matches)
+
+        #expect(delivery == .delivered)
+        #expect(answers == [Self.acceptedForm])
+        #expect(PendingElicitationFixtures.ends(in: rootOutputs).isEmpty)
     }
 }

@@ -81,6 +81,13 @@ public struct SubagentQuestionTarget: Sendable {
 ///   whose own run asked the question mails the answer to its model. A
 ///   URL-mode accept goes down at once, and a completion goes down or comes
 ///   up, so each level sends one ``SessionEvent/elicitationCompleted(_:)``.
+/// - An answer at the child ends the copy at the parent at once, one time,
+///   with a cancel that gives ``answeredAtChildReason``. The feed of the child
+///   shows no event for an answer, so the relay reads the answers of a Router
+///   child from a watch of its own (``RoutedSessionActor/watchAnswers()``). A
+///   later answer at the parent finds no question, and changes nothing. When
+///   the parent answers first, the answer that the relay gives the child ends
+///   nothing at the parent.
 /// - An end with no answer ends the question one time at each level: an end
 ///   in the child comes up (`RunPlane.endElicitation(_:with:)`, origin
 ///   ``Origin/system`` at the parent), and an end at the parent goes down to
@@ -120,8 +127,10 @@ public struct SubagentQuestionTarget: Sendable {
 /// the relay must always settle the task of the question, so that the child
 /// copy ends and ``finish()`` returns.
 ///
-/// A known limit: a child that is not a Router session gets no
-/// ``SessionEvent/elicitationEnded(_:)`` when the parent ends its question.
+/// A known limit: a child that is not a Router session gives the relay no
+/// answers, so an answer at such a child does not end the copy at the parent.
+/// Such a child also gets no ``SessionEvent/elicitationEnded(_:)`` when the
+/// parent ends its question.
 /// Its copy of the question gets the response of the end through
 /// ``RoutedSession/respond(elicitationId:response:)``. Such a child also
 /// counts as work until its first ``SessionEvent/workEnded``.
@@ -129,6 +138,13 @@ public struct SubagentQuestionTarget: Sendable {
 /// The relay never closes a session and never waits for an answer of the
 /// child. Close the child first, and then call ``finish()``.
 public final class SubagentQuestionRelay: Sendable {
+    /// The reason of the cancel that the copy of a question in the parent
+    /// gets when the question was answered at the child
+    /// (``RoutedSession/respond(elicitationId:response:)`` of the child).
+    /// A host can tell this end from the end of a stopped run
+    /// (`RunPlane.runCancelledReason`).
+    public static let answeredAtChildReason = "answered at the child"
+
     /// The task that reads the feed of the child to its end, and waits for
     /// the task of each question that it sent up.
     private let reading: Task<Void, Never>
@@ -167,7 +183,8 @@ public final class SubagentQuestionRelay: Sendable {
         guard target.userPresence == .interactive else { return nil }
         let subscription = await subscribe(to: child)
         let relay = await target.session.openRelay(child: child, childWorks: subscription.childWorks)
-        let link = SubagentQuestionLink(child: child, agentName: agentName, target: target, relay: relay)
+        let link = SubagentQuestionLink(
+            child: child, agentName: agentName, target: target, relay: relay, answerWatch: subscription.answerWatch)
         // Detached: the relay gets no task-local of the run that starts it,
         // so no origin and no mark of that run reaches the work of the relay.
         let reading = Task.detached { await link.read(subscription.feed) }
@@ -189,20 +206,26 @@ public final class SubagentQuestionRelay: Sendable {
     /// work event after that state. A child that is not a Router session
     /// counts as work until its first ``SessionEvent/workEnded``.
     ///
+    /// The watch on the answers of a Router child
+    /// (``RoutedSessionActor/watchAnswers()``) starts at the same time. A
+    /// child that is not a Router session gives no answers.
+    ///
     /// - Parameter child: The session of the subagent.
-    /// - Returns: The feed, and whether the child works. A Router session
-    ///   that started its close gives a feed that is already finished.
+    /// - Returns: The feed, whether the child works, and the watch on the
+    ///   answers. A Router session that started its close gives a feed that
+    ///   is already finished.
     private static func subscribe(
         to child: any RoutedSession
-    ) async -> (feed: AsyncStream<SessionOutput>, childWorks: Bool) {
+    ) async -> (feed: AsyncStream<SessionOutput>, childWorks: Bool, answerWatch: ChildAnswerWatch) {
         guard let router = child as? RoutedSessionActor else {
-            return (await child.streamSessionEvents(), true)
+            return (await child.streamSessionEvents(), true, .none)
         }
+        let answerWatch = router.watchAnswers()
         let (feed, phase) = router.feedWithWorkPhase()
         guard let feed else {
-            return (AsyncStream { $0.finish() }, false)
+            return (AsyncStream { $0.finish() }, false, answerWatch)
         }
-        return (feed, phase == .working)
+        return (feed, phase == .working, answerWatch)
     }
 }
 
@@ -226,6 +249,10 @@ struct SubagentQuestionLink: Sendable {
     /// The id of the relay in the table of the parent.
     let relay: ULID
 
+    /// The watch on the answers of the child. It gives the id of each
+    /// question that a client answered in the child.
+    let answerWatch: ChildAnswerWatch
+
     /// The parent session.
     private var parent: RoutedSessionActor {
         target.session
@@ -238,12 +265,24 @@ struct SubagentQuestionLink: Sendable {
     /// - Parameter feed: The feed of the child.
     func read(_ feed: AsyncStream<SessionOutput>) async {
         await withDiscardingTaskGroup { group in
+            group.addTask { await readAnswers() }
             for await output in feed {
                 await handle(output.event, in: &group)
             }
+            answerWatch.stop()
             await endOpenQuestions()
         }
         await parent.closeRelay(relay)
+    }
+
+    /// Reads the answers of the child to their end (the end of the watch),
+    /// and ends the copy at the parent of each question that a client
+    /// answered in the child.
+    private func readAnswers() async {
+        for await id in answerWatch.answers {
+            guard await parent.noteRelayedQuestionAnsweredBelow(id, of: relay) else { continue }
+            await endAtParent(id, with: .cancel(reason: SubagentQuestionRelay.answeredAtChildReason))
+        }
     }
 
     /// Acts on one event of the child. Only the questions, their ends, their
@@ -281,10 +320,13 @@ struct SubagentQuestionLink: Sendable {
     ///   - group: The group of the tasks of the relayed questions.
     private func sendUp(_ event: OperationEvent, in group: inout DiscardingTaskGroup) async {
         guard let request = event.elicitation else { return }
-        await parent.noteRelayed(request, by: relay)
+        let answeredAlready = await parent.noteRelayed(request, by: relay)
         let relayed = request.relayed(by: agentName, askedBy: event.tool)
         group.addTask { await ask(relayed) }
         await parent.awaitRelayedQuestionRecorded(request.elicitationId)
+        if answeredAlready {
+            await endAtParent(request.elicitationId, with: .cancel(reason: SubagentQuestionRelay.answeredAtChildReason))
+        }
     }
 
     /// The task of one relayed question: asks it in the run of the target,
