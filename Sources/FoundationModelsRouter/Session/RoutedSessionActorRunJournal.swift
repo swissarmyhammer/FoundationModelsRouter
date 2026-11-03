@@ -396,7 +396,7 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// carries the id that its open record joined.
     ///
     /// The open record is also the start of a tool call. The call is then
-    /// recorded (``recordStart(of:)``), before the tool body runs.
+    /// recorded (``recordStart(of:correlationID:)``), before the tool body runs.
     ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
@@ -407,7 +407,7 @@ extension RoutedSessionActor: ToolInvocationObserver {
             let call = toolCallRunJoin.openedCall(for: record, in: submissionEntries)
             toolCallID = call?.id
             if let call {
-                await recordStart(of: call)
+                await recordStart(of: call, correlationID: record.correlationID)
             }
         } else {
             toolCallID = toolCallRunJoin.toolCallID(for: record, in: submissionEntries)

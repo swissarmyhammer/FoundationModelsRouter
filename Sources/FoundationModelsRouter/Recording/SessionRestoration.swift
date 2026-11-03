@@ -3,7 +3,7 @@ import FoundationModels
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -88,7 +88,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionRecord`` against this call's owning profile, and a mismatch
     /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -145,6 +145,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     directory of the session gets the key too, and so does a sub-agent
     ///     that starts from the session while it is open. See
     ///     ``SessionConfiguration/hookSessionKey``.
+    ///   - claimingRuns: The orphan runs that the host takes, or empty (the
+    ///     default) to take none. The restore posts no `.lost` terminal for
+    ///     a claimed run, and the session keeps the claim open until the host
+    ///     completes the run
+    ///     (``RoutedSession/completeClaimedRun(_:outcome:detail:)``) or the
+    ///     session closes. See
+    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -159,12 +166,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         toolOutputProtection: ToolOutputProtection? = nil,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         userPresence: UserPresence? = nil,
-        hookSessionKey: String? = nil
+        hookSessionKey: String? = nil,
+        claimingRuns: Set<RunKey> = []
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
-            userPresence: userPresence, hookSessionKey: hookSessionKey)
+            userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

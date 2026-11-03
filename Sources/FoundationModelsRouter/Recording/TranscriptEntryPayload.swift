@@ -242,12 +242,20 @@ struct ToolCallPayload: Sendable, Codable, Equatable {
     let toolName: String
     /// The call's arguments, encoded via `GeneratedContent.jsonString`.
     let argumentsJSON: String
+    /// The completion token of the run that the call started, or `nil`.
+    ///
+    /// Only a ``TranscriptEvent/Kind/toolCallStarted`` marker holds it. The
+    /// tool run makes the token, so the marker of a call that has no run has
+    /// none. A restore reads it to find the run of an open call in the
+    /// journal (``OpenToolCalls``).
+    let correlationID: String?
 
     /// Creates a tool call payload.
-    init(id: String, toolName: String, argumentsJSON: String) {
+    init(id: String, toolName: String, argumentsJSON: String, correlationID: String? = nil) {
         self.id = id
         self.toolName = toolName
         self.argumentsJSON = argumentsJSON
+        self.correlationID = correlationID
     }
 }
 

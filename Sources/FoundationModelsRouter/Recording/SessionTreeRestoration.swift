@@ -3,8 +3,8 @@ import FoundationModels
 import FoundationModelsExtras
 
 /// A failure to restore recorded sessions from disk, through
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -27,6 +27,11 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// model resident in `slot` on the restoring profile.
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
 
+    /// The host claimed a run that is not an orphan run of any restored
+    /// session: the journal holds a `.completed` event for it, or holds no
+    /// event of it. Only a run with ``RunStatus/orphaned`` can be claimed.
+    case runNotClaimable(RunKey)
+
     /// A localized message describing what error occurred.
     public var errorDescription: String? {
         switch self {
@@ -47,6 +52,11 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
                 Session \(session.description) was recorded against model \(recorded.stringValue) in slot \
                 \(slot.rawValue), but the restoring profile's resident model for that slot is \
                 \(resident.stringValue).
+                """
+        case .runNotClaimable(let key):
+            return """
+                The run \(key.correlationID) of the tool \(key.tool) is not an orphan run of the recorded \
+                sessions, so a restore cannot claim it.
                 """
         }
     }
@@ -83,7 +93,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 ///
 /// This type stays internal. A caller resumes a session by an id it holds,
 /// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)`` is the
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)`` is the
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
@@ -235,6 +245,19 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     key of the root while the root is open. The recording does not
     ///     hold the key, because it is for the hooks only, so a host gives it
     ///     again here. See ``SessionConfiguration/hookSessionKey``.
+    ///   - claimingRuns: The orphan runs that the host takes, or empty (the
+    ///     default) to take none. The restore posts no `.lost` terminal for a
+    ///     claimed run. The first restored session, in walk order, whose
+    ///     recorded events hold the orphan run keeps the claim open: it is
+    ///     work (``RoutedSession/awaitIdle()``) until the host completes the run
+    ///     (``RoutedSession/completeClaimedRun(_:outcome:detail:)``), or the
+    ///     session closes and ends the run as `.lost`. A host finds the keys
+    ///     with ``RouterSessionDirectory/runStatuses(of:)``. A claimed key
+    ///     that is not an orphan run of the tree throws
+    ///     ``SessionTreeRestorationError/runNotClaimable(_:)`` before any
+    ///     session is restored. The open tool call of a claimed run gets the
+    ///     placeholder output ``OpenToolCalls/runningOutput``, and the real
+    ///     result arrives as run mail with the same run key.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -248,7 +271,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         toolOutputProtection: ToolOutputProtection? = nil,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         userPresence: UserPresence? = nil,
-        hookSessionKey: String? = nil
+        hookSessionKey: String? = nil,
+        claimingRuns: Set<RunKey> = []
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -267,6 +291,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         guard rootNode.parentId == nil else {
             throw SessionTreeRestorationError.notARootSession(rootId)
         }
+
+        try Self.requireClaimable(claimingRuns, in: rootNode, of: tree)
+        // The claimed runs whose open claim no restored node holds yet. The
+        // first node whose events hold an orphan run keeps its claim.
+        var unplacedClaims = claimingRuns
 
         var sessionsById: [ULID: any RoutedSession] = [:]
         // The rehydration match (task ^ne5g9jn): each node's recorded tool
@@ -499,8 +528,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // so the record has no holes and the model learns the run died.
             // This is the only place `.lost` is manufactured outside an MCP
             // transport drop.
+            // A run that the host claimed gets no lost terminal. The first
+            // node that holds the run keeps the open claim.
+            var claimedTerminals: [OperationEvent] = []
             for lostEvent in TranscriptTree.lostRunTerminalEvents(in: effectiveEvents) {
-                await outbox.post(event: lostEvent)
+                let run = RunKey(tool: lostEvent.tool, correlationID: lostEvent.correlationID)
+                guard claimingRuns.contains(run) else {
+                    await outbox.post(event: lostEvent)
+                    continue
+                }
+                if unplacedClaims.remove(run) != nil {
+                    claimedTerminals.append(lostEvent)
+                }
             }
 
             let session = makeRoutedSessionActor(
@@ -598,6 +637,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // the transcript records it, so a later restore sends no second
             // one. The mail does not go back to the queue: no tool side
             // effect runs again.
+            await session.holdClaims(for: claimedTerminals)
             await session.reportLostMail(
                 TranscriptTree.lostMail(
                     in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: [.mail]), ofSession: node.id))
@@ -609,7 +649,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``
         /// releases those forks anyway.
         ///
         /// The model reads its instructions from the leading `.instructions`
@@ -717,5 +757,37 @@ extension TranscriptTree {
     /// - Returns: The manufactured terminal events, or empty.
     static func lostRunTerminalEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
         OrphanRunScan(scanning: events).lostTerminalEvents()
+    }
+}
+
+extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Checks that each run of `claims` is an orphan run in the recorded
+    /// events of `rootNode` or of a node below it. It reads the events and
+    /// restores nothing, so a failed check leaves no restored session.
+    ///
+    /// - Parameters:
+    ///   - claims: The runs that the host claims.
+    ///   - rootNode: The root of the tree to restore.
+    ///   - tree: The loaded tree.
+    /// - Throws: ``SessionTreeRestorationError/runNotClaimable(_:)`` for the
+    ///   first claimed run, in order of tool and `correlationID`, that is no
+    ///   orphan run of the tree; the errors of
+    ///   ``TranscriptTree/effectiveEntryEvents(forSession:)``.
+    fileprivate static func requireClaimable(
+        _ claims: Set<RunKey>, in rootNode: SessionNode, of tree: TranscriptTree
+    ) throws {
+        guard !claims.isEmpty else { return }
+        var orphans: Set<RunKey> = []
+        var pending = [rootNode]
+        while let node = pending.popLast() {
+            orphans.formUnion(OrphanRunScan(scanning: try tree.effectiveEntryEvents(forSession: node.id)).orphanedRuns)
+            pending += node.children
+        }
+        let unclaimable = claims.subtracting(orphans).sorted {
+            ($0.tool, $0.correlationID) < ($1.tool, $1.correlationID)
+        }
+        if let key = unclaimable.first {
+            throw SessionTreeRestorationError.runNotClaimable(key)
+        }
     }
 }

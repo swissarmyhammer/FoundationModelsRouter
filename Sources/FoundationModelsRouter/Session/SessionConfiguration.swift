@@ -115,7 +115,7 @@ public struct SessionConfiguration: Sendable {
     /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
     /// ``persistable`` does not record it. A restore gets
     /// it again from the host, through the `isNoOpToolCall` argument of
-    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:)``.
+    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``.
     public var isNoOpToolCall: NoOpToolCallCheck
 
     /// Tells if a user can answer the questions of the session.

@@ -494,6 +494,11 @@ actor RoutedSessionActor: RoutedSession {
     /// changes of this state.
     nonisolated let workEvents = Mutex(WorkEventState())
 
+    /// The runs that the host claimed at the restore of this session, and
+    /// that have no terminal event yet. A run leaves this set on its first
+    /// terminal event. See ``completeClaimedRun(_:outcome:detail:)``.
+    var openClaims: [RunKey: OpenClaim] = [:]
+
     /// The lease of the work of the children of the relays of this session
     /// (`WorkKind.relayedChild`), or `nil` while no child of a relay works.
     /// See ``updateRelayedChildWork()``.

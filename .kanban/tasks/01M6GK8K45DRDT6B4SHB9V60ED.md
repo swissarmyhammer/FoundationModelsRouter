@@ -15,10 +15,31 @@ comments:
 
     Tests (`ClaimOrphanRunsTests`): claim and complete once; second complete is a no-op; claim and close gives lost; no claim gives lost as today; claim of a completed key throws; awaitIdle with open claim.
   timestamp: 2026-11-03T13:40:15.722041+00:00
+- actor: claude-code
+  id: 01m6h4j9kq9h9a9wbedkq6b6m6
+  text: |-
+    CHECK ANSWERS (implementation).
+    1. Run plane and awaitIdle: awaitIdle waits on the work registry, not on the run plane. A claim has no run in the run plane (the process died). So the restored session holds one work lease of the new kind WorkKind.claimedRun for each open claim. awaitIdle and isIdle report busy while a claim is open. The lease ends after the one terminal is posted. The lease of the mail of that terminal is taken first, so there is no idle gap.
+    2. Protocol or actor: the method is on the RoutedSession protocol, because a host holds any RoutedSession. RoutedSessionActor is the only conformer, and no stub conforms, so no other type changed.
+    3. ToolCallOutputPairing: an output pairs with its call by the SDK call id (entry id of the output equals the call id). The placeholder output has the id of the call, so the pairing holds. The run key is different: it uses the completion token (correlationID) of the run. The two ids were not linked in the journal. Now the toolCallStarted marker holds the completion token in the new optional field ToolCallPayload.correlationID. The session writes the marker when the open record of the run arrives, and that is the place where the token is known. The real result arrives as run mail with the run key (tool, token). It never pairs with the placeholder output; it is a message.
+    4. Claim place: the first restored node, in walk order, whose effective events hold the orphan run keeps the open claim. A fork that inherits the same events posts no lost for a claimed key. A claimed key that is no orphan in any node throws SessionTreeRestorationError.runNotClaimable(RunKey) before any session is restored.
+    5. Duplicate terminal: a key leaves the open claims on its first terminal (complete or close). The second call returns false and posts nothing. The close takes all claims before its first suspension, so a call after the close starts finds none.
+    6. Close: the lost terminal of each open claim is journaled after the drain through journalWithoutStaging (the queue is closed, so there is no mail). It has the op and the detail of the lost terminal that the restore did not post.
+    7. Mail rule: the completed terminal of a claim is run mail like the restore lost terminal. A completed terminal whose token is not a settled run of the run plane does not start a submission by itself. It rides the next submission. This is the existing rule, and it is not changed.
+
+    PLACEHOLDER OUTPUT (coordinator addition). The restore chooses the text of the placeholder output of an open call from the journal (OpenToolCalls.folding reads OrphanRunScan statuses). A call whose run (tool, token) is orphaned gets OpenToolCalls.runningOutput: the run still works, the result comes as run mail. A call with no run in the journal, no token, or a terminal event gets OpenToolCalls.interruptedOutput: the call was interrupted before its result was recorded, call it again if needed. So a call that ended inline (output only in memory) and a call that the user cancelled do not wait for ever. Tests: WriteAheadToolCallTests (orphaned run, no run, completed run, cancelled run, marker holds the token, restore with orphaned run, restore after an inline-finished call, restore after a cancelled call).
+  timestamp: 2026-11-03T16:41:05.399415+00:00
+- actor: claude-code
+  id: 01m6h4k1a4ye6dv676yff0w6vj
+  text: |-
+    ### implement — changed
+    - evidence: full swift test: 2300 tests in 278 suites passed (main target), 0 failures. New: ClaimOrphanRunsTests (13 tests), 8 new tests in WriteAheadToolCallTests. Files: Recording/OpenToolCalls.swift, Recording/TranscriptEntryPayload.swift, Recording/SessionTreeRestoration.swift, Recording/SessionRestoration.swift, Session/RoutedSession.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorClaimedRuns.swift (new), Session/RoutedSessionActorClosing.swift, Session/RoutedSessionActorRecording.swift, Session/RoutedSessionActorRunJournal.swift, Session/RoutedSessionActorWorkEvents.swift, doc link updates, Tests/ClaimOrphanRunsTests.swift, Tests/WriteAheadToolCallTests.swift.
+    - next: review. No commit, no push.
+  timestamp: 2026-11-03T16:41:29.668858+00:00
 depends_on:
 - 01M6GK7RHHHC6B6QMJ25FT1QDT
-position_column: todo
-position_ordinal: '8280'
+position_column: review
+position_ordinal: '80'
 title: Let a host claim orphan runs at restore, so the restore does not post lost and the host can post the real completed
 ---
 ## What

@@ -211,7 +211,7 @@ struct WriteAheadToolCallTests {
         #expect(Self.toolCallIDs(in: entries) == [[Self.firstCallID]])
     }
 
-    @Test("a restore after the crash answers the open call with the placeholder output")
+    @Test("a restore after the crash answers a call that has no run in the journal with the interrupted output")
     @MainActor
     func restoreAnswersTheOpenCallWithThePlaceholder() async throws {
         let gate = RunLatch()
@@ -228,7 +228,137 @@ struct WriteAheadToolCallTests {
         let entries = Array(await restored.session.transcript)
 
         #expect(Self.toolOutputIDs(in: entries) == [Self.firstCallID])
-        #expect(Self.toolOutputTexts(in: entries) == [OpenToolCalls.placeholderOutput])
+        #expect(Self.toolOutputTexts(in: entries) == [OpenToolCalls.interruptedOutput])
+    }
+
+    // MARK: - The placeholder follows the run in the journal
+
+    /// The completion token of the run of the hand-built calls.
+    private static let runToken = "run-token-1"
+
+    @Test("a call whose run is orphaned in the journal gets the running output")
+    func orphanedRunGetsTheRunningOutput() {
+        let events = [
+            Self.markerEvent(seq: 1, callID: Self.firstCallID, correlationID: Self.runToken),
+            Self.runEvent(seq: 2, correlationID: Self.runToken, kind: .progress),
+        ]
+
+        #expect(Self.placeholderTexts(for: events).filter { $0 == OpenToolCalls.runningOutput }.count == 1)
+    }
+
+    @Test("a call with no run in the journal gets the interrupted output")
+    func callWithoutARunGetsTheInterruptedOutput() {
+        let events = [Self.markerEvent(seq: 1, callID: Self.firstCallID, correlationID: Self.runToken)]
+
+        #expect(Self.placeholderTexts(for: events) == [OpenToolCalls.interruptedOutput])
+    }
+
+    @Test("a call whose run completed before the crash gets the interrupted output")
+    func completedRunGetsTheInterruptedOutput() {
+        let events = [
+            Self.markerEvent(seq: 1, callID: Self.firstCallID, correlationID: Self.runToken),
+            Self.runEvent(seq: 2, correlationID: Self.runToken, kind: .progress),
+            Self.runEvent(seq: 3, correlationID: Self.runToken, kind: .completed, outcome: .succeeded),
+        ]
+
+        #expect(Self.placeholderTexts(for: events).filter { $0 == OpenToolCalls.interruptedOutput }.count == 1)
+    }
+
+    @Test("a call whose run the user cancelled gets the interrupted output")
+    func cancelledRunGetsTheInterruptedOutput() {
+        let events = [
+            Self.markerEvent(seq: 1, callID: Self.firstCallID, correlationID: Self.runToken),
+            Self.runEvent(seq: 2, correlationID: Self.runToken, kind: .completed, outcome: .cancelled),
+        ]
+
+        #expect(Self.placeholderTexts(for: events).filter { $0 == OpenToolCalls.interruptedOutput }.count == 1)
+    }
+
+    @Test("the marker of a call carries the completion token of its run")
+    @MainActor
+    func markerCarriesTheCompletionToken() async throws {
+        let gate = RunLatch()
+        let entered = RunLatch()
+        let tool = MountFixtures.GatedTool(gate: gate, entered: entered)
+        let fixture = try await Fixture.make(
+            over: Self.container(calling: tool.name, in: [Self.firstCallID]), tools: [tool], gates: [gate])
+        defer { await fixture.end() }
+        _ = Task { try await fixture.started.session.respond(to: Self.prompt) }
+        await entered.waitUntilOpen()
+
+        let call = try #require(fixture.events().first { $0.kind == .toolCallStarted }?.entry?.toolCalls?.first)
+
+        #expect(call.correlationID?.isEmpty == false)
+    }
+
+    @Test("a restore after a crash answers a call with a journaled orphaned run with the running output")
+    @MainActor
+    func restoreAnswersAnOrphanedRunWithTheRunningOutput() async throws {
+        let gate = RunLatch()
+        let entered = RunLatch()
+        let tool = MountFixtures.GatedTool(gate: gate, entered: entered)
+        let fixture = try await Fixture.make(
+            over: Self.container(calling: tool.name, in: [Self.firstCallID]), tools: [tool], gates: [gate])
+        defer { await fixture.end() }
+        _ = Task { try await fixture.started.session.respond(to: Self.prompt) }
+        await entered.waitUntilOpen()
+        let token = try #require(
+            fixture.events().first { $0.kind == .toolCallStarted }?.entry?.toolCalls?.first?.correlationID)
+        await fixture.started.session.outbox.journalWithoutStaging(
+            event: OperationEvent(tool: tool.name, op: "run tool", correlationID: token, kind: .progress, detail: "working"))
+
+        let restored = try await fixture.restore()
+        defer { await restored.session.close() }
+        let texts = Self.toolOutputTexts(in: Array(await restored.session.transcript))
+
+        #expect(texts.filter { $0 == OpenToolCalls.runningOutput }.count == 1)
+    }
+
+    @Test("a restore after a call that finished inline in the same submission gives it the interrupted output")
+    @MainActor
+    func restoreAnswersAnInlineFinishedCallWithTheInterruptedOutput() async throws {
+        let gate = RunLatch()
+        let entered = RunLatch()
+        let gated = MountFixtures.GatedTool(gate: gate, entered: entered)
+        let script = ScriptedAnswerScript(
+            rounds: [
+                [ScriptedToolCall(id: Self.firstCallID, toolName: MountFixtures.FastTool().name, argument: .literal(Self.argumentValue))],
+                [ScriptedToolCall(id: Self.secondCallID, toolName: gated.name, argument: .literal(Self.argumentValue))],
+            ])
+        let container = ScriptedToolCallingContainer(
+            model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()))
+        let fixture = try await Fixture.make(over: container, tools: [MountFixtures.FastTool(), gated], gates: [gate])
+        defer { await fixture.end() }
+        _ = Task { try await fixture.started.session.respond(to: Self.prompt) }
+        await entered.waitUntilOpen()
+
+        let restored = try await fixture.restore()
+        defer { await restored.session.close() }
+        let texts = Self.toolOutputTexts(in: Array(await restored.session.transcript))
+
+        #expect(texts == [OpenToolCalls.interruptedOutput, OpenToolCalls.interruptedOutput])
+    }
+
+    @Test("a restore after a cancelled call never gives the running output")
+    @MainActor
+    func restoreAfterACancelledCallGivesNoRunningOutput() async throws {
+        let gate = RunLatch()
+        let entered = RunLatch()
+        let tool = MountFixtures.GatedTool(gate: gate, entered: entered)
+        let fixture = try await Fixture.make(
+            over: Self.container(calling: tool.name, in: [Self.firstCallID]), tools: [tool], gates: [gate])
+        defer { await fixture.end() }
+        let answer = Task { try await fixture.started.session.respond(to: Self.prompt) }
+        await entered.waitUntilOpen()
+        answer.cancel()
+        await gate.open()
+        _ = await answer.result
+
+        let restored = try await fixture.restore()
+        defer { await restored.session.close() }
+        let texts = Self.toolOutputTexts(in: Array(await restored.session.transcript))
+
+        #expect(!texts.contains(OpenToolCalls.runningOutput))
     }
 
     // MARK: - A clean run
@@ -288,7 +418,8 @@ struct WriteAheadToolCallTests {
         let tree = try TranscriptTree.load(under: fixture.routerDirectory)
         let entries = Array(try tree.effectiveTranscript(forSession: fixture.started.session.id))
 
-        #expect(!Self.toolOutputTexts(in: entries).contains(OpenToolCalls.placeholderOutput))
+        #expect(!Self.toolOutputTexts(in: entries).contains(OpenToolCalls.interruptedOutput))
+        #expect(!Self.toolOutputTexts(in: entries).contains(OpenToolCalls.runningOutput))
     }
 
     @Test("a clean run announces each call one time in the live events")
@@ -342,22 +473,53 @@ struct WriteAheadToolCallTests {
     }
 
     /// The payload of one scripted call.
-    private static func callPayload(_ id: String) -> ToolCallPayload {
-        ToolCallPayload(id: id, toolName: "gated_tool", argumentsJSON: "{\"value\":\"\(argumentValue)\"}")
+    private static func callPayload(_ id: String, correlationID: String? = nil) -> ToolCallPayload {
+        ToolCallPayload(
+            id: id, toolName: "gated_tool", argumentsJSON: "{\"value\":\"\(argumentValue)\"}",
+            correlationID: correlationID)
     }
 
-    /// A marker event for the call `id`.
-    private static func markerEvent(seq: Int, callID id: String) -> TranscriptEvent {
+    /// A marker event for the call `id`, with the completion token of its run
+    /// when `correlationID` is not `nil`.
+    private static func markerEvent(seq: Int, callID id: String, correlationID: String? = nil) -> TranscriptEvent {
         TranscriptEvent(
             routerId: routerID, sessionId: sessionID, seq: seq, ts: Date(timeIntervalSince1970: TimeInterval(seq)),
-            kind: .toolCallStarted, entry: TranscriptEntryPayload(entryId: "started-\(id)", toolCalls: [callPayload(id)]))
+            kind: .toolCallStarted,
+            entry: TranscriptEntryPayload(
+                entryId: "started-\(id)", toolCalls: [callPayload(id, correlationID: correlationID)]))
+    }
+
+    /// A journaled event of a run of the tool `gated_tool`, as the journal
+    /// holds it: a segment of a `.toolOutput` entry.
+    private static func runEvent(
+        seq: Int, correlationID: String, kind: OperationEventKind, outcome: OperationOutcome? = nil
+    ) -> TranscriptEvent {
+        let event = OperationEvent(
+            tool: "gated_tool", op: "run tool", correlationID: correlationID, kind: kind, detail: "run detail",
+            outcome: outcome)
+        return TranscriptEvent(
+            routerId: routerID, sessionId: sessionID, seq: seq, ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: .toolOutput,
+            entry: TranscriptEntryPayload(
+                entryId: "run-\(seq)",
+                segments: [TranscriptEntryMapper.segmentPayload(OperationEventSegment(id: "run-\(seq)-segment", content: event))]))
+    }
+
+    /// The text of the placeholder outputs that `OpenToolCalls.folding(_:)`
+    /// makes for `events`.
+    private static func placeholderTexts(for events: [TranscriptEvent]) -> [String] {
+        OpenToolCalls.folding(events).filter { $0.kind == .toolOutput && $0.entry?.segments?.count == 1 }
+            .compactMap { event in
+                guard case .text(_, let content)? = event.entry?.segments?.first else { return nil }
+                return content
+            }
     }
 
     /// A `.toolCalls` entry event holding the calls `ids`.
     private static func toolCallsEvent(seq: Int, callIDs ids: [String]) -> TranscriptEvent {
         TranscriptEvent(
             routerId: routerID, sessionId: sessionID, seq: seq, ts: Date(timeIntervalSince1970: TimeInterval(seq)),
-            kind: .toolCalls, entry: TranscriptEntryPayload(entryId: "calls-\(seq)", toolCalls: ids.map(callPayload)))
+            kind: .toolCalls, entry: TranscriptEntryPayload(entryId: "calls-\(seq)", toolCalls: ids.map { callPayload($0) }))
     }
 
     /// A `.toolOutput` entry event answering the call `id`.

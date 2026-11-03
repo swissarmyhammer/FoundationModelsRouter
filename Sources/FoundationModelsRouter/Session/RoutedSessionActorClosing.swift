@@ -119,6 +119,12 @@ extension RoutedSessionActor {
     /// first waits for that close, so the two do not run at the same time,
     /// and then runs the close itself, which finds each step done.
     ///
+    /// **The claims of the host.** A run that the host claimed at the restore,
+    /// and that no call of ``completeClaimedRun(_:outcome:detail:)`` ended,
+    /// gets one `.completed` event with outcome `.lost`, with the detail that
+    /// a restore gives to a lost run. The journal records it, and it makes no
+    /// mail, because the queue is closed. So no run stays open.
+    ///
     /// **The live list of the directory.** Each close first takes this
     /// session off the live list of its router's directory
     /// (``RouterSessionDirectory/unregister(_:)``), before any wait, so a
@@ -146,6 +152,11 @@ extension RoutedSessionActor {
     /// it ended, and then closes the output, the progress row, the mail
     /// records and the prompt cache. A second run finds each step done.
     private func closeAndAwaitTheEnd() async {
+        // The claims are taken first, with no suspension before: a call of
+        // ``completeClaimedRun(_:outcome:detail:)`` that comes later finds no
+        // claim and posts nothing, so each claim has one terminal event.
+        let unclaimedRuns = takeOpenClaims()
+
         // The signals that wait behind the work that runs now do not run
         // after close. They send no event, and a wait for their terminal
         // event ends with ``MailRefusal/closed``.
@@ -205,6 +216,9 @@ extension RoutedSessionActor {
         // wait: when close returns, the session holds no work, and no task of
         // the session keeps the profile.
         await startDrainIfNeeded().value
+        // After the drain, so the lost terminal of a claim comes after any
+        // event of the sweep in the journal, and before the output closes.
+        await journalLostTerminals(of: unclaimedRuns)
         // ``performCancelAll()`` and the end of all work ended the open answer, so each delivered mail has its
         // terminal event. The output closes: each mail subscription that is
         // left finishes, and each wait for a terminal event that never came

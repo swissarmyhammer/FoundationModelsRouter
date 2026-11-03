@@ -479,9 +479,17 @@ extension RoutedSessionActor {
     /// The caller got `call` from the entries of the submission in flight,
     /// while the SDK waits in the tool call. This call reads no transcript.
     ///
-    /// - Parameter call: The SDK tool call that starts.
-    func recordStart(of call: Transcript.ToolCall) async {
-        let payload = ToolCallPayload(id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString)
+    /// The marker also holds the completion token of the run of the call.
+    /// A restore uses it to find the run of an open call in the journal
+    /// (``OpenToolCalls``).
+    ///
+    /// - Parameters:
+    ///   - call: The SDK tool call that starts.
+    ///   - correlationID: The completion token of the run of the call.
+    func recordStart(of call: Transcript.ToolCall, correlationID: String) async {
+        let payload = ToolCallPayload(
+            id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString,
+            correlationID: correlationID)
         await append(
             partial: makePartialEvent(
                 kind: .toolCallStarted,

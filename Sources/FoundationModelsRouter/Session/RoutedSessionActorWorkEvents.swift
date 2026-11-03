@@ -340,6 +340,13 @@ extension WorkKind {
     /// The sweep of the background runs of ``RoutedSession/cancelAll()``,
     /// from its start to the journal of the terminal of each swept run.
     public static let sweep = WorkKind("sweep")
+
+    /// A run that the host claimed at a restore
+    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``),
+    /// from the restore to the first terminal event of the run: the
+    /// completion of the host (``RoutedSession/completeClaimedRun(_:outcome:detail:)``)
+    /// or the `.lost` terminal of the close.
+    public static let claimedRun = WorkKind("claimedRun")
 }
 
 /// ``RoutedSessionActor``'s work events: ``SessionEvent/workStarted`` when the

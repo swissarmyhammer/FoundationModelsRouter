@@ -15,16 +15,28 @@ import Foundation
 ///   transcript is then valid for the model: the model needs an output for
 ///   each call (``ToolCallOutputPairing``). The real result of a run arrives
 ///   later as run mail, not as this output.
+///
+/// The text of the placeholder follows the journal. The marker holds the
+/// completion token of the run of its call. A call whose run is orphaned
+/// (``RunStatus/orphaned``) gets ``runningOutput``: its result comes as run
+/// mail. Any other call gets ``interruptedOutput``: the call has no run in the
+/// journal, or its run has a terminal event, so no result comes. A call that
+/// ended inline, and a call that the user cancelled, are such calls. The model
+/// then does not wait for a result that never arrives.
 enum OpenToolCalls {
-    /// The text of the output that a restore gives to an open call.
-    ///
-    /// A synchronous tool run ends with the process, and its result is lost.
-    /// A background run can still end, and its terminal event arrives as run
-    /// mail. The text states both: the result is not here, and it can still
-    /// arrive.
-    static let placeholderOutput =
-        "The result of this tool call was not recorded. If its run still works, "
-        + "its result will arrive in this conversation as a message when it is ready."
+    /// The text of the output that a restore gives to an open call whose run
+    /// is orphaned in the journal. The run does not work now, but the restore
+    /// posts its terminal event, or a host that claimed the run completes it.
+    /// That event arrives as run mail.
+    static let runningOutput =
+        "The run of this tool call is still working. Its result will arrive in this "
+        + "conversation as a message when it is ready."
+
+    /// The text of the output that a restore gives to an open call that has
+    /// no orphaned run in the journal. No result will arrive for this call.
+    static let interruptedOutput =
+        "This tool call was interrupted before its result was recorded. "
+        + "Call it again if you still need it."
 
     /// The prefix of the id of the `.toolCalls` entry that a restore makes.
     /// The id ends with the id of the first call, so it is the same at each
@@ -44,6 +56,7 @@ enum OpenToolCalls {
     /// - Returns: The events with no marker.
     static func folding(_ events: [TranscriptEvent]) -> [TranscriptEvent] {
         let lastCover = lastCoveringIndex(in: events)
+        let statuses = OrphanRunScan(scanning: events).statuses
         var folded: [TranscriptEvent] = []
         var group: [TranscriptEvent] = []
         for (index, event) in events.enumerated() {
@@ -54,12 +67,12 @@ enum OpenToolCalls {
                 continue
             }
             if event.kind.isEntryKind {
-                folded += openEvents(of: group)
+                folded += openEvents(of: group, statuses: statuses)
                 group = []
             }
             folded.append(event)
         }
-        return folded + openEvents(of: group)
+        return folded + openEvents(of: group, statuses: statuses)
     }
 
     /// The index of the last `.toolCalls` event that holds each call id.
@@ -79,27 +92,45 @@ enum OpenToolCalls {
     /// The `.toolCalls` event of one group of open markers, then one
     /// placeholder `.toolOutput` event for each call.
     ///
-    /// - Parameter group: The open markers, in order.
+    /// - Parameters:
+    ///   - group: The open markers, in order.
+    ///   - statuses: The status of each run in the journal.
     /// - Returns: The events, or none for an empty group.
-    private static func openEvents(of group: [TranscriptEvent]) -> [TranscriptEvent] {
+    private static func openEvents(
+        of group: [TranscriptEvent], statuses: [RunKey: RunStatus]
+    ) -> [TranscriptEvent] {
         let calls = group.compactMap { $0.entry?.toolCalls?.first }
         guard let template = group.first, let first = calls.first else { return [] }
         let entry = TranscriptEntryPayload(entryId: entryIDPrefix + first.id, toolCalls: calls)
         let outputs = zip(group, calls).map { marker, call in
-            rekinded(marker, as: .toolOutput, entry: placeholderPayload(for: call))
+            rekinded(marker, as: .toolOutput, entry: placeholderPayload(for: call, statuses: statuses))
         }
         return [rekinded(template, as: .toolCalls, entry: entry)] + outputs
     }
 
     /// The payload of the placeholder `.toolOutput` that answers `call`.
     ///
-    /// - Parameter call: The open call.
+    /// - Parameters:
+    ///   - call: The open call.
+    ///   - statuses: The status of each run in the journal.
     /// - Returns: The payload, with the id of the call as its entry id.
-    private static func placeholderPayload(for call: ToolCallPayload) -> TranscriptEntryPayload {
+    private static func placeholderPayload(
+        for call: ToolCallPayload, statuses: [RunKey: RunStatus]
+    ) -> TranscriptEntryPayload {
         TranscriptEntryPayload(
             entryId: call.id,
-            segments: [.text(id: call.id + placeholderSegmentSuffix, content: placeholderOutput)],
+            segments: [.text(id: call.id + placeholderSegmentSuffix, content: text(for: call, statuses: statuses))],
             toolName: call.toolName)
+    }
+
+    /// The text of the placeholder output of `call`: ``runningOutput`` when
+    /// the run of the call is orphaned in the journal, else
+    /// ``interruptedOutput``.
+    private static func text(for call: ToolCallPayload, statuses: [RunKey: RunStatus]) -> String {
+        guard let correlationID = call.correlationID,
+            statuses[RunKey(tool: call.toolName, correlationID: correlationID)] == .orphaned
+        else { return interruptedOutput }
+        return runningOutput
     }
 
     /// `event` as an event of another kind with another payload. The

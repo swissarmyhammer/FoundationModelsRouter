@@ -697,6 +697,34 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Idempotent.
     func close() async
 
+    /// Completes a run that the host claimed at the restore of this session,
+    /// with the real result of the host.
+    ///
+    /// The restore of a session (``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:)``)
+    /// posts a `.lost` terminal for each orphan run. A run in `claimingRuns`
+    /// gets none. It stays an open claim of this session, and the session is
+    /// not idle (``awaitIdle()``) while a claim is open. This call posts the
+    /// one `.completed` event of that run. The journal records it once, and
+    /// it comes to the model as run mail, as the terminal of any run does.
+    /// The run key of the event is the claimed key, so the event completes the
+    /// original run of the original tool call.
+    ///
+    /// A claim has one terminal event only. The first call for a key posts it
+    /// and ends the claim. A later call for the same key posts nothing. A
+    /// call for a key that is not an open claim of this session posts nothing
+    /// too. A claim that no call completes ends as `.lost` when ``close()``
+    /// runs.
+    ///
+    /// - Parameters:
+    ///   - key: The key of the claimed run.
+    ///   - outcome: How the run ended.
+    ///   - detail: The text of the result for the model, or `nil` for none.
+    /// - Returns: `true` when this call posted the terminal event. `false`
+    ///   when `key` is not an open claim of this session, or its terminal
+    ///   event was posted before.
+    @discardableResult
+    func completeClaimedRun(_ key: RunKey, outcome: OperationOutcome, detail: String?) async -> Bool
+
     /// Sends one user message to this session, and returns its id at once.
     ///
     /// A helper on top of ``MailSink/mail(_:)``: the message is a user message in

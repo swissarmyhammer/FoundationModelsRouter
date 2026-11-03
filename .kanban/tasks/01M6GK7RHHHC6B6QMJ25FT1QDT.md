@@ -36,8 +36,15 @@ comments:
     - evidence: full swift test: 2280 tests in 277 suites passed, 0 failures; WriteAheadToolCallTests 18 tests passed (confirmed by the suite line in the log).
     - next: review
   timestamp: 2026-11-03T16:26:07.068233+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6h42w8j60yzhvza2aycjpr0
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (d1658fbf): 0 findings, 0 confirmed, 6 refuted, 13 files reviewed.
+    - next: none
+  timestamp: 2026-11-03T16:32:40.210852+00:00
+position_column: done
+position_ordinal: ffffffffdf80
 title: 'Write-ahead record of a tool call: the .toolCalls entry reaches the recording when the call starts, not at the end of the submission'
 ---
 ## What
