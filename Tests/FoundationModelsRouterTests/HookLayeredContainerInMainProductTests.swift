@@ -30,7 +30,7 @@ struct HookLayeredContainerInMainProductTests {
 
     /// The operation of a run that ends only at its cancel. The root waits
     /// inline for it as a child tool call.
-    private static let inlineOp = "swallow cancel"
+    private static let inlineOperation = "swallow cancel"
 
     /// A scripted session of a router, and what the test reads.
     private struct Harness: HookedSessionFixture {
@@ -107,7 +107,7 @@ struct HookLayeredContainerInMainProductTests {
     func foregroundCancelEndsTheRootThatWaitsInline() async throws {
         let gate = RunLatch()
         let tool = try ShutdownRunFixtures.makeTool(gate: gate)
-        let argumentsJSON = ShutdownRunFixtures.arguments(op: Self.inlineOp, name: ShutdownRecording.agentName)
+        let argumentsJSON = ShutdownRunFixtures.arguments(op: Self.inlineOperation, name: ShutdownRecording.agentName)
         try await Self.withSession(calling: tool, argumentsJSON: argumentsJSON) { harness in
             var feed = await harness.session.streamSessionEvents().makeAsyncIterator()
             let session = harness.session

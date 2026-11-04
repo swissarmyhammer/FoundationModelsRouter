@@ -47,15 +47,15 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
         HookLayeredSessionBackend(wrapping: wrapped.makeSession(instructions: instructions))
     }
 
-    /// A backend of the wrapped container whose tools have the layer.
+    /// A backend of the wrapped container whose tools have the layer. This is
+    /// ``makeSession(instructions:tools:samplingMode:)`` with no sampling mode.
     ///
     /// - Parameters:
     ///   - instructions: The session instructions, or `nil`.
     ///   - tools: The tools of the session.
     /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(
-            wrapping: wrapped.makeSession(instructions: instructions, tools: SessionToolLayers.checked(tools)))
+        makeSession(instructions: instructions, tools: tools, samplingMode: nil)
     }
 
     /// A restored backend of the wrapped container with no tools.
@@ -67,15 +67,15 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     }
 
     /// A restored backend of the wrapped container whose tools have the
-    /// layer.
+    /// layer. This is ``makeSession(transcript:tools:samplingMode:)`` with no
+    /// sampling mode.
     ///
     /// - Parameters:
     ///   - transcript: The transcript of the restored session.
     ///   - tools: The tools of the session.
     /// - Returns: The backend, in a ``HookLayeredSessionBackend``.
     public func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(
-            wrapping: wrapped.makeSession(transcript: transcript, tools: SessionToolLayers.checked(tools)))
+        makeSession(transcript: transcript, tools: tools, samplingMode: nil)
     }
 
     /// A backend of the wrapped container with no tools, that decodes with

@@ -13,6 +13,26 @@ comments:
     - Open: `swift build --build-tests --package-path IntegrationTests` fails BEFORE and independent of this change. IntegrationTests/Package.resolved pins FoundationModelsExtras c922cca; the root pins 0b45545. Extras at c922cca has no SessionTranscriptReader, so RoutedLLM.swift fails. No file in IntegrationTests uses HookLayeredLLMContainer. I did not change the pin.
     - next: /review
   timestamp: 2026-11-04T15:07:41.070636+00:00
+- actor: claude-code
+  id: 01m6khwx8qfcf7ye5bb62r58b0
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD. 1 finding (confirmed 1, refuted 2).
+    - Review Findings (2026-11-04 09:10):
+    - [ ] `Tests/FoundationModelsRouterTests/HookLayeredContainerInMainProductTests.swift:33` `swift/naming-clarity` — The name `inlineOp` uses the abbreviation `op`. The rule asks for full words. The abbreviation makes the reader work harder to learn what the value is. Rename to `inlineOperation`, and update the use at line 110 (`ShutdownRunFixtures.arguments(op: Self.inlineOperation, ...)`). The external `op:` label belongs to existing code, so keep it.
+    - note: five code-hygiene rules declined an item because they looked for Tests/FoundationModelsRouterTestSupport/HookLayeredLLMContainer.swift, which the commit moved. Nothing was unread in the new file by those rules.
+    - next: implementer fixes the finding, then /review again.
+  timestamp: 2026-11-04T15:12:33.559729+00:00
+- actor: claude-code
+  id: 01m6kj7be92y7znhg9kg99pew6
+  text: |-
+    ### implement — changed
+    - evidence: 2 files. Tests/FoundationModelsRouterTests/HookLayeredContainerInMainProductTests.swift, Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift.
+    - [x] FIXED `HookLayeredContainerInMainProductTests.swift:33` swift/naming-clarity: `inlineOp` is now `inlineOperation`, with the use at the call site; the external `op:` label is kept. No other abbreviation of that cause is in the file.
+    - Review file on HookLayeredLLMContainer.swift gave 2 findings (reuse/reuse). [x] FIXED both: `makeSession(instructions:tools:)` and `makeSession(transcript:tools:)` now delegate to the samplingMode overloads with `samplingMode: nil`, so the tool-layer call `SessionToolLayers.checked` is in one overload for each form. The live loader and this container already share the one `SessionToolLayers.checked` function, so the layering code is single. Docs of both overloads state the delegation. Public API is the same.
+    - full `swift test`: 2442 tests in 288 suites, 38 tests, 19 tests; 0 failures, no warnings.
+    - next: /review
+  timestamp: 2026-11-04T15:18:15.753158+00:00
 position_column: doing
 position_ordinal: '80'
 title: Move HookLayeredLLMContainer into the main Router product so a normal binary can use it
