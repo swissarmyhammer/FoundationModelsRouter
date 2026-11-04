@@ -14,7 +14,7 @@ import Foundation
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
-    /// ``divergence``, ``generationCall``, ``repeatedPartRemoval``,
+    /// ``divergence``, ``modelChanged``, ``generationCall``, ``repeatedPartRemoval``,
     /// ``watchStop``, ``mail``, ``promptStarted`` and ``toolCallStarted`` are
     /// router-only. ``unknown``
     /// carries a newer SDK case.
@@ -41,6 +41,14 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// recorded baseline (see ``TranscriptDiffer/divergence(from:in:)``).
         /// Router-only. ``TranscriptEvent/text`` holds the description.
         case divergence
+        /// A restore moved the session onto another model or slot (see
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``).
+        /// Router-only. The event is stamped with the new ``TranscriptEvent/slot``
+        /// and the new ``TranscriptEvent/model``, and ``TranscriptEvent/text``
+        /// holds the old and the new model and slot
+        /// (``RestoredSession/modelChangedText(from:to:)``). A restore skips
+        /// it. A journal recorded before this kind holds no such event.
+        case modelChanged
         /// One generation call of a submission ended (see
         /// ``SessionEvent/generationCall(_:)``). Router-only.
         /// ``TranscriptEvent/tokensIn`` and ``TranscriptEvent/tokensOut`` hold
@@ -124,8 +132,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
-            case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail,
-                .promptStarted, .toolCallStarted, .toolCall:
+            case .session, .embedding, .divergence, .modelChanged, .generationCall, .repeatedPartRemoval, .watchStop,
+                .mail, .promptStarted, .toolCallStarted, .toolCall:
                 return false
             }
         }

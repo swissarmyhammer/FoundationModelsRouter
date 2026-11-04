@@ -233,6 +233,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// feed task and its watcher. It sends no second `started` and starts no
     /// second watcher.
     ///
+    /// A registration of another session object with the id of a live session
+    /// is a replacement, not a second registration. A restore makes it: a host
+    /// suspends a session, keeps the object, and restores the same id, also
+    /// onto another model. The new object gets its own `started`, its own
+    /// feed task and its own watcher, and the id is no more suspended.
+    ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - kind: The kind of the session.
@@ -247,7 +253,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
         let watcher = openInboxWatcher(of: session)
         let isNew = state.withLock { registry in
-            if let live = registry.entries[session.id], live.session != nil {
+            if let live = registry.entries[session.id], live.session === session {
                 entry.updatedAt = live.updatedAt
                 entry.tracking = live.tracking
                 entry.stateFeed = live.stateFeed

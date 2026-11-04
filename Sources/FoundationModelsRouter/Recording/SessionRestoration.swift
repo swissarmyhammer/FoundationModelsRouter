@@ -4,7 +4,7 @@ import FoundationModelsExtras
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -79,6 +79,22 @@ extension RestoredSession {
         supplied \(supplied.count) characters
         """
     }
+
+    /// The body of the ``TranscriptEvent/Kind/modelChanged`` event a restore
+    /// appends when it moves a session onto another model or slot.
+    ///
+    /// The text names the old slot and model, and then the new slot and
+    /// model. The event itself is stamped with the new ones.
+    ///
+    /// - Parameters:
+    ///   - old: The slot and the model the session was recorded on.
+    ///   - new: The slot and the model the session is restored onto.
+    /// - Returns: The event's body text.
+    static func modelChangedText(
+        from old: (slot: ModelSlot, model: ModelRef), to new: (slot: ModelSlot, model: ModelRef)
+    ) -> String {
+        "model changed from \(old.slot.rawValue) \(old.model.stringValue) to \(new.slot.rawValue) \(new.model.stringValue)"
+    }
 }
 
 extension RoutedModel where Container == any LoadedLLMContainer {
@@ -88,8 +104,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// id, and its recording directory, so the next submission appends to the
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionRecord`` against this call's owning profile, and a mismatch
-    /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` for what
+    /// is a typed error. With `switchingModel`, the session restores onto
+    /// this handle instead, and it keeps its id. See
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -152,12 +169,51 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     completes the run
     ///     (``RoutedSession/completeClaimedRun(_:outcome:detail:)``) or the
     ///     session closes. See
-    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
+    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
     ///   - transcriptReader: The reader of the recorded transcripts of
     ///     sessions, or `nil` (the default) for no reader. The recording does
     ///     not hold the reader, because it is a live object, so a host gives
     ///     it again here, as it gives the tools. See
     ///     ``SessionConfiguration/transcriptReader``.
+    ///   - switchingModel: `false` (the default) to restore the session onto
+    ///     the model of its recorded slot, which must be the model it was
+    ///     recorded on. `true` to restore the session onto THIS handle, also
+    ///     when its recorded model or slot is another one. This is how a host
+    ///     moves a session to another model and keeps its id.
+    ///
+    ///     The host first suspends the old session
+    ///     (``RoutedSession/suspend()``). Two live sessions with one id would
+    ///     share one folder, and Router does not check this. The restore then
+    ///     keeps the id, the session folder and the lineage. It does not end
+    ///     the old session: a suspended session has no ended marker. A
+    ///     restore in the same process, also while the host still holds the
+    ///     old session object, replaces the old session in the session
+    ///     directory of the router.
+    ///
+    ///     Each moved session appends one
+    ///     ``TranscriptEvent/Kind/modelChanged`` event to its transcript, and
+    ///     its `index.md` takes the new ``SessionRecord/slot``, the new
+    ///     ``SessionRecord/model`` and the new ``SessionRecord/context``. The
+    ///     events of the old model stay as they are, so a read of the
+    ///     transcript by the id returns the whole history. The next
+    ///     submission runs on the new model and records its `model.ref`. A
+    ///     session that is on this slot and this model already changes
+    ///     nothing and writes no event.
+    ///
+    ///     The recorded forks under the session move with it, to this same
+    ///     handle, because a fork is a part of the same conversation. A fork
+    ///     that stayed on the old model would fail with
+    ///     ``SessionTreeRestorationError/modelMismatch(session:slot:recorded:resident:)``.
+    ///     The restore releases the forks anyway.
+    ///
+    ///     The history can be larger than the context of the new model. The
+    ///     restore calls no compaction. It re-applies the recorded
+    ///     compaction budget as it is: the limit of the budget is in tokens
+    ///     and is not scaled to the new context. A context that differs from
+    ///     the recorded one is reported in
+    ///     ``RestoredSession/contextMismatches``. A host that moves a session
+    ///     to a smaller context compacts it with
+    ///     ``RoutedSession/compact()`` before the next submission.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -174,13 +230,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         userPresence: UserPresence? = nil,
         hookSessionKey: String? = nil,
         claimingRuns: Set<RunKey> = [],
-        transcriptReader: (any SessionTranscriptReader)? = nil
+        transcriptReader: (any SessionTranscriptReader)? = nil,
+        switchingModel: Bool = false
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
             userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns,
-            transcriptReader: transcriptReader)
+            transcriptReader: transcriptReader, switchingModel: switchingModel)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

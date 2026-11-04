@@ -342,7 +342,7 @@ extension WorkKind {
     public static let sweep = WorkKind("sweep")
 
     /// A run that the host claimed at a restore
-    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``),
+    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``),
     /// from the restore to the first terminal event of the run: the
     /// completion of the host (``RoutedSession/completeClaimedRun(_:outcome:detail:)``)
     /// or the `.lost` terminal of the close.

@@ -115,7 +115,7 @@ public struct SessionConfiguration: Sendable {
     /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
     /// ``persistable`` does not record it. A restore gets
     /// it again from the host, through the `isNoOpToolCall` argument of
-    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
+    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
     public var isNoOpToolCall: NoOpToolCallCheck
 
     /// Tells if a user can answer the questions of the session.
@@ -239,7 +239,7 @@ public struct SessionConfiguration: Sendable {
     /// ``SessionTranscriptError/noSource``. For a session that a restore
     /// makes, the host gives the reader again as the `transcriptReader`
     /// argument of
-    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
+    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
     ///
     /// The reader is a live object, thus ``persistable`` does not record it.
     public var transcriptReader: (any SessionTranscriptReader)?

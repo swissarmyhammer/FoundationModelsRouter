@@ -64,7 +64,7 @@ extension TranscriptEvent {
         case .promptStarted:
             return .prompt(mailIDs: takenMail.map { "\($0.id)" })
         case .session, .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .embedding, .divergence,
-            .generationCall, .repeatedPartRemoval, .watchStop, .mail, .toolCall, .unknown:
+            .modelChanged, .generationCall, .repeatedPartRemoval, .watchStop, .mail, .toolCall, .unknown:
             return nil
         }
     }

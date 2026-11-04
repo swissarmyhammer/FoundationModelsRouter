@@ -342,13 +342,13 @@ struct ShutdownRecording {
 ///
 /// - A body that swallows the cancel and returns text: `cancelled` (the sweep
 ///   won) or `succeeded` (the body won).
-/// - A body that throws `CancellationError`: `cancelled` (the sweep won) or
-///   `failed` (the body won). `AnyOperation` wraps the error in
-///   `OperationError.executionFailed`, so the run plane does not see a
-///   `CancellationError`.
+/// - A body that throws `CancellationError`: `cancelled`. `AnyOperation`
+///   rethrows the error, and the one outcome rule
+///   (`OperationOutcome(thrown:)`) gives `cancelled` for it. So the sweep and
+///   the body write the same outcome.
 /// - A body that throws a `LostRunError`: `cancelled` (the sweep won) or
-///   `failed` (the body won), for the same reason. The outcome is never
-///   `lost`.
+///   `lost` (the body won). `AnyOperation` rethrows the error, and the one
+///   outcome rule gives `lost` for it.
 ///
 /// A body that waits until the sweep settled the run has one outcome:
 /// `cancelled`.
@@ -370,8 +370,8 @@ struct NormalCloseRunOutcomeTests {
     /// Each way a body can end at the cancel.
     static let reactions = [
         Reaction(op: "swallow cancel", description: "returns text", possible: [.cancelled, .succeeded]),
-        Reaction(op: "throw cancellation", description: "throws CancellationError", possible: [.cancelled, .failed]),
-        Reaction(op: "throw lost", description: "throws a LostRunError", possible: [.cancelled, .failed]),
+        Reaction(op: "throw cancellation", description: "throws CancellationError", possible: [.cancelled]),
+        Reaction(op: "throw lost", description: "throws a LostRunError", possible: [.cancelled, .lost]),
     ]
 
     @Test("a run that the sweep settled first is cancelled, also when the body returns text after it", arguments: RunPlacement.allCases)
@@ -393,7 +393,7 @@ struct NormalCloseRunOutcomeTests {
         #expect(try await recording.statuses().values.map { $0 } == [.completed(.cancelled)])
     }
 
-    @Test("a body that reacts to the cancel gets one of the outcomes of the two writers, and never lost", arguments: reactions)
+    @Test("a body that reacts to the cancel gets one of the outcomes of the two writers", arguments: reactions)
     func reactingBodyGetsAnOutcomeOfTheRace(reaction: Reaction) async throws {
         let recording = try await ShutdownRecording.make(calling: [reaction.op])
         defer { await recording.end() }

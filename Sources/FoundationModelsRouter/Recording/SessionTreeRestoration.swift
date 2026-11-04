@@ -3,8 +3,8 @@ import FoundationModels
 import FoundationModelsExtras
 
 /// A failure to restore recorded sessions from disk, through
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -24,7 +24,8 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     case slotNotInProfile(session: ULID, slot: ModelSlot)
 
     /// The recorded ``SessionRecord/model`` of `session` does not match the
-    /// model resident in `slot` on the restoring profile.
+    /// model resident in `slot` on the restoring profile. A restore with
+    /// `switchingModel` never throws it.
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
 
     /// The host claimed a run that is not claimable in any restored session:
@@ -96,7 +97,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 ///
 /// This type stays internal. A caller resumes a session by an id it holds,
 /// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)`` is the
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` is the
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
@@ -273,6 +274,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     gets it. The recording does not hold the reader, because it is a
     ///     live object, so a host gives it again here, as it gives the tools.
     ///     See ``SessionConfiguration/transcriptReader``.
+    ///   - switchingModel: `false` (the default) to restore each node onto
+    ///     the model of its recorded slot. `true` to restore the root and each
+    ///     recorded fork under it onto THIS handle, also when the recorded
+    ///     model or slot is another one. Each moved node appends one
+    ///     ``TranscriptEvent/Kind/modelChanged`` event and rewrites the slot,
+    ///     the model and the context of its `index.md`. It keeps its id, its
+    ///     folder and its lineage. A node that is on this slot and this model
+    ///     already changes nothing. The restore calls no compaction. See
+    ///     ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -288,7 +298,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         userPresence: UserPresence? = nil,
         hookSessionKey: String? = nil,
         claimingRuns: Set<RunKey> = [],
-        transcriptReader: (any SessionTranscriptReader)? = nil
+        transcriptReader: (any SessionTranscriptReader)? = nil,
+        switchingModel: Bool = false
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -358,9 +369,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             return hooks
         }
 
-        func restore(_ node: SessionNode) async throws -> any RoutedSession {
+        /// The generation handle one node restores onto, when the restore
+        /// keeps the recorded model: the handle that the recorded slot names
+        /// on the owning profile. Its resident model must be the recorded one.
+        ///
+        /// - Parameter node: The loaded node.
+        /// - Returns: The generation handle of the recorded slot.
+        /// - Throws: ``SessionTreeRestorationError/slotNotInProfile(session:slot:)``
+        ///   or ``SessionTreeRestorationError/modelMismatch(session:slot:recorded:resident:)``.
+        func recordedHandle(for node: SessionNode) throws -> RoutedLLM {
             let slot = node.record.slot
-            let model = node.record.model
             let routedLLM: RoutedLLM
             switch slot {
             case .standard:
@@ -370,14 +388,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             case .embedding:
                 throw SessionTreeRestorationError.slotNotInProfile(session: node.id, slot: slot)
             }
-            guard routedLLM.chosen == model else {
+            guard routedLLM.chosen == node.record.model else {
                 throw SessionTreeRestorationError.modelMismatch(
                     session: node.id,
                     slot: slot,
-                    recorded: model,
+                    recorded: node.record.model,
                     resident: routedLLM.chosen
                 )
             }
+            return routedLLM
+        }
+
+        func restore(_ node: SessionNode) async throws -> any RoutedSession {
+            // With the switch, every node restores onto this handle. Without
+            // it, each node restores onto the handle of its recorded slot.
+            let routedLLM = try switchingModel ? self : recordedHandle(for: node)
+            let model = routedLLM.chosen
 
             // This node's span opens here, before the transcript read below,
             // rather than around the construction alone: `effectiveTranscript`
@@ -417,11 +443,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Throws: ``TranscriptTreeError`` or ``TranscriptReconstructionError``
         ///   for what the transcript read throws.
         func rebuild(_ node: SessionNode, on routedLLM: RoutedLLM) async throws -> any RoutedSession {
-            // Read again from the node's own record rather than handed down:
-            // `restore(_:)` already checked both against `routedLLM`, so these
-            // two are the recorded facts this node is rebuilt with.
-            let slot = node.record.slot
-            let model = node.record.model
+            // The slot and the model of the handle this node restores onto.
+            // Without the switch, `restore(_:)` checked that they are the
+            // recorded ones. With the switch, they can differ from the
+            // recorded ones, and the node moves (see `recordModelChange`).
+            let slot = routedLLM.slot
+            let model = routedLLM.chosen
+            let movesModel = node.record.slot != slot || node.record.model != model
 
             // The restored session runs against the live resolution's
             // context — the physical window `routedLLM`'s backend was
@@ -447,6 +475,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // transcript is the only place that reaches the model.
             let (effectiveInstructions, seedTranscript) = await applyInstructionsOverride(
                 to: node, transcript: transcript, on: routedLLM)
+
+            if movesModel {
+                await recordModelChange(of: node, to: routedLLM)
+            }
 
             // The node's recorded configuration envelope (task ^ne5g9jn),
             // or `nil` when its record holds none, which restores with the
@@ -665,6 +697,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 record: .restored(node.record)
             )
             session.bind(resultWitness: resultWitness)
+            if movesModel {
+                // The `index.md` follows the event: the slot, the model and
+                // the context that the node runs against now.
+                session.updateRecord {
+                    $0.slot = slot
+                    $0.model = model
+                    $0.context = resolvedContextTokens
+                }
+            }
             // Crash-edge mail durability (`mailbox.md`, section 5, problem
             // 14): each mail of this node that the transcript holds as queued
             // or delivered, with no terminal record, was cut off with the
@@ -679,12 +720,39 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             return session
         }
 
+        /// Appends the ``TranscriptEvent/Kind/modelChanged`` event of one node
+        /// that restores onto another model or slot. The event is stamped with
+        /// the new slot and the new model, and its text names the old ones
+        /// (``RestoredSession/modelChangedText(from:to:)``). The recorded
+        /// events stay as they are, so the history keeps the model of each
+        /// answer.
+        ///
+        /// - Parameters:
+        ///   - node: The node being rebuilt.
+        ///   - routedLLM: The generation handle the node restores onto.
+        func recordModelChange(of node: SessionNode, to routedLLM: RoutedLLM) async {
+            await routedLLM.recorder.append(
+                TranscriptEvent.Partial(
+                    routerId: routedLLM.routerId,
+                    sessionId: node.id,
+                    parentId: node.parentId,
+                    slot: routedLLM.slot,
+                    model: routedLLM.chosen,
+                    kind: .modelChanged,
+                    text: RestoredSession.modelChangedText(
+                        from: (node.record.slot, node.record.model),
+                        to: (routedLLM.slot, routedLLM.chosen))
+                ),
+                to: node.directory
+            )
+        }
+
         /// Applies this call's `instructions` override to one node.
         ///
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:)``
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``
         /// releases those forks anyway.
         ///
         /// The model reads its instructions from the leading `.instructions`

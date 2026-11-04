@@ -529,8 +529,8 @@ public final class SessionObserver {
                 rows.append(
                     TranscriptEntry(
                         id: payload.entryId, kind: .reasoning(text ?? ""), sourceEntryId: payload.entryId))
-            case .session, .instructions, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop,
-                .mail, .promptStarted, .toolCallStarted, .toolCall, .unknown:
+            case .session, .instructions, .embedding, .divergence, .modelChanged, .generationCall,
+                .repeatedPartRemoval, .watchStop, .mail, .promptStarted, .toolCallStarted, .toolCall, .unknown:
                 break
             }
         }
@@ -732,8 +732,8 @@ public final class SessionObserver {
         case .response:
             return compactionRow(from: entry, entryId: payload.entryId) == nil ? .text(entryId: payload.entryId) : nil
         case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
-            .generationCall, .repeatedPartRemoval, .watchStop, .mail, .promptStarted, .toolCallStarted, .toolCall,
-            .unknown:
+            .modelChanged, .generationCall, .repeatedPartRemoval, .watchStop, .mail, .promptStarted,
+            .toolCallStarted, .toolCall, .unknown:
             return nil
         }
     }
