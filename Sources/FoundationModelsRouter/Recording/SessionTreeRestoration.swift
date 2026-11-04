@@ -731,17 +731,39 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         ///   - node: The node being rebuilt.
         ///   - routedLLM: The generation handle the node restores onto.
         func recordModelChange(of node: SessionNode, to routedLLM: RoutedLLM) async {
+            await appendRestoreEvent(
+                kind: .modelChanged,
+                text: RestoredSession.modelChangedText(
+                    from: (node.record.slot, node.record.model),
+                    to: (routedLLM.slot, routedLLM.chosen)),
+                of: node, on: routedLLM, slot: routedLLM.slot, model: routedLLM.chosen)
+        }
+
+        /// Appends one event of the restore path to the directory of a node.
+        /// Every event the restore writes goes through here, so the event
+        /// shape lives in one place.
+        ///
+        /// - Parameters:
+        ///   - kind: The kind of the event.
+        ///   - text: The text of the event.
+        ///   - node: The node being rebuilt. Its id, parent and directory
+        ///     address the event.
+        ///   - routedLLM: The generation handle whose recorder writes the event.
+        ///   - slot: The slot stamped on the event.
+        ///   - model: The model stamped on the event.
+        func appendRestoreEvent(
+            kind: TranscriptEvent.Kind, text: String, of node: SessionNode,
+            on routedLLM: RoutedLLM, slot: ModelSlot, model: ModelRef
+        ) async {
             await routedLLM.recorder.append(
                 TranscriptEvent.Partial(
                     routerId: routedLLM.routerId,
                     sessionId: node.id,
                     parentId: node.parentId,
-                    slot: routedLLM.slot,
-                    model: routedLLM.chosen,
-                    kind: .modelChanged,
-                    text: RestoredSession.modelChangedText(
-                        from: (node.record.slot, node.record.model),
-                        to: (routedLLM.slot, routedLLM.chosen))
+                    slot: slot,
+                    model: model,
+                    kind: kind,
+                    text: text
                 ),
                 to: node.directory
             )
@@ -790,19 +812,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // marker states the condition in the record itself. The write path
             // is the one ``RoutedSessionActor`` uses for its own
             // transcript-divergence markers.
-            await routedLLM.recorder.append(
-                TranscriptEvent.Partial(
-                    routerId: routedLLM.routerId,
-                    sessionId: node.id,
-                    parentId: node.parentId,
-                    slot: node.record.slot,
-                    model: node.record.model,
-                    kind: .divergence,
-                    text: RestoredSession.instructionsDivergenceText(
-                        recorded: recorded, supplied: supplied)
-                ),
-                to: node.directory
-            )
+            await appendRestoreEvent(
+                kind: .divergence,
+                text: RestoredSession.instructionsDivergenceText(
+                    recorded: recorded, supplied: supplied),
+                of: node, on: routedLLM, slot: node.record.slot, model: node.record.model)
             return (
                 supplied,
                 TranscriptDiffer.replacingLeadingInstructions(of: transcript, with: supplied)

@@ -24,8 +24,15 @@ comments:
     - open point 2 (live sub-agent whose root differs from its parent through parentCall): not a defect in the code, which passes parentCall.rootSessionID as is. The live test uses a root parent, so its root equals the parent id and it does not tell the two apart. The recorded-spawn and restored cases do test a root that differs from the parent.
     - next: implement the finding (swift/doc-parameter-naming), then review again
   timestamp: 2026-11-03T20:50:50.150179+00:00
-position_column: review
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m6hjyyt8kwhwxejgkswsc71z
+  text: |-
+    ### review — clean
+    - evidence: review sha bb52caa6~1..bb52caa6 — 0 findings (confirmed 0, refuted 0). Prior finding (HookLineageTests.swift:192 doc key) is checked and fixed.
+    - next: none; card moved to done.
+  timestamp: 2026-11-03T20:52:40.392741+00:00
+position_column: done
+position_ordinal: ffffffffea80
 title: Router sends SessionEnd with reason suspended or released, and HookSession kind and rootSessionID
 ---
 ## What

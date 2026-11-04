@@ -29,8 +29,15 @@ comments:
     - [x] `Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift:171` `reuse/reuse` — fixed. New helper `expectFutureVersionRefusal(_:)` holds the shared setup (canonical temp directory, one session folder with a future-version index, the expected typed error). The merge test and the one-folder read test each call it and pass in the read under test. Same cause removed from the whole file: new `makeCanonicalTempDir()` reuses `makeTempDir()`; the two tests that built a temp directory by hand (merged order test, level off creates no file test) now call `makeTempDir()`.
     - next: review
   timestamp: 2026-11-03T23:16:52.553303+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6hv92zd01n8qeygq7hd2a2g
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (627e0cc0): 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 1 file reviewed; 2 .kanban files skipped by .reviewignore.
+    - next: none. Card moved to done. Not pushed.
+  timestamp: 2026-11-03T23:18:00.941259+00:00
+position_column: done
+position_ordinal: ffffffffeb80
 title: Pass a host transcript reader to every MountSite; add a one-folder TranscriptEvent read
 ---
 The ACP agent host asks for two changes. The user said yes ("Yes, tell the Router session"). Plan first, no code until the coordinator agrees. No push until the user types "commit and push" in this session.

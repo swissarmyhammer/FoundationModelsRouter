@@ -15,7 +15,23 @@ comments:
     - fix on the way: RouterSessionDirectory.register replaces an entry when another object has the id (before: the suspended old object kept the feed and the suspended mark).
     - next: /review
   timestamp: 2026-11-04T06:21:42.017394+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m6jksnp9tcx2zbaw6qtnrc2y
+  text: |-
+    ### review — findings
+    - scope: review sha HEAD~1..HEAD (30014aa6), counts: 1 finding, 1 confirmed, 0 refuted
+    - [ ] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:734` `reuse/reuse` — `recordModelChange(of:to:)` rebuilds the same `TranscriptEvent.Partial` (routerId, sessionId, parentId, slot, model, kind, text) and appends it to `node.directory` through `routedLLM.recorder.append` as the existing divergence write does. Two copies of the restore-event write path will drift apart when the event shape changes. Extract one helper on the restore path, for example `appendRestoreEvent(kind:text:of node: SessionNode, on routedLLM: RoutedLLM, slot:model:)`, that builds the `Partial` and performs the append. Call it from both `recordModelChange(of:to:)` and the divergence write, passing the kind and the text in each case.
+    - next: implementer fixes the finding, then re-run review.
+  timestamp: 2026-11-04T06:26:30.217615+00:00
+- actor: claude-code
+  id: 01m6jkwb4s4ym7w7acp8jwrwe2
+  text: |-
+    ### implement — changed
+    - finding fixed (checked): `SessionTreeRestoration.swift` recordModelChange(of:to:) and the divergence write built the same TranscriptEvent.Partial and appended it. Now one helper, appendRestoreEvent(kind:text:of:on:slot:model:), builds the Partial and does the append. Both callers use it. The file holds no other recorder.append call, so no other copy remains.
+    - evidence: full suite 2440 tests in 287 suites passed, 38 and 19 in the other two runs, zero failures. (The suite was run twice by mistake: the first output was cut by tail.)
+    - next: /review
+  timestamp: 2026-11-04T06:27:57.721653+00:00
+position_column: review
 position_ordinal: '80'
 title: 'Answer: keep the session id across a model-slot switch (plan only, no code)'
 ---
@@ -45,3 +61,7 @@ Option C: makeSession with a given id. Not advised: it does not carry the histor
 1. Tests first: id equal after a switch; one folder; no ended marker on the old session; transcript has a `modelChanged` event; `ToolContext.sessionID` equals the old id; a read by that id returns the whole history; a restore with a different model but no switch flag still throws `modelMismatch`.
 2. Implement the parameter and the event.
 3. Run the full suite once, review, local commit. Push only on the words of the user. #subagents
+
+## Review Findings
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:734` `reuse/reuse` — `recordModelChange(of:to:)` rebuilds the same `TranscriptEvent.Partial` (routerId, sessionId, parentId, slot, model, kind, text) and appends it to `node.directory` through `routedLLM.recorder.append` as the existing divergence write does. Two copies of the restore-event write path will drift apart when the event shape changes. Extract one helper on the restore path, for example `appendRestoreEvent(kind:text:of node: SessionNode, on routedLLM: RoutedLLM, slot:model:)`, that builds the `Partial` and performs the append. Call it from both `recordModelChange(of:to:)` and the divergence write, passing the kind and the text in each case.
