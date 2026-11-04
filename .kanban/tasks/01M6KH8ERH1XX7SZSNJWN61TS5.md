@@ -54,8 +54,36 @@ comments:
     - full `swift test`: 2443 tests in 288 suites, 38 tests, 19 tests; 0 failures, no warnings. (The full suite ran two times, because the first output was cut by a filter; the code did not change between the runs.)
     - next: /review
   timestamp: 2026-11-04T15:28:07.003965+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6kk0yjg7azt51kdvhet93gb
+  text: |-
+    ### review — findings
+    - scope: review sha HEAD~1..HEAD (df89dd91): 0 findings (1 refuted, 7 attempted; .kanban files ignored). review file Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift: 1 finding.
+
+    ## Review Findings (2026-11-04 09:30)
+
+    - [ ] `Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift:27` `duplication/duplication` — HookLayeredLLMContainer is a near-copy of MLXFoundationModelsContainer. The copy is in a file this change did not edit, so the same container logic now exists in two places and can drift apart. Extract one shared container, parameterized by whether the tool hook layer is applied, and have both this wrapper and the live loader call it. The change must not edit LiveModelLoader.swift as part of this change. Report the LiveModelLoader side as a separate task.
+
+    - next: fix the finding, then run /review again.
+  timestamp: 2026-11-04T15:32:14.544674+00:00
+- actor: claude-code
+  id: 01m6kk1ym8j486mpqrs2eknnkg
+  text: |-
+    ### finish — stuck (true conflict, human decision needed)
+    - finding: Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift:27 duplication — "near-copy of MLXFoundationModelsContainer"; asks to extract one shared container used by both, and says do NOT edit LiveModelLoader.swift.
+    - conflict: the fix needs a change in LiveModelLoader.swift (the live container is in that file), and the finding forbids that change. Also the two types differ: MLXFoundationModelsContainer makes real SDK sessions; HookLayeredLLMContainer only decorates the backends of a wrapped container. The overlap is the ten makeSession overloads that the LoadedLLMContainer protocol requires.
+    - state: code is done and green (2443 tests). Local commits 193580e6, 59203291, df89dd91. Review of the commit range is clean. Not pushed.
+    - next: a person decides to drop the finding, or to open a separate task for a shared protocol-extension default. Recommended: drop it (protocol surface, not copied logic).
+  timestamp: 2026-11-04T15:32:47.368216+00:00
+- actor: claude-code
+  id: 01m6kn48jjf86pf7888gpvhj2t
+  text: |-
+    ### finish — done by user decision
+    - The user dropped the finding at HookLayeredLLMContainer.swift:27 (shared container with MLXFoundationModelsContainer) for now: "yes, drop the finding for now". Reason: the fix needs a change in LiveModelLoader.swift, which the finding forbids.
+    - All other findings are fixed. The range review is clean. Full suite: 2443 tests, 0 failures.
+  timestamp: 2026-11-04T16:09:00.242948+00:00
+position_column: done
+position_ordinal: ffffffffed80
 title: Move HookLayeredLLMContainer into the main Router product so a normal binary can use it
 ---
 The ACP agent stub binary `acp-agent-stub` runs a scripted model. It needs the session tool layers of a live RoutedModel, so a `session/cancel` of the root ends the root while a tool call waits for a child. Today `HookLayeredLLMContainer` is only in the FoundationModelsRouterTestSupport product, which imports Apple `Testing`. A binary that links it fails at launch in dyld (Testing.framework not loaded). `SessionToolLayers` is `package` access, so the host cannot build the wrapper.
