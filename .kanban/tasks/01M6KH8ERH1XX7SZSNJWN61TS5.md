@@ -33,6 +33,27 @@ comments:
     - full `swift test`: 2442 tests in 288 suites, 38 tests, 19 tests; 0 failures, no warnings.
     - next: /review
   timestamp: 2026-11-04T15:18:15.753158+00:00
+- actor: claude-code
+  id: 01m6kjdbtypf6mtxr8nhqzm1ks
+  text: |-
+    ### review — findings
+    - scope: review sha HEAD~1..HEAD (59203291): 0 findings. review file Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift: 2 findings (confirmed 2, refuted 1).
+    - [ ] `Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift:107` `duplication/duplication` — The tools-and-sampling-mode `makeSession(instructions:...)` and the tools-and-sampling-mode `makeSession(transcript:...)` bodies are the same wrap-and-forward block. They differ only by the first argument label and value. Both copies run `SessionToolLayers.checked(tools)` and pass `samplingMode` through. If one copy changes, the other can drift. Extract one private helper that takes the already-built wrapped backend, or a closure over `wrapped.makeSession`. Call it from both sites. Keep the `SessionToolLayers.checked(tools)` call in that one helper so the rule lives in one place.
+    - [ ] `Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift:242` `completeness/invariant-propagation` — The new replacingTranscript(_:tools:) passes tools straight to the wrapped backend. It does not call SessionToolLayers.checked(tools). The two makeSession overloads that take tools (lines 109 and 141) do call it. So a session whose transcript is replaced with new tools gets tools without the tool hook layer. Its tool calls send no PreToolUse, PreToolResult or PostToolUse events. The doc comment at lines 17-19 says each tool of each session gets the layers. Wrap the tools at line 242 the same way as lines 109 and 141: `wrapped.replacingTranscript(transcript, tools: SessionToolLayers.checked(tools))`. Add one test that replaces the transcript with tools through this container and checks that the tool events are sent once per call.
+    - next: fix both findings, then run /review again. Card body not changed.
+  timestamp: 2026-11-04T15:21:32.766969+00:00
+- actor: claude-code
+  id: 01m6kjsctv5y4s27x6fv06jvht
+  text: |-
+    ### implement — changed
+    - evidence: 2 files. Sources/FoundationModelsRouter/Session/HookLayeredLLMContainer.swift, Tests/FoundationModelsRouterTests/HookLayeredContainerInMainProductTests.swift.
+    - [x] FIXED `HookLayeredLLMContainer.swift` duplication/duplication: the tools+samplingMode `makeSession(instructions:...)` and `makeSession(transcript:...)` bodies now call one internal helper, `HookLayeredSessionBackend.layering(_:over:)`. `SessionToolLayers.checked(tools)` is in that one place only.
+    - [x] FIXED `HookLayeredLLMContainer.swift` completeness/invariant-propagation: `replacingTranscript(_:tools:)` now goes through the same helper, so its tools get the layers. `makeFork()` and `replacingTranscript(_:)` (no tools) keep the tools of the wrapped backend and do not call the helper, so no tool is wrapped twice. Same cause checked in the whole file: all three paths that give a backend new tools use the helper; no other path does.
+    - TDD: new test "a tool of a replaced transcript gets PreToolUse and PreToolResult once for each call" (a backend replaces its transcript with a raw tool through HookLayeredSessionBackend, inside a session). RED before the fix: use 1, post 0, result 0 (no hook events at all — the first RED run counted use 0). GREEN after the fix.
+    - Discovery: PostToolUse is NOT sent for a raw tool, even with the layer. The end of the call comes from the ToolResultWitness of the session mount layer (ToolCallEndProbe), and a raw tool has no mount. So the new test asserts exactly one PreToolUse and one PreToolResult; PostToolUse for a composed tool stays in the first test of the suite. The test helper `withSession` got an overload that takes a container and tools.
+    - full `swift test`: 2443 tests in 288 suites, 38 tests, 19 tests; 0 failures, no warnings. (The full suite ran two times, because the first output was cut by a filter; the code did not change between the runs.)
+    - next: /review
+  timestamp: 2026-11-04T15:28:07.003965+00:00
 position_column: doing
 position_ordinal: '80'
 title: Move HookLayeredLLMContainer into the main Router product so a normal binary can use it

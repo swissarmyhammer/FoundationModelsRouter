@@ -59,14 +59,28 @@ struct HookLayeredContainerInMainProductTests {
     private static func withSession(
         calling tool: some Tool, argumentsJSON: String, _ body: (Harness) async throws -> Void
     ) async throws {
+        let scripted = MountCallingLLMContainer(calls: [
+            ScriptedMountCall(toolName: tool.name, argumentsJSON: argumentsJSON)
+        ])
+        try await withSession(wrapping: scripted, tools: [tool], body)
+    }
+
+    /// Makes a session over a ``HookLayeredLLMContainer`` that wraps
+    /// `scripted`, runs `body`, and removes the temp directory.
+    ///
+    /// - Parameters:
+    ///   - scripted: The container that the wrapper wraps.
+    ///   - tools: The tools of the session.
+    ///   - body: The test.
+    /// - Throws: What the resolve or `body` throws.
+    private static func withSession(
+        wrapping scripted: any LoadedLLMContainer, tools: [any Tool], _ body: (Harness) async throws -> Void
+    ) async throws {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: directory) }
         let visitor = ToolHookTests.ToolRecordingVisitor()
         let dispatcher = HookDispatcher(dataDirectory: directory.appendingPathComponent(hookDataFolderName))
         dispatcher.register(visitor)
-        let scripted = MountCallingLLMContainer(calls: [
-            ScriptedMountCall(toolName: tool.name, argumentsJSON: argumentsJSON)
-        ])
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             loader: StubModelLoader(
@@ -76,7 +90,7 @@ struct HookLayeredContainerInMainProductTests {
         await router.useRunClock(clock)
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(tools: [tool], inlineSettleGrace: MountFixtures.manualClockGrace))
+            configuration: SessionConfiguration(tools: tools, inlineSettleGrace: MountFixtures.manualClockGrace))
         let harness = Harness(session: session, dispatcher: dispatcher, visitor: visitor, clock: clock)
         // A test that throws before its own close still closes the session.
         defer { await harness.closeAndDrain() }
@@ -124,5 +138,169 @@ struct HookLayeredContainerInMainProductTests {
             #expect(cancelled)
             await gate.open()
         }
+    }
+
+    /// The production change that makes this test fail: a wrapper backend
+    /// whose `replacingTranscript(_:tools:)` gives the wrapped backend the
+    /// tools with no hook layer, so a tool call of the replaced backend sends
+    /// no events.
+    ///
+    /// The tool of the replaced transcript is a raw tool, with no mount layer
+    /// of the session. Thus no result witness gives the end of the call, and
+    /// the `PostToolUse` is not sent. The first test in this suite holds the
+    /// `PostToolUse` of a composed tool.
+    @Test("a tool of a replaced transcript gets PreToolUse and PreToolResult once for each call")
+    func aReplacedTranscriptToolGetsEachEventOnce() async throws {
+        let call = ScriptedMountCall(
+            toolName: MarkerEmittingTool.toolName, argumentsJSON: #"{"value":"\#(ScriptedToolFixture.firstStepName)"}"#)
+        let scripted = ReplacingToolsLLMContainer(tool: MarkerEmittingTool(), calls: [call])
+        try await Self.withSession(wrapping: scripted, tools: []) { harness in
+            _ = try await harness.session.respond(to: Self.prompt)
+            await harness.closeAndDrain()
+
+            let events = harness.visitor.recorder.events
+            let useCount = events.filter { if case .use = $0 { true } else { false } }.count
+            let resultCount = events.filter { if case .result = $0 { true } else { false } }.count
+            #expect(useCount == 1 && resultCount == 1)
+        }
+    }
+}
+
+/// A backend that makes a ``MountCallingBackend`` over the `tools` of a
+/// replaced transcript, as a live backend makes its replaced session.
+private final class ToolRebuildingBackend: LanguageModelSessionBackend {
+    /// The calls of the first submission of each rebuilt backend.
+    private let calls: [ScriptedMountCall]
+
+    /// The stub that answers the calls that no rebuilt backend makes.
+    private let inner = StubSessionBackend()
+
+    /// Makes a backend whose rebuilt backends make `calls`.
+    ///
+    /// - Parameter calls: The calls of the first submission.
+    init(calls: [ScriptedMountCall]) {
+        self.calls = calls
+    }
+
+    func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+        try await inner.respond(to: prompt, maxTokens: maxTokens)
+    }
+
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+        inner.streamResponse(to: prompt, maxTokens: maxTokens)
+    }
+
+    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+        try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+    }
+
+    func makeFork() -> any LanguageModelSessionBackend {
+        inner.makeFork()
+    }
+
+    func transcriptEntries() -> [Transcript.Entry] {
+        inner.transcriptEntries()
+    }
+
+    func usageTokenCounts() -> (input: Int, output: Int)? {
+        inner.usageTokenCounts()
+    }
+
+    func cachedInputTokenCount() -> Int? {
+        inner.cachedInputTokenCount()
+    }
+
+    func replacingTranscript(_ transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
+        MountCallingBackend(tools: tools, calls: calls)
+    }
+}
+
+/// A backend whose submission replaces its transcript with one raw tool,
+/// through a ``HookLayeredSessionBackend``, and answers from the replaced
+/// backend. The wrapper, not this backend, must put the hook layer on the
+/// tool.
+private final class ReplacingToolsBackend: LanguageModelSessionBackend {
+    /// The raw tool of the replaced transcript.
+    private let tool: any Tool
+
+    /// The wrapper over the rebuilding backend.
+    private let layered: HookLayeredSessionBackend
+
+    /// The stub that answers the calls that the replaced backend does not.
+    private let inner = StubSessionBackend()
+
+    /// Makes a backend that replaces its transcript with `tool`.
+    ///
+    /// - Parameters:
+    ///   - tool: The raw tool of the replaced transcript.
+    ///   - calls: The calls of the first submission of the replaced backend.
+    init(tool: any Tool, calls: [ScriptedMountCall]) {
+        self.tool = tool
+        self.layered = HookLayeredSessionBackend(wrapping: ToolRebuildingBackend(calls: calls))
+    }
+
+    func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+        let replaced = layered.replacingTranscript(Transcript(entries: []), tools: [tool])
+        return try await replaced.respond(to: prompt, maxTokens: maxTokens)
+    }
+
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+        inner.streamResponse(to: prompt, maxTokens: maxTokens)
+    }
+
+    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+        try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+    }
+
+    func makeFork() -> any LanguageModelSessionBackend {
+        inner.makeFork()
+    }
+
+    func transcriptEntries() -> [Transcript.Entry] {
+        inner.transcriptEntries()
+    }
+
+    func usageTokenCounts() -> (input: Int, output: Int)? {
+        inner.usageTokenCounts()
+    }
+
+    func cachedInputTokenCount() -> Int? {
+        inner.cachedInputTokenCount()
+    }
+}
+
+/// Vends a ``ReplacingToolsBackend`` for each session.
+private final class ReplacingToolsLLMContainer: LoadedLLMContainer {
+    /// The scripted counter of ``MountCallingLLMContainer``: one token per
+    /// `Character`. This file does not import the test support library, so it
+    /// takes the counter from that container.
+    let tokenCounter: any TokenCounter = MountCallingLLMContainer(calls: []).tokenCounter
+
+    /// The raw tool of the replaced transcript of each backend.
+    private let tool: any Tool
+
+    /// The calls of the first submission of each replaced backend.
+    private let calls: [ScriptedMountCall]
+
+    /// Makes a container.
+    ///
+    /// - Parameters:
+    ///   - tool: The raw tool of the replaced transcript of each backend.
+    ///   - calls: The calls of the first submission of each replaced backend.
+    init(tool: any Tool, calls: [ScriptedMountCall]) {
+        self.tool = tool
+        self.calls = calls
+    }
+
+    func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+        ReplacingToolsBackend(tool: tool, calls: calls)
+    }
+
+    func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
+        makeSession(instructions: instructions)
+    }
+
+    func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+        StubSessionBackend(entries: Array(transcript))
     }
 }

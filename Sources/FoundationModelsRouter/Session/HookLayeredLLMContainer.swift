@@ -104,10 +104,9 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     public func makeSession(
         instructions: String?, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(
-            wrapping: wrapped.makeSession(
-                instructions: instructions, tools: SessionToolLayers.checked(tools), samplingMode: samplingMode
-            ))
+        HookLayeredSessionBackend.layering(tools) { layered in
+            wrapped.makeSession(instructions: instructions, tools: layered, samplingMode: samplingMode)
+        }
     }
 
     /// A restored backend of the wrapped container with no tools, that
@@ -136,9 +135,9 @@ public struct HookLayeredLLMContainer: LoadedLLMContainer {
     public func makeSession(
         transcript: Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(
-            wrapping: wrapped.makeSession(
-                transcript: transcript, tools: SessionToolLayers.checked(tools), samplingMode: samplingMode))
+        HookLayeredSessionBackend.layering(tools) { layered in
+            wrapped.makeSession(transcript: transcript, tools: layered, samplingMode: samplingMode)
+        }
     }
 }
 
@@ -158,6 +157,24 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
     /// - Parameter wrapped: The backend of the wrapped container.
     init(wrapping wrapped: any LanguageModelSessionBackend) {
         self.wrapped = wrapped
+    }
+
+    /// A backend in this decorator over the backend that `makeBackend` makes
+    /// from `tools` with the session layers. This is the one place where the
+    /// layers of a new set of tools are put on: each path that gives a
+    /// backend new tools goes through it. A path that keeps the tools of a
+    /// backend (a fork, a replaced transcript with no tools) does not, so no
+    /// tool has the layers two times.
+    ///
+    /// - Parameters:
+    ///   - tools: The raw tools of the new backend.
+    ///   - makeBackend: Makes the wrapped backend from the tools with the
+    ///     layers.
+    /// - Returns: The backend, in this decorator.
+    static func layering(
+        _ tools: [any Tool], over makeBackend: ([any Tool]) -> any LanguageModelSessionBackend
+    ) -> HookLayeredSessionBackend {
+        HookLayeredSessionBackend(wrapping: makeBackend(SessionToolLayers.checked(tools)))
     }
 
     /// Generates a complete text response through the wrapped backend.
@@ -239,6 +256,8 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
     ///   - tools: The tools of the new backend.
     /// - Returns: The backend, in this decorator.
     func replacingTranscript(_ transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        HookLayeredSessionBackend(wrapping: wrapped.replacingTranscript(transcript, tools: tools))
+        HookLayeredSessionBackend.layering(tools) { layered in
+            wrapped.replacingTranscript(transcript, tools: layered)
+        }
     }
 }
