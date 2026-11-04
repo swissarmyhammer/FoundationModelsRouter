@@ -1,5 +1,4 @@
 import FoundationModels
-import FoundationModelsRouter
 
 /// A scripted container whose sessions get their tools with the tool hook
 /// layer of Router, as the live model loader gives them.

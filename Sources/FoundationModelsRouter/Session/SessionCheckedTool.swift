@@ -111,7 +111,7 @@ extension Tool {
 /// The one code path that puts the session layers on the tools of a backend.
 ///
 /// The live backend gives its SDK session each tool through this code path.
-/// The scripted container of the test support library
+/// The scripted container wrapper of this module
 /// (`HookLayeredLLMContainer`) also uses it, so the layers of a scripted test
 /// and of the live loader cannot be different. ``Tool/sessionChecked`` stays
 /// internal to this module.

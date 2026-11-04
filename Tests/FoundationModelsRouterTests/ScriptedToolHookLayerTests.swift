@@ -3,20 +3,18 @@ import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsHooks
 import FoundationModelsRouter
-import FoundationModelsRouterTestSupport
 import Testing
 
-/// Holds ``HookLayeredLLMContainer`` of `FoundationModelsRouterTestSupport`
+/// Holds ``HookLayeredLLMContainer`` of `FoundationModelsRouter`
 /// (task ^fk069kg): a scripted container whose backend calls its tools
 /// directly gives no tool events, and the same container in a
 /// ``HookLayeredLLMContainer`` gives `PreToolUse`, `PreToolResult` and
 /// `PostToolUse`, as the live loader does.
 ///
 /// This file imports each module with a plain `import`, as a host test does.
-/// Thus each test uses only the public API of Router and of the test support
-/// library. The scripted container is ``MountCallingLLMContainer``: its
-/// backend calls the tools of the session directly, as the scripted model of
-/// a host does.
+/// Thus each test uses only the public API of Router. The scripted container
+/// is ``MountCallingLLMContainer``: its backend calls the tools of the session
+/// directly, as the scripted model of a host does.
 ///
 /// Each test closes the session and calls `dispatcher.drain()` before it
 /// reads the post events, because a post event arrives on a task of the

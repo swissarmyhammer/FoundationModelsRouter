@@ -31,8 +31,15 @@ comments:
     - evidence: full suite 2440 tests in 287 suites passed, 38 and 19 in the other two runs, zero failures. (The suite was run twice by mistake: the first output was cut by tail.)
     - next: /review
   timestamp: 2026-11-04T06:27:57.721653+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m6jkyb9cy80etamzmwdd5sjq
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (6331c9c3): findings 0, confirmed 0, refuted 0; 1 file reviewed; the one prior finding (appendRestoreEvent helper) is checked
+    - next: card moved to done; commit is local, not pushed
+  timestamp: 2026-11-04T06:29:03.404133+00:00
+position_column: done
+position_ordinal: ffffffffec80
 title: 'Answer: keep the session id across a model-slot switch (plan only, no code)'
 ---
 The ACP agent host asks (for the user) whether a replacement session can keep the id of the session it replaces. The user chose: Router keeps the id. This card holds the answer and a plan. Write no code until the user allows it.
