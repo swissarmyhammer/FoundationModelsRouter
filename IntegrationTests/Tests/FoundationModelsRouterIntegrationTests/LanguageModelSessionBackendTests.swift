@@ -760,45 +760,4 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(cachedAfterAnswer2 > 0, "answer 2 must reuse the cache that answer 1 left under the session id")
         #expect(cachedByAnswer3 == 0, "answer 3 must reuse nothing: the release removed the entry of the session id")
     }
-
-    // MARK: - Timing signal (best-effort, non-fatal)
-
-    @Test(
-        "answer 2 tends to be faster than answer 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
-    )
-    func secondAnswerTendsToBeFasterThanFirst() async throws {
-        let loaded = try await Self.makeContainer()
-        defer { await loaded.container.model.evict() }
-        // A long instruction makes the fixed, cacheable prefix answer 2 should
-        // reuse a much larger share of the input than a short one would, so a
-        // real speed-up (if the cache is working) is more likely to be
-        // visible above run-to-run noise.
-        let longInstructions = String(
-            repeating:
-                "You are a careful, terse assistant who always answers in as few words as possible. ",
-            count: 40
-        )
-        let backend = try #require(
-            loaded.container.makeSession(instructions: longInstructions, samplingMode: loaded.samplingMode)
-                as? MLXFoundationModelsSessionBackend
-        )
-
-        let answer1Start = Date()
-        _ = try await backend.respond(to: "Say just 'OK'.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let answer1Duration = Date().timeIntervalSince(answer1Start)
-
-        let answer2Start = Date()
-        _ = try await backend.respond(to: "Say just 'OK' again.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let answer2Duration = Date().timeIntervalSince(answer2Start)
-
-        // Heuristic/warning only: logged for a human to read, never asserted.
-        // A ratio near (or above) 1.0 would be a signal worth investigating —
-        // that the cache is not meaningfully speeding up answer 2 even if
-        // `cachedTokenCount` reports reuse — but flaky wall-clock timing on
-        // shared CI hardware must never fail this suite.
-        let ratio = answer1Duration > 0 ? answer2Duration / answer1Duration : .nan
-        print(
-            "[secondAnswerTendsToBeFasterThanFirst] answer1=\(answer1Duration)s answer2=\(answer2Duration)s ratio=\(ratio)"
-        )
-    }
 }
