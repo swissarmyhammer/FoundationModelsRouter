@@ -76,6 +76,39 @@ comments:
     - evidence: `swift build --build-tests` clean (only the known mlx-swift_Cmlx.bundle "missing creator" notice); `swift test` 2508 + 38 + 19 = 2565 passed, 0 failed (2561 + 4 new HubTreeListingTests); `swift build --build-tests --package-path IntegrationTests` complete. Files: new Tests/FoundationModelsRouterTests/Helpers/HubTreeListing.swift, Tests/FoundationModelsRouterTests/HubTreeListingTests.swift; edited Helpers/FileServingMetadataSource.swift, Helpers/RouterTestFixtures.swift, GGUFRepoMetadataTests, GGUFResolveTests, ResolveTests, RepoMetadataTests, ExamplesTests, AnswerCancellationFixtures, and 24 other test files whose treeJSON now aliases RouterTestFixtures.treeJSON. Finding flipped to [x].
     - next: /review
   timestamp: 2026-11-09T21:43:28.611667+00:00
+- actor: claude-code
+  id: 01m714h5y1wa00a7zxva3mrny0
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (dc245f42): 1 finding (1 confirmed, 0 refuted) — Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:172 `code-hygiene/magic-numbers-swift`. Prior finding FileServingMetadataSource.swift:57 `reuse/reuse` is checked and was not raised again.
+    - next: replace the magic numbers in RouterTestFixtures.swift with named constants, across the whole file, then re-review.
+  timestamp: 2026-11-09T21:48:19.777636+00:00
+- actor: claude-code
+  id: 01m714hkf8bz37b8y6yka9jbtj
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 36 files (HubTreeListing builder)
+    - test: green — swift test 2565 passed, IntegrationTests builds
+    - commit: dc245f42
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:172 (code-hygiene/magic-numbers-swift); prior reuse finding resolved
+  timestamp: 2026-11-09T21:48:33.640885+00:00
+- actor: claude-code
+  id: 01m714rcpke6sxx97n7e40k00z
+  text: |-
+    Fixed `code-hygiene/magic-numbers-swift` (RouterTestFixtures.swift:172) across the whole file, plus the same cause in HubTreeListingTests.swift. No values changed.
+    - RouterTestFixtures: new documented constants `layerCount` (2), `attentionHeadCount` (8), `keyValueHeadCount` (2), `headDimension` (16), `hiddenSize` (128), interpolated into `configJSON`; `weightFileBytes` (10_000_000) for the `treeJSON` weight file; `gibibyteShift` (30), `stubTotalRAM` (64 << 30), `stubWorkingSet` (48 << 30) for `stubProbe`.
+    - HubTreeListingTests: `nativeContext` (8192), `plainFileBytes` (700), `lfsObjectBytes` (9_000), `firstShardBytes` (300), `secondShardBytes` (400); the shard test now expects `firstShardBytes + secondShardBytes`.
+    - HubTreeListing.swift: no change needed. Its only literals are `135` (already the named `lfsPointerSize`) and a `0` directory size in the JSON, which is an allowed value.
+    - Check: swiftlint `no_magic_numbers` with the rule's config (`allowed_numbers: [0, 1, -1, 100]`) reported line 172 before the fix and nothing after, over all three files. Swiftlint flagged only line 172 to begin with. The other literals were named because the brief asked for every magic number.
+    - Out of scope, not touched: ResolveTests.embeddingSlotFootprint, GGUFResolveTests.smallBytes and ResidencyStubs (embeddingModelFootprint, generationWeightsBytes) each spell out 10_000_000 again. That number is the same weight size as `RouterTestFixtures.weightFileBytes`, and these files could alias it.
+  timestamp: 2026-11-09T21:52:16.083062+00:00
+- actor: claude-code
+  id: 01m714rezg9gmxe523medagkmc
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, Tests/FoundationModelsRouterTests/HubTreeListingTests.swift. `swift build --build-tests` clean (only the known mlx-swift_Cmlx.bundle "missing creator" notice); `swift test` 2508 + 38 + 19 = 2565 passed, 0 failed; `swift build --build-tests --package-path IntegrationTests` complete. Finding flipped to [x].
+    - next: /review
+  timestamp: 2026-11-09T21:52:18.416029+00:00
 depends_on:
 - 01M70TB3W99163V7F38SFR7SPN
 position_column: doing
@@ -116,3 +149,12 @@ Resolution sizes each candidate before download (`RepoMetadata`, `HuggingFaceMet
 > - `.kanban/ (from .reviewignore)` — 4 file(s)
 
 - [x] `Tests/FoundationModelsRouterTests/Helpers/FileServingMetadataSource.swift:57` `reuse/reuse` — The new `treeFile` helper rebuilds the Hub tree-listing JSON for one file, which an existing unchanged helper in ResolveTests already builds. Two copies of the same listing shape will drift apart as the Hub format is handled. Reuse the existing ResolveTests `tree` helper, or move it into this shared helper and have ResolveTests call `FileServingMetadataSource.treeFile`/`tree`, so there is one canonical tree-listing builder.
+
+## Review Findings (2026-11-09 15:44)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 37 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:172` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.

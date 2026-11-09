@@ -151,6 +151,29 @@ struct BasicLLMContainer: PlainTranscriptStubContainer {
 /// per-test temp directory and the router itself — so the fixture data
 /// lives in exactly one place instead of being repeated per suite.
 enum RouterTestFixtures {
+    /// The `num_hidden_layers` of ``configJSON``. Two layers keep the KV
+    /// cache of the stub model tiny, so its footprint is mostly the weights
+    /// of ``weightFileBytes``.
+    static let layerCount = 2
+
+    /// The `num_attention_heads` of ``configJSON``: a small head count that
+    /// is a whole multiple of ``keyValueHeadCount``, as grouped-query
+    /// attention needs.
+    static let attentionHeadCount = 8
+
+    /// The `num_key_value_heads` of ``configJSON``: fewer key/value heads
+    /// than ``attentionHeadCount``, so the stub model is grouped-query like
+    /// the real models the router sizes, and its KV cache stays small.
+    static let keyValueHeadCount = 2
+
+    /// The `head_dim` of ``configJSON``: a small width, so each cached token
+    /// costs few bytes.
+    static let headDimension = 16
+
+    /// The `hidden_size` of ``configJSON``: ``attentionHeadCount`` heads of
+    /// ``headDimension`` each, so the config is self-consistent.
+    static let hiddenSize = 128
+
     /// The canned `config.json` payload behind ``rawMetadata`` — a tiny,
     /// valid model config the resolver can size. Its window is
     /// `ScriptedSessionContext.tokens`, so a profile that names no context
@@ -158,18 +181,24 @@ enum RouterTestFixtures {
     static let configJSON = Data(
         """
         {
-            "num_hidden_layers": 2,
+            "num_hidden_layers": \(layerCount),
             "max_position_embeddings": \(ScriptedSessionContext.tokens),
-            "num_attention_heads": 8,
-            "num_key_value_heads": 2,
-            "head_dim": 16,
-            "hidden_size": 128
+            "num_attention_heads": \(attentionHeadCount),
+            "num_key_value_heads": \(keyValueHeadCount),
+            "head_dim": \(headDimension),
+            "hidden_size": \(hiddenSize)
         }
         """.utf8)
 
+    /// The byte size of the one weight file in ``treeJSON``: 10 MB, the
+    /// weights of a plausible but tiny model. It fits the RAM of
+    /// ``stubProbe`` many times over, so resolution never fails on fit, and
+    /// it is large enough that a weight charge shows in a budget a test reads.
+    static let weightFileBytes: Int64 = 10_000_000
+
     /// The canned repo file-tree payload behind ``rawMetadata`` — one
     /// plausible weights file the resolver can size.
-    static let treeJSON = HubTreeListing.json([.file("model.safetensors", size: 10_000_000)])
+    static let treeJSON = HubTreeListing.json([.file("model.safetensors", size: weightFileBytes)])
 
     /// The canned repo metadata a test's ``StubMetadataSource`` serves.
     static var rawMetadata: RawRepoMetadata {
@@ -179,10 +208,23 @@ enum RouterTestFixtures {
     /// The length of each vector that every stub embedder makes.
     static let stubDimension = 8
 
+    /// The number of bits to shift a count of GiB by to get a count of bytes
+    /// (1 GiB is 2^30 bytes).
+    static let gibibyteShift = 30
+
+    /// The total RAM of ``stubProbe``: 64 GiB, a large Apple silicon Mac, so
+    /// the stub model never comes near it.
+    static let stubTotalRAM: Int64 = 64 << gibibyteShift
+
+    /// The recommended GPU working set of ``stubProbe``: 48 GiB, three
+    /// quarters of ``stubTotalRAM``, the share macOS gives the GPU on a Mac
+    /// of that size. It is the budget the router sizes against.
+    static let stubWorkingSet: Int64 = 48 << gibibyteShift
+
     /// The fixed hardware every shared-fixture router probes: ample RAM, so
     /// resolution never fails on the stub metadata's tiny model.
     static let stubProbe = StubProbe(
-        chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30)
+        chip: "Apple Test", totalRAM: stubTotalRAM, recommendedMaxWorkingSetSize: stubWorkingSet)
 
     /// The standard test profile: one candidate per slot.
     ///
