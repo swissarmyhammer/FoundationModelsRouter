@@ -39,6 +39,31 @@ comments:
     - evidence: root cause = the drafter naming the candidate's own file was a different ModelRef key, so its Hub metadata + 16 MB of GGUF header Range reads ran a second time, serially after the candidate (all sizing was serial). Fix: one concurrent fetch per (repo, path, revision). Files: Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/GGUFResolveTests.swift, Tests/FoundationModelsRouterTests/ResolveTests.swift, Tests/FoundationModelsRouterTests/Helpers/FileServingMetadataSource.swift, Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift (new). Sizing phase: self-drafter 10.3 s -> 3.3 s, plain 4.0 s -> 3.2 s. swift test 2567 pass; both builds clean; gated suite 3/3.
     - next: /review. Follow-up ^gnp1jne for the Range-read round trips.
   timestamp: 2026-11-09T22:28:46.179562+00:00
+- actor: claude-code
+  id: 01m7170w9xmr1vv9ncb0qk97g8
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (69a0bd58) — 1 finding (1 confirmed, 0 refuted): Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift:58
+    - next: fix the open finding in the Review Findings (2026-11-09 16:30) section, then re-review
+  timestamp: 2026-11-09T22:31:51.357746+00:00
+- actor: claude-code
+  id: 01m7171886gm74nsrg2apddrt3
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — Router.swift sizing dedup + concurrency, 4 test files
+    - test: green — swift test 2567 passed, IntegrationTests builds
+    - commit: 69a0bd58
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift:58 (code-hygiene/idioms-swift ReplaceForEachWithForLoop)
+  timestamp: 2026-11-09T22:32:03.590639+00:00
+- actor: claude-code
+  id: 01m7173n394nfdhvwg2mnnkev3
+  text: |-
+    Resolved finding `code-hygiene/idioms-swift` ReplaceForEachWithForLoop: `release()` in OverlapGatedMetadataSource now resumes held reads with a for-in loop. That file had only this one `.forEach`. The diff of HEAD (69a0bd58) added no other `.forEach` in any file. Finding flipped to [x].
+
+    ### implement — changed
+    - evidence: 1 source file (Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift) + card .md; `swift build --build-tests` clean (only the known mlx-swift_Cmlx.bundle missing-creator notice); `swift test` 2567 pass (2510 + 38 + 19), 0 failures
+    - next: /review
+  timestamp: 2026-11-09T22:33:22.281897+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'GGUF: sizing a GGUF ref that names a GGUF drafter takes ~15 s longer than the plain ref'
@@ -50,3 +75,12 @@ Measured by the gated GGUF suite (^44meq1j) on 2026-11-09, over 3 runs, each wit
 Find where the time goes. Candidates: the drafter is sized serially after the candidate; the Range fetch reads more of the header than it needs; a ref and its drafter that name the same file are fetched twice instead of sharing one result. Fix it if the cause is in the router.
 
 #gguf
+
+## Review Findings (2026-11-09 16:30)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 10 not reviewed.
+
+> 10 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 10 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift:58` `code-hygiene/idioms-swift` — ReplaceForEachWithForLoop: replace use of '.forEach { ... }' with for-in loop.

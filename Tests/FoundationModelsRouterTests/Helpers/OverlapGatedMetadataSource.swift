@@ -55,6 +55,8 @@ actor OverlapGatedMetadataSource: MetadataSource {
         isReleased = true
         let reads = heldReads
         heldReads = []
-        reads.forEach { $0.resume() }
+        for read in reads {
+            read.resume()
+        }
     }
 }
