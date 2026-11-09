@@ -631,7 +631,9 @@ public actor Router {
     /// Fetches every candidate's parsed metadata, merging results for a ref
     /// shared across slots with ``preferSuccess(left:right:)``. The MTP
     /// drafter of a candidate (``ModelRef/drafter``) is sized too, under its
-    /// own ref, so the fit charges its weights.
+    /// own ref, so the fit charges its weights and, for a GGUF drafter, its
+    /// context. A drafter that llama.cpp will not load is still sized, and
+    /// logs a warning (``warnIfDrafterWillNotLoad(_:result:)``).
     private func sizeCandidates(
         profile def: ProfileDefinition
     ) async -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
@@ -645,11 +647,33 @@ public actor Router {
                     out[ref] = result
                 }
                 if let drafter = ref.drafter, out[drafter] == nil {
-                    out[drafter] = await metadataResult(for: drafter)
+                    let drafterResult = await metadataResult(for: drafter)
+                    warnIfDrafterWillNotLoad(drafter, result: drafterResult)
+                    out[drafter] = drafterResult
                 }
             }
         }
         return out
+    }
+
+    /// Logs a warning for a GGUF drafter that llama.cpp does not load as a
+    /// DFlash drafter (``GGUFCacheSizing/isUnloadableDFlashDrafter``).
+    ///
+    /// The router cannot know before the load that the model falls back to
+    /// decoding with no drafter, so the drafter stays sized and charged. The
+    /// warning tells the operator why the model will run with no speedup.
+    ///
+    /// - Parameters:
+    ///   - drafter: The drafter.
+    ///   - result: Its sizing result.
+    private func warnIfDrafterWillNotLoad(_ drafter: ModelRef, result: Result<RepoMetadata, RepoMetadataError>) {
+        guard case .success(let metadata) = result, metadata.gguf?.isUnloadableDFlashDrafter == true else { return }
+        RouterTelemetry.logger(.repoMetadataReader, explicit: explicitLogger).warning(
+            """
+            a GGUF drafter has the architecture dflash-draft of the fork converters, which llama.cpp \
+            does not load as a DFlash drafter; the model decodes with no drafter and no speedup
+            """,
+            metadata: [RouterTelemetry.LogMetadataKey.modelRef: "\(drafter.stringValue)"])
     }
 
     /// Fetches and parses one candidate's metadata. A non-``RepoMetadataError``
@@ -691,20 +715,23 @@ public actor Router {
         return membership
     }
 
-    /// The weight bytes of the MTP drafter of `ref`, which the model loads
-    /// beside its own weights.
+    /// The bytes of the MTP drafter of `ref`, which the model loads beside
+    /// its own weights: the weights of the drafter, and the context of a
+    /// GGUF drafter at the context of the model
+    /// (``RepoMetadata/draftContextBytes(context:)``).
     ///
     /// - Parameters:
     ///   - ref: A generation candidate.
+    ///   - context: The working context of the candidate.
     ///   - metadataByRef: The sized metadata, the drafters included.
-    /// - Returns: 0 for a ref with no drafter, the weight bytes of its drafter,
-    ///   or the error of a drafter that could not be sized.
-    private static func drafterWeightBytes(
-        of ref: ModelRef, metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+    /// - Returns: 0 for a ref with no drafter, the bytes of its drafter, or
+    ///   the error of a drafter that could not be sized.
+    private static func drafterBytes(
+        of ref: ModelRef, context: Int, metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
     ) -> Result<Int64, RepoMetadataError> {
         guard let drafter = ref.drafter else { return .success(0) }
         return (metadataByRef[drafter] ?? .failure(.metadataUnavailable(unsizedCandidateMessage(for: drafter))))
-            .map(\.weightBytes)
+            .map { $0.weightBytes + $0.draftContextBytes(context: context) }
     }
 
     /// The diagnostic for a Core ML embedding model that a profile lists for
@@ -791,7 +818,7 @@ public actor Router {
                 if residentKeys.contains(where: { $0.canServe(key) }) {
                     candidates.append(sessionKV)
                 } else {
-                    switch drafterWeightBytes(of: ref, metadataByRef: metadataByRef) {
+                    switch drafterBytes(of: ref, context: context, metadataByRef: metadataByRef) {
                     case .failure(let error):
                         return .failure(error)
                     case .success(let drafterBytes):

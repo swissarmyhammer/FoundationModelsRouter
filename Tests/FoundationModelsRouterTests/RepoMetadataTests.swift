@@ -510,7 +510,7 @@ struct RepoMetadataTests {
 
         let footprint = try await reader.footprint(for: "org/model")
 
-        #expect(footprint.kvHeads == 8)
+        #expect(footprint.cache == .attention(layers: 2, kvHeads: 8, headDim: 16))
     }
 
     @Test("head_dim fallback: absent head_dim uses hidden_size / num_attention_heads")
@@ -526,7 +526,7 @@ struct RepoMetadataTests {
         let footprint = try await reader.footprint(for: "org/model")
 
         // hidden_size 512 / 8 heads = 64 head_dim.
-        #expect(footprint.headDim == 64)
+        #expect(footprint.cache == .attention(layers: 2, kvHeads: 8, headDim: 64))
     }
 
     @Test("missing config.json surfaces metadataUnavailable, not a crash")
@@ -703,12 +703,12 @@ struct RepoMetadataTests {
         let ref = ModelRef(repo: "org/model", revision: "main")
         let cache = RepoMetadataCache(cacheDir: dir)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Self.movedPastCacheJSON.write(to: cache.fileURL(repo: ref.repo, revision: ref.revision))
+        try Self.movedPastCacheJSON.write(to: cache.fileURL(for: ref))
 
         let metadata = try await reader.metadata(for: ref)
 
         #expect(metadata.weightBytes == Self.expectedWeightBytes)
-        #expect(try cache.load(repo: ref.repo, revision: ref.revision) == metadata)
+        #expect(try cache.load(for: ref) == metadata)
     }
 
     @Test("a failed fetch at a moving revision returns the cached entry")
@@ -763,9 +763,9 @@ struct RepoMetadataTests {
         let cache = RepoMetadataCache(cacheDir: dir)
 
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Self.staleSchemaCacheJSON.write(to: cache.fileURL(repo: "org/model", revision: "abc123"))
+        try Self.staleSchemaCacheJSON.write(to: cache.fileURL(for: ModelRef(repo: "org/model", revision: "abc123")))
 
-        #expect(try cache.load(repo: "org/model", revision: "abc123") == nil)
+        #expect(try cache.load(for: ModelRef(repo: "org/model", revision: "abc123")) == nil)
     }
 
     @Test("RepoMetadataReader.metadata(for:) re-fetches and re-caches when the cached entry has the stale pre-fix schema")
@@ -779,7 +779,7 @@ struct RepoMetadataTests {
         let ref = ModelRef(repo: "org/model", revision: Self.commitHash)
         let cache = RepoMetadataCache(cacheDir: dir)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Self.staleSchemaCacheJSON.write(to: cache.fileURL(repo: ref.repo, revision: ref.revision))
+        try Self.staleSchemaCacheJSON.write(to: cache.fileURL(for: ref))
 
         let metadata = try await reader.metadata(for: ref)
 

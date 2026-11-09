@@ -209,6 +209,100 @@ struct HuggingFaceMetadataSourceTests {
         }
     }
 
+    /// The path of the GGUF file the range tests read.
+    private static let ggufPath = "Q4_K_M/model-Q4_K_M.gguf"
+
+    /// The bytes of the whole file the range tests read.
+    private static let fileBytes = Data((0..<64).map { UInt8($0) })
+
+    /// The range the range tests read.
+    private static let readRange = 8..<24
+
+    /// The status of a response that holds a range of the file.
+    private static let partialContentStatus = 206
+
+    /// Installs a handler that records each request and answers it with
+    /// `status` and `body`.
+    ///
+    /// - Parameters:
+    ///   - status: The HTTP status of each response.
+    ///   - body: The body of each response.
+    /// - Returns: The recorder of the requests.
+    private static func installRecording(status: Int, body: Data) -> RequestRecorder {
+        let recorder = RequestRecorder()
+        StubURLProtocol.install(forHost: host) { request in
+            recorder.record(request)
+            return (response(for: request.url!, statusCode: status), body)
+        }
+        return recorder
+    }
+
+    /// Reads ``readRange`` of ``ggufPath`` through a stub source.
+    ///
+    /// - Parameter tokenProvider: The token provider of the source.
+    /// - Returns: The bytes.
+    /// - Throws: The error of the read.
+    private static func readFileRange(tokenProvider: TokenProvider = .none) async throws -> Data {
+        try await makeSource(tokenProvider: tokenProvider)
+            .fetchFileBytes(repo: "org/model", revision: nil, path: ggufPath, range: readRange)
+    }
+
+    @Test("a file range is read from the resolve URL of the file at the revision")
+    func fileRangeUsesResolveURL() async throws {
+        let recorder = Self.installRecording(status: Self.partialContentStatus, body: Data())
+
+        _ = try await Self.readFileRange()
+
+        #expect(recorder.urls.map(\.absoluteString) == ["https://hf.example.test/org/model/resolve/main/\(Self.ggufPath)"])
+    }
+
+    @Test("a file range is asked for with an inclusive HTTP Range header")
+    func fileRangeSendsRangeHeader() async throws {
+        let recorder = Self.installRecording(status: Self.partialContentStatus, body: Data())
+
+        _ = try await Self.readFileRange()
+
+        #expect(recorder.requests.map { $0.value(forHTTPHeaderField: "Range") } == ["bytes=8-23"])
+    }
+
+    @Test("a file range read sends the token of the provider")
+    func fileRangeSendsToken() async throws {
+        let recorder = Self.installRecording(status: Self.partialContentStatus, body: Data())
+
+        _ = try await Self.readFileRange(tokenProvider: .fixed(token: Self.token))
+
+        #expect(recorder.requests.map { $0.value(forHTTPHeaderField: "Authorization") } == ["Bearer \(Self.token)"])
+    }
+
+    @Test("a 206 response gives its body as the bytes of the range")
+    func partialContentGivesBody() async throws {
+        let body = Self.fileBytes.subdata(in: Self.readRange)
+        _ = Self.installRecording(status: Self.partialContentStatus, body: body)
+
+        #expect(try await Self.readFileRange() == body)
+    }
+
+    @Test("a 200 response from a server that ignored the range gives only the bytes of the range")
+    func fullContentIsCutToTheRange() async throws {
+        _ = Self.installRecording(status: 200, body: Self.fileBytes)
+
+        #expect(try await Self.readFileRange() == Self.fileBytes.subdata(in: Self.readRange))
+    }
+
+    @Test("a 404 for a file range is an error, not bytes of a header")
+    func missingFileIsAnError() async throws {
+        _ = Self.installRecording(status: 404, body: Data("not found".utf8))
+
+        await #expect(throws: RepoMetadataError.self) { _ = try await Self.readFileRange() }
+    }
+
+    @Test("a 416 for a range past the end of the file gives no bytes")
+    func rangePastTheEndGivesNoBytes() async throws {
+        _ = Self.installRecording(status: 416, body: Data())
+
+        #expect(try await Self.readFileRange().isEmpty)
+    }
+
     /// Builds a canned `HTTPURLResponse` for a status code.
     ///
     /// Defaults the headers/protocol fields the tests don't care about.

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsLlamaCpp
 import Testing
 
 @testable import FoundationModelsRouter
@@ -10,6 +11,9 @@ struct FootprintTests {
 
     /// Contexts (tokens) for the monotonicity check, in strictly increasing order.
     private static let monotonicContexts: [Int] = [512, 1024, 2048, 4096, 8192, 16384]
+
+    /// A context that is not a multiple of the 256 cells llama.cpp pads to.
+    private static let unpaddedContext = 1_000
 
     /// A small generative architecture with hand-computable KV math.
     private static func smallArch(weightBytes: Int64 = 1000) -> Footprint {
@@ -90,5 +94,26 @@ struct FootprintTests {
         #expect(embedder.kvBytes(context: 8192) == 0)
         #expect(embedder.footprint(context: 8192) == 42 * Self.mb)
         #expect(embedder.footprint(context: 0) == embedder.footprint(context: 1_000_000))
+    }
+
+    @Test("a GGUF footprint's KV term is the KV cache llama.cpp allocates, padded to 256 cells")
+    func ggufKVBytesMatchHeader() throws {
+        let header = try GGUFHeader.parse(prefix: GGUFHeaderFixtures.denseBytes)
+        let footprint = Footprint(weightBytes: 0, cache: GGUFCacheSizing(header: header))
+
+        #expect(
+            footprint.kvBytes(context: Self.unpaddedContext)
+                == Int64(header.keyValueBytes(contextSize: Self.unpaddedContext, cacheType: .float16)))
+    }
+
+    @Test("a hybrid GGUF footprint's KV term adds the recurrent state of each live sequence")
+    func hybridGGUFKVBytesAddRecurrentState() throws {
+        let header = try GGUFHeader.parse(prefix: GGUFHeaderFixtures.hybridBytes)
+        let footprint = Footprint(weightBytes: 0, cache: GGUFCacheSizing(header: header))
+        let expected =
+            header.keyValueBytes(contextSize: Self.unpaddedContext, cacheType: .float16)
+            + header.recurrentStateBytes(sequenceCount: LlamaLanguageModel.Options.defaultMaxLiveSequences)
+
+        #expect(footprint.kvBytes(context: Self.unpaddedContext) == Int64(expected))
     }
 }

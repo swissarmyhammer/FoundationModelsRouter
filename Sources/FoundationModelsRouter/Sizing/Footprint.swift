@@ -5,37 +5,61 @@ import Foundation
 /// The KV cache is fp16 regardless of weight quantization. Overhead is not
 /// modeled. The fit step compares this raw estimate with the budget.
 ///
-/// The estimate does not size recurrent state. A model with recurrent layers
-/// (Mamba or another state-space model, such as the linear layers of Qwen3.5
-/// and Qwen3.6) keeps a fixed-size state for each such layer in place of a KV
-/// cache. ``kvBytes(context:)`` counts every layer as an attention layer, so
-/// the estimate is wrong for such a model, and the prompt-cache budget that
-/// the pool computes from it is wrong by the same amount.
+/// An MLX model is sized from its `config.json`, layer by layer
+/// (``Cache/attention(layers:kvHeads:headDim:)``). That estimate does not
+/// size recurrent state. A model with recurrent layers (Mamba or another
+/// state-space model, such as the linear layers of Qwen3.5 and Qwen3.6) keeps
+/// a fixed-size state for each such layer in place of a KV cache.
+/// ``kvBytes(context:)`` counts every layer it is given as an attention
+/// layer, so the estimate is wrong for such a model, and the prompt-cache
+/// budget that the pool computes from it is wrong by the same amount.
+///
+/// A GGUF model is sized from its GGUF header (``Cache/gguf(_:)``), as
+/// llama.cpp allocates its context: the padded KV cache of the blocks with a
+/// KV cache, and the recurrent state of a hybrid model.
 struct Footprint: Sendable, Equatable {
+    /// How the memory of the context of a model grows with the context.
+    enum Cache: Sendable, Equatable {
+        /// An fp16 KV cache of `layers` layers of `kvHeads` K and V heads of
+        /// `headDim` elements: an MLX model, or an embedder with no layer.
+        case attention(layers: Int, kvHeads: Int, headDim: Int)
+
+        /// The context of a GGUF model, as its header sizes it.
+        case gguf(GGUFCacheSizing)
+    }
+
     /// Bytes per cached element (fp16).
     private static let cacheElementBytes: Int64 = 2
 
     /// The two cache tensors per token: keys and values.
     private static let keyValueTensors: Int64 = 2
 
-    /// Resident weight bytes — `Σ size(*.safetensors)`.
+    /// Resident weight bytes: the weight files of the model.
     let weightBytes: Int64
 
-    /// Number of transformer layers with a KV cache. Zero for an embedder.
-    let layers: Int
-
-    /// Effective key/value heads, with the GQA fallback applied.
-    let kvHeads: Int
-
-    /// Per-head dimension, with the `head_dim` fallback applied.
-    let headDim: Int
+    /// How the memory of the context grows with the context.
+    let cache: Cache
 
     /// Creates a footprint from already-resolved architecture values.
+    ///
+    /// - Parameters:
+    ///   - weightBytes: The resident weight bytes.
+    ///   - layers: The count of the layers with a KV cache. Zero for an embedder.
+    ///   - kvHeads: The effective key/value heads, with the GQA fallback applied.
+    ///   - headDim: The per-head dimension, with the `head_dim` fallback applied.
     init(weightBytes: Int64, layers: Int, kvHeads: Int, headDim: Int) {
         self.weightBytes = weightBytes
-        self.layers = layers
-        self.kvHeads = kvHeads
-        self.headDim = headDim
+        self.cache = .attention(layers: layers, kvHeads: kvHeads, headDim: headDim)
+    }
+
+    /// Creates the footprint of a GGUF model.
+    ///
+    /// - Parameters:
+    ///   - weightBytes: The bytes of the shards of the model and of its projector.
+    ///   - cache: The context of the model, as its header sizes it.
+    init(weightBytes: Int64, cache: GGUFCacheSizing) {
+        self.weightBytes = weightBytes
+        self.cache = .gguf(cache)
     }
 
     /// Creates a footprint from config-shaped fields and applies the fallbacks:
@@ -82,17 +106,27 @@ struct Footprint: Sendable, Equatable {
         Footprint(weightBytes: weightBytes, layers: 0, kvHeads: 0, headDim: 0)
     }
 
-    /// The fp16 KV cache bytes to decode `context` tokens:
-    /// `2 × layers × context × kvHeads × headDim × 2`.
+    /// The bytes of the context of the model at `context` tokens.
     ///
-    /// - Returns: KV cache bytes; `0` for an embedder.
+    /// For an MLX model it is the fp16 KV cache:
+    /// `2 × layers × context × kvHeads × headDim × 2`. For a GGUF model it is
+    /// ``GGUFCacheSizing/bytes(context:)``: the padded KV cache and the
+    /// recurrent state.
+    ///
+    /// - Parameter context: The context, in tokens.
+    /// - Returns: The bytes; `0` for an embedder.
     func kvBytes(context: Int) -> Int64 {
-        Self.keyValueTensors
-            * Int64(layers)
-            * Int64(context)
-            * Int64(kvHeads)
-            * Int64(headDim)
-            * Self.cacheElementBytes
+        switch cache {
+        case .attention(let layers, let kvHeads, let headDim):
+            Self.keyValueTensors
+                * Int64(layers)
+                * Int64(context)
+                * Int64(kvHeads)
+                * Int64(headDim)
+                * Self.cacheElementBytes
+        case .gguf(let sizing):
+            sizing.bytes(context: context)
+        }
     }
 
     /// The raw resident-memory estimate: `weightBytes + kvBytes(context)`. Overhead is excluded.

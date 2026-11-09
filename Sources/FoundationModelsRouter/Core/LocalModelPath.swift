@@ -73,8 +73,9 @@ enum LocalModelPath {
 
     /// The same reference with a local path changed to an absolute path.
     ///
-    /// A Hub repo id is not changed. The revision is kept, and so is the
-    /// drafter, which is resolved the same way.
+    /// A Hub repo id is not changed. The path inside the repository and the
+    /// revision are kept, and so is the drafter, which is resolved the same
+    /// way.
     ///
     /// - Parameters:
     ///   - ref: The reference to resolve.
@@ -90,6 +91,7 @@ enum LocalModelPath {
     ) -> ModelRef {
         ModelRef(
             repo: directory(of: ref.repo, home: home, workingDirectory: workingDirectory)?.path ?? ref.repo,
+            path: ref.path,
             revision: ref.revision,
             drafter: ref.drafter.map { resolved($0, home: home, workingDirectory: workingDirectory) })
     }

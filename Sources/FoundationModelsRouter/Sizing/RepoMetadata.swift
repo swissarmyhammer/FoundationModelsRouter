@@ -3,7 +3,9 @@ import FoundationModelsExtras
 import HuggingFace
 import Logging
 
-/// The raw bytes of the two Hub artifacts that sizing needs. No weights are downloaded.
+/// The raw bytes of the two Hub artifacts that sizing needs. No weights are
+/// downloaded. A GGUF model also needs the header of its first shard, which
+/// ``MetadataSource/fetchFileBytes(repo:revision:path:range:)`` reads.
 public struct RawRepoMetadata: Sendable {
     /// The bytes of `config.json` at the revision, or `nil` when absent.
     public let configJSON: Data?
@@ -27,6 +29,37 @@ public protocol MetadataSource: Sendable {
     ///   - revision: The pinned revision, or `nil` for the default revision.
     /// - Throws: If the transport fails.
     func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata
+
+    /// Fetches a range of the bytes of one file of a repo at a revision: the
+    /// read that gives the GGUF header of a model with no download of its
+    /// weights.
+    ///
+    /// - Parameters:
+    ///   - repo: The Hugging Face repository id, e.g. `"org/repo"`.
+    ///   - revision: The pinned revision, or `nil` for the default revision.
+    ///   - path: The path of the file in the repository.
+    ///   - range: The byte offsets to read, from the start of the file.
+    /// - Returns: The bytes of the range. A range that runs past the end of
+    ///   the file gives the bytes up to the end, so fewer bytes than asked.
+    /// - Throws: If the transport fails or the file cannot be read.
+    func fetchFileBytes(repo: String, revision: String?, path: String, range: Range<Int>) async throws -> Data
+}
+
+extension MetadataSource {
+    /// Refuses each read of file bytes: a source that does not implement
+    /// the read sizes no GGUF model, and sizes each other model as before.
+    ///
+    /// - Parameters:
+    ///   - repo: The Hugging Face repository id.
+    ///   - revision: The pinned revision, or `nil`.
+    ///   - path: The path of the file in the repository.
+    ///   - range: The byte offsets to read.
+    /// - Returns: Never returns.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)``, always.
+    public func fetchFileBytes(repo: String, revision: String?, path: String, range: Range<Int>) async throws -> Data {
+        throw RepoMetadataError.metadataUnavailable(
+            "the metadata source of \(repo) reads no file bytes, so it cannot read the GGUF header of \(path)")
+    }
 }
 
 /// A failure reading a repo's sizing metadata.
@@ -44,7 +77,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///
     /// For an MLX repo this is `Σ size(*.safetensors)` at the repo root. For a
     /// Core ML repo it is the size of the largest `.mlpackage` folder; see
-    /// ``init(raw:repo:)``.
+    /// ``init(raw:repo:)``. For a GGUF model it is the sum of its shards and
+    /// its projector; see ``ggufWeightBytes(of:in:)``.
     let weightBytes: Int64
 
     /// Transformer layer count (`num_hidden_layers`).
@@ -77,7 +111,15 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///
     /// The value is `nil` for a Core ML repo. Such a repo has no `config.json`
     /// to read, and it can only be an embedder.
+    ///
+    /// For a GGUF model it is the training context of its GGUF header
+    /// (`<arch>.context_length`).
     let nativeMaxContext: Int?
+
+    /// The context of a GGUF model, as its GGUF header sizes it, or `nil` for
+    /// an MLX or a Core ML repo, whose context ``footprint`` sizes from the
+    /// architecture fields above.
+    let gguf: GGUFCacheSizing?
 
     /// Whether the repo is a Core ML embedding model.
     ///
@@ -93,7 +135,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     ///
     /// `numFullAttentionLayers` defaults to `numHiddenLayers`. `nativeMaxContext`
     /// has no default; every caller passes the figure it read, or `nil` for a
-    /// Core ML repo.
+    /// Core ML repo. `gguf` defaults to `nil`: the repo is not GGUF.
     init(
         weightBytes: Int64,
         numHiddenLayers: Int,
@@ -102,7 +144,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         headDim: Int?,
         hiddenSize: Int?,
         numFullAttentionLayers: Int? = nil,
-        nativeMaxContext: Int?
+        nativeMaxContext: Int?,
+        gguf: GGUFCacheSizing? = nil
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -112,6 +155,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         self.hiddenSize = hiddenSize
         self.numFullAttentionLayers = numFullAttentionLayers ?? numHiddenLayers
         self.nativeMaxContext = nativeMaxContext
+        self.gguf = gguf
     }
 
     /// Parses sizing metadata from raw fetched artifacts.
@@ -223,7 +267,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// - Returns: The entries of the listing.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the bytes
     ///   do not decode. The message names the decode failure.
-    private static func decodeTreeEntries(_ treeJSON: Data, repo: String) throws -> [TreeEntry] {
+    static func decodeTreeEntries(_ treeJSON: Data, repo: String) throws -> [TreeEntry] {
         try decode([TreeEntry].self, from: treeJSON) { error in
             "the tree listing for \(repo) could not be decoded: \(error)"
         }
@@ -294,10 +338,14 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         return declared
     }
 
-    /// The memory footprint estimate for this repo. Uses ``numFullAttentionLayers``
-    /// as the KV-cache layer count.
+    /// The memory footprint estimate for this repo. A GGUF model is sized by
+    /// ``gguf``. Any other repo uses ``numFullAttentionLayers`` as the
+    /// KV-cache layer count.
     var footprint: Footprint {
-        Footprint(
+        if let gguf {
+            return Footprint(weightBytes: weightBytes, cache: gguf)
+        }
+        return Footprint(
             weightBytes: weightBytes,
             numHiddenLayers: numFullAttentionLayers,
             numAttentionHeads: numAttentionHeads,
@@ -510,7 +558,10 @@ struct RepoMetadata: Sendable, Equatable, Codable {
 
 
 /// Reads ``RepoMetadata`` for a ``ModelRef`` and caches the parsed result per
-/// `(repo, revision)` on disk.
+/// `(repo, path, revision)` on disk.
+///
+/// The path is part of the key, because two paths of one repository name
+/// two models: the two quantization folders of a GGUF repository.
 ///
 /// The revision decides which of the two is read first, because only a full
 /// commit hash names a fixed point in the repo history:
@@ -540,9 +591,13 @@ struct RepoMetadataReader: Sendable {
 
     /// Returns the parsed metadata for a model.
     ///
-    /// A reference to a local model folder (see ``LocalModelPath``) is read from
-    /// the files of the folder at each call. It makes no Hub call and uses no
-    /// cache, because the files of a folder can change.
+    /// A reference to a local model folder or a local `.gguf` file (see
+    /// ``LocalModelPath``) is read from the disk at each call. It makes no Hub
+    /// call and uses no cache, because the files of a folder can change.
+    ///
+    /// A repository whose files under the path of the reference are GGUF is
+    /// sized from its tree listing and the GGUF header of the first shard of
+    /// the model, which a range read gives; see ``RepoMetadata/gguf``.
     ///
     /// A commit-pinned reference is read from the cache first and fetched only on
     /// a miss. A reference whose revision can move is fetched first, and its
@@ -551,8 +606,8 @@ struct RepoMetadataReader: Sendable {
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the repo
     ///   lacks sizing inputs, or any error from the source or cache I/O.
     func metadata(for ref: ModelRef) async throws -> RepoMetadata {
-        if let directory = LocalModelPath.directory(of: ref.repo) {
-            return try RepoMetadata(localDirectory: directory)
+        if let location = LocalModelPath.directory(of: ref.repo) {
+            return try await RepoMetadata(localLocation: location)
         }
         if Self.revisionCanMove(ref.revision) {
             return try await refreshedMetadata(for: ref)
@@ -571,11 +626,11 @@ struct RepoMetadataReader: Sendable {
     ///
     /// - Throws: As ``metadata(for:)``.
     private func pinnedMetadata(for ref: ModelRef) async throws -> RepoMetadata {
-        if let cached = try cache.load(repo: ref.repo, revision: ref.revision) {
+        if let cached = try cache.load(for: ref) {
             return cached
         }
         let raw = try await source.fetchRawMetadata(repo: ref.repo, revision: ref.revision)
-        return try parseAndCache(raw, for: ref)
+        return try await parseAndCache(raw, for: ref)
     }
 
     /// Returns the metadata for a reference whose revision can move.
@@ -592,7 +647,7 @@ struct RepoMetadataReader: Sendable {
         do {
             raw = try await source.fetchRawMetadata(repo: ref.repo, revision: ref.revision)
         } catch {
-            guard let cached = try? cache.load(repo: ref.repo, revision: ref.revision) else {
+            guard let cached = try? cache.load(for: ref) else {
                 throw error
             }
             RouterTelemetry.makeLogger(.repoMetadataReader).notice(
@@ -605,17 +660,35 @@ struct RepoMetadataReader: Sendable {
                 ]) { _, new in new })
             return cached
         }
-        return try parseAndCache(raw, for: ref)
+        return try await parseAndCache(raw, for: ref)
     }
 
     /// Parses raw artifacts and writes the result to the cache under the
     /// reference's key, replacing any entry already there.
     ///
+    /// A GGUF model under the path of the reference reads the GGUF header of
+    /// its first shard from the source; any other repo is parsed as
+    /// ``RepoMetadata/init(raw:repo:)`` parses it.
+    ///
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the raw
-    ///   artifacts lack sizing inputs, or any error from the cache write.
-    private func parseAndCache(_ raw: RawRepoMetadata, for ref: ModelRef) throws -> RepoMetadata {
-        let parsed = try RepoMetadata(raw: raw, repo: ref.repo)
-        try cache.save(parsed, repo: ref.repo, revision: ref.revision)
+    ///   artifacts lack sizing inputs, or any error from the header read or
+    ///   the cache write.
+    private func parseAndCache(_ raw: RawRepoMetadata, for ref: ModelRef) async throws -> RepoMetadata {
+        let entries = try RepoMetadata.decodeTreeEntries(raw.treeJSON, repo: ref.repo)
+        let parsed: RepoMetadata
+        if let files = try RepoMetadata.ggufFileSet(in: entries, under: ref.path, name: ref.stringValue) {
+            let header = try await GGUFHeaderPrefix.read(name: "\(ref.repo)/\(files.model)") { range in
+                try await source.fetchFileBytes(repo: ref.repo, revision: ref.revision, path: files.model, range: range)
+            }
+            parsed = try RepoMetadata(
+                ggufHeader: header, weightBytes: RepoMetadata.ggufWeightBytes(of: files, in: entries),
+                name: ref.stringValue)
+        } else {
+            parsed = try RepoMetadata(
+                entries: entries, format: HubModelFormat.detect(paths: entries.map(\.path)),
+                configJSON: raw.configJSON, repo: ref.repo)
+        }
+        try cache.save(parsed, for: ref)
         return parsed
     }
 
@@ -640,8 +713,8 @@ struct RepoMetadataReader: Sendable {
 }
 
 
-/// A disposable on-disk cache of parsed ``RepoMetadata``, keyed by `(repo, revision)`.
-/// Each key maps to its own JSON file.
+/// A disposable on-disk cache of parsed ``RepoMetadata``, keyed by
+/// `(repo, path, revision)`. Each key maps to its own JSON file.
 ///
 /// An entry stays correct only while its revision names the same content, and
 /// only a full commit hash gives that. ``RepoMetadataReader`` applies the rule:
@@ -652,13 +725,14 @@ struct RepoMetadataCache: Sendable {
     /// The directory under which metadata JSON files are written.
     let cacheDir: URL
 
-    /// Loads the cached metadata for a `(repo, revision)`, if present.
+    /// Loads the cached metadata of a reference, if present.
     ///
+    /// - Parameter ref: The reference. Its repo, path and revision are the key.
     /// - Returns: The cached metadata, or `nil` when nothing is cached or the
     ///   cached entry fails to decode. A decode failure is logged.
     /// - Throws: If a cached file exists but cannot be read.
-    func load(repo: String, revision: String?) throws -> RepoMetadata? {
-        let url = fileURL(repo: repo, revision: revision)
+    func load(for ref: ModelRef) throws -> RepoMetadata? {
+        let url = fileURL(for: ref)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
         do {
@@ -671,19 +745,26 @@ struct RepoMetadataCache: Sendable {
         }
     }
 
-    /// Saves metadata under its `(repo, revision)` key. Overwrites an existing entry.
+    /// Saves metadata under the key of a reference. Overwrites an existing entry.
     ///
+    /// - Parameters:
+    ///   - metadata: The parsed metadata.
+    ///   - ref: The reference. Its repo, path and revision are the key.
     /// - Throws: If the directory cannot be created or the file cannot be written.
-    func save(_ metadata: RepoMetadata, repo: String, revision: String?) throws {
+    func save(_ metadata: RepoMetadata, for ref: ModelRef) throws {
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        let url = fileURL(repo: repo, revision: revision)
+        let url = fileURL(for: ref)
         let data = try JSONEncoder().encode(metadata)
         try data.write(to: url, options: .atomic)
     }
 
-    /// The file URL for a `(repo, revision)` key. The key is hashed into a filesystem-safe name.
-    func fileURL(repo: String, revision: String?) -> URL {
-        let key = "\(repo)\u{0}\(revision ?? "")"
+    /// The file URL for the `(repo, path, revision)` key of a reference. The
+    /// key is hashed into a filesystem-safe name.
+    ///
+    /// - Parameter ref: The reference.
+    /// - Returns: The URL of its cache file.
+    func fileURL(for ref: ModelRef) -> URL {
+        let key = "\(ref.repo)\u{0}\(ref.path ?? "")\u{0}\(ref.revision ?? "")"
         return cacheDir.appendingPathComponent("repo-metadata-\(SHA256Hex.text(of: key)).json", isDirectory: false)
     }
 }
@@ -710,6 +791,23 @@ public struct HuggingFaceMetadataSource: MetadataSource {
 
     /// The HTTP header that carries the token.
     private static let authorizationHeader = "Authorization"
+
+    /// The HTTP header that asks for a range of the bytes of a file.
+    private static let rangeHeader = "Range"
+
+    /// The status of a response for a file the repo does not hold.
+    private static let notFoundStatus = 404
+
+    /// The status of a response that holds the asked range of a file.
+    private static let partialContentStatus = 206
+
+    /// The status of a response to a range that starts past the end of the
+    /// file.
+    private static let rangeNotSatisfiableStatus = 416
+
+    /// The status of a response that holds the whole file: the server
+    /// ignored the range.
+    private static let wholeFileStatus = 200
 
     /// Creates a live source.
     ///
@@ -746,13 +844,56 @@ public struct HuggingFaceMetadataSource: MetadataSource {
     ///   than a `config.json` 404.
     public func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
         let rev = revision ?? Self.defaultRevision
-        let configURL = endpoint.appendingPathComponent("\(repo)/resolve/\(rev)/config.json")
+        let configURL = Self.resolveURL(endpoint: endpoint, repo: repo, revision: rev, path: "config.json")
         let treeURL = Self.recursiveTreeURL(endpoint: endpoint, repo: repo, revision: rev)
         let token = try await tokenProvider.getToken()
 
         let configJSON = try await optionalData(for: Self.request(for: configURL, bearerToken: token))
         let (treeJSON, _) = try await session.data(for: Self.request(for: treeURL, bearerToken: token))
         return RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
+    }
+
+    /// Fetches a range of the bytes of one file of a repo at a revision (`nil`
+    /// means `main`) with an HTTP range GET of the resolve URL of the file,
+    /// the URL a download reads. It sends the token of the provider when it
+    /// gives one.
+    ///
+    /// A server that ignores the range answers 200 with the whole file; the
+    /// bytes of the range are cut from it. A range that starts past the end
+    /// of the file (416) gives no bytes.
+    ///
+    /// - Throws: The error of the token provider, a transport error, or
+    ///   ``RepoMetadataError/metadataUnavailable(_:)`` for any other HTTP
+    ///   status.
+    public func fetchFileBytes(repo: String, revision: String?, path: String, range: Range<Int>) async throws -> Data {
+        let url = Self.resolveURL(endpoint: endpoint, repo: repo, revision: revision ?? Self.defaultRevision, path: path)
+        var request = Self.request(for: url, bearerToken: try await tokenProvider.getToken())
+        request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: Self.rangeHeader)
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? Self.wholeFileStatus
+        switch status {
+        case Self.partialContentStatus:
+            return data
+        case Self.wholeFileStatus:
+            return data.subdata(in: range.clamped(to: 0..<data.count))
+        case Self.rangeNotSatisfiableStatus:
+            return Data()
+        default:
+            throw RepoMetadataError.metadataUnavailable("reading \(path) of \(repo) for its GGUF header gave HTTP \(status)")
+        }
+    }
+
+    /// The resolve URL of one file of a repo at a revision: the URL that a
+    /// download reads.
+    ///
+    /// - Parameters:
+    ///   - endpoint: The Hub origin.
+    ///   - repo: The repository id.
+    ///   - revision: The revision.
+    ///   - path: The path of the file in the repository.
+    /// - Returns: The URL.
+    private static func resolveURL(endpoint: URL, repo: String, revision: String, path: String) -> URL {
+        endpoint.appendingPathComponent("\(repo)/resolve/\(revision)/\(path)")
     }
 
     /// The URL of the recursive tree listing for a repo at a revision.
@@ -785,7 +926,7 @@ public struct HuggingFaceMetadataSource: MetadataSource {
     /// - Throws: Any transport error other than a 404.
     private func optionalData(for request: URLRequest) async throws -> Data? {
         let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode == 404 {
+        if let http = response as? HTTPURLResponse, http.statusCode == Self.notFoundStatus {
             return nil
         }
         return data

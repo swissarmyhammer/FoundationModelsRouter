@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsExtras
+import FoundationModelsLlamaCpp
 import Testing
 
 @testable import FoundationModelsRouter
@@ -52,6 +53,19 @@ struct LocalRepoMetadataTests {
 
     /// The size of the larger Core ML package, in two files.
     private static let largePackageFileBytes = 500
+
+    /// The size of a local GGUF model file: its header, then zero bytes.
+    private static let ggufModelBytes = 20_000
+
+    /// The size of the projector of a local GGUF folder.
+    private static let ggufProjectorBytes = 3_000
+
+    /// Writes a GGUF model file that holds the dense header of
+    /// ``GGUFHeaderFixtures`` and zero bytes up to ``ggufModelBytes``.
+    private static func writeGGUFModel(_ path: String, in folder: TempModelFolder) throws {
+        let header = GGUFHeaderFixtures.denseBytes
+        try folder.write(path, data: header + Data(count: ggufModelBytes - header.count))
+    }
 
     /// Makes a reader over a fresh cache folder and the failing source.
     private static func makeReader() throws -> (reader: RepoMetadataReader, cache: TempModelFolder, source: FailingMetadataSource) {
@@ -205,5 +219,68 @@ struct LocalRepoMetadataTests {
             try await reader.metadata(for: ModelRef(repo: Self.hubRepo))
         }
         #expect(await source.askedRepos == [Self.hubRepo])
+    }
+
+    @Test("a local .gguf file is sized by its bytes")
+    func localGGUFFileWeightBytes() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-gguf-file")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel("model-Q4_K_M.gguf", in: folder)
+
+        let metadata = try await reader.metadata(
+            for: ModelRef(repo: folder.url.appending(path: "model-Q4_K_M.gguf").path))
+
+        #expect(metadata.weightBytes == Int64(Self.ggufModelBytes))
+    }
+
+    @Test("a local .gguf file gets its native context from its header")
+    func localGGUFFileNativeContext() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-gguf-file")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel("model.gguf", in: folder)
+        let header = try GGUFHeader.parse(prefix: GGUFHeaderFixtures.denseBytes)
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.appending(path: "model.gguf").path))
+
+        #expect(metadata.nativeMaxContext == header.trainingContextSize)
+    }
+
+    @Test("a local GGUF folder is sized by its model and its projector")
+    func localGGUFFolderWeightBytes() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-gguf-folder")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel("model.gguf", in: folder)
+        try folder.writeFile("mmproj-model-f16.gguf", byteCount: Self.ggufProjectorBytes)
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.path))
+
+        #expect(metadata.weightBytes == Int64(Self.ggufModelBytes + Self.ggufProjectorBytes))
+    }
+
+    @Test("a local GGUF folder is sized with no Hub call")
+    func localGGUFFolderNoHubCall() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-gguf-folder")
+        let (reader, cache, source) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel("model.gguf", in: folder)
+
+        _ = try await reader.metadata(for: ModelRef(repo: folder.url.path))
+
+        #expect(await source.askedRepos.isEmpty)
+    }
+
+    @Test("a local file that is not a .gguf file cannot be sized")
+    func localNonGGUFFileFails() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-not-gguf")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try folder.writeFile("model.bin", byteCount: Self.tokenizerBytes)
+
+        await #expect(throws: RepoMetadataError.self) {
+            try await reader.metadata(for: ModelRef(repo: folder.url.appending(path: "model.bin").path))
+        }
     }
 }

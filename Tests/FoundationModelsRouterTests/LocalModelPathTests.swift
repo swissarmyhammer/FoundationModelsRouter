@@ -64,6 +64,13 @@ struct LocalModelPathTests {
         #expect(Self.resolved(ModelRef(repo: "./m", revision: "abc")).revision == "abc")
     }
 
+    @Test("the path inside a Hub repository is kept, so a quant folder of a GGUF repo still names one model")
+    func hubPathKept() {
+        let ref = ModelRef("unsloth/Qwen3-4B-GGUF/Q4_K_M")
+
+        #expect(Self.resolved(ref) == ref)
+    }
+
     @Test("the drafter of a local reference is resolved too")
     func drafterResolved() {
         let ref = ModelRef(repo: "./m", drafter: ModelRef(repo: "~/d"))

@@ -8,6 +8,38 @@ extension RepoMetadata {
     /// The tree type of a file.
     private static let fileEntryType = "file"
 
+    /// Parses sizing metadata from a model on the disk: a `.gguf` file, a
+    /// folder of GGUF files, or a folder of an MLX or a Core ML model.
+    ///
+    /// A `.gguf` file, and a folder whose files at any depth are GGUF as the
+    /// Extras `HubModelFormat.detect(paths:)` rule decides, are sized by
+    /// ``init(localGGUF:)``. Any other folder is sized by
+    /// ``init(localDirectory:names:entries:)``. No Hub call is made.
+    ///
+    /// - Parameter location: The absolute path of the file or the folder.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the
+    ///   location is a file that is not a `.gguf` file, or as the two
+    ///   initializers describe.
+    init(localLocation location: URL) async throws {
+        var isFolder: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: location.path, isDirectory: &isFolder)
+        if exists && !isFolder.boolValue {
+            guard location.pathExtension == GGUFFileSet.fileExtension else {
+                throw RepoMetadataError.metadataUnavailable(
+                    "the local model \(location.path) is a file that is not a .\(GGUFFileSet.fileExtension) file")
+            }
+            try await self.init(localGGUF: location)
+            return
+        }
+        let names = try Self.topLevelNames(of: location)
+        let entries = try Self.fileEntries(in: location)
+        if HubModelFormat.detect(paths: entries.map(\.path)) == .gguf {
+            try await self.init(localGGUF: location)
+            return
+        }
+        try self.init(localDirectory: location, names: names, entries: entries)
+    }
+
     /// Parses sizing metadata from a model folder on the disk.
     ///
     /// The folder is read as the Extras `HubModelLoader` reads it. The names at
@@ -21,16 +53,18 @@ extension RepoMetadata {
     /// A symbolic link is followed, because a folder of a Hub snapshot holds
     /// links to its files.
     ///
-    /// - Parameter directory: The absolute path of the model folder.
-    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the folder
-    ///   does not exist, is empty or cannot be read, or lacks sizing inputs as
-    ///   ``init(raw:repo:)`` describes.
-    init(localDirectory directory: URL) throws {
-        let names = try Self.topLevelNames(of: directory)
+    /// - Parameters:
+    ///   - directory: The absolute path of the model folder.
+    ///   - names: The names at the top of the folder.
+    ///   - entries: Every file under the folder, with its size.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the
+    ///   folder lacks sizing inputs as ``init(raw:repo:)`` describes, or
+    ///   `config.json` cannot be read.
+    private init(localDirectory directory: URL, names: [String], entries: [TreeEntry]) throws {
         let configURL = directory.appending(path: Self.configFileName, directoryHint: .notDirectory)
         let configJSON = names.contains(Self.configFileName) ? try Data(contentsOf: configURL) : nil
         try self.init(
-            entries: try Self.fileEntries(in: directory), format: HubModelFormat.detect(paths: names),
+            entries: entries, format: HubModelFormat.detect(paths: names),
             configJSON: configJSON, repo: directory.path)
     }
 

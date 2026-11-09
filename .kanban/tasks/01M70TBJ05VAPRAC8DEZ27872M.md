@@ -17,10 +17,26 @@ comments:
     - evidence: 9 files — Sources/FoundationModelsRouter/Resolution/{ModelLoader,LiveModelLoader,SlotPoolLoader,PoolPrimitives}.swift, Sources/FoundationModelsRouter/Core/ModelSlot.swift, Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/PoolKeyContextTests.swift (new, 16 tests), Tests/FoundationModelsRouterTests/LiveLLMContainerGGUFTests.swift (+2 tests), Tests/FoundationModelsRouterTests/SlotPoolLoaderTests.swift (helper access). `swift build --build-tests`: only the pre-existing mlx-swift_Cmlx.bundle missing-creator notice. `swift test`: 2468 + 38 + 19 = 2525 passed, 0 failed (was 2507). `swift build --build-tests --package-path IntegrationTests`: clean apart from the same notice. Extras resolved at eb0f0d7 (contains 098aeaa) in both packages.
     - next: /review
   timestamp: 2026-11-09T20:58:34.562372+00:00
+- actor: claude-code
+  id: 01m711y72z8e7391vghjpdbhfj
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (1aacab39) — 0 findings (14 attempted, 0 confirmed, 1 refuted, 0 failed); 9 files reviewed, 8 .kanban files ignored
+    - next: none — task moved to done
+  timestamp: 2026-11-09T21:03:01.215364+00:00
+- actor: claude-code
+  id: 01m711yds29z4qhv3hwf37rmdg
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 files (ModelLoader.poolKey, LiveModelLoader/SlotPoolLoader context keys, ModelPoolKey.canServe, 18 tests)
+    - test: green — swift test 2525 passed, IntegrationTests builds
+    - commit: 1aacab39
+    - review: clean — 0 findings
+  timestamp: 2026-11-09T21:03:08.066777+00:00
 depends_on:
 - 01M70TB3W99163V7F38SFR7SPN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffff080
 title: 'GGUF: load llama.cpp at the context the router resolved'
 ---
 ## Problem
