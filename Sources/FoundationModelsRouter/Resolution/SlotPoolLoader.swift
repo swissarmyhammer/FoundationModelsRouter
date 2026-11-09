@@ -5,12 +5,19 @@ import MLXFoundationModels
 
 /// The loader that the router gives to the Extras model pool for one slot.
 ///
-/// The Extras loader protocol loads by ``ModelPoolKey`` only: a ref and a
-/// role. The router loader needs more: the slot, the advisory working context
-/// and the progress callback of the resolve. The router gives that slot data
-/// when it makes this loader, not through the pool. The ``evict(_:)`` step of
-/// the pool comes back through the Extras protocol to
-/// ``ModelLoader/evict(container:)``.
+/// The Extras loader protocol loads by ``ModelPoolKey`` only: a ref, a role
+/// and, for a model that loads at a fixed context, that context. The router
+/// loader needs more: the slot and the progress callback of the resolve. The
+/// router gives that slot data when it makes this loader, not through the
+/// pool. The ``evict(_:)`` step of the pool comes back through the Extras
+/// protocol to ``ModelLoader/evict(container:)``.
+///
+/// A generation slot asks the pool for its model at the context of the
+/// resolve. The router loader decides whether the key keeps that context
+/// (``ModelLoader/poolKey(for:)``): llama.cpp loads a GGUF model at a fixed
+/// context, so each context is its own load, and a resident load at a larger
+/// context serves a smaller one. Each other loader keeps one model for every
+/// context.
 ///
 /// The first loader of a key wins: a later caller of the same key gets the
 /// container of the first loader, whatever loader it gives. Thus a caller
@@ -25,12 +32,23 @@ struct SlotPoolLoader: PooledModelLoader {
     /// The slot that the model is loaded for.
     let slot: ModelSlot
 
-    /// The working context of the first resolve. Advisory only; see
+    /// The working context that the resolve decided for ``slot``. A
+    /// generation key asks for it; see
     /// ``ModelLoader/loadLLM(ref:slot:context:reporting:)``.
     let context: Int
 
     /// Receives each download-progress value of the load.
     let reporting: @Sendable (DownloadProgress) -> Void
+
+    /// The key that the pool keeps the model of `key` under: the key that the
+    /// router loader gives.
+    ///
+    /// - Parameter key: The key of a request.
+    /// - Returns: The key of the model in the pool.
+    /// - Throws: The error of the pool key of the router loader.
+    func poolKey(for key: ModelPoolKey) async throws -> ModelPoolKey {
+        try await loader.poolKey(for: key)
+    }
 
     /// Loads the model of `key` through the router loader, with the slot data
     /// of this loader. See ``load(key:progressHandler:)``.
@@ -44,7 +62,8 @@ struct SlotPoolLoader: PooledModelLoader {
 
     /// Loads the model of `key` through the router loader, with the slot data
     /// of this loader. The role of `key` selects the generation load or the
-    /// embedding load.
+    /// embedding load. A generation load gets the context of `key` when the
+    /// key keeps one, and ``context`` when the router loader dropped it.
     ///
     /// Each download value of the router loader goes to ``reporting``, which
     /// is the one progress path of the resolve. The same bytes also go to
@@ -66,7 +85,8 @@ struct SlotPoolLoader: PooledModelLoader {
         }
         switch key.role {
         case .llm:
-            return try await loader.loadLLM(ref: key.ref, slot: slot, context: context, reporting: forward)
+            return try await loader.loadLLM(
+                ref: key.ref, slot: slot, context: key.contextSize ?? context, reporting: forward)
         case .embedding:
             return try await loader.loadEmbedder(ref: key.ref, slot: slot, reporting: forward)
         }
@@ -108,6 +128,11 @@ struct SlotPoolLoader: PooledModelLoader {
     /// through this loader at once, with no second wait in the admission
     /// queue, so the job cannot wait for itself.
     ///
+    /// The request asks at ``context`` for a generation slot
+    /// (``ModelSlot/poolKey(of:context:)``). The ``FoundationModelsExtras/ModelHold/key``
+    /// of the hold is the key of the resident model, so its context is the
+    /// context that the model loaded at, which can be larger.
+    ///
     /// - Parameters:
     ///   - ref: The model.
     ///   - admission: The Extras model pool inside the running admission job.
@@ -120,7 +145,7 @@ struct SlotPoolLoader: PooledModelLoader {
         of ref: ModelRef, in admission: ModelPoolAdmission, footprintBytes: Int64, sessionBytes: Int64
     ) async throws -> ModelHold {
         try await admission.acquire(
-            ModelPoolKey(ref: ref, role: slot.poolRole), footprintBytes: footprintBytes,
+            slot.poolKey(of: ref, context: context), footprintBytes: footprintBytes,
             sessionBytes: sessionBytes, loader: self)
     }
 }

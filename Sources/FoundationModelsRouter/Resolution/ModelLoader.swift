@@ -171,18 +171,34 @@ public protocol LoadedEmbeddingContainer: LoadedModelContainer, PooledEmbedding 
 /// The download-and-load step behind ``Router/resolve(profile:reporting:)``.
 /// The live implementation is ``LiveModelLoader``.
 public protocol ModelLoader: Sendable {
+    /// The key that the Extras model pool keeps the model of `key` under.
+    /// The pool asks it at each acquire of the router, before it looks for a
+    /// resident model, and the load gets the key it gives.
+    ///
+    /// A loader that loads a model at a fixed context (llama.cpp, for a GGUF
+    /// model) keeps the context of `key`, so each context is its own load, and
+    /// a resident model at a larger context serves a smaller one. Any other
+    /// loader drops it, so one model serves every context. The default drops
+    /// it.
+    ///
+    /// - Parameter key: The key of a request.
+    /// - Returns: The key of the model in the pool.
+    /// - Throws: The error of the decision. The acquire throws it.
+    func poolKey(for key: ModelPoolKey) async throws -> ModelPoolKey
+
     /// Downloads and loads a generation model. Reports download progress to
     /// `reporting`.
     ///
-    /// The container is keyed in the pool by `ref` and its role only, and one
-    /// container serves every working context. `context` is advisory: a
-    /// loader must not size the container or its KV cache by it. The KV
-    /// cache is allocated per session and priced per session by the router.
+    /// A loader that loads at a fixed context (llama.cpp, for a GGUF model)
+    /// loads the model at `context`, and its ``poolKey(for:)`` keeps that
+    /// context. Any other loader ignores `context`: one container serves
+    /// every working context, the KV cache is allocated per session, and the
+    /// router prices it per session.
     ///
     /// - Parameters:
     ///   - ref: The model to download and load.
     ///   - slot: The slot the model is loaded for.
-    ///   - context: The working context the first resolve decodes at. Advisory only.
+    ///   - context: The working context that the resolve decided.
     ///   - reporting: Receives each download-progress observation.
     /// - Throws: If the download or load fails.
     func loadLLM(
@@ -225,6 +241,13 @@ public protocol ModelLoader: Sendable {
 }
 
 extension ModelLoader {
+    /// A loader that ignores the context keeps one model for each reference
+    /// and role.
+    ///
+    /// - Parameter key: The key of a request.
+    /// - Returns: `key` with no context.
+    public func poolKey(for key: ModelPoolKey) async throws -> ModelPoolKey { key.withoutContext }
+
     /// A no-op eviction. Only a loader that manages residency overrides it.
     public func evict(container: any LoadedModelContainer) async {}
 

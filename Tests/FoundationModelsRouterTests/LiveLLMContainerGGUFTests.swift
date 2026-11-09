@@ -97,6 +97,56 @@ struct LiveLLMContainerGGUFTests {
         #expect(container.contextWindow == Self.contextSize)
         _ = container.makeSession(instructions: "Be brief.")
     }
+
+    /// The context a resolve decides in the context tests. It is neither the
+    /// llama.cpp default nor ``contextSize``, so the window tells that the
+    /// model loaded at the context of the resolve.
+    private static let resolvedContext = 16_384
+
+    /// The weights the private pool counts for the GGUF model.
+    private static let footprintBytes: Int64 = 1_000
+
+    @Test("the live loader loads a GGUF model at the resolved context, and its container reports that window")
+    func liveLoaderLoadsAGGUFModelAtTheResolvedContext() async throws {
+        let loader = LiveModelLoader(reporting: { _ in }, modelLoader: ContextGGUFPoolLoader())
+
+        let loaded = try await loader.loadLLM(
+            ref: Self.ref, slot: .standard, context: Self.resolvedContext, reporting: { _ in })
+
+        #expect(try #require(loaded as? LiveLLMContainer).contextWindow == Self.resolvedContext)
+    }
+
+    @Test("a router acquire of a GGUF model gives a container whose window is the resolved context")
+    func routerAcquireOfAGGUFModelReportsTheResolvedContext() async throws {
+        let loader = LiveModelLoader(reporting: { _ in }, modelLoader: ContextGGUFPoolLoader())
+        let slotLoader = SlotPoolLoader(
+            loader: loader, slot: .standard, context: Self.resolvedContext, reporting: { _ in })
+
+        let hold = try await slotLoader.acquireHold(
+            of: Self.ref, in: FoundationModelsExtras.ModelPool(), footprintBytes: Self.footprintBytes,
+            sessionBytes: 0)
+
+        let container = try await hold.generationContainer()
+
+        #expect(try #require(container as? LiveLLMContainer).contextWindow == Self.resolvedContext)
+    }
+}
+
+/// A pool loader that loads a GGUF model at the context of each key, and keys
+/// each model at the context of the request, as the Extras
+/// `LlamaCppModelLoader` does. A key with no context loads at the default of
+/// llama.cpp. The model is the vocab-only Qwen 3.5 fixture.
+private struct ContextGGUFPoolLoader: PooledModelLoader {
+    func poolKey(for key: ModelPoolKey) async throws -> ModelPoolKey { key }
+
+    func load(_ key: ModelPoolKey) async throws -> any Sendable {
+        let defaults = LlamaLanguageModel.Options()
+        return try LlamaLanguageModel(
+            gguf: LlamaCppTestFixtures.vocabURL(named: "qwen35"),
+            options: LlamaLanguageModel.Options(contextSize: key.contextSize ?? defaults.contextSize))
+    }
+
+    func evict(_ container: any Sendable) async {}
 }
 
 /// A pool loader that gives one `LlamaLanguageModel` for each key, as the

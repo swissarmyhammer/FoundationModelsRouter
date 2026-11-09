@@ -573,7 +573,7 @@ extension SlotPoolLoader {
     ///   - sessionBytes: The session of this hold.
     /// - Returns: The hold.
     /// - Throws: What the load throws.
-    fileprivate func acquireHold(
+    func acquireHold(
         of ref: ModelRef, in pool: ModelPool, footprintBytes: Int64, sessionBytes: Int64
     ) async throws -> ModelHold {
         try await pool.admit { admission in

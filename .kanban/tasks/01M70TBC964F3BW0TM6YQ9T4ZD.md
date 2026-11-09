@@ -95,10 +95,26 @@ comments:
     - evidence: 4 files. Sources/FoundationModelsRouter/Resolution/TokenizerTokenCounter.swift, Sources/FoundationModelsRouter/Resolution/LiveLLMContainerPooling.swift, Sources/FoundationModelsRouter/Resolution/LlamaTokenCounter.swift (deleted), Tests/FoundationModelsRouterTests/LiveLLMContainerGGUFTests.swift. `swift build --build-tests` built with no compiler warnings. The only notice is the SwiftPM "missing creator … mlx-swift_Cmlx.bundle", which was already there. `swift test` passed 2450 tests in 289 suites, plus 38 and 19. `swift build --build-tests --package-path IntegrationTests` completed.
     - next: /review
   timestamp: 2026-11-09T20:43:47.282973+00:00
+- actor: claude-code
+  id: 01m710zemdzadhzbd7jjjbr72f
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (a257721b): 0 findings, 0 confirmed, 0 refuted; 4 files reviewed. All prior Review Findings items checked. Tool-rule declines only concern the deleted Sources/FoundationModelsRouter/Resolution/LlamaTokenCounter.swift.
+    - next: task moved to done
+  timestamp: 2026-11-09T20:46:13.133660+00:00
+- actor: claude-code
+  id: 01m7110178cp10qncsev1zg0fq
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — TokenizerTokenCounter generic over CountingTokenizer, LlamaTokenCounter deleted
+    - test: green — swift test 2507 passed, IntegrationTests builds
+    - commit: a257721b
+    - review: clean — 0 findings, 6/6 prior items checked
+  timestamp: 2026-11-09T20:46:32.168995+00:00
 depends_on:
 - 01M70TB3W99163V7F38SFR7SPN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffef80
 title: 'GGUF: a generation container over LlamaLanguageModel'
 ---
 ## What

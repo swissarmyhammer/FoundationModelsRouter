@@ -593,7 +593,8 @@ public actor Router {
         let slotLoader = SlotPoolLoader(
             loader: loader, slot: slot, context: slotRes.contextTokens,
             reporting: Self.reporter(slot: slot, progress: progress))
-        let isResident = admission.footprint.resident[ModelPoolKey(ref: chosen, role: slot.poolRole)] != nil
+        let request = slot.poolKey(of: chosen, context: slotRes.contextTokens)
+        let isResident = admission.footprint.resident.keys.contains { $0.canServe(request) }
 
         return try await promptCacheSizing.withBudget(adding: isResident ? sessionBytes : footprintBytes) {
             if isResident {
@@ -747,10 +748,14 @@ public actor Router {
     /// The raw footprint bytes for one candidate at a context, sized under
     /// every slot it is a candidate for, with the largest figure kept.
     ///
-    /// A candidate whose ``ModelPoolKey`` is in `residentKeys` is charged its
+    /// A candidate that a key in `residentKeys` serves
+    /// (``ModelPoolKey/canServe(_:)``) is charged its
     /// marginal cost: one session KV cache at `context` for a generation
-    /// model, whatever context it was first loaded at, and zero for an
-    /// embedder.
+    /// model, and zero for an embedder. A generation model that loads at a
+    /// fixed context (GGUF) is resident under that context, so it serves
+    /// `context` only when it loaded at `context` or a larger one; any other
+    /// generation model is resident with no context, and serves every
+    /// context.
     ///
     /// A Core ML embedding model (``RepoMetadata/isCoreMLEmbedding``) that
     /// is a candidate of the standard slot or of the flash slot is an error:
@@ -776,14 +781,14 @@ public actor Router {
             }
             var candidates: [Int64] = []
             if slots.contains(.embedding) {
-                let key = ModelPoolKey(ref: ref, role: .embedding)
+                let key = ModelSlot.embedding.poolKey(of: ref, context: context)
                 let raw = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
-                candidates.append(residentKeys.contains(key) ? 0 : raw)
+                candidates.append(residentKeys.contains(where: { $0.canServe(key) }) ? 0 : raw)
             }
             if slots.contains(.standard) || slots.contains(.flash) {
-                let key = ModelPoolKey(ref: ref, role: .llm)
+                let key = ModelSlot.standard.poolKey(of: ref, context: context)
                 let sessionKV = metadata.footprint.kvBytes(context: context)
-                if residentKeys.contains(key) {
+                if residentKeys.contains(where: { $0.canServe(key) }) {
                     candidates.append(sessionKV)
                 } else {
                     switch drafterWeightBytes(of: ref, metadataByRef: metadataByRef) {

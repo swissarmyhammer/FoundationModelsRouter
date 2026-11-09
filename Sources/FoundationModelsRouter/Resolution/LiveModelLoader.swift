@@ -1054,6 +1054,18 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         self.modelLoader = modelLoader
     }
 
+    /// The key that the pool keeps the model of `key` under: the key that
+    /// the model loader gives. `HubModelLoader`, in a live loader, keeps the
+    /// context of a GGUF model, which llama.cpp loads at a fixed context, and
+    /// drops it for each other format.
+    ///
+    /// - Parameter key: The key of a request.
+    /// - Returns: The key of the model in the pool.
+    /// - Throws: The error of the pool key of the model loader.
+    public func poolKey(for key: ModelPoolKey) async throws -> ModelPoolKey {
+        try await modelLoader.poolKey(for: key)
+    }
+
     /// Loads the model of `key` for the Extras model pool: a generation model
     /// for ``ModelRole/llm`` and an embedding model for
     /// ``ModelRole/embedding``. Reports the download progress to the
@@ -1091,31 +1103,39 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
             reportDownload(progress)
         }
         switch key.role {
-        case .llm: return try await loadGeneration(ref: key.ref, progressHandler: handler)
-        case .embedding: return try await loadEmbedding(ref: key.ref, progressHandler: handler)
+        case .llm: return try await loadGeneration(key: key, progressHandler: handler)
+        case .embedding: return try await loadEmbedding(key: key, progressHandler: handler)
         }
     }
 
     /// Loads a generation model through the model loader: the Extras
-    /// `HubModelLoader` in a live loader, which loads it with MLX and
-    /// downloads the model when the cache does not hold it. The weights load before the container is
-    /// returned. The live loader uses neither `slot` nor `context`.
+    /// `HubModelLoader` in a live loader, which loads it with MLX, or with
+    /// llama.cpp for a GGUF model, and downloads the model when the cache does
+    /// not hold it. The weights load before the container is returned. The
+    /// live loader does not use `slot`.
+    ///
+    /// The model loader gets the key of `ref` at `context` as its
+    /// ``poolKey(for:)`` gives it: `HubModelLoader` keeps the context for a
+    /// GGUF model, so llama.cpp loads it at `context`, and the window of the
+    /// container is that context. It drops the context for each other format.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
     /// which is what keeps the part files filling the Hugging Face cache, so a
     /// later load continues that same transfer.
     ///
     /// - Throws: `CancellationError` when the calling task is cancelled, the
-    ///   error of the model loader or of the wrap of the model, or
+    ///   error of the pool key or of the model loader, the error of the wrap
+    ///   of the model, or
     ///   ``LiveModelLoaderError/unsupportedGenerationModel(key:containerType:)``
-    ///   when the model loader gives no `MLXLanguageModel`.
+    ///   when the model loader gives no model that the live container wraps.
     public func loadLLM(
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        try await loadGeneration(ref: ref, progressHandler: Self.downloadHandler(reporting: reporting))
+        let key = try await poolKey(for: ModelPoolKey(ref: ref, role: .llm, contextSize: context))
+        return try await loadGeneration(key: key, progressHandler: Self.downloadHandler(reporting: reporting))
     }
 
     /// Loads a generation model through the model loader, gives each step of
@@ -1125,19 +1145,19 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// ``loadLLM(ref:slot:context:reporting:)``.
     ///
     /// - Parameters:
-    ///   - ref: The model to load.
+    ///   - key: The model to load, as the model loader keys it: with the
+    ///     context it loads at, for a GGUF model.
     ///   - progressHandler: Gets each step of the load.
     /// - Returns: The loaded generation container.
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader or of the wrap, or
     ///   ``LiveModelLoaderError/unsupportedGenerationModel(key:containerType:)``.
     private func loadGeneration(
-        ref: ModelRef, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
+        key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
     ) async throws -> LiveLLMContainer {
-        let key = ModelPoolKey(ref: ref, role: .llm)
         let loaded = try await loadThroughModelLoader(key, progressHandler: progressHandler)
         do {
-            guard let container = try await LiveLLMContainer.make(wrappingLoaded: loaded, ref: ref) else {
+            guard let container = try await LiveLLMContainer.make(wrappingLoaded: loaded, ref: key.ref) else {
                 throw LiveModelLoaderError.unsupportedGenerationModel(
                     key: key, containerType: String(describing: type(of: loaded)))
             }
@@ -1166,7 +1186,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        try await loadEmbedding(ref: ref, progressHandler: Self.downloadHandler(reporting: reporting))
+        try await loadEmbedding(
+            key: ModelPoolKey(ref: ref, role: .embedding), progressHandler: Self.downloadHandler(reporting: reporting))
     }
 
     /// Loads an embedding model through the model loader, and gives each step
@@ -1174,16 +1195,15 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// ``loadEmbedder(ref:slot:reporting:)``.
     ///
     /// - Parameters:
-    ///   - ref: The model to load.
+    ///   - key: The model to load.
     ///   - progressHandler: Gets each step of the load.
     /// - Returns: The loaded embedding container.
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader, or
     ///   ``PooledEmbedderError/notAnEmbedding(key:containerType:)``.
     private func loadEmbedding(
-        ref: ModelRef, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
+        key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
     ) async throws -> LoadedPooledEmbedding {
-        let key = ModelPoolKey(ref: ref, role: .embedding)
         let container = try await loadThroughModelLoader(key, progressHandler: progressHandler)
         return try LoadedPooledEmbedding(container: container, of: key)
     }
