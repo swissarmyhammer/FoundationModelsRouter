@@ -25,12 +25,7 @@ extension AnswerCancellationTests {
         }
         """.utf8)
 
-    static let treeJSON = Data(
-        """
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
+    static let treeJSON = RouterTestFixtures.treeJSON
 
     static var rawMetadata: RawRepoMetadata {
         RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)

@@ -66,15 +66,13 @@ struct RepoMetadataTests {
     /// - One non-LFS shard with only a plain `size` (0.25 MB), exercising the
     ///   `lfs?.size ?? size` fallback.
     /// - Non-weight files that must not be summed.
-    private static let weightTreeJSON = Data("""
-        [
-            {"type": "file", "path": "model-00001-of-00003.safetensors", "size": 135, "lfs": {"size": 1000000}},
-            {"type": "file", "path": "model-00002-of-00003.safetensors", "size": 135, "lfs": {"size": 500000}},
-            {"type": "file", "path": "model-00003-of-00003.safetensors", "size": 250000},
-            {"type": "file", "path": "config.json", "size": 700},
-            {"type": "file", "path": "tokenizer.json", "size": 2000}
-        ]
-        """.utf8)
+    private static let weightTreeJSON = HubTreeListing.json([
+        .lfsFile("model-00001-of-00003.safetensors", size: 1_000_000),
+        .lfsFile("model-00002-of-00003.safetensors", size: 500_000),
+        .file("model-00003-of-00003.safetensors", size: 250_000),
+        .file("config.json", size: 700),
+        .file("tokenizer.json", size: 2000),
+    ])
 
     /// Σ of the safetensors sizes above: 1.0 MB + 0.5 MB (LFS) + 0.25 MB (plain).
     private static let expectedWeightBytes: Int64 = 1_750_000
@@ -543,12 +541,10 @@ struct RepoMetadataTests {
 
     @Test("no *.safetensors in the tree surfaces metadataUnavailable")
     func noSafetensorsUnavailable() async throws {
-        let tree = Data("""
-            [
-                {"type": "file", "path": "config.json", "size": 700},
-                {"type": "file", "path": "tokenizer.json", "size": 2000}
-            ]
-            """.utf8)
+        let tree = HubTreeListing.json([
+            .file("config.json", size: 700),
+            .file("tokenizer.json", size: 2000),
+        ])
         let (reader, dir, _) = Self.makeReader(
             raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
         )
@@ -801,19 +797,15 @@ struct RepoMetadataTests {
     /// for a recursive listing: directory entries with size 0, then the files.
     /// The repo has no `config.json` and no `*.safetensors`.
     /// Bundle bytes: 625_086 (graph) + 308_767_296 (weights) + 617 (manifest).
-    private static let coreMLTreeJSON = Data("""
-        [
-            {"type": "directory", "path": "embed-8bit.mlpackage", "size": 0},
-            {"type": "directory", "path": "embed-8bit.mlpackage/Data", "size": 0},
-            {"type": "file", "path": "README.md", "size": 11164},
-            {"type": "file", "path": "tokenizer.json", "size": 33385008, "lfs": {"size": 33385008}},
-            {"type": "file", "path": "embed-8bit.mlpackage/Manifest.json", "size": 617},
-            {"type": "file", "path": "embed-8bit.mlpackage/Data/com.apple.CoreML/model.mlmodel",
-             "size": 625086, "lfs": {"size": 625086}},
-            {"type": "file", "path": "embed-8bit.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
-             "size": 134, "lfs": {"size": 308767296}}
-        ]
-        """.utf8)
+    private static let coreMLTreeJSON = HubTreeListing.json([
+        .directory("embed-8bit.mlpackage"),
+        .directory("embed-8bit.mlpackage/Data"),
+        .file("README.md", size: 11_164),
+        .lfsFile("tokenizer.json", size: 33_385_008, pointerSize: 33_385_008),
+        .file("embed-8bit.mlpackage/Manifest.json", size: 617),
+        .lfsFile("embed-8bit.mlpackage/Data/com.apple.CoreML/model.mlmodel", size: 625_086, pointerSize: 625_086),
+        .lfsFile("embed-8bit.mlpackage/Data/com.apple.CoreML/weights/weight.bin", size: 308_767_296, pointerSize: 134),
+    ])
 
     /// The sum of the file sizes in the one bundle of ``coreMLTreeJSON``.
     private static let coreMLBundleBytes: Int64 = 309_392_999
@@ -846,12 +838,10 @@ struct RepoMetadataTests {
     }
 
     /// The tree listing of a repo that holds only a compiled `.mlmodelc` folder.
-    private static let compiledOnlyTreeJSON = Data("""
-        [
-            {"type": "file", "path": "embed.mlmodelc/weights/weight.bin", "size": 134, "lfs": {"size": 4000}},
-            {"type": "file", "path": "embed.mlmodelc/model.mil", "size": 500}
-        ]
-        """.utf8)
+    private static let compiledOnlyTreeJSON = HubTreeListing.json([
+        .lfsFile("embed.mlmodelc/weights/weight.bin", size: 4000, pointerSize: 134),
+        .file("embed.mlmodelc/model.mil", size: 500),
+    ])
 
     @Test("a repo with only a .mlmodelc folder is not sized as a CoreML repo: it needs a config.json like MLX")
     func compiledOnlyRepoIsNotCoreML() {
@@ -877,12 +867,10 @@ struct RepoMetadataTests {
 
     @Test("a .mlmodelc folder next to a .mlpackage folder does not add its bytes to the package")
     func compiledFolderIsNotSizedBesideAPackage() throws {
-        let tree = Data("""
-            [
-                {"type": "file", "path": "embed.mlpackage/weights/weight.bin", "size": 3000},
-                {"type": "file", "path": "embed.mlmodelc/weights/weight.bin", "size": 9000}
-            ]
-            """.utf8)
+        let tree = HubTreeListing.json([
+            .file("embed.mlpackage/weights/weight.bin", size: 3000),
+            .file("embed.mlmodelc/weights/weight.bin", size: 9000),
+        ])
 
         let metadata = try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
 
@@ -891,12 +879,10 @@ struct RepoMetadataTests {
 
     @Test("a nested .safetensors file next to a .mlpackage folder makes the repo MLX, so it is not sized as CoreML")
     func nestedSafetensorsMakesTheRepoMLX() {
-        let tree = Data("""
-            [
-                {"type": "file", "path": "embed.mlpackage/weights/weight.bin", "size": 3000},
-                {"type": "file", "path": "extra/model.safetensors", "size": 1000}
-            ]
-            """.utf8)
+        let tree = HubTreeListing.json([
+            .file("embed.mlpackage/weights/weight.bin", size: 3000),
+            .file("extra/model.safetensors", size: 1000),
+        ])
         let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
 
         #expect(
@@ -910,12 +896,10 @@ struct RepoMetadataTests {
 
     @Test("a repo with two bundles of one model is sized by the larger bundle, not the sum")
     func twoCoreMLBundlesCountTheLargerOne() throws {
-        let tree = Data("""
-            [
-                {"type": "file", "path": "embed-8bit.mlpackage/weights/weight.bin", "size": 3000},
-                {"type": "file", "path": "embed-fp16.mlpackage/weights/weight.bin", "size": 6000}
-            ]
-            """.utf8)
+        let tree = HubTreeListing.json([
+            .file("embed-8bit.mlpackage/weights/weight.bin", size: 3000),
+            .file("embed-fp16.mlpackage/weights/weight.bin", size: 6000),
+        ])
 
         let metadata = try RepoMetadata(raw: RawRepoMetadata(configJSON: nil, treeJSON: tree), repo: "org/c")
 
@@ -924,12 +908,10 @@ struct RepoMetadataTests {
 
     @Test("a repo with safetensors weights does not add a CoreML bundle to them")
     func safetensorsRepoIgnoresCoreMLBundle() throws {
-        let tree = Data("""
-            [
-                {"type": "file", "path": "model.safetensors", "size": 1000},
-                {"type": "file", "path": "extra.mlpackage/weights/weight.bin", "size": 9000}
-            ]
-            """.utf8)
+        let tree = HubTreeListing.json([
+            .file("model.safetensors", size: 1000),
+            .file("extra.mlpackage/weights/weight.bin", size: 9000),
+        ])
         let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
 
         let metadata = try RepoMetadata(raw: raw, repo: "org/model")
@@ -939,9 +921,7 @@ struct RepoMetadataTests {
 
     @Test("a repo with no weight files of any kind cannot be sized")
     func repoWithNoWeightsIsAnError() {
-        let tree = Data("""
-            [{"type": "file", "path": "README.md", "size": 10}]
-            """.utf8)
+        let tree = HubTreeListing.json([.file("README.md", size: 10)])
 
         let raw = RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree)
 

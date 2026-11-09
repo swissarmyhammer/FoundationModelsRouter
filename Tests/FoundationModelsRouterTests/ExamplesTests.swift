@@ -134,13 +134,7 @@ struct ExamplesTests {
                 }
                 """.utf8
             )
-            let treeJSON = Data(
-                """
-                [
-                    {"type": "file", "path": "model.safetensors", "size": 10000000}
-                ]
-                """.utf8
-            )
+            let treeJSON = RouterTestFixtures.treeJSON
             return RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
         }
 

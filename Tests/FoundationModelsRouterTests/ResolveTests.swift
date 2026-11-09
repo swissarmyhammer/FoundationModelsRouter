@@ -216,11 +216,7 @@ struct ResolveTests {
         """.utf8)
 
     /// A canned tree listing with a single 10 MB weight shard.
-    private static let treeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
+    private static let treeJSON = RouterTestFixtures.treeJSON
 
     private static var rawMetadata: RawRepoMetadata {
         RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
@@ -815,11 +811,7 @@ struct ResolveTests {
     /// A tree listing with a single 100-byte weight shard, shared by every
     /// window-wiring fixture above (the weight size is negligible next to the
     /// KV-cache math the test cares about).
-    private static let windowTreeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 100}
-        ]
-        """.utf8)
+    private static let windowTreeJSON = HubTreeListing.json([.file("model.safetensors", size: 100)])
 
     @Test("router wiring: the bigger standard candidate at a smaller derived context beats the smaller one at a bigger context")
     @MainActor
@@ -1029,11 +1021,7 @@ struct ResolveTests {
     // MARK: - MTP drafter
 
     /// A tree listing with one weight shard far larger than any test budget.
-    private static let hugeTreeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 1000000000000}
-        ]
-        """.utf8)
+    private static let hugeTreeJSON = HubTreeListing.json([.file("model.safetensors", size: 1_000_000_000_000)])
 
     /// A profile whose first standard candidate names `drafter`.
     private static func drafterProfile(drafter: ModelRef) -> ProfileDefinition {
@@ -1111,12 +1099,6 @@ struct ResolveTests {
     /// machine reports about 81 percent.)
     private static let workingSetOf32GB: Int64 = (32 << 30) * 2 / 3
 
-    /// A tree listing of one model: one weight file of each size.
-    private static func tree(_ sizes: [Int64]) -> Data {
-        let files = sizes.enumerated().map { #"{"type": "file", "path": "model-\#($0.offset).safetensors", "size": \#($0.element)}"# }
-        return Data("[\(files.joined(separator: ","))]".utf8)
-    }
-
     /// The sizing keys of a Qwen3.5-family `config.json` (Qwen3.8 27B and its
     /// MTP head): 64 layers, one full-attention layer in four.
     private static let qwen38Config: Data = {
@@ -1157,15 +1139,15 @@ struct ResolveTests {
     private static var agentDefaultMetadata: ScriptedMetadataSource {
         let raw: [String: RawRepoMetadata] = [
             "mlx-community/Qwen3.8-27B-4bit": RawRepoMetadata(
-                configJSON: qwen38Config, treeJSON: tree([5_343_268_662, 5_354_185_130, 5_357_087_557])),
+                configJSON: qwen38Config, treeJSON: HubTreeListing.shards([5_343_268_662, 5_354_185_130, 5_357_087_557])),
             "mlx-community/Qwen3.8-27B-MTP-4bit": RawRepoMetadata(
-                configJSON: qwen38Config, treeJSON: tree([238_934_137])),
+                configJSON: qwen38Config, treeJSON: HubTreeListing.shards([238_934_137])),
             "mlx-community/Qwen3-4B-4bit": RawRepoMetadata(
                 configJSON: qwen3Config(layers: 36, heads: 32, hidden: 2560, maxPositions: 40960),
-                treeJSON: tree([2_263_022_529])),
+                treeJSON: HubTreeListing.shards([2_263_022_529])),
             "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ": RawRepoMetadata(
                 configJSON: qwen3Config(layers: 28, heads: 16, hidden: 1024, maxPositions: 32768),
-                treeJSON: tree([335_296_756])),
+                treeJSON: HubTreeListing.shards([335_296_756])),
         ]
         return ScriptedMetadataSource(
             scripts: raw.mapValues { Array(repeating: .success($0), count: 4) }, defaultRaw: rawMetadata)

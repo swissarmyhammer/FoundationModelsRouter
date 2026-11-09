@@ -42,15 +42,15 @@ struct GGUFResolveTests {
 
     /// The tree listing of the GGUF standard repo, with its model at `size`.
     private static func ggufTree(size: Int64) -> Data {
-        FileServingMetadataSource.tree([
-            FileServingMetadataSource.treeFile(ggufModelPath, size: size),
-            FileServingMetadataSource.treeFile("Q8_0/model-Q8_0.gguf", size: hugeBytes),
+        HubTreeListing.json([
+            .lfsFile(ggufModelPath, size: size),
+            .lfsFile("Q8_0/model-Q8_0.gguf", size: hugeBytes),
         ])
     }
 
     /// The tree listing of the MLX standard repo, with one shard of `size`.
     private static func mlxTree(size: Int64) -> Data {
-        Data(#"[{"type": "file", "path": "model.safetensors", "size": \#(size)}]"#.utf8)
+        HubTreeListing.json([.file("model.safetensors", size: size)])
     }
 
     /// A source that serves the MLX repo, the GGUF repo and the drafter
@@ -70,8 +70,8 @@ struct GGUFResolveTests {
                 ggufRef.repo: RawRepoMetadata(configJSON: nil, treeJSON: ggufTree(size: ggufBytes)),
                 drafterRef.repo: RawRepoMetadata(
                     configJSON: nil,
-                    treeJSON: FileServingMetadataSource.tree([
-                        FileServingMetadataSource.treeFile(drafterModelPath, size: drafterBytes)
+                    treeJSON: HubTreeListing.json([
+                        .lfsFile(drafterModelPath, size: drafterBytes)
                     ])),
             ],
             defaultRaw: RouterTestFixtures.rawMetadata,

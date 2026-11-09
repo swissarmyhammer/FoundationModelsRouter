@@ -43,6 +43,39 @@ comments:
     - evidence: `swift build --build-tests` clean (only the pre-existing mlx-swift_Cmlx.bundle "missing creator" notice); `swift test` 2504 + 38 + 19 = 2561 passed, 0 failed (was 2525); `swift build --build-tests --package-path IntegrationTests` complete. Files: Sources/FoundationModelsRouter/{Core/LocalModelPath.swift, Router.swift, Sizing/Footprint.swift, Sizing/LocalRepoMetadata.swift, Sizing/RepoMetadata.swift, Sizing/GGUFCacheSizing.swift (new), Sizing/GGUFRepoMetadata.swift (new)}; Tests: FootprintTests, HuggingFaceMetadataSourceTests, LocalModelPathTests, LocalRepoMetadataTests, RepoMetadataTests, GGUFRepoMetadataTests (new), GGUFResolveTests (new), Helpers/FileServingMetadataSource (new), Helpers/GGUFHeaderFixtures (new).
     - next: /review
   timestamp: 2026-11-09T21:29:38.523876+00:00
+- actor: claude-code
+  id: 01m713vj1grj9ztdcz2hstsws2
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (f6e9d57b) — 1 finding (1 confirmed, 3 refuted): Tests/FoundationModelsRouterTests/Helpers/FileServingMetadataSource.swift:57 (reuse/reuse)
+    - next: implement the open finding in the 2026-11-09 15:31 Review Findings section, then re-review
+  timestamp: 2026-11-09T21:36:31.280132+00:00
+- actor: claude-code
+  id: 01m713w89r09m8xjsgbhkdrxq8
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 16 files
+    - test: green — swift test 2561 passed, IntegrationTests builds
+    - commit: f6e9d57b
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/FileServingMetadataSource.swift:57 (reuse/reuse)
+  timestamp: 2026-11-09T21:36:54.072892+00:00
+- actor: claude-code
+  id: 01m71486fm2p97knbdbvztgama
+  text: |-
+    Fixed the reuse/reuse finding (FileServingMetadataSource.swift:57) across the whole FoundationModelsRouterTests target.
+    - New Helpers/HubTreeListing.swift: `HubTreeListing.json(_ entries: [Entry])` with `.file(path, size:)`, `.lfsFile(path, size:, pointerSize: = 135)`, `.directory(path)`, plus `HubTreeListing.shards(_ sizes:)` (the ResolveTests `tree` helper, moved). HubTreeListingTests (4 tests) parse built listings through `RepoMetadata`.
+    - Removed `treeFile`/`tree` from FileServingMetadataSource, the forwarding wrappers in GGUFRepoMetadataTests, and ResolveTests' private `tree`. GGUFResolveTests' `mlxTree` uses the builder.
+    - Every other inline listing literal was folded (script-driven JSON parse -> builder call, values preserved exactly incl. the recorded CoreML pointer sizes 134/33_385_008/625_086): RepoMetadataTests (8 listings), ResolveTests window/huge listings, and 30 per-file copies of the one-10 MB-model.safetensors listing, which now alias `RouterTestFixtures.treeJSON` (itself built with HubTreeListing).
+    - Discovery: the reader sizes only top-level `*.safetensors`; a nested `sub/model.safetensors` is not a weight (my first directory test failed on that, test fixed).
+    - Not touched: Tests/FoundationModelsRouterPublicSurfaceTests/ResolutionProgressPublicSurfaceTests.swift has one more copy of the listing literal, but it is a separate target (public API only, no @testable), so it cannot see this helper; out of the requested test-target scope.
+  timestamp: 2026-11-09T21:43:25.428946+00:00
+- actor: claude-code
+  id: 01m71489k379xynxm2cyvj9w14
+  text: |-
+    ### implement — changed
+    - evidence: `swift build --build-tests` clean (only the known mlx-swift_Cmlx.bundle "missing creator" notice); `swift test` 2508 + 38 + 19 = 2565 passed, 0 failed (2561 + 4 new HubTreeListingTests); `swift build --build-tests --package-path IntegrationTests` complete. Files: new Tests/FoundationModelsRouterTests/Helpers/HubTreeListing.swift, Tests/FoundationModelsRouterTests/HubTreeListingTests.swift; edited Helpers/FileServingMetadataSource.swift, Helpers/RouterTestFixtures.swift, GGUFRepoMetadataTests, GGUFResolveTests, ResolveTests, RepoMetadataTests, ExamplesTests, AnswerCancellationFixtures, and 24 other test files whose treeJSON now aliases RouterTestFixtures.treeJSON. Finding flipped to [x].
+    - next: /review
+  timestamp: 2026-11-09T21:43:28.611667+00:00
 depends_on:
 - 01M70TB3W99163V7F38SFR7SPN
 position_column: doing
@@ -73,3 +106,13 @@ Resolution sizes each candidate before download (`RepoMetadata`, `HuggingFaceMet
 - **Path scoping:** a Hub ref with a path whose files are not GGUF is a sizing error, mirroring the Extras loader's `pathNeedsGGUF`.
 - **`MetadataSource.fetchFileBytes(repo:revision:path:range:)`** is a new requirement with a default implementation that throws, so sources that only serve MLX/Core ML metadata (the many test stubs) are unchanged.
 - **`LocalModelPath.resolved` kept dropping `ref.path`** (latent bug): it now keeps it, so `org/repo/Q4_K_M` reaches sizing and loading intact.
+- **One tree-listing builder for tests:** `Tests/FoundationModelsRouterTests/Helpers/HubTreeListing.swift` (`HubTreeListing.json(_:)` over `.file`/`.lfsFile`/`.directory` entries, and `HubTreeListing.shards(_:)`, the former ResolveTests `tree`) is the only place the test target writes the Hub tree-listing JSON shape. Every listing that was `{"type": "file", ...}` JSON is built with it; the 30 per-file copies of the one-10 MB-`model.safetensors` listing now alias `RouterTestFixtures.treeJSON`.
+
+## Review Findings (2026-11-09 15:31)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 16 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/FileServingMetadataSource.swift:57` `reuse/reuse` — The new `treeFile` helper rebuilds the Hub tree-listing JSON for one file, which an existing unchanged helper in ResolveTests already builds. Two copies of the same listing shape will drift apart as the Hub format is handled. Reuse the existing ResolveTests `tree` helper, or move it into this shared helper and have ResolveTests call `FileServingMetadataSource.treeFile`/`tree`, so there is one canonical tree-listing builder.

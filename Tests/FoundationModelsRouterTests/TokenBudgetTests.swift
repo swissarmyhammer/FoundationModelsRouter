@@ -118,11 +118,7 @@ struct TokenBudgetTests {
         }
         """.utf8)
 
-    private static let treeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
+    private static let treeJSON = RouterTestFixtures.treeJSON
 
     private static var rawMetadata: RawRepoMetadata {
         RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)

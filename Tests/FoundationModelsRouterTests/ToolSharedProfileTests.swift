@@ -126,11 +126,7 @@ struct ToolSharedProfileTests {
         }
         """.utf8)
 
-    private static let treeJson = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
+    private static let treeJson = RouterTestFixtures.treeJSON
 
     private static var rawMetadata: RawRepoMetadata {
         RawRepoMetadata(configJSON: configJson, treeJSON: treeJson)

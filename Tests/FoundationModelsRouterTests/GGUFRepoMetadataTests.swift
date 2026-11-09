@@ -36,16 +36,6 @@ struct GGUFRepoMetadataTests {
     /// The first read of a header, in bytes.
     private static let firstReadBytes = 1 << 20
 
-    /// One file of a tree listing.
-    private static func treeFile(_ path: String, size: Int64) -> String {
-        FileServingMetadataSource.treeFile(path, size: size)
-    }
-
-    /// A tree listing of some files.
-    private static func tree(_ files: [String]) -> Data {
-        FileServingMetadataSource.tree(files)
-    }
-
     /// Makes a reader over a stub source and a fresh cache folder.
     ///
     /// - Parameters:
@@ -69,7 +59,10 @@ struct GGUFRepoMetadataTests {
     /// - Throws: The error of the read.
     private static func singleFileMetadata() async throws -> RepoMetadata {
         let (reader, cache, _) = try makeReader(
-            treeJSON: tree([treeFile("model-Q4_K_M.gguf", size: modelBytes), treeFile("README.md", size: 10)]),
+            treeJSON: HubTreeListing.json([
+                .lfsFile("model-Q4_K_M.gguf", size: modelBytes),
+                .lfsFile("README.md", size: 10),
+            ]),
             files: ["model-Q4_K_M.gguf": GGUFHeaderFixtures.denseBytes])
         defer { cache.remove() }
         return try await reader.metadata(for: ModelRef(repo: repo))
@@ -100,7 +93,7 @@ struct GGUFRepoMetadataTests {
     func splitSetWeightBytes() async throws {
         let shards = (1...3).map { String(format: "Q8_0/model-Q8_0-%05d-of-00003.gguf", $0) }
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree(shards.map { Self.treeFile($0, size: Self.shardBytes) }),
+            treeJSON: HubTreeListing.json(shards.map { .lfsFile($0, size: Self.shardBytes) }),
             files: [shards[0]: GGUFHeaderFixtures.denseBytes])
         defer { cache.remove() }
 
@@ -112,9 +105,9 @@ struct GGUFRepoMetadataTests {
     @Test("the projector beside a GGUF model adds its bytes")
     func projectorAddsBytes() async throws {
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([
-                Self.treeFile("model.gguf", size: Self.modelBytes),
-                Self.treeFile("mmproj-model-f16.gguf", size: Self.projectorBytes),
+            treeJSON: HubTreeListing.json([
+                .lfsFile("model.gguf", size: Self.modelBytes),
+                .lfsFile("mmproj-model-f16.gguf", size: Self.projectorBytes),
             ]),
             files: ["model.gguf": GGUFHeaderFixtures.denseBytes])
         defer { cache.remove() }
@@ -128,7 +121,7 @@ struct GGUFRepoMetadataTests {
     func hybridAddsRecurrentState() async throws {
         let header = try GGUFHeader.parse(prefix: GGUFHeaderFixtures.hybridBytes)
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("model.gguf", size: Self.modelBytes)]),
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Self.modelBytes)]),
             files: ["model.gguf": GGUFHeaderFixtures.hybridBytes])
         defer { cache.remove() }
         let expected =
@@ -144,7 +137,7 @@ struct GGUFRepoMetadataTests {
     func headerGrowsItsRange() async throws {
         let bytes = try Data(contentsOf: LlamaCppTestFixtures.vocabURL(named: "qwen35"))
         let (reader, cache, source) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("model.gguf", size: Int64(bytes.count))]),
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Int64(bytes.count))]),
             files: ["model.gguf": bytes])
         defer { cache.remove() }
 
@@ -163,7 +156,7 @@ struct GGUFRepoMetadataTests {
         let bytes = try Data(contentsOf: LlamaCppTestFixtures.vocabURL(named: "qwen35"))
         let header = try GGUFHeader.parse(prefix: bytes)
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("model.gguf", size: Int64(bytes.count))]),
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Int64(bytes.count))]),
             files: ["model.gguf": bytes])
         defer { cache.remove() }
 
@@ -175,7 +168,7 @@ struct GGUFRepoMetadataTests {
     @Test("the first read of a header is one megabyte from the start of the file")
     func firstReadIsOneMegabyte() async throws {
         let (reader, cache, source) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("model.gguf", size: Self.modelBytes)]),
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Self.modelBytes)]),
             files: ["model.gguf": GGUFHeaderFixtures.denseBytes])
         defer { cache.remove() }
 
@@ -188,7 +181,7 @@ struct GGUFRepoMetadataTests {
     func truncatedHeaderIsAnError() async throws {
         let truncated = GGUFHeaderFixtures.denseBytes.prefix(GGUFHeaderFixtures.denseBytes.count / 2)
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("model.gguf", size: Self.modelBytes)]),
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Self.modelBytes)]),
             files: ["model.gguf": Data(truncated)])
         defer { cache.remove() }
 
@@ -201,7 +194,7 @@ struct GGUFRepoMetadataTests {
     func headerWithNoContextIsAnError() async throws {
         let bytes = GGUFHeaderFixtures.noContextBytes
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("model.gguf", size: Self.modelBytes)]), files: ["model.gguf": bytes])
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Self.modelBytes)]), files: ["model.gguf": bytes])
         defer { cache.remove() }
 
         await #expect(throws: RepoMetadataError.self) {
@@ -212,9 +205,9 @@ struct GGUFRepoMetadataTests {
     @Test("a repo root that holds two GGUF models is an error that asks for a path")
     func ambiguousRootIsAnError() async throws {
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([
-                Self.treeFile("Q4_K_M/model-Q4_K_M.gguf", size: Self.modelBytes),
-                Self.treeFile("Q8_0/model-Q8_0.gguf", size: Self.otherQuantBytes),
+            treeJSON: HubTreeListing.json([
+                .lfsFile("Q4_K_M/model-Q4_K_M.gguf", size: Self.modelBytes),
+                .lfsFile("Q8_0/model-Q8_0.gguf", size: Self.otherQuantBytes),
             ]),
             files: [:])
         defer { cache.remove() }
@@ -227,7 +220,7 @@ struct GGUFRepoMetadataTests {
     @Test("a path inside a repo whose files are not GGUF is an error, as the loader refuses it")
     func pathToNonGGUFIsAnError() async throws {
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([Self.treeFile("sub/model.safetensors", size: Self.modelBytes)]), files: [:])
+            treeJSON: HubTreeListing.json([.lfsFile("sub/model.safetensors", size: Self.modelBytes)]), files: [:])
         defer { cache.remove() }
 
         await #expect(throws: RepoMetadataError.self) {
@@ -238,9 +231,9 @@ struct GGUFRepoMetadataTests {
     @Test("two quantizations in one pinned repo are sized and cached separately")
     func twoQuantsSizedSeparately() async throws {
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([
-                Self.treeFile("Q4_K_M/model-Q4_K_M.gguf", size: Self.modelBytes),
-                Self.treeFile("Q8_0/model-Q8_0.gguf", size: Self.otherQuantBytes),
+            treeJSON: HubTreeListing.json([
+                .lfsFile("Q4_K_M/model-Q4_K_M.gguf", size: Self.modelBytes),
+                .lfsFile("Q8_0/model-Q8_0.gguf", size: Self.otherQuantBytes),
             ]),
             files: [
                 "Q4_K_M/model-Q4_K_M.gguf": GGUFHeaderFixtures.denseBytes,
@@ -258,9 +251,9 @@ struct GGUFRepoMetadataTests {
     @Test("a path to one .gguf file inside a repo sizes that file")
     func pathToFileSizesThatFile() async throws {
         let (reader, cache, _) = try Self.makeReader(
-            treeJSON: Self.tree([
-                Self.treeFile("model-Q4_K_M.gguf", size: Self.modelBytes),
-                Self.treeFile("model-Q8_0.gguf", size: Self.otherQuantBytes),
+            treeJSON: HubTreeListing.json([
+                .lfsFile("model-Q4_K_M.gguf", size: Self.modelBytes),
+                .lfsFile("model-Q8_0.gguf", size: Self.otherQuantBytes),
             ]),
             files: ["model-Q8_0.gguf": GGUFHeaderFixtures.otherDenseBytes])
         defer { cache.remove() }

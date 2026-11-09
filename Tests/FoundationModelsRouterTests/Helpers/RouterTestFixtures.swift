@@ -169,12 +169,7 @@ enum RouterTestFixtures {
 
     /// The canned repo file-tree payload behind ``rawMetadata`` — one
     /// plausible weights file the resolver can size.
-    static let treeJSON = Data(
-        """
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
+    static let treeJSON = HubTreeListing.json([.file("model.safetensors", size: 10_000_000)])
 
     /// The canned repo metadata a test's ``StubMetadataSource`` serves.
     static var rawMetadata: RawRepoMetadata {
