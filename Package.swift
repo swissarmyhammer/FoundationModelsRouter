@@ -191,6 +191,21 @@ let package = Package(
             url: "git@github.com:swissarmyhammer/\(hooksPackage).git",
             branch: "main"
         ),
+        // The llama.cpp backend of a GGUF model. The Extras GGUF loader makes
+        // its `LlamaLanguageModel`; the router wraps that model in a live
+        // container and counts tokens with its `LlamaTokenizer`. The same
+        // branch as FoundationModelsExtras tracks.
+        .package(
+            url: "git@github.com:swissarmyhammer/FoundationModelsLlamaCpp.git",
+            branch: "main"
+        ),
+        // The vocab-only GGUF fixtures (`LlamaCppTestFixtures`) of the unit
+        // tests of the GGUF container. The same branch as
+        // FoundationModelsLlamaCpp tracks.
+        .package(
+            url: "git@github.com:swissarmyhammer/llama-cpp-swift.git",
+            branch: "main"
+        ),
     ],
     targets: [
         .target(
@@ -198,6 +213,12 @@ let package = Package(
             dependencies: mlxProducts + [
                 ulidProduct, tracingProduct, loggingProduct, metricsProduct, hooksProduct, huggingFaceProduct,
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
+                // The GGUF loader of the Extras pool: a reference whose files
+                // are GGUF loads through llama.cpp, and a profile never names
+                // the backend. Its C++ modules require `.Cxx` (see the end of
+                // this manifest).
+                .product(name: "FoundationModelsExtrasLlamaCpp", package: "FoundationModelsExtras"),
+                .product(name: "FoundationModelsLlamaCpp", package: "FoundationModelsLlamaCpp"),
             ],
             path: "Sources/\(packageName)",
             // The DocC catalog (task ^j0pp9yp) is documentation input for
@@ -220,6 +241,12 @@ let package = Package(
                 .target(name: "\(packageName)RealModelSupport"),
                 inMemoryTracingProduct,
                 .product(name: "Operations", package: "FoundationModelsExtras"),
+                // The live loader tests read the GGUF loader of the live
+                // loader's `HubModelLoader`.
+                .product(name: "FoundationModelsExtrasLlamaCpp", package: "FoundationModelsExtras"),
+                // The GGUF container tests load a vocab-only GGUF fixture.
+                .product(name: "FoundationModelsLlamaCpp", package: "FoundationModelsLlamaCpp"),
+                .product(name: "LlamaCppTestFixtures", package: "llama-cpp-swift"),
                 // The log tests read the log records of a capture of the
                 // Extras telemetry helper, and give its logger to a session.
                 // The metric tests give its metrics factory to a session, and
@@ -423,3 +450,14 @@ let package = Package(
         ),
     ]
 )
+
+// C++ interop on every target. The router links the Extras GGUF loader, which
+// links FoundationModelsLlamaCpp, and the C++ modules of llama.cpp
+// (`LlamaCppCore`, `LlamaCppCommon`, `LlamaCppMtmd`) declare
+// `requires cplusplus`. The Swift dependency scanner follows them through
+// every module that imports the router, directly or through a wrapper, so a
+// target without `.Cxx` fails with "module 'LlamaCppCore' requires feature
+// 'cplusplus'". Each consumer of this package needs the same setting.
+for target in package.targets where target.type != .plugin {
+    target.swiftSettings = (target.swiftSettings ?? []) + [.interoperabilityMode(.Cxx)]
+}

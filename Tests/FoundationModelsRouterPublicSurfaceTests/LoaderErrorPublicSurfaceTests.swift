@@ -25,14 +25,14 @@ struct LoaderErrorPublicSurfaceTests {
 
     /// Tells if `error` is a failure of a load of `LiveModelLoader`. A caller
     /// outside the package makes this test to show a message about a model
-    /// that is not an `MLXLanguageModel`.
+    /// that the live loader does not wrap.
     ///
     /// - Parameter error: The error that a load threw.
     /// - Returns: `true` when `error` is a `LiveModelLoaderError`.
     private static func isLiveLoaderFailure(_ error: any Error) -> Bool {
         guard let failure = error as? LiveModelLoaderError else { return false }
         switch failure {
-        case .notAnMLXLanguageModel: return true
+        case .unsupportedGenerationModel: return true
         }
     }
 

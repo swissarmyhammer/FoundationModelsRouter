@@ -8,7 +8,7 @@ import MLXLMCommon
 /// A tier's real model, loaded, with the decoding strategy the tier pinned.
 /// ``load(ref:context:samplingMode:unexpectedContainerType:)`` is the one way
 /// a gated eval tier in this target puts its real model into a concrete
-/// ``MLXFoundationModelsContainer``.
+/// ``LiveLLMContainer``.
 ///
 /// The load has three steps. It builds a ``LiveModelLoader``, which loads
 /// through the Extras `HubModelLoader`. It loads the `.standard` slot at the tier's own context.
@@ -35,7 +35,7 @@ import MLXLMCommon
 ///
 /// `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelContainer.swift`
 /// is the same consolidation for the integration target, and this target cannot
-/// call it. A helper returning ``MLXFoundationModelsContainer`` needs
+/// call it. A helper returning ``LiveLLMContainer`` needs
 /// `@testable import FoundationModelsRouter`, because that type is internal to
 /// the router, and `@testable` reaches only a LEAF test target.
 ///
@@ -53,7 +53,7 @@ import MLXLMCommon
 struct CompactionEvalRealModelContainer: Sendable {
     /// The loaded container. Each `makeSession` call on it must pass
     /// ``samplingMode``, because the container stores no mode of its own.
-    let container: MLXFoundationModelsContainer
+    let container: LiveLLMContainer
 
     /// The decoding strategy the tier loaded with, or `nil` for the provider
     /// default.
@@ -85,13 +85,13 @@ struct CompactionEvalRealModelContainer: Sendable {
     ///     randomness at all, which is what lets a red run be attributed to the
     ///     change under test.
     ///   - unexpectedContainerType: The error to throw when the loader resolves
-    ///     something other than an ``MLXFoundationModelsContainer``. The tier
+    ///     something other than an ``LiveLLMContainer``. The tier
     ///     owns this domain error. The continuity tier gives
     ///     ``CompactionContinuityEvaluationError/unexpectedContainerType``.
     ///     Because the tier gives the error, that case has a thrower.
     /// - Returns: The loaded container and the pinned mode.
     /// - Throws: `unexpectedContainerType` if what was loaded is not an
-    ///   ``MLXFoundationModelsContainer``, or whatever
+    ///   ``LiveLLMContainer``, or whatever
     ///   ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)`` throws while
     ///   resolving and loading `ref`.
     static func load(
@@ -109,7 +109,7 @@ struct CompactionEvalRealModelContainer: Sendable {
             context: context,
             reporting: { _ in }
         )
-        guard let container = loaded as? MLXFoundationModelsContainer else {
+        guard let container = loaded as? LiveLLMContainer else {
             throw unexpectedContainerType
         }
         CompactionEvalProgressLog.emit(

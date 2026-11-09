@@ -284,7 +284,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
             windowTokens: recordedTranscriptCompactionContext,
             label: Self.compactionLabel
         )
-        await loaded.container.model.evict()
+        await loaded.container.mlxModel?.evict()
 
         // The loaded model's own counter, the counter the compaction counted
         // with, so every size this test reads is in one unit.

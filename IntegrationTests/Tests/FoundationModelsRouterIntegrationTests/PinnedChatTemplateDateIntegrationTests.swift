@@ -148,9 +148,9 @@ struct PinnedChatTemplateDateIntegrationTests {
     @Test("the render of the real template carries the pinned date, and not the clock's")
     func pinnedDateReachesTheRealTemplate() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
 
-        let modelContainer = try await loaded.container.model.loadContainer()
+        let modelContainer = try await #require(loaded.container.mlxModel).loadContainer()
         let rendered = try await modelContainer.perform { context in
             let tokenIds = try context.tokenizer.applyChatTemplate(
                 messages: Self.conversationWithNoSystemMessage)
@@ -173,7 +173,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         let loadStarted = ContinuousClock.now
         let loaded = try await Self.makeContainer()
         loadDuration = ContinuousClock.now - loadStarted
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
 
         // `instructions: nil` is what puts no system message into the
         // conversation, and the date branch of the template fires only then. A

@@ -18,7 +18,7 @@ import Testing
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU. Real
 /// `LanguageModelSession(tools:)` wiring lives in the live
-/// ``MLXFoundationModelsContainer``/``MLXFoundationModelsSessionBackend``
+/// ``LiveLLMContainer``/``MLXFoundationModelsSessionBackend``
 /// (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`),
 /// exercised end to end only by the gated integration suite.
 @Suite("makeSession(tools:): per-session composition")

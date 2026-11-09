@@ -388,7 +388,7 @@ struct CompactionSmokeIntegrationTests {
             windowTokens: compactionSmokeContext,
             label: compactionLabel
         )
-        await loaded.container.model.evict()
+        await loaded.container.mlxModel?.evict()
         return (outcome, loaded.container.tokenCounter)
     }
 

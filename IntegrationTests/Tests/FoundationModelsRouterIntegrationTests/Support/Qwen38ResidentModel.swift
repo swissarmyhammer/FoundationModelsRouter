@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import MLXFoundationModels
 
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
@@ -46,7 +47,7 @@ actor Qwen38ResidentModel {
 
     /// Evicts the resident model, when one is loaded.
     func evict() async {
-        await loaded?.container.model.evict()
+        await loaded?.container.mlxModel?.evict()
         loaded = nil
     }
 }

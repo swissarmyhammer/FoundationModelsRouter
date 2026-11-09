@@ -69,10 +69,10 @@ struct MTPDrafterIntegrationTests {
         let loaded = try await RealModelContainer.load(ref: ref, samplingMode: .greedy)
         do {
             let run = try await answer(ref, on: loaded)
-            await loaded.container.model.evict()
+            await loaded.container.mlxModel?.evict()
             return run
         } catch {
-            await loaded.container.model.evict()
+            await loaded.container.mlxModel?.evict()
             throw error
         }
     }

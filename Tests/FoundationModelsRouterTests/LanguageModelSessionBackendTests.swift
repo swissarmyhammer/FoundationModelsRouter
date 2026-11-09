@@ -7,7 +7,7 @@
 
     /// GPU-free evidence backing the `LanguageModelSession` pivot's guided-generation
     /// resolution (see plan.md's "Guided generation" section and
-    /// ``MLXFoundationModelsContainer``).
+    /// ``LiveLLMContainer``).
     ///
     /// `GenerationSchemaDecodingTests` pins (with a real, run assertion) what
     /// `GenerationSchema`'s own `Codable` conformance does with a caller's plain
@@ -296,7 +296,7 @@
     /// ``LoadedLLMContainer/makeSession(transcript:)``, the transcript-seeded
     /// sibling of ``LoadedLLMContainer/makeSession(instructions:)`` restoration
     /// needs to rebuild a session from a persisted transcript rather than from
-    /// scratch. The live conformer (``MLXFoundationModelsContainer``, gated
+    /// scratch. The live conformer (``LiveLLMContainer``, gated
     /// integration suite) seeds a real `LanguageModelSession` from the
     /// transcript; this GPU-free counterpart proves the stub side of the seam:
     /// a container's `makeSession(transcript:)` seeds ``StubSessionBackend``'s

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsRouterRealModelSupport
+import MLXFoundationModels
 import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
@@ -15,7 +16,7 @@ import FoundationModelsRouterTestSupport
 /// one compact-then-ask call.
 ///
 /// Builds a fresh ``LanguageModelProfile``/``Router`` per call over the one
-/// cached, already-loaded ``MLXFoundationModelsContainer``, so every sample gets
+/// cached, already-loaded ``LiveLLMContainer``, so every sample gets
 /// its own isolated recording root without paying for a second model download.
 actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// The resident model with its pinned mode, once ``container()`` loaded it.
@@ -93,7 +94,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// - Returns: The cached container with its pinned mode, if one was
     ///   already loaded, or the newly-loaded and now-cached one otherwise.
     /// - Throws: ``CompactionContinuityEvaluationError/unexpectedContainerType``
-    ///   if the loaded container is not an `MLXFoundationModelsContainer`, or
+    ///   if the loaded container is not an `LiveLLMContainer`, or
     ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws while resolving/loading ``CompactionContinuityRealModel/ref``.
     private func container() async throws -> CompactionEvalRealModelContainer {
@@ -344,7 +345,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// Evicts the resident model, if one was ever loaded — called once by
     /// `.exclusiveResidentModel(of:)` as the gated suite ends, however it ended.
     func evictIfLoaded() async {
-        guard let loaded else { return }
-        await loaded.container.model.evict()
+        guard let model = loaded?.container.mlxModel else { return }
+        await model.evict()
     }
 }

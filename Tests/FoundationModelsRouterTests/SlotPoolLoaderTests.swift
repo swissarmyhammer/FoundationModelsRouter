@@ -454,12 +454,12 @@ struct SlotPoolLoaderTests {
         #expect(modelLoader.evictedTypes == [String(describing: ForeignContainer.self)])
     }
 
-    @Test("a generation load of the live loader throws a clear error when its model loader gives no MLXLanguageModel")
+    @Test("a generation load of the live loader throws a clear error when its model loader gives no generation model it wraps")
     func liveGenerationLoadOfForeignContainerThrows() async throws {
         let loader = Self.makeLiveLoader(modelLoader: RecordingPoolLoader(), reporting: { _ in })
 
         await #expect(
-            throws: LiveModelLoaderError.notAnMLXLanguageModel(
+            throws: LiveModelLoaderError.unsupportedGenerationModel(
                 key: ModelPoolKey(ref: Self.ref, role: .llm),
                 containerType: String(describing: ForeignContainer.self))
         ) {

@@ -340,7 +340,7 @@ struct PropagationProbeIntegrationTests {
     private func makeUncontaminatedContainer() async throws -> UncontaminatedLoad {
         let dropStarted = ContinuousClock.now
         let inherited = try await RealModelContainer.load(ref: propagationProbeModel)
-        await inherited.container.model.evict()
+        await inherited.container.mlxModel?.evict()
         let dropDuration = ContinuousClock.now - dropStarted
 
         let loadStarted = ContinuousClock.now
@@ -359,7 +359,7 @@ struct PropagationProbeIntegrationTests {
     /// test prints these beside its own answer.
     private struct UncontaminatedLoad {
         /// The container with no inherited prompt-cache state.
-        let container: MLXFoundationModelsContainer
+        let container: LiveLLMContainer
 
         /// How long the inherited load and its eviction took together.
         let dropDuration: Duration
@@ -594,7 +594,7 @@ struct PropagationProbeIntegrationTests {
         // the wall clock of the evict.
         defer {
             let evictStarted = ContinuousClock.now
-            await loaded.container.model.evict()
+            await loaded.container.mlxModel?.evict()
             evictDuration = ContinuousClock.now - evictStarted
         }
         dropDuration = loaded.dropDuration

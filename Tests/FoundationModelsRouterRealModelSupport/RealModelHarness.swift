@@ -139,7 +139,7 @@ public enum RealModelHarness {
     ///     vended from the profile reports its ``RoutedSession/contextFill``
     ///     against this number.
     ///   - container: The model that is already loaded and resident. Taken as
-    ///     the protocol rather than as ``MLXFoundationModelsContainer``, because
+    ///     the protocol rather than as ``LiveLLMContainer``, because
     ///     nothing here needs the concrete type and the protocol is what lets
     ///     ``RealModelHarnessTests`` prove this whole build with no model at all.
     ///   - samplingMode: The decoding strategy every session vended from the

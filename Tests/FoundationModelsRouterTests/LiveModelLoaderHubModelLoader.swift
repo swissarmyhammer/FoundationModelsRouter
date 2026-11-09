@@ -1,5 +1,8 @@
-import FoundationModelsExtras
+import FoundationModelsExtrasLlamaCpp
+import HuggingFace
 import Testing
+
+@testable import FoundationModelsExtras
 
 @testable import FoundationModelsRouter
 
@@ -41,10 +44,47 @@ extension LiveModelLoader {
         try Self.storedLoader(named: "coreML", in: requireHubModelLoader())
     }
 
+    /// The `LlamaCppModelLoader` inside the `HubModelLoader` of this live
+    /// loader. It loads each `.llm` key whose files are GGUF. See
+    /// ``requireMLXModelLoader()``.
+    ///
+    /// - Returns: Its `LlamaCppModelLoader`.
+    /// - Throws: When the model loader is not a `HubModelLoader`, or when its
+    ///   optional GGUF loader named `gguf` is absent or of another type.
+    func requireGGUFModelLoader() throws -> LlamaCppModelLoader {
+        try Self.storedLoader(named: "gguf", in: requireHubModelLoader())
+    }
+
+    /// The `HubClient` that the GGUF loader of this live loader downloads
+    /// with. The source keeps its `HubSource` private, so this reads it by its
+    /// name.
+    ///
+    /// - Returns: The client of each GGUF download.
+    /// - Throws: When a stored property is missing or of another type.
+    func requireGGUFHubClient() throws -> HubClient {
+        let hub: HubSource = try Self.stored(named: "hub", in: requireGGUFSource())
+        return hub.client()
+    }
+
+    /// The `GGUFSource` of the GGUF loader of this live loader: the cache it
+    /// downloads to and reads the files from. See ``requireGGUFHubClient()``.
+    ///
+    /// - Returns: The source of each GGUF model.
+    /// - Throws: When a stored property is missing or of another type.
+    func requireGGUFSource() throws -> GGUFSource {
+        try Self.stored(named: "source", in: requireGGUFModelLoader())
+    }
+
     /// Reads one stored loader of a `HubModelLoader` by the name of its
     /// property.
     private static func storedLoader<Loader>(named name: String, in hub: HubModelLoader) throws -> Loader {
-        let child = Mirror(reflecting: hub).children.first { $0.label == name }
-        return try #require(child?.value as? Loader)
+        try stored(named: name, in: hub)
+    }
+
+    /// Reads one stored property of `value` by its name. An optional property
+    /// that holds a value casts to its wrapped type.
+    private static func stored<Value>(named name: String, in value: Any) throws -> Value {
+        let child = Mirror(reflecting: value).children.first { $0.label == name }
+        return try #require(child?.value as? Value)
     }
 }

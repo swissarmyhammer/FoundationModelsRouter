@@ -66,7 +66,7 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// has measured this suite's time again since that change.
 ///
 /// Builds a ``LanguageModelProfile`` directly over an already-loaded
-/// model's ``MLXFoundationModelsContainer`` (bypassing
+/// model's ``LiveLLMContainer`` (bypassing
 /// `Router.resolve(_:reporting:)`, which would need real `.flash`/`.embedding`
 /// downloads too) — the same manual-harness technique
 /// ``SessionTreeRestorationIntegrationTests`` uses — so this suite reaches the
@@ -130,7 +130,7 @@ struct CompactionRoundTripIntegrationTests {
         // An evict is idempotent: it removes the model from the cache by its
         // id. So this deferred evict can run after the evict before step 4,
         // and it runs also when the test throws before that evict (rule T1).
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
         let profile = RealModelHarness.make(
             model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
@@ -212,7 +212,7 @@ struct CompactionRoundTripIntegrationTests {
         #expect(!recall.isEmpty)
         #expect(recall.contains("CRIMSON-77"))
 
-        await loaded.container.model.evict()
+        await loaded.container.mlxModel?.evict()
 
         // 4. Restore from disk — a fresh Router/profile over the same
         //    recording root, simulating a new process — yields the
@@ -222,7 +222,7 @@ struct CompactionRoundTripIntegrationTests {
             ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
-        defer { await reloaded.container.model.evict() }
+        defer { await reloaded.container.mlxModel?.evict() }
         let profile2 = RealModelHarness.make(
             model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,

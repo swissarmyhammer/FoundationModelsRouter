@@ -1,5 +1,5 @@
 import Foundation
-import FoundationModelsExtras
+@testable import FoundationModelsExtras
 import Testing
 
 @testable import FoundationModelsRouter
@@ -39,6 +39,9 @@ struct LiveModelLoaderCacheFolderTests {
     /// the `safetensors` extension.
     private static let weightFileName = "model.safetensors"
 
+    /// The name of the one GGUF file of the GGUF snapshot.
+    private static let ggufFileName = "model.gguf"
+
     /// The ref that the loader reads when the model names no revision.
     private static let mainRef = "main"
 
@@ -72,6 +75,19 @@ struct LiveModelLoaderCacheFolderTests {
         await #expect(throws: MLXModelLoaderError.notInCache(key: Self.key, revision: Self.mainRef)) {
             try await loader.requireMLXModelLoader().footprintBytes(of: Self.key)
         }
+    }
+
+    @Test("a live loader with a cache folder finds a GGUF snapshot in that folder")
+    func cacheFolderHoldsTheGGUFFiles() async throws {
+        let given = try FakeHubCache.make(ref: Self.ref, commit: Self.commit, files: [Self.ggufFileName: 1])
+        defer { try? FileManager.default.removeItem(at: given) }
+        let loader = LiveModelLoader(cacheDirectory: given)
+
+        let source: GGUFSource = try loader.requireGGUFSource()
+        let files = try source.cachedFiles(of: Self.ref)
+
+        #expect(files.model.resolvingSymlinksInPath().path.hasPrefix(given.resolvingSymlinksInPath().path))
+        #expect(files.model.lastPathComponent == Self.ggufFileName)
     }
 
     // MARK: - Fixtures

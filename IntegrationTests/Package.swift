@@ -93,8 +93,18 @@ let package = Package(
             dependencies: routerProducts + [
                 .product(name: "\(routerPackage)EvalSupport", package: routerPackage),
                 mlxCommonProduct,
+                // The eval runner evicts the resident `MLXLanguageModel` of
+                // its live container when the gated suite ends.
+                mlxFoundationModelsProduct,
             ],
             path: "Tests/\(routerPackage)EvalIntegrationTests"
         ),
     ]
 )
+
+// C++ interop on every target: the router links the Extras GGUF loader, whose
+// llama.cpp modules require it in each module that imports the router (see the
+// same loop at the end of the root manifest).
+for target in package.targets where target.type != .plugin {
+    target.swiftSettings = (target.swiftSettings ?? []) + [.interoperabilityMode(.Cxx)]
+}

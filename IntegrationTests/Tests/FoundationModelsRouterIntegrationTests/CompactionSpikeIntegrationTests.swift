@@ -24,9 +24,9 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// `.toolCalls` and `.toolOutput` pair that keeps its old ids.
 ///
 /// Builds directly over an already-loaded tiny model's
-/// ``MLXFoundationModelsContainer`` (bypassing `Router.resolve(_:reporting:)`,
+/// ``LiveLLMContainer`` (bypassing `Router.resolve(_:reporting:)`,
 /// which would need a real `.flash`/`.embedding` download too) and calls
-/// ``MLXFoundationModelsContainer/makeSession(transcript:)`` directly — the
+/// ``LiveLLMContainer/makeSession(transcript:)`` directly — the
 /// same factory ``LiveModelLoader``'s live conformer exposes, and the one a
 /// restored/compacted session is rebuilt through — rather than assembling a
 /// full ``RoutedSessionActor``, since this spike's only question is whether
@@ -122,7 +122,7 @@ struct CompactionSpikeIntegrationTests {
     @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and a kept tool output completes one submission without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesASubmission() async throws {
         let loaded = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
         let synthesizedIds = Array(synthesizedTranscript).map(\.id)

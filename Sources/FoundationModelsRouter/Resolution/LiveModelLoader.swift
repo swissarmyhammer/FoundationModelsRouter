@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsExtrasLlamaCpp
 import HuggingFace
 import MLXFoundationModels
 import MLXLLM
@@ -22,7 +23,7 @@ import Synchronization
 // Sendable`, so conforming them to the router's marker protocols lets
 // ``LiveModelLoader`` vend real generation and embedding through the same
 // orchestration the unit suite drives with stubs. These are the milestone-7
-// live seams: ``MLXFoundationModelsContainer`` runs the real `LanguageModelSession`
+// live seams: ``LiveLLMContainer`` runs the real `LanguageModelSession`
 // (`FoundationModels`) pipeline over an `MLXLanguageModel` conformance, and
 // ``LoadedPooledEmbedding`` gives the router the embedding model that the
 // Extras `HubModelLoader` loads: an MLX model, or a Core ML model that runs on
@@ -39,10 +40,11 @@ import Synchronization
 // invoked by FoundationModels, not called directly here. See plan.md's
 // "Backends" and "Guided generation" sections.
 
-/// The live ``LoadedLLMContainer``. Wraps an `MLXLanguageModel` and makes the
-/// ``LanguageModelSessionBackend`` every generation call runs through. The
-/// Extras `MLXModelLoader` makes and loads the model; the router makes no
-/// `MLXLanguageModel` itself (see ``make(wrapping:repo:)``).
+/// The live ``LoadedLLMContainer``. Wraps the generation model that the Extras
+/// `HubModelLoader` loaded, by the files of the reference: an `MLXLanguageModel`
+/// for safetensors weights, or a `LlamaLanguageModel` for a GGUF model. It
+/// makes the ``LanguageModelSessionBackend`` every generation call runs
+/// through. The router makes no model itself (see ``make(wrappingLoaded:ref:)``).
 ///
 /// The container stores no decoding strategy. The mode belongs to the router:
 /// each `makeSession(...samplingMode:)` call gives
@@ -53,21 +55,22 @@ import Synchronization
 /// The container holds no queue and no lock. Each backend runs over a new
 /// per-session ``SessionLanguageModel``, whose passes call the model through
 /// `PooledGeneration.run(ref:channel:_:)` of FoundationModelsExtras. The FIFO
-/// lock of the MLX model serializes the generations, one generation at a
-/// time, and no tool body runs under it.
-package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
-    /// The raw `LanguageModel` conformance of this slot's resident MLX model.
+/// lock of the model serializes the generations, one generation at a time,
+/// and no tool body runs under it.
+package struct LiveLLMContainer: LoadedLLMContainer, Sendable {
+    /// The raw `LanguageModel` conformance of this slot's resident model.
     /// The eviction of the loader and the thinking control of a backend read
     /// it; generation runs over a ``SessionLanguageModel`` that wraps it.
-    let model: MLXLanguageModel
+    let model: any FoundationModels.LanguageModel
 
     /// The model reference of ``model``. Each pass of each backend of this
     /// container names it in the in-flight meter.
     let ref: ModelRef
 
     /// The window of ``model``, in tokens: the native max context its
-    /// `config.json` declares. Each backend this container makes sends it
-    /// as the ceiling of a call that names none.
+    /// `config.json` declares for an MLX model, or the context a GGUF model
+    /// loaded at. Each backend this container makes sends it as the ceiling
+    /// of a call that names none.
     let contextWindow: Int
 
     /// The counter over the loaded model's own tokenizer. See
@@ -81,7 +84,9 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     ///   - ref: The model reference of `model`.
     ///   - contextWindow: The window of `model`, in tokens.
     ///   - tokenCounter: The counter over the tokenizer of `model`.
-    init(model: MLXLanguageModel, ref: ModelRef, contextWindow: Int, tokenCounter: any TokenCounter) {
+    init(
+        model: any FoundationModels.LanguageModel, ref: ModelRef, contextWindow: Int, tokenCounter: any TokenCounter
+    ) {
         self.model = model
         self.ref = ref
         self.contextWindow = contextWindow
@@ -943,16 +948,17 @@ public enum ModelLoaderError: Error, Equatable {
 /// A failure of a load of ``LiveModelLoader``.
 public enum LiveModelLoaderError: Error, Equatable, LocalizedError {
     /// The model loader gave a container of the type `containerType` for the
-    /// generation key `key`, which is not an `MLXLanguageModel`.
-    case notAnMLXLanguageModel(key: ModelPoolKey, containerType: String)
+    /// generation key `key`, which is no generation model that the live loader
+    /// wraps (``LiveLLMContainer/make(wrappingLoaded:ref:)``).
+    case unsupportedGenerationModel(key: ModelPoolKey, containerType: String)
 
     /// A message that tells what is wrong.
     public var errorDescription: String? {
         switch self {
-        case .notAnMLXLanguageModel(let key, let containerType):
+        case .unsupportedGenerationModel(let key, let containerType):
             """
-            The model loader gave a \(containerType) for \(key.ref.stringValue), which is not an \
-            MLXLanguageModel. The live loader wraps only an MLXLanguageModel in a generation container.
+            The model loader gave a \(containerType) for \(key.ref.stringValue), which is no generation \
+            model that the live loader wraps. It wraps an MLXLanguageModel or a LlamaLanguageModel.
             """
         }
     }
@@ -1046,7 +1052,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
             reporting: reporting,
             modelLoader: HubModelLoader(
                 cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
-                drafterRegistration: Self.drafterRegistration))
+                drafterRegistration: Self.drafterRegistration,
+                gguf: LlamaCppModelLoader(cacheDirectory: cacheDirectory, tokenProvider: tokenProvider)))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test
@@ -1116,7 +1123,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader or of the wrap of the model, or
-    ///   ``LiveModelLoaderError/notAnMLXLanguageModel(key:containerType:)``
+    ///   ``LiveModelLoaderError/unsupportedGenerationModel(key:containerType:)``
     ///   when the model loader gives no `MLXLanguageModel`.
     public func loadLLM(
         ref: ModelRef,
@@ -1139,18 +1146,18 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// - Returns: The loaded generation container.
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader or of the wrap, or
-    ///   ``LiveModelLoaderError/notAnMLXLanguageModel(key:containerType:)``.
+    ///   ``LiveModelLoaderError/unsupportedGenerationModel(key:containerType:)``.
     private func loadGeneration(
         ref: ModelRef, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
-    ) async throws -> MLXFoundationModelsContainer {
+    ) async throws -> LiveLLMContainer {
         let key = ModelPoolKey(ref: ref, role: .llm)
         let loaded = try await loadThroughModelLoader(key, progressHandler: progressHandler)
         do {
-            guard let model = loaded as? MLXLanguageModel else {
-                throw LiveModelLoaderError.notAnMLXLanguageModel(
+            guard let container = try await LiveLLMContainer.make(wrappingLoaded: loaded, ref: ref) else {
+                throw LiveModelLoaderError.unsupportedGenerationModel(
                     key: key, containerType: String(describing: type(of: loaded)))
             }
-            return try await MLXFoundationModelsContainer.make(wrapping: model, ref: ref)
+            return container
         } catch {
             await modelLoader.evict(loaded)
             throw error
@@ -1251,7 +1258,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// - Parameter container: The container to evict.
     public func evict(_ container: any Sendable) async {
         switch container {
-        case let generation as MLXFoundationModelsContainer:
+        case let generation as LiveLLMContainer:
             await modelLoader.evict(generation.model)
         case let embedding as LoadedPooledEmbedding:
             await modelLoader.evict(embedding.embedding)

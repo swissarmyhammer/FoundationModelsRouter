@@ -35,7 +35,7 @@ struct SessionLanguageModelPassTests {
     }
 
     /// A live container over ``makeUnloadableMLXModel()``.
-    private static func makeLiveContainer() -> MLXFoundationModelsContainer {
+    private static func makeLiveContainer() -> LiveLLMContainer {
         UnloadableMLXModel.liveContainer(repo: rawModelRepository)
     }
 
@@ -154,7 +154,7 @@ struct SessionLanguageModelPassTests {
     @Test("respondWithoutReasoning still finds the raw MLX model behind the wrapper, in a fork too")
     func liveBackendFindsTheRawModelForThinkingControl() throws {
         let container = Self.makeLiveContainer()
-        let rawModelID = container.model.modelID
+        let rawModelID = try #require(container.model as? MLXLanguageModel).modelID
 
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend)

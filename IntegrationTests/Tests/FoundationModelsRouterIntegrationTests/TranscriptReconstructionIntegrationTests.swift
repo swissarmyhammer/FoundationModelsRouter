@@ -40,7 +40,7 @@ struct TranscriptReconstructionIntegrationTests {
     private struct Harness {
         let session: RoutedSessionActor
         let backend: MLXFoundationModelsSessionBackend
-        let container: MLXFoundationModelsContainer
+        let container: LiveLLMContainer
         let routerId: ULID
         let sessionId: ULID
         let recordingsDir: URL
@@ -68,7 +68,7 @@ struct TranscriptReconstructionIntegrationTests {
                     as? MLXFoundationModelsSessionBackend
             )
         } catch {
-            await loaded.container.model.evict()
+            await loaded.container.mlxModel?.evict()
             throw error
         }
 
@@ -165,7 +165,7 @@ struct TranscriptReconstructionIntegrationTests {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
-        defer { await harness.container.model.evict() }
+        defer { await harness.container.mlxModel?.evict() }
 
         _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 

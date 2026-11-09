@@ -20,7 +20,7 @@ import Testing
 /// per-node mount wrapper — whose ambient ``ToolContext`` posts to that
 /// node's own outbox — rather than sharing one event route tree-wide. Real
 /// `LanguageModelSession(tools:)` wiring for a restored
-/// transcript lives in the live ``MLXFoundationModelsContainer``
+/// transcript lives in the live ``LiveLLMContainer``
 /// (`Resolution/LiveModelLoader.swift`), exercised end to end only by the
 /// gated integration suite.
 @Suite("restoreSessionTree(root:tools:): tools threaded to every restored node")

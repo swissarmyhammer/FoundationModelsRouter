@@ -51,7 +51,7 @@ struct ExecutorPassBoundaryIntegrationTests {
         recordingInto log: PassBoundaryLog
     ) async throws -> (session: LanguageModelSession, loaded: RealModelContainer) {
         let loaded = try await RealModelContainer.load(ref: passBoundaryModel)
-        let model = PassBoundaryProbeModel(wrapping: loaded.container.model, log: log)
+        let model = PassBoundaryProbeModel(wrapping: try #require(loaded.container.mlxModel), log: log)
         let session = LanguageModelSession(
             model: model, tools: [PassBoundaryProbeTool(log: log)], instructions: instructions)
         return (session, loaded)
@@ -61,7 +61,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func respondPassEndsBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
 
         _ = try await session.respond(to: Self.prompt, options: Self.answerOptions)
 
@@ -73,7 +73,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func streamPassEndsBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
 
         let snapshotCount = try await PassBoundaryExpectations.consume(
             session.streamResponse(to: Self.prompt, options: Self.answerOptions))
@@ -97,7 +97,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func slowStreamConsumerStillEndsPassBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
 
         let consumeStarted = ContinuousClock.now
         let snapshotCount = try await PassBoundaryExpectations.consumeAfterEachOpenPassEnds(

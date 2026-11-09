@@ -31,7 +31,7 @@ import Testing
 /// target's own ``UndrivenLanguageModelContainer``: it holds no model at all,
 /// which is the whole reason
 /// ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
-/// takes the protocol rather than the concrete ``MLXFoundationModelsContainer``
+/// takes the protocol rather than the concrete ``LiveLLMContainer``
 /// — the concrete type wraps a real resident MLX model and cannot be
 /// constructed without one. Every fact the two suites depend on is then
 /// readable here in milliseconds.

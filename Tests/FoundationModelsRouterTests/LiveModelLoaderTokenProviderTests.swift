@@ -35,6 +35,15 @@ struct LiveModelLoaderTokenProviderTests {
         #expect(await client.bearerToken == Self.token)
     }
 
+    @Test("a live loader gives its token provider to the Hub client of each GGUF download")
+    func tokenProviderReachesTheGGUFHubClient() async throws {
+        let loader = LiveModelLoader(tokenProvider: .fixed(token: Self.token))
+
+        let client = try loader.requireGGUFHubClient()
+
+        #expect(await client.bearerToken == Self.token)
+    }
+
     @Test("a live loader with the .none provider sends no token")
     func noneProviderSendsNoToken() async throws {
         let loader = LiveModelLoader(tokenProvider: .none)

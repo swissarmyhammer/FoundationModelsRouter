@@ -14,7 +14,7 @@ import struct FoundationModelsExtras.MLXModelLoader
 /// A real model a gated suite loaded, with the decoding strategy the suite
 /// pinned. ``load(ref:context:samplingMode:chatTemplateDate:)`` is the one way
 /// every gated suite puts a real model into its concrete
-/// ``MLXFoundationModelsContainer``.
+/// ``LiveLLMContainer``.
 ///
 /// Nine suites each carried a private copy of the same three-step body: build a
 /// ``LiveModelLoader`` over the fork's two Hub macros, load the `.standard`
@@ -56,7 +56,7 @@ import struct FoundationModelsExtras.MLXModelLoader
 public struct RealModelContainer: Sendable {
     /// The loaded container. Each `makeSession` call on it must pass
     /// ``samplingMode``, because the container stores no mode of its own.
-    package let container: MLXFoundationModelsContainer
+    package let container: LiveLLMContainer
 
     /// The decoding strategy the suite loaded with, or `nil` for the provider
     /// default.
@@ -157,7 +157,7 @@ public struct RealModelContainer: Sendable {
     /// - Returns: The loaded container and the pinned mode.
     /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws, or an expectation failure if what it loaded is not an
-    ///   ``MLXFoundationModelsContainer``.
+    ///   ``LiveLLMContainer``.
     // Only the suites in the IntegrationTests package call this.
     // Periphery reads only this package's index, thus it finds no caller.
     // periphery:ignore
@@ -175,7 +175,7 @@ public struct RealModelContainer: Sendable {
         }
         let loaded = try await makeLoader(chatTemplateDate: chatTemplateDate).loadLLM(
             ref: ref, slot: .standard, context: context, reporting: { _ in })
-        let container = try #require(loaded as? MLXFoundationModelsContainer)
+        let container = try #require(loaded as? LiveLLMContainer)
         return RealModelContainer(container: container, samplingMode: samplingMode)
     }
 

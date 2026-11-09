@@ -129,33 +129,33 @@ extension ModelHold {
     /// The container of this hold as a generation container.
     ///
     /// The first loader of the key can be the Extras loader of a
-    /// `PooledModel` (`HubModelLoader`, which loads a generation model with
-    /// `MLXModelLoader`), which gives a bare `MLXLanguageModel`. The router then
-    /// wraps that model in a live container
-    /// (``MLXFoundationModelsContainer/make(wrapping:repo:)``), so a
+    /// `PooledModel` (`HubModelLoader`), which gives a bare `MLXLanguageModel`
+    /// or `LlamaLanguageModel`. The router then wraps that model in a live
+    /// container (``LiveLLMContainer/make(wrappingLoaded:ref:)``), so a
     /// `PooledModel` and a router share one resident model in either order.
     ///
     /// - Returns: The container.
     /// - Throws: ``PooledGenerationError/notAGenerationContainer(key:containerType:)``
     ///   when the first loader of the key gave a container that is neither a
-    ///   ``LoadedLLMContainer`` nor an `MLXLanguageModel`, or the error of the
-    ///   wrap of an `MLXLanguageModel`.
+    ///   ``LoadedLLMContainer`` nor a model that the live container wraps, or
+    ///   the error of the wrap.
     func generationContainer() async throws -> any LoadedLLMContainer {
         if let generation = container as? any LoadedLLMContainer {
             return generation
         }
-        guard let model = container as? MLXLanguageModel else {
+        guard let generation = try await LiveLLMContainer.make(wrappingLoaded: container, ref: key.ref) else {
             throw PooledGenerationError.notAGenerationContainer(
                 key: key, containerType: String(describing: type(of: container)))
         }
-        return try await MLXFoundationModelsContainer.make(wrapping: model, ref: key.ref)
+        return generation
     }
 }
 
 /// An error of a generation hold in the Extras model pool.
 enum PooledGenerationError: Error, Equatable, LocalizedError {
     /// The container of `key` has the type `containerType`, which does not
-    /// conform to ``LoadedLLMContainer`` and is not an `MLXLanguageModel`.
+    /// conform to ``LoadedLLMContainer`` and is no model that
+    /// ``LiveLLMContainer/make(wrappingLoaded:ref:)`` wraps.
     case notAGenerationContainer(key: ModelPoolKey, containerType: String)
 
     /// A message that tells what is wrong.
@@ -164,9 +164,9 @@ enum PooledGenerationError: Error, Equatable, LocalizedError {
         case .notAGenerationContainer(let key, let containerType):
             """
             The container of \(key.ref.stringValue) is a \(containerType), which does not conform to \
-            LoadedLLMContainer and is not an MLXLanguageModel. The first loader of a key gives the \
-            container of all holds, so each loader of a generation key that the router uses must return \
-            a LoadedLLMContainer or an MLXLanguageModel.
+            LoadedLLMContainer and is neither an MLXLanguageModel nor a LlamaLanguageModel. The first \
+            loader of a key gives the container of all holds, so each loader of a generation key that the \
+            router uses must return a LoadedLLMContainer, an MLXLanguageModel or a LlamaLanguageModel.
             """
         }
     }

@@ -68,7 +68,7 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 ///    never-torn-down session.
 ///
 /// Builds ``LanguageModelProfile``s directly over an already-loaded
-/// model's ``MLXFoundationModelsContainer`` (bypassing
+/// model's ``LiveLLMContainer`` (bypassing
 /// `Router.resolve(_:reporting:)`, which would need real `.flash`/`.embedding`
 /// downloads too) — the same technique
 /// ``LanguageModelSessionBackendIntegrationTests`` and
@@ -266,7 +266,7 @@ struct SessionTreeRestorationIntegrationTests {
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
         let loaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
-        defer { await loaded.container.model.evict() }
+        defer { await loaded.container.mlxModel?.evict() }
         let profile = Self.makeProfile(
             model: sessionTreeForkTreeModel, loaded: loaded, cacheDir: cacheDir, recordingsDir: recordingsDir)
         // The router's own id, read off the handle it stamped. The harness
@@ -322,7 +322,7 @@ struct SessionTreeRestorationIntegrationTests {
         // same recording root, with a freshly (re-)loaded model container.
         let reloaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
-        defer { await reloaded.container.model.evict() }
+        defer { await reloaded.container.mlxModel?.evict() }
         let profile2 = Self.makeProfile(
             model: sessionTreeForkTreeModel,
             loaded: reloaded,
@@ -396,7 +396,7 @@ struct SessionTreeRestorationIntegrationTests {
         let (routerId, rootId): (ULID, ULID) = try await {
             let loaded = try await RealModelContainer.load(
                 ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
-            defer { await loaded.container.model.evict() }
+            defer { await loaded.container.mlxModel?.evict() }
             let profile = Self.makeProfile(
                 model: sessionTreeToolCallingModel, loaded: loaded, cacheDir: cacheDir,
                 recordingsDir: recordingsDir)
@@ -409,7 +409,7 @@ struct SessionTreeRestorationIntegrationTests {
         // a real tool this time — the seam that used to hardcode `tools: []`.
         let reloaded = try await RealModelContainer.load(
             ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
-        defer { await reloaded.container.model.evict() }
+        defer { await reloaded.container.mlxModel?.evict() }
         let profile2 = Self.makeProfile(
             model: sessionTreeToolCallingModel, loaded: reloaded, cacheDir: cacheDir,
             recordingsDir: recordingsDir, routerId: routerId)
