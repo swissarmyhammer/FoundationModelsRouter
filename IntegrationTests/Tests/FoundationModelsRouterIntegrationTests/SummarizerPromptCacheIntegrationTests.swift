@@ -101,7 +101,7 @@ struct SummarizerPromptCacheIntegrationTests {
         let loaded = try await RealModelContainer.load(
             ref: summarizerPromptCacheModel, context: CompactionRoundTripFixture.context, samplingMode: samplingMode)
         return try await FixtureCleanup.removingDirectoryOnThrow(
-            root, alsoOnThrow: { await loaded.container.mlxModel?.evict() }
+            root, alsoOnThrow: { await loaded.evict() }
         ) {
             let profile = RealModelHarness.make(
                 model: summarizerPromptCacheModel, context: CompactionRoundTripFixture.context,
@@ -156,7 +156,7 @@ struct SummarizerPromptCacheIntegrationTests {
     func aCompactionAddsNoKeyToThePromptCache() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        defer { await fixture.loaded.container.mlxModel?.evict() }
+        defer { await fixture.loaded.evict() }
         _ = try await fixture.session.respond(to: fillingPrompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let before = await Self.settledPromptCacheState()
 
@@ -177,7 +177,7 @@ struct SummarizerPromptCacheIntegrationTests {
     func theNextAnswerAfterACompactionReusesItsOwnCache() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        defer { await fixture.loaded.container.mlxModel?.evict() }
+        defer { await fixture.loaded.evict() }
         try await Self.fillAndCompact(fixture.session)
 
         _ = try await fixture.session.respond(

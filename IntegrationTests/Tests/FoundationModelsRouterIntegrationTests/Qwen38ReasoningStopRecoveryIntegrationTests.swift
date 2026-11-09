@@ -100,7 +100,7 @@ struct Qwen38ReasoningStopRecoveryIntegrationTests {
         // The model is evicted also when the test throws (rule T1). This defer
         // runs first, so the eviction comes before the end of the profile and
         // the removal of the directory.
-        defer { await container.container.mlxModel?.evict() }
+        defer { await container.evict() }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(
                 instructions: Self.instructions, tools: [ReadFileTool()],

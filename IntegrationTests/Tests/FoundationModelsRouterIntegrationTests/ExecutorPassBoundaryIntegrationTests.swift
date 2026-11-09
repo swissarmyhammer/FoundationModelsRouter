@@ -61,7 +61,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func respondPassEndsBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
 
         _ = try await session.respond(to: Self.prompt, options: Self.answerOptions)
 
@@ -73,7 +73,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func streamPassEndsBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
 
         let snapshotCount = try await PassBoundaryExpectations.consume(
             session.streamResponse(to: Self.prompt, options: Self.answerOptions))
@@ -97,7 +97,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     func slowStreamConsumerStillEndsPassBeforeToolBody() async throws {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
 
         let consumeStarted = ContinuousClock.now
         let snapshotCount = try await PassBoundaryExpectations.consumeAfterEachOpenPassEnds(

@@ -122,7 +122,7 @@ struct CancelledGenerationTeardownIntegrationTests {
         // after the cancelled run. The abort under investigation fired in
         // this window — after the report, around teardown of the cancelled
         // generation's GPU work.
-        await loaded.container.mlxModel?.evict()
+        await loaded.evict()
 
         // And the next suite loads the model again and generates. The process
         // surviving a fresh generation proves the cancelled one left no
@@ -131,7 +131,7 @@ struct CancelledGenerationTeardownIntegrationTests {
             ref: cancellationSmokeModel,
             samplingMode: .greedy
         )
-        defer { await reloaded.container.mlxModel?.evict() }
+        defer { await reloaded.evict() }
         let reply = try await reloaded.container.makeSession(
             instructions: "You are a terse, literal assistant.", samplingMode: reloaded.samplingMode
         ).respond(
@@ -153,7 +153,7 @@ struct CancelledGenerationTeardownIntegrationTests {
             ref: cancellationSmokeModel,
             samplingMode: .greedy
         )
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let backend = loaded.container.makeSession(
             instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
         let usageBefore = try #require(backend.usageTokenCounts())

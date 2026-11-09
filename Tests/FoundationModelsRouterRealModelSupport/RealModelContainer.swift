@@ -179,6 +179,24 @@ public struct RealModelContainer: Sendable {
         return RealModelContainer(container: container, samplingMode: samplingMode)
     }
 
+    /// Evicts the loaded model's weights, so the suites that run after this
+    /// one load into free memory.
+    ///
+    /// Every gated suite evicts what it loads, and it does so in a `defer`
+    /// right after ``load(ref:context:samplingMode:chatTemplateDate:)``, so
+    /// the weights go back also when the test throws. A suite that frees the
+    /// weights early, before its assertions, calls this a second time; a
+    /// second eviction does no harm.
+    ///
+    /// Only an MLX model has weights to evict this way. For a model of
+    /// another backend this does nothing.
+    // Only the suites in the IntegrationTests package call this.
+    // Periphery reads only this package's index, thus it finds no caller.
+    // periphery:ignore
+    package func evict() async {
+        await container.mlxModel?.evict()
+    }
+
     /// Makes the live loader of a load. With no pin, it is the plain live
     /// loader. With a pin, the Extras `MLXModelLoader` under the live loader
     /// reads each tokenizer through a

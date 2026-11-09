@@ -68,7 +68,7 @@ struct TranscriptReconstructionIntegrationTests {
                     as? MLXFoundationModelsSessionBackend
             )
         } catch {
-            await loaded.container.mlxModel?.evict()
+            await loaded.evict()
             throw error
         }
 

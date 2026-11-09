@@ -197,7 +197,7 @@ struct Qwen38ToolAnswerIntegrationTests {
             ref: qwen38ToolAnswerModel, samplingMode: Self.samplingMode)
         // The weights go back also when the test throws before the eviction
         // below (rule T1). A second eviction does no harm.
-        defer { await container.container.mlxModel?.evict() }
+        defer { await container.evict() }
         let loadDuration = ContinuousClock.now - loadStarted
 
         let (session, profile, directory) = makeSession(over: container)
@@ -227,7 +227,7 @@ struct Qwen38ToolAnswerIntegrationTests {
         // on the runner, the Muse Glimmer load that took 6 seconds before this
         // suite ran took 104 seconds after it, and four Muse suites timed out
         // at the time limit of that day.
-        await container.container.mlxModel?.evict()
+        await container.evict()
 
         // Printed so a reader can see what the model did, and so the cost
         // splits into the load and the answer.

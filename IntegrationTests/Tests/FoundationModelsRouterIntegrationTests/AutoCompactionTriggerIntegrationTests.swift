@@ -382,7 +382,7 @@ struct AutoCompactionTriggerIntegrationTests {
         // The eviction of the model, also when an answer throws (rule T1). No
         // statement after the answers reads the model, so the eviction runs
         // at the end of the test, before the removal of the directories.
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
 
         let profile = RealModelHarness.make(
             model: autoCompactionTriggerModel,

@@ -47,7 +47,7 @@ actor Qwen38ResidentModel {
 
     /// Evicts the resident model, when one is loaded.
     func evict() async {
-        await loaded?.container.mlxModel?.evict()
+        await loaded?.evict()
         loaded = nil
     }
 }

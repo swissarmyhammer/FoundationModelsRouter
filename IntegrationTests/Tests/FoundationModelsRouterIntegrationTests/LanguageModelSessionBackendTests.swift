@@ -140,7 +140,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test("a second respond() call on the same backend sees the first answer's content in context")
     func secondRespondSeesPriorAnswer() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let backend = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -192,7 +192,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // The timed eviction below stays for the phase print. This deferred
         // eviction comes also when the test throws (rule T1); a second
         // eviction does no harm.
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         loadDuration = ContinuousClock.now - loadStarted
         let parent = try #require(
             loaded.container.makeSession(
@@ -237,7 +237,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == childEntryCountAfterOwnAnswer)
 
         let evictStarted = ContinuousClock.now
-        await loaded.container.mlxModel?.evict()
+        await loaded.evict()
         evictDuration = ContinuousClock.now - evictStarted
     }
 
@@ -248,7 +248,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let prior = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -315,7 +315,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func eachAnswerLeavesOnePromptAndOneResponse() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which no answer owes. Omitting
         // instructions leaves only the entries that the answers made.
@@ -334,7 +334,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test("a fork taken after one answer begins holding exactly that answer's entries")
     func forkAfterOneAnswerHoldsThatAnswersEntries() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let parent = try #require(
             loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
@@ -353,7 +353,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test("transcriptEntries().count equals session.transcript.count and grows across answers")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let backend = try #require(
             loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
@@ -421,7 +421,7 @@ struct LanguageModelSessionBackendIntegrationTests {
                     as? MLXFoundationModelsSessionBackend
             )
         } catch {
-            await loaded.container.mlxModel?.evict()
+            await loaded.evict()
             throw error
         }
 
@@ -632,7 +632,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func secondAnswerReusesFirstAnswersKVCache() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let backend = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
@@ -732,7 +732,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     )
     func sessionKeyedCacheIsReusedUntilItsRelease() async throws {
         let loaded = try await Self.makeContainer()
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
         let backend = try #require(
             loaded.container.makeSession(
                 instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)

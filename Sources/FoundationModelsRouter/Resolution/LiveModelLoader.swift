@@ -77,22 +77,6 @@ package struct LiveLLMContainer: LoadedLLMContainer, Sendable {
     /// ``LoadedLLMContainer/tokenCounter``.
     package let tokenCounter: any TokenCounter
 
-    /// Makes a container over a resident model.
-    ///
-    /// - Parameters:
-    ///   - model: The raw `LanguageModel` conformance of the resident model.
-    ///   - ref: The model reference of `model`.
-    ///   - contextWindow: The window of `model`, in tokens.
-    ///   - tokenCounter: The counter over the tokenizer of `model`.
-    init(
-        model: any FoundationModels.LanguageModel, ref: ModelRef, contextWindow: Int, tokenCounter: any TokenCounter
-    ) {
-        self.model = model
-        self.ref = ref
-        self.contextWindow = contextWindow
-        self.tokenCounter = tokenCounter
-    }
-
     /// Makes a live session backend over ``model`` that decodes with the
     /// provider default.
     package func makeSession(instructions: String?) -> any LanguageModelSessionBackend {

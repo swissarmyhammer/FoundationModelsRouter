@@ -122,7 +122,7 @@ struct CompactionSpikeIntegrationTests {
     @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and a kept tool output completes one submission without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesASubmission() async throws {
         let loaded = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
-        defer { await loaded.container.mlxModel?.evict() }
+        defer { await loaded.evict() }
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
         let synthesizedIds = Array(synthesizedTranscript).map(\.id)

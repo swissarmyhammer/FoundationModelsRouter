@@ -340,7 +340,7 @@ struct PropagationProbeIntegrationTests {
     private func makeUncontaminatedContainer() async throws -> UncontaminatedLoad {
         let dropStarted = ContinuousClock.now
         let inherited = try await RealModelContainer.load(ref: propagationProbeModel)
-        await inherited.container.mlxModel?.evict()
+        await inherited.evict()
         let dropDuration = ContinuousClock.now - dropStarted
 
         let loadStarted = ContinuousClock.now

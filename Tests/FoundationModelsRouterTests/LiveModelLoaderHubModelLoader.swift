@@ -30,7 +30,7 @@ extension LiveModelLoader {
     /// - Throws: When the model loader is not a `HubModelLoader`, or when it
     ///   has no stored `MLXModelLoader` named `mlx`.
     func requireMLXModelLoader() throws -> MLXModelLoader {
-        try Self.storedLoader(named: "mlx", in: requireHubModelLoader())
+        try Self.stored(named: "mlx", in: requireHubModelLoader())
     }
 
     /// The `CoreMLModelLoader` inside the `HubModelLoader` of this live
@@ -41,7 +41,7 @@ extension LiveModelLoader {
     /// - Throws: When the model loader is not a `HubModelLoader`, or when it
     ///   has no stored `CoreMLModelLoader` named `coreML`.
     func requireCoreMLModelLoader() throws -> CoreMLModelLoader {
-        try Self.storedLoader(named: "coreML", in: requireHubModelLoader())
+        try Self.stored(named: "coreML", in: requireHubModelLoader())
     }
 
     /// The `LlamaCppModelLoader` inside the `HubModelLoader` of this live
@@ -52,7 +52,7 @@ extension LiveModelLoader {
     /// - Throws: When the model loader is not a `HubModelLoader`, or when its
     ///   optional GGUF loader named `gguf` is absent or of another type.
     func requireGGUFModelLoader() throws -> LlamaCppModelLoader {
-        try Self.storedLoader(named: "gguf", in: requireHubModelLoader())
+        try Self.stored(named: "gguf", in: requireHubModelLoader())
     }
 
     /// The `HubClient` that the GGUF loader of this live loader downloads
@@ -73,12 +73,6 @@ extension LiveModelLoader {
     /// - Throws: When a stored property is missing or of another type.
     func requireGGUFSource() throws -> GGUFSource {
         try Self.stored(named: "source", in: requireGGUFModelLoader())
-    }
-
-    /// Reads one stored loader of a `HubModelLoader` by the name of its
-    /// property.
-    private static func storedLoader<Loader>(named name: String, in hub: HubModelLoader) throws -> Loader {
-        try stored(named: name, in: hub)
     }
 
     /// Reads one stored property of `value` by its name. An optional property
