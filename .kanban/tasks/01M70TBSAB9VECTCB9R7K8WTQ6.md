@@ -109,10 +109,26 @@ comments:
     - evidence: 2 files — Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, Tests/FoundationModelsRouterTests/HubTreeListingTests.swift. `swift build --build-tests` clean (only the known mlx-swift_Cmlx.bundle "missing creator" notice); `swift test` 2508 + 38 + 19 = 2565 passed, 0 failed; `swift build --build-tests --package-path IntegrationTests` complete. Finding flipped to [x].
     - next: /review
   timestamp: 2026-11-09T21:52:18.416029+00:00
+- actor: claude-code
+  id: 01m714vxfm6emv81cjz8wg6fhd
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (c9216bb4) — 0 findings (7 validator runs attempted, 0 failed); all prior Review Findings items checked
+    - next: none — task moved to done
+  timestamp: 2026-11-09T21:54:11.572961+00:00
+- actor: claude-code
+  id: 01m714w8n6n5kg8knpshnq9548
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — RouterTestFixtures.swift, HubTreeListingTests.swift (named constants)
+    - test: green — swift test 2565 passed, IntegrationTests builds
+    - commit: c9216bb4
+    - review: clean — 0 findings, 2/2 prior items checked
+  timestamp: 2026-11-09T21:54:23.014836+00:00
 depends_on:
 - 01M70TB3W99163V7F38SFR7SPN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffff180
 title: 'GGUF: size a GGUF candidate (and its drafter) before download'
 ---
 ## Problem
