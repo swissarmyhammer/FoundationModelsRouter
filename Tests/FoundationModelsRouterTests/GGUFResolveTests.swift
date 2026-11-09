@@ -207,4 +207,41 @@ struct GGUFResolveTests {
                     && $0.metadata[RouterTelemetry.LogMetadataKey.modelRef] == "\(Self.drafterRef.stringValue)"
             })
     }
+
+    /// A GGUF candidate whose drafter names its own file: the shape of a
+    /// model that drafts with a second copy of itself.
+    private static let selfDraftingRef = ModelRef(
+        repo: ggufRef.repo, path: ggufRef.path, revision: ggufRef.revision, drafter: ggufRef)
+
+    @Test("a candidate whose drafter names its own file reads its GGUF header once")
+    func selfDrafterReadsTheHeaderOnce() async throws {
+        let source = Self.source(mlxBytes: Self.smallBytes, ggufBytes: Self.smallBytes)
+
+        _ = try await Self.resolve(Self.profile(standard: [Self.selfDraftingRef]), source: source)
+
+        #expect(await source.readRanges == [0..<GGUFHeaderPrefix.initialByteCount])
+    }
+
+    @Test("a candidate whose drafter names its own file reads the metadata of its repo once")
+    func selfDrafterReadsTheRepoMetadataOnce() async throws {
+        let source = Self.source(mlxBytes: Self.smallBytes, ggufBytes: Self.smallBytes)
+
+        _ = try await Self.resolve(Self.profile(standard: [Self.selfDraftingRef]), source: source)
+
+        #expect(await source.metadataReads.filter { $0 == Self.ggufRef.repo }.count == 1)
+    }
+
+    @Test("a resolve sizes the drafter of a candidate while it sizes the candidate")
+    func drafterIsSizedWhileItsCandidateIsSized() async throws {
+        let ref = ModelRef(repo: Self.ggufRef.repo, path: Self.ggufRef.path, drafter: Self.drafterRef)
+        let source = OverlapGatedMetadataSource(
+            base: Self.source(mlxBytes: Self.smallBytes, ggufBytes: Self.smallBytes),
+            holding: Self.ggufRef.repo, until: Self.drafterRef.repo)
+
+        let resolved = try await BoundedWait.run {
+            try await Self.resolve(Self.profile(standard: [ref]), source: source)
+        }
+
+        #expect(resolved.standard.chosen == ref)
+    }
 }

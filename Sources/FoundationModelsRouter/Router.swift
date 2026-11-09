@@ -628,32 +628,61 @@ public actor Router {
 
     // MARK: - Sizing
 
-    /// Fetches every candidate's parsed metadata, merging results for a ref
-    /// shared across slots with ``preferSuccess(left:right:)``. The MTP
-    /// drafter of a candidate (``ModelRef/drafter``) is sized too, under its
-    /// own ref, so the fit charges its weights and, for a GGUF drafter, its
-    /// context. A drafter that llama.cpp will not load is still sized, and
-    /// logs a warning (``warnIfDrafterWillNotLoad(_:result:)``).
+    /// Fetches every candidate's parsed metadata. The MTP drafter of a
+    /// candidate (``ModelRef/drafter``) is sized too, under its own ref, so
+    /// the fit charges its weights and, for a GGUF drafter, its context. A
+    /// drafter that llama.cpp will not load is still sized, and logs a
+    /// warning (``warnIfDrafterWillNotLoad(_:result:)``).
+    ///
+    /// Each distinct model is fetched once (``sizingKey(of:)``), and every
+    /// fetch runs at the same time. A ref listed in two slots, and a
+    /// candidate whose drafter names its own file, share one fetch: a GGUF
+    /// fetch reads megabytes of header over several range reads, so a second
+    /// fetch of the same file, or a fetch that waits for another, costs
+    /// seconds.
     private func sizeCandidates(
         profile def: ProfileDefinition
     ) async -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
-        var out: [ModelRef: Result<RepoMetadata, RepoMetadataError>] = [:]
-        for (_, refs) in def.candidatesBySlot {
-            for ref in refs {
-                let result = await metadataResult(for: ref)
-                if let existing = out[ref] {
-                    out[ref] = Self.preferSuccess(left: existing, right: result)
-                } else {
-                    out[ref] = result
-                }
-                if let drafter = ref.drafter, out[drafter] == nil {
-                    let drafterResult = await metadataResult(for: drafter)
-                    warnIfDrafterWillNotLoad(drafter, result: drafterResult)
-                    out[drafter] = drafterResult
-                }
+        let candidates = Set(def.candidatesBySlot.values.joined())
+        let drafters = Set(candidates.compactMap(\.drafter))
+        let refs = candidates.union(drafters)
+        let resultsByKey = await sizedModels(Set(refs.map(Self.sizingKey(of:))))
+        let metadataByRef = Dictionary(
+            uniqueKeysWithValues: refs.compactMap { ref in
+                resultsByKey[Self.sizingKey(of: ref)].map { (ref, $0) }
+            })
+        for drafter in drafters {
+            if let result = metadataByRef[drafter] {
+                warnIfDrafterWillNotLoad(drafter, result: result)
             }
         }
-        return out
+        return metadataByRef
+    }
+
+    /// Fetches the metadata of each model at the same time.
+    ///
+    /// - Parameter keys: The models, each written as its ``sizingKey(of:)``.
+    /// - Returns: The result of each model, by its key.
+    private nonisolated func sizedModels(
+        _ keys: Set<ModelRef>
+    ) async -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
+        await withTaskGroup(of: (key: ModelRef, result: Result<RepoMetadata, RepoMetadataError>).self) { group in
+            for key in keys {
+                group.addTask { (key, await self.metadataResult(for: key)) }
+            }
+            return await group.reduce(into: [:]) { results, sized in results[sized.key] = sized.result }
+        }
+    }
+
+    /// The model whose metadata a ref names: its repo, its path and its
+    /// revision, and no drafter. The metadata of a model reads only those
+    /// three (``RepoMetadataReader/metadata(for:)``), so two refs with one
+    /// key have one metadata.
+    ///
+    /// - Parameter ref: A candidate or a drafter.
+    /// - Returns: The ref with no drafter.
+    private static func sizingKey(of ref: ModelRef) -> ModelRef {
+        ModelRef(repo: ref.repo, path: ref.path, revision: ref.revision)
     }
 
     /// Logs a warning for a GGUF drafter that llama.cpp does not load as a
@@ -678,29 +707,13 @@ public actor Router {
 
     /// Fetches and parses one candidate's metadata. A non-``RepoMetadataError``
     /// error becomes ``RepoMetadataError/metadataUnavailable(_:)``.
-    private func metadataResult(for ref: ModelRef) async -> Result<RepoMetadata, RepoMetadataError> {
+    private nonisolated func metadataResult(for ref: ModelRef) async -> Result<RepoMetadata, RepoMetadataError> {
         do {
             return .success(try await metadataReader.metadata(for: ref))
         } catch let error as RepoMetadataError {
             return .failure(error)
         } catch {
             return .failure(.metadataUnavailable(error.localizedDescription))
-        }
-    }
-
-    /// Merges two metadata results for one ref: the first success, or the
-    /// first failure when both failed.
-    private static func preferSuccess(
-        left lhs: Result<RepoMetadata, RepoMetadataError>,
-        right rhs: Result<RepoMetadata, RepoMetadataError>
-    ) -> Result<RepoMetadata, RepoMetadataError> {
-        switch (lhs, rhs) {
-        case (.success, _):
-            return lhs
-        case (.failure, .success):
-            return rhs
-        case (.failure, .failure):
-            return lhs
         }
     }
 

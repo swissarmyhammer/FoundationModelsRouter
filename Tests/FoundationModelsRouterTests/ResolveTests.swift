@@ -109,9 +109,8 @@ struct ResolveTests {
     // MARK: - Scripted metadata source
 
     /// A ``MetadataSource`` whose fetch outcome for a repo is scripted per
-    /// call, consumed in order — so a single ``ModelRef`` shared across two
-    /// slots (and therefore fetched twice by the router's sizing step, once
-    /// per slot) can be driven through a specific success/failure sequence.
+    /// call, consumed in order, so a test drives a repo through a specific
+    /// success/failure sequence.
     /// A repo with no script, or an exhausted one, falls back to
     /// ``defaultRaw``, so slots unrelated to the scripted candidate(s)
     /// resolve normally with no extra setup.
@@ -523,8 +522,8 @@ struct ResolveTests {
 
     @Test(
         """
-        sizeCandidates merges a ModelRef shared across slots by keeping the \
-        larger successful footprint (preferLarger .success/.success)
+        a ModelRef shared across slots is priced at its larger footprint \
+        in every slot
         """
     )
     @MainActor
@@ -535,8 +534,8 @@ struct ResolveTests {
         // The same ref is the sole candidate for both `embedding` and
         // `standard`. Sized as an embedder it is only 10 MB (no KV cache);
         // sized as a generation model at the profile's context it is ~12.1 MB
-        // (weights + KV cache). The merge in `sizeCandidates` must keep the
-        // larger of the two for *both* slots' fit test.
+        // (weights + KV cache). The fit must price it at the larger of the
+        // two in *both* slots.
         let shared: ModelRef = "org/shared-embed-std"
         let profile = ProfileDefinition(
             name: "shared-embed-std",
@@ -585,58 +584,8 @@ struct ResolveTests {
 
     @Test(
         """
-        sizeCandidates merges a ModelRef shared across slots by preferring a \
-        later success over an earlier failure (preferLarger .failure/.success)
-        """
-    )
-    @MainActor
-    func mergePrefersSuccessOverAnEarlierFailure() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        // The same ref is the `standard` candidate and the first `flash`
-        // candidate. Its fetch fails the first time it is sized (whichever
-        // slot that is) and succeeds the second — the merge must keep the
-        // success so `standard` still resolves to it, rather than the failure
-        // poisoning the merged entry. `flash` never uses the `standard` model,
-        // so it takes its second candidate.
-        let heals: ModelRef = "org/heals-after-one-failure"
-        let healsFlash: ModelRef = "org/heals-flash"
-        let profile = ProfileDefinition(
-            name: "heals",
-            description: "one ref fails its first fetch, then sizes successfully",
-            standard: [heals],
-            flash: [heals, healsFlash],
-            embedding: ["org/emb-only"],
-            context: ScriptedSessionContext.tokens
-        )
-
-        let progress = ResolutionProgress()
-        let source = ScriptedMetadataSource(
-            scripts: [
-                heals.repo: [.failDirect(.metadataUnavailable("transient")), .success(Self.rawMetadata)]
-            ],
-            defaultRaw: Self.rawMetadata
-        )
-        let loader = StubModelLoader(progress: progress)
-        let router = Router(
-            cacheDir: dir,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-            metadataSource: source,
-            loader: loader,
-            pool: ModelPool()
-        )
-
-        let resolved = try await router.resolve(profile: profile, reporting: progress)
-
-        #expect(resolved.standard.chosen == heals)
-        #expect(resolved.flash.chosen == healsFlash)
-    }
-
-    @Test(
-        """
-        sizeCandidates merges a ModelRef shared across slots by keeping the \
-        first failure when every fetch fails (preferLarger .failure/.failure)
+        sizeCandidates fetches a ModelRef shared across slots once, so the \
+        failure of that fetch is its verdict in every slot
         """
     )
     @MainActor
@@ -645,12 +594,10 @@ struct ResolveTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // The same ref is the `standard` candidate and the first `flash`
-        // candidate, and every fetch for it fails. `preferLarger`'s
-        // `.failure/.failure` branch keeps `lhs` — the chronologically-first
-        // computed result, which (since calls are sequential) is always
-        // whichever slot's fetch happens first, regardless of slot iteration
-        // order. The second `flash` candidate keeps the profile from naming
-        // only one model for both generation slots.
+        // candidate. Its script holds two failures, and the router fetches it
+        // once, so the first failure is its verdict in both slots and the
+        // second is never read. The second `flash` candidate keeps the profile
+        // from naming only one model for both generation slots.
         let dualFail: ModelRef = "org/dual-fail"
         let profile = ProfileDefinition(
             name: "dual-fail",

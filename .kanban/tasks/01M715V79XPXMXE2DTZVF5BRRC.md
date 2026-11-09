@@ -1,8 +1,46 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m716anw7k7b3ab44srykvt43
+  text: |-
+    Research + measurement (2026-11-09).
+
+    Code path: Router.sizeCandidates walks every slot's refs serially, `await metadataResult(for: ref)` one at a time, then the drafter, also serially. The candidate `ModelRef(repo:path:revision:drafter:)` and its drafter `ModelRef(repo:path:revision:)` are different ModelRef keys (drafter is part of Hashable), so the self-drafter is sized twice. The revision is nil (can move), so RepoMetadataReader.refreshedMetadata fetches every time; the disk cache (keyed repo/path/revision) is only a fallback and does not dedup. There is no in-flight dedup anywhere. Metadata depends only on repo/path/revision (stringValue omits the drafter, so even the error names match).
+
+    Header cost: Qwen3.5-0.8B-Q8_0.gguf KV section ends at byte 10,942,704 (tokens 4.85 MB, merges 5.09 MB, token_type 0.99 MB). GGUFHeaderPrefix reads 0..1M, 1..2M, 2..4M, 4..8M, 8..16M = 5 serial Range GETs, 16 MB, plus 5 full re-parses. Timing harness over the live HuggingFaceMetadataSource: tree+config 0.17 s, range reads 0.71/0.29/0.34/0.45/0.86 s; one header = 3.4-3.5 s total (debug), and a second sizing of the same ref costs the same again.
+
+    Gated suite with temporary prints (reverted): plain profile sizing 4.0 s (embedding 0.38 + flash 0.20 + GGUF 3.43, serial); self-drafter profile sizing 10.3 s (0.14 + 0.14 + GGUF 3.62 + same GGUF again as drafter 6.39); mixed-slot GGUF alone took 9.47 s in the same run, so the per-header cost swings 3-9 s with the network. Loads are ~1.2 s and unchanged. Root cause of the delta: the drafter naming the same file is fetched a second time, serially. Contributing: all sizing is serial.
+
+    Not the cause: tree listing (one GET, 0.11 s, 1.3 KB), no retry/timeout paths in the source.
+
+    Plan: size each distinct (repo, path, revision) once, concurrently, in sizeCandidates; map results back to candidates and drafters. preferSuccess becomes dead (each ref gets one fetch). Range-read growth (5 round trips, 16 MB for 11 MB) is a separate improvement for the plain ref; filed as its own task.
+  timestamp: 2026-11-09T22:19:43.879776+00:00
+- actor: claude-code
+  id: 01m716v3raddd3gs00x1r204xw
+  text: |-
+    Implementation landed (not committed).
+
+    Router.sizeCandidates now collects the distinct candidates and drafters, maps each to its sizing key (`ModelRef(repo:path:revision:)`, no drafter), and sizes each distinct key once, all at the same time, in a task group (`sizedModels`, nonisolated; `metadataResult` is nonisolated too so parsing does not serialize on the Router actor). Results map back to every ref. `preferSuccess` was deleted: with one fetch per model there is nothing to merge. Drafter warnings now fire for each distinct drafter.
+
+    Behavior change to note: a ref listed in two slots used to be fetched twice, and a transient failure on the first fetch could heal on the second. It is now fetched once, so the one result is its verdict in every slot. The test that pinned the heal (`mergePrefersSuccessOverAnEarlierFailure`) was deleted as no longer valid; the `.failure/.failure` test was retitled to the new contract (one fetch, its failure in every slot) and the `.success/.success` test retitled (it tests the per-slot footprint pricing, not sizeCandidates). ScriptedMetadataSource's doc no longer claims a twice-per-slot fetch.
+
+    TDD: three new tests in GGUFResolveTests failed first (header read 2x, repo metadata read 2x, OverlapGatedMetadataSource gate expired at 60 s under serial sizing) and pass now. New helper Tests/.../Helpers/OverlapGatedMetadataSource.swift; FileServingMetadataSource records `metadataReads`.
+
+    Re-measured with the gated suite (temporary prints, reverted): plain profile sizing 4.0 s -> 3.2 s; self-drafter profile sizing 10.3 s -> 3.3 s (the drafter shares the candidate's fetch, and the MLX candidates overlap the GGUF one). Test durations: self-drafter 32.5 s -> 26.4 s; suite 57.2 s -> 46.2 s. Remaining sizing time is the GGUF header Range reads themselves (5 round trips, 16 MB), filed as ^gnp1jne.
+
+    Verification: `swift build --build-tests` clean (only the known missing-creator notice); `swift test` 2510 + 38 + 19 = 2567 pass (2565 + 3 new - 1 deleted); `swift build --build-tests --package-path IntegrationTests` clean; gated GGUFProfileIntegrationTests 3/3 pass.
+  timestamp: 2026-11-09T22:28:42.378870+00:00
+- actor: claude-code
+  id: 01m716v7f3h1y3m2145146nfww
+  text: |-
+    ### implement — changed
+    - evidence: root cause = the drafter naming the candidate's own file was a different ModelRef key, so its Hub metadata + 16 MB of GGUF header Range reads ran a second time, serially after the candidate (all sizing was serial). Fix: one concurrent fetch per (repo, path, revision). Files: Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/GGUFResolveTests.swift, Tests/FoundationModelsRouterTests/ResolveTests.swift, Tests/FoundationModelsRouterTests/Helpers/FileServingMetadataSource.swift, Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift (new). Sizing phase: self-drafter 10.3 s -> 3.3 s, plain 4.0 s -> 3.2 s. swift test 2567 pass; both builds clean; gated suite 3/3.
+    - next: /review. Follow-up ^gnp1jne for the Range-read round trips.
+  timestamp: 2026-11-09T22:28:46.179562+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'GGUF: sizing a GGUF ref that names a GGUF drafter takes ~15 s longer than the plain ref'
 ---
 ## What

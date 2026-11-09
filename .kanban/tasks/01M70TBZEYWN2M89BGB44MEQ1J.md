@@ -40,12 +40,28 @@ comments:
     - evidence: 1 file, the new IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFProfileIntegrationTests.swift. Real-model runs of `swift test --package-path IntegrationTests --filter GGUFProfileIntegrationTests`: run 1, the first draft, failed (expected 1 generation call, got 4) after 348 s, which included a 4.5-minute Llama-3.2-1B download. With the final code: run 2 passed (3/3, suite 62.1 s, command 82 s; tests 11.9 s / 38.8 s / 11.3 s). Run 3, back to back, passed (3/3, suite 64.3 s, command 77 s; tests 12.0 s / 40.3 s / 11.9 s). Root `swift build --build-tests`: clean apart from the known mlx-swift_Cmlx.bundle notice. Root `swift test`: 2508 + 38 + 19 = 2565 passed.
     - next: /review
   timestamp: 2026-11-09T22:11:30.530080+00:00
+- actor: claude-code
+  id: 01m7160k0h8641ax6eeygt64b8
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (12113453): 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed); 1 file reviewed (GGUFProfileIntegrationTests.swift), 10 .kanban files excluded by .reviewignore. Acceptance item checked: runs 2 and 3 back to back were 3/3 each (62.1 s, 64.3 s).
+    - next: none — task moved to done.
+  timestamp: 2026-11-09T22:14:13.265036+00:00
+- actor: claude-code
+  id: 01m7160yd4dgnmhrcy4hjc0kqb
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — GGUFProfileIntegrationTests.swift (new); real-model runs passed 3/3 twice in a row (62.1 s, 64.3 s)
+    - test: green — swift test 2565 passed, IntegrationTests builds
+    - commit: 12113453
+    - review: clean — 0 findings
+  timestamp: 2026-11-09T22:14:24.932106+00:00
 depends_on:
 - 01M70TBC964F3BW0TM6YQ9T4ZD
 - 01M70TBJ05VAPRAC8DEZ27872M
 - 01M70TBSAB9VECTCB9R7K8WTQ6
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffff380
 title: 'GGUF: real-model integration test — a GGUF profile resolves, generates, and speculates with MTP'
 ---
 ## What
@@ -57,4 +73,4 @@ A gated test in the IntegrationTests package that drives the whole router path w
 - Keep it under the 2-minute budget per integration test.
 
 ## Acceptance
-- [ ] The test passes twice in a row locally. #gguf
+- [x] The test passes twice in a row locally. #gguf

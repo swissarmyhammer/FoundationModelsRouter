@@ -22,6 +22,9 @@ actor FileServingMetadataSource: MetadataSource {
     /// The bytes of each file, by `repo/path`.
     private let files: [String: Data]
 
+    /// Each repo whose metadata was read, in the order of the reads.
+    private(set) var metadataReads: [String] = []
+
     /// Each range read, in the order of the reads.
     private(set) var readRanges: [Range<Int>] = []
 
@@ -38,7 +41,8 @@ actor FileServingMetadataSource: MetadataSource {
     }
 
     func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
-        rawByRepo[repo] ?? defaultRaw
+        metadataReads.append(repo)
+        return rawByRepo[repo] ?? defaultRaw
     }
 
     func fetchFileBytes(repo: String, revision: String?, path: String, range: Range<Int>) async throws -> Data {
