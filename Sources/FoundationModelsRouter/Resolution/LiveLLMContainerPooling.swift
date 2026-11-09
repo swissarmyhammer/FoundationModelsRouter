@@ -36,7 +36,8 @@ extension LiveLLMContainer {
 
     /// Wraps a `LlamaLanguageModel`. Its window is the context the model
     /// loaded at, which llama.cpp fixes at load, and it counts with the
-    /// vocabulary of the model (``LlamaTokenCounter``).
+    /// vocabulary of the model (``TokenizerTokenCounter`` over its
+    /// `LlamaTokenizer`).
     ///
     /// - Parameters:
     ///   - model: The model to wrap.
@@ -46,7 +47,7 @@ extension LiveLLMContainer {
     package static func make(wrapping model: LlamaLanguageModel, ref: ModelRef) throws -> LiveLLMContainer {
         LiveLLMContainer(
             model: model, ref: ref, contextWindow: model.contextSize,
-            tokenCounter: LlamaTokenCounter(tokenizer: try model.tokenizer()))
+            tokenCounter: TokenizerTokenCounter(tokenizer: try model.tokenizer()))
     }
 
     /// Wraps an `MLXLanguageModel`. Its window is the native max context of

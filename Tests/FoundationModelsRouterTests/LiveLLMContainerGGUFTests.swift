@@ -23,6 +23,13 @@ struct LiveLLMContainerGGUFTests {
     /// the window tells that the container read it from the model.
     private static let contextSize = 8_192
 
+    /// A text of many multi-byte characters, so a cut by tokens can fall
+    /// inside a character.
+    private static let multiByteText = "naïve café — 日本語のテキストを数える"
+
+    /// The tokens the cut fixture keeps: fewer than `multiByteText` holds.
+    private static let cutTokens = 5
+
     /// A vocab-only Qwen 3.5 model: its vocabulary and its chat template.
     private static func makeModel() throws -> LlamaLanguageModel {
         try LlamaLanguageModel(
@@ -51,6 +58,16 @@ struct LiveLLMContainerGGUFTests {
         #expect(container.tokenCounter.prefix(of: text, tokens: 0) == "")
         #expect(container.tokenCounter.prefix(of: text, tokens: 10_000) == text)
         #expect(container.tokenCounter.prefix(of: text, tokens: 2).count < text.count)
+    }
+
+    @Test("the shared TokenizerTokenCounter cuts text over a LlamaTokenizer as the tokenizer cuts it")
+    func tokenizerTokenCounterCutsAsTheLlamaTokenizer() throws {
+        let tokenizer = try Self.makeModel().tokenizer()
+        let counter = TokenizerTokenCounter(tokenizer: tokenizer)
+
+        #expect(
+            counter.prefix(of: Self.multiByteText, tokens: Self.cutTokens)
+                == (try tokenizer.prefix(of: Self.multiByteText, tokens: Self.cutTokens)))
     }
 
     @Test("a GGUF container counts a transcript through the chat template of the model")

@@ -1,8 +1,86 @@
 import Foundation
 import FoundationModels
+import FoundationModelsLlamaCpp
 import MLXLMCommon
 
 /// The live ``TokenCounter``: it counts with the tokenizer of a loaded model.
+///
+/// The counter holds the rules every backend shares: a text counts its tokens
+/// with no special tokens added, a prefix keeps nothing for a limit of zero or
+/// less and the whole text when it fits, and a transcript counts as the chat
+/// template of the model renders it. Its ``CountingTokenizer`` reads the
+/// vocabulary of the model: ``MLXCountingTokenizer`` for an MLX model, and the
+/// `LlamaTokenizer` of a GGUF model.
+struct TokenizerTokenCounter: TokenCounter {
+    /// The tokenizer of the loaded model.
+    private let tokenizer: any CountingTokenizer
+
+    /// Creates a counter over `tokenizer`.
+    ///
+    /// - Parameter tokenizer: The tokenizer of the loaded model.
+    init(tokenizer: any CountingTokenizer) {
+        self.tokenizer = tokenizer
+    }
+
+    /// Creates a counter over the tokenizer of a loaded MLX model.
+    ///
+    /// - Parameter tokenizer: The tokenizer of the loaded model.
+    init(tokenizer: any Tokenizer) {
+        self.init(tokenizer: MLXCountingTokenizer(tokenizer: tokenizer))
+    }
+
+    /// The number of tokens `tokenizer` encodes `text` to, with no special
+    /// tokens added.
+    func count(_ text: String) -> Int {
+        tokenizer.plainTextTokens(of: text).count
+    }
+
+    /// The number of tokens the chat template renders `transcript` to.
+    ///
+    /// - Throws: What the render of the chat template throws.
+    func count(_ transcript: Transcript) throws -> Int {
+        try tokenizer.renderedTokenCount(of: transcript)
+    }
+
+    /// The first `limit` tokens of `text`, decoded back to text.
+    func prefix(of text: String, tokens limit: Int) -> String {
+        guard limit > 0 else { return "" }
+        let tokens = tokenizer.plainTextTokens(of: text)
+        guard tokens.count > limit else { return text }
+        return tokenizer.leadingText(of: text, tokens: tokens, limit: limit)
+    }
+}
+
+/// A tokenizer a ``TokenizerTokenCounter`` counts with: the vocabulary and the
+/// chat template of one loaded model.
+protocol CountingTokenizer: Sendable {
+    /// The tokens of `text`, with no special tokens added. Content inside a
+    /// conversation carries no sequence markers of its own.
+    ///
+    /// - Parameter text: The text to tokenize.
+    /// - Returns: The tokens.
+    func plainTextTokens(of text: String) -> [Int]
+
+    /// The text of the first `limit` tokens of `text`. The counter asks only
+    /// for a cut: `limit` is more than zero and less than `tokens.count`.
+    ///
+    /// - Parameters:
+    ///   - text: The text to cut.
+    ///   - tokens: The tokens of `text` (``plainTextTokens(of:)``).
+    ///   - limit: The number of tokens to keep.
+    /// - Returns: The kept text.
+    func leadingText(of text: String, tokens: [Int], limit: Int) -> String
+
+    /// The number of tokens the chat template of the model renders
+    /// `transcript` to.
+    ///
+    /// - Parameter transcript: The transcript to render.
+    /// - Returns: The count of the tokens of the rendered prompt.
+    /// - Throws: What the render of the chat template throws.
+    func renderedTokenCount(of transcript: Transcript) throws -> Int
+}
+
+/// The ``CountingTokenizer`` of an MLX model: its swift-transformers tokenizer.
 ///
 /// A transcript is rendered through the chat template of the tokenizer, the
 /// same way the MLX generation path renders it before a call: the
@@ -11,28 +89,25 @@ import MLXLMCommon
 /// ``TranscriptChatMessages``). A tokenizer with no chat template renders the
 /// messages as plain text, which is the fallback the MLX generation path
 /// takes for such a model.
-struct TokenizerTokenCounter: TokenCounter {
+struct MLXCountingTokenizer: CountingTokenizer {
     /// The tokenizer of the loaded model.
-    private let tokenizer: any Tokenizer
+    let tokenizer: any Tokenizer
 
-    /// Creates a counter over `tokenizer`.
-    ///
-    /// - Parameter tokenizer: The tokenizer of the loaded model.
-    init(tokenizer: any Tokenizer) {
-        self.tokenizer = tokenizer
+    /// The tokens `tokenizer` encodes `text` to, with no special tokens added.
+    func plainTextTokens(of text: String) -> [Int] {
+        tokenizer.encode(text: text, addSpecialTokens: false)
     }
 
-    /// The number of tokens `tokenizer` encodes `text` to, with no special
-    /// tokens added.
-    func count(_ text: String) -> Int {
-        encode(text).count
+    /// The first `limit` of `tokens`, decoded back to text.
+    func leadingText(of text: String, tokens: [Int], limit: Int) -> String {
+        tokenizer.decode(tokenIds: Array(tokens.prefix(limit)), skipSpecialTokens: false)
     }
 
     /// The number of tokens the chat template renders `transcript` to.
     ///
     /// - Throws: What the chat template throws, except a missing template,
     ///   which takes the plain-text fallback.
-    func count(_ transcript: Transcript) throws -> Int {
+    func renderedTokenCount(of transcript: Transcript) throws -> Int {
         let messages = TranscriptChatMessages.messages(for: transcript)
         let tools = try TranscriptChatMessages.toolSpecifications(for: transcript)
         do {
@@ -43,19 +118,26 @@ struct TokenizerTokenCounter: TokenCounter {
             return tokenizer.encode(text: TranscriptChatMessages.plainText(of: messages), addSpecialTokens: true).count
         }
     }
+}
 
-    /// The first `limit` tokens of `text`, decoded back to text.
-    func prefix(of text: String, tokens limit: Int) -> String {
-        guard limit > 0 else { return "" }
-        let tokens = encode(text)
-        guard tokens.count > limit else { return text }
-        return tokenizer.decode(tokenIds: Array(tokens.prefix(limit)), skipSpecialTokens: false)
+/// The ``CountingTokenizer`` of a GGUF model: the vocabulary of the loaded
+/// `LlamaLanguageModel`. Its own `renderedTokenCount(of:)` renders a
+/// transcript through the chat template of the model, the same way the
+/// llama.cpp generation path renders it before a call. Each call reads only
+/// the vocabulary, so a count runs from any thread while the model generates.
+extension LlamaTokenizer: CountingTokenizer {
+    /// The tokens of `text`, with no special tokens added. The tokenizer
+    /// throws only for a text of more than `Int32.max` bytes, which gives no
+    /// tokens.
+    func plainTextTokens(of text: String) -> [Int] {
+        ((try? tokens(text)) ?? []).map(Int.init)
     }
 
-    /// The tokens of `text`, with no special tokens added. Content inside a
-    /// conversation carries no sequence markers of its own.
-    private func encode(_ text: String) -> [Int] {
-        tokenizer.encode(text: text, addSpecialTokens: false)
+    /// The text of the first `limit` tokens of `text`, cut by the tokenizer
+    /// itself so the cut never falls inside a character. The tokenizer throws
+    /// only for a text of more than `Int32.max` bytes, which keeps nothing.
+    func leadingText(of text: String, tokens: [Int], limit: Int) -> String {
+        (try? prefix(of: text, tokens: limit)) ?? ""
     }
 }
 

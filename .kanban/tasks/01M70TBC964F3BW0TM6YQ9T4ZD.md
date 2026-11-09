@@ -52,6 +52,49 @@ comments:
   id: 01m70zsgyqqmbj7t55bmvjnpe4
   text: 'Correction to the two comments above. The diff touches 20 files: 3 outside IntegrationTests and 17 IntegrationTests/Tests files, Support/Qwen38ResidentModel.swift among them. The earlier comments said 21 and 18. The eviction sites moved to `RealModelContainer.evict()` number 40, not 42.'
   timestamp: 2026-11-09T20:25:30.327634+00:00
+- actor: claude-code
+  id: 01m7107xeycxpdafa2v6t5v7c2
+  text: |-
+    ### finish iteration 2 — commit (review pending)
+    - implement: changed — 20 files (5 findings fixed)
+    - test: green — swift test 2449/38/19 passed, 0 failures; IntegrationTests builds. The only warning is the SwiftPM "missing creator for mutated node … mlx-swift_Cmlx.bundle"; it also appears on 662a44b5~1 (before GGUF, no .Cxx), so it comes from the dependency and isn't new
+    - commit: 453d78d9
+  timestamp: 2026-11-09T20:33:21.886659+00:00
+- actor: claude-code
+  id: 01m710g3f5newaxftxbq2rbfwd
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (453d78d9) — 0 findings, the 5 prior items are resolved; review file LiveLLMContainerPooling.swift — 0 findings; review file LlamaTokenCounter.swift — 1 finding: Sources/FoundationModelsRouter/Resolution/LlamaTokenCounter.swift:12 (reuse/reuse)
+    - next: implement the LlamaTokenCounter reuse finding (reuse or generalize TokenizerTokenCounter), then re-review
+  timestamp: 2026-11-09T20:37:50.181577+00:00
+- actor: claude-code
+  id: 01m710gkkzbg8vg226whyegqxn
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 20 files
+    - test: green — swift test 2449 passed (the SwiftPM Cmlx.bundle notice was already there before this work)
+    - commit: 453d78d9
+    - review: findings — LlamaTokenCounter.swift:12 (reuse/reuse); all 5 earlier items fixed
+  timestamp: 2026-11-09T20:38:06.719913+00:00
+- actor: claude-code
+  id: 01m710txch0nt48sd5qnhjmth5
+  text: |-
+    Fixed the LlamaTokenCounter reuse finding (uncommitted):
+    - New internal protocol `CountingTokenizer: Sendable` in TokenizerTokenCounter.swift: `plainTextTokens(of:) -> [Int]`, `leadingText(of:tokens:limit:)` (called only for a cut, 0 < limit < tokens.count), `renderedTokenCount(of:) throws`.
+    - `TokenizerTokenCounter` now holds `any CountingTokenizer` and keeps the shared rules: count(text), count(transcript), and prefix returns "" for limit <= 0 and the text unchanged when it fits. `init(tokenizer: any Tokenizer)` stays as a convenience that wraps the MLX tokenizer, so the existing tests and CompactionPartCostTests compile unchanged.
+    - `MLXCountingTokenizer` wraps the MLX `Tokenizer`. The chat-template render, including the `TokenizerError.missingChatTemplate` plain-text fallback, moved into it unchanged.
+    - `LlamaTokenizer` conforms through an extension. Its own `renderedTokenCount(of:)` satisfies the requirement. `plainTextTokens` maps the Int32.max throw to no tokens. `leadingText` uses the tokenizer's own `prefix(of:tokens:)`, so a cut never falls inside a character. Rejected alternative: decoding the token prefix with `text(of:)` would end in U+FFFD when the cut splits a character. Cost: the cut re-tokenizes the text one time.
+    - Deleted LlamaTokenCounter.swift. `LiveLLMContainer.make(wrapping: LlamaLanguageModel, ref:)` now builds `TokenizerTokenCounter(tokenizer: try model.tokenizer())`.
+    - One edge differs from the old type: for a text over Int32.max bytes, which counts as 0 tokens, prefix now returns the text unchanged. The old type returned "".
+    - New test in LiveLLMContainerGGUFTests: the shared counter over a LlamaTokenizer cuts a multi-byte text exactly as `LlamaTokenizer.prefix` cuts it. It failed to compile first (RED), then passed.
+  timestamp: 2026-11-09T20:43:44.401898+00:00
+- actor: claude-code
+  id: 01m710v06jr77q7kwd1pyyrsq3
+  text: |-
+    ### implement — changed
+    - evidence: 4 files. Sources/FoundationModelsRouter/Resolution/TokenizerTokenCounter.swift, Sources/FoundationModelsRouter/Resolution/LiveLLMContainerPooling.swift, Sources/FoundationModelsRouter/Resolution/LlamaTokenCounter.swift (deleted), Tests/FoundationModelsRouterTests/LiveLLMContainerGGUFTests.swift. `swift build --build-tests` built with no compiler warnings. The only notice is the SwiftPM "missing creator … mlx-swift_Cmlx.bundle", which was already there. `swift test` passed 2450 tests in 289 suites, plus 38 and 19. `swift build --build-tests --package-path IntegrationTests` completed.
+    - next: /review
+  timestamp: 2026-11-09T20:43:47.282973+00:00
 depends_on:
 - 01M70TB3W99163V7F38SFR7SPN
 position_column: doing
@@ -85,3 +128,20 @@ title: 'GGUF: a generation container over LlamaLanguageModel'
 - [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SessionTreeRestorationIntegrationTests.swift:325` `reuse/reuse` — The eviction teardown is duplicated. Use the shared `RealModelContainer` eviction helper. (Confirmed by the prior pass over this range.)
 - [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:87` `code-hygiene/idioms-swift` — UseSynthesizedInitializer: remove this explicit initializer, which is identical to the compiler-synthesized initializer.
 - [x] `Tests/FoundationModelsRouterTests/LiveModelLoaderHubModelLoader.swift:81` `reuse/reuse` — storedLoader(named:in:) is now a one-line forwarder to the generic stored(named:in:) added directly below it. It adds a second helper with the same behaviour under a different name, so there are two ways to read a stored property where one is enough. Drop storedLoader and call stored(named:in:) directly from requireMLXModelLoader, requireCoreMLModelLoader and requireGGUFModelLoader, or keep storedLoader as the only helper if its name is the clearer one. Keep one of the two.
+
+## Review Findings (2026-11-09 14:33)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 20 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+## Review Findings (2026-11-09 14:35)
+
+> Scope: `review file Sources/FoundationModelsRouter/Resolution/LiveLLMContainerPooling.swift` — reviewed the whole of each named file. 1 file(s) reviewed, 0 not reviewed.
+
+## Review Findings (2026-11-09 14:36)
+
+> Scope: `review file Sources/FoundationModelsRouter/Resolution/LlamaTokenCounter.swift` — reviewed the whole of each named file. 1 file(s) reviewed, 0 not reviewed.
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LlamaTokenCounter.swift:12` `reuse/reuse` — The `LlamaTokenCounter` struct duplicates `TokenizerTokenCounter`: it wraps a tokenizer and implements the same `TokenCounter` count, transcript count, and prefix operations. Adding a second counter type for the same job splits the token-counting behavior across two types. Check whether `TokenizerTokenCounter` can take the `LlamaTokenizer` directly, through a protocol or a generic parameter, so the Llama path reuses it. If it cannot, generalize `TokenizerTokenCounter` over its tokenizer type and use it here, rather than keeping a parallel counter.
