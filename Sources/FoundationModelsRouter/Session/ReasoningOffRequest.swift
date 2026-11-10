@@ -7,7 +7,8 @@ import FoundationModels
 /// (``ReasoningOffRequest/reasoningLevel``) only when its model conforms and
 /// ``canTurnReasoningOff()`` gives `true`. The MLX engine refuses "reasoning
 /// off" for a model that always reasons, and for a model with no control of
-/// its reasoning. Such a model keeps its usual behavior.
+/// its reasoning. Such a model keeps its usual behavior. `MLXLanguageModel`
+/// and `LlamaLanguageModel` conform (task ^r0dx34s).
 protocol ReasoningSwitchable {
     /// Whether a call can ask this model to turn its reasoning off.
     ///
@@ -40,11 +41,12 @@ enum ReasoningOffRequest {
     /// runs with the reasoning of its model off.
     @TaskLocal static var isRequested = false
 
-    /// The reasoning level that asks the MLX engine to turn the reasoning of
-    /// the model off.
+    /// The reasoning level that asks the engine to turn the reasoning of the
+    /// model off.
     ///
     /// `MLXLanguageModel` reads `.custom("no_think")`, and only that value, as
-    /// "reasoning off". For a model that turns its reasoning on and off with
+    /// "reasoning off". `LlamaLanguageModel` reads the same value in the same
+    /// way (task ^r0dx34s). For a model that turns its reasoning on and off with
     /// a chat template flag, the engine then renders the prompt with that
     /// flag off: for Qwen3, `enable_thinking` is `false` in the additional
     /// context of the template. The level applies to the one pass that

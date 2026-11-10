@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+position_column: doing
+position_ordinal: '8280'
 title: 'GGUF: warn before download when a DFlash drafter has no dflash.target_layers'
 ---
 ## What

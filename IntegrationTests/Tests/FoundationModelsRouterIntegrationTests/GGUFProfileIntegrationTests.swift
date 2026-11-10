@@ -60,7 +60,9 @@ private let ggufSamplingMode: GenerationOptions.SamplingMode = .greedy
 /// the token counts and the metadata of the calls, and never the text of the
 /// answer. A call that ends inside its reasoning at this ceiling is a
 /// reasoning stop, and the session recovers with more calls in the same
-/// answer: the measured run of 2026-11-09 made four calls of 128 reasoning
+/// answer. The first model pass of each recovery, and of the final pass,
+/// runs with the reasoning of the model off (task ^r0dx34s). Before that
+/// task, the measured run of 2026-11-09 made four calls of 128 reasoning
 /// tokens each.
 private let ggufAnswerTokenCeiling = 128
 
@@ -113,6 +115,75 @@ private let mixedSlotProfile = ProfileDefinition(
 )
 
 // MARK: - Fixture
+
+/// What one answer of a session gave: the usage of each of its generation
+/// calls, and the reasoning of each pass that ran with the reasoning off.
+private struct GGUFAnswer {
+    /// The usage of each generation call of the answer, in order. It holds
+    /// at least one call.
+    let calls: [GenerationCallUsage]
+
+    /// The reasoning characters of the first generation call of each
+    /// submission that follows a reasoning stop, in order. The session runs
+    /// the first model pass of that submission, a recovery or the final
+    /// pass, with the reasoning of the model off.
+    let reasoningOffPassReasoning: [Int]
+}
+
+/// Splits the events of one answer into a ``GGUFAnswer``.
+///
+/// A ``SessionEvent/reasoningStopped(_:)`` marks the next submission as one
+/// whose first pass runs with the reasoning off. The reasoning deltas of that
+/// submission up to its first ``SessionEvent/generationCall(_:)`` are the
+/// reasoning of that pass.
+private struct GGUFAnswerRecorder {
+    /// The usage of each generation call so far.
+    private var calls: [GenerationCallUsage] = []
+
+    /// The reasoning of each reasoning-off pass so far.
+    private var reasoningOffPassReasoning: [Int] = []
+
+    /// Whether a reasoning stop came and the next submission has not started.
+    private var reasoningOffPassPending = false
+
+    /// Whether the generation call in flight is a reasoning-off pass.
+    private var inReasoningOffPass = false
+
+    /// The reasoning characters of the generation call in flight.
+    private var reasoningInFlight = 0
+
+    /// Takes one event of the answer.
+    ///
+    /// - Parameter event: The event.
+    mutating func record(_ event: SessionEvent) {
+        switch event {
+        case .reasoningStopped:
+            reasoningOffPassPending = true
+        case .submissionStarted:
+            inReasoningOffPass = reasoningOffPassPending
+            reasoningOffPassPending = false
+            reasoningInFlight = 0
+        case .reasoningDelta(let delta):
+            reasoningInFlight += delta.count
+        case .generationCall(let usage):
+            calls.append(usage)
+            if inReasoningOffPass {
+                reasoningOffPassReasoning.append(reasoningInFlight)
+            }
+            inReasoningOffPass = false
+            reasoningInFlight = 0
+        case .answerFailed(let failure):
+            Issue.record("the answer failed: \(failure)")
+        default:
+            break
+        }
+    }
+
+    /// The answer the events so far gave.
+    var answer: GGUFAnswer {
+        GGUFAnswer(calls: calls, reasoningOffPassReasoning: reasoningOffPassReasoning)
+    }
+}
 
 /// A ``MachineProbe`` that reports a fixed working set, and the chip and the
 /// physical RAM of the host.
@@ -193,6 +264,9 @@ private struct GGUFRouterFixture {
 /// 4. One slot that names an MLX candidate and a GGUF candidate resolves by
 ///    fit: the MLX candidate does not fit the budget, and the GGUF candidate
 ///    wins the slot.
+/// 5. After a reasoning stop, the first model pass of each recovery and of
+///    the final pass runs with the reasoning of the model off, and writes no
+///    reasoning (task ^r0dx34s).
 ///
 /// ## What each resolve loads
 ///
@@ -226,7 +300,7 @@ struct GGUFProfileIntegrationTests {
         defer { fixture.removeRoot() }
 
         var profile: LanguageModelProfile? = try await fixture.resolve(ggufProfile)
-        let calls = try await Self.answerOnce(on: try #require(profile).standard)
+        let calls = try await Self.answerOnce(on: try #require(profile).standard).calls
         profile = nil
         #expect(await fixture.pool.awaitNoResidentModel())
 
@@ -246,7 +320,7 @@ struct GGUFProfileIntegrationTests {
         defer { fixture.removeRoot() }
 
         var profile: LanguageModelProfile? = try await fixture.resolve(selfDraftingProfile)
-        let calls = try await Self.answerOnce(on: try #require(profile).standard)
+        let calls = try await Self.answerOnce(on: try #require(profile).standard).calls
         profile = nil
         #expect(await fixture.pool.awaitNoResidentModel())
 
@@ -255,6 +329,22 @@ struct GGUFProfileIntegrationTests {
             let outcome = try #require(usage.speculativeDecoding)
             #expect(outcome.draftedTokenCount > 0)
         }
+    }
+
+    @Test("each pass of a GGUF answer that runs with the reasoning off writes no reasoning")
+    func ggufReasoningOffPassWritesNoReasoning() async throws {
+        let fixture = GGUFRouterFixture()
+        defer { fixture.removeRoot() }
+
+        var profile: LanguageModelProfile? = try await fixture.resolve(ggufProfile)
+        let passes = try await Self.answerOnce(on: try #require(profile).standard).reasoningOffPassReasoning
+        profile = nil
+        #expect(await fixture.pool.awaitNoResidentModel())
+
+        // The first call reasons up to the ceiling, so the answer has at
+        // least one reasoning stop and one pass with the reasoning off.
+        try #require(!passes.isEmpty)
+        #expect(passes.allSatisfy { $0 == 0 }, "reasoning characters of each reasoning-off pass: \(passes)")
     }
 
     @Test("a slot with an MLX candidate and a GGUF candidate resolves by fit")
@@ -274,31 +364,29 @@ struct GGUFProfileIntegrationTests {
     }
 
     /// Makes one session on `model`, answers ``ggufPrompt`` one time, and
-    /// returns the usage of each generation call of the answer.
+    /// returns what the answer gave: the usage of each generation call, and
+    /// the reasoning of each pass that ran with the reasoning off.
     ///
     /// The session is local to this call, so it is gone when the call
     /// returns, and the caller can drop the profile the session retains.
     ///
     /// - Parameter model: The model to answer on.
-    /// - Returns: The usage of each generation call of the answer, in order.
-    ///   It holds at least one call.
+    /// - Returns: What the answer gave. Its calls hold at least one call.
     /// - Throws: Whatever the answer throws, or an expectation failure when the
     ///   answer reported no generation call.
-    private static func answerOnce(on model: RoutedLLM) async throws -> [GenerationCallUsage] {
+    private static func answerOnce(on model: RoutedLLM) async throws -> GGUFAnswer {
         let session = model.makeSession(instructions: ggufInstructions)
-        var calls: [GenerationCallUsage] = []
+        var recorder = GGUFAnswerRecorder()
         let started = ContinuousClock.now
         for try await event in await session.streamEvents(to: ggufPrompt, maxTokens: ggufAnswerTokenCeiling) {
-            if case .generationCall(let usage) = event {
-                calls.append(usage)
-            }
-            if case .answerFailed(let failure) = event {
-                Issue.record("the answer failed: \(failure)")
-            }
+            recorder.record(event)
         }
-        try #require(!calls.isEmpty)
+        let answer = recorder.answer
+        try #require(!answer.calls.isEmpty)
         // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
-        print("[\(label)] ref=\(model.chosen.stringValue) answer=\(ContinuousClock.now - started) calls=\(calls)")
-        return calls
+        print(
+            "[\(label)] ref=\(model.chosen.stringValue) answer=\(ContinuousClock.now - started) calls=\(answer.calls) "
+                + "reasoningOffPassReasoning=\(answer.reasoningOffPassReasoning)")
+        return answer
     }
 }

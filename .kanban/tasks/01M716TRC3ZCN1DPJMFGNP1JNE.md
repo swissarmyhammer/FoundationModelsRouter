@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+position_column: doing
+position_ordinal: '8180'
 title: 'GGUF: the header Range reads take 5 round trips and 16 MB for an 11 MB KV section'
 ---
 ## What

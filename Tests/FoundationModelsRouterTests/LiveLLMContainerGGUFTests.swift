@@ -85,6 +85,49 @@ struct LiveLLMContainerGGUFTests {
         #expect(count > container.tokenCounter.count("Be brief.Hello"))
     }
 
+    /// The fixture chat template of Qwen 3.5, which supports thinking. The
+    /// chat template of the vocab-only Qwen 3.5 GGUF has no thinking.
+    private static let thinkingTemplateName = "Qwen3.5-4B"
+
+    /// The vocab-only Qwen 3.5 model over ``thinkingTemplateName``: a model
+    /// whose chat template supports thinking.
+    private static func makeThinkingModel() throws -> LlamaLanguageModel {
+        try LlamaLanguageModel(
+            gguf: LlamaCppTestFixtures.vocabURL(named: "qwen35"),
+            options: LlamaLanguageModel.Options(contextSize: contextSize),
+            chatTemplate: String(contentsOf: LlamaCppTestFixtures.templateURL(named: thinkingTemplateName), encoding: .utf8))
+    }
+
+    /// Whether `model` can turn its reasoning off, read as the live backend
+    /// reads it: a cast of the raw model to ``ReasoningSwitchable``. A model
+    /// that does not conform cannot.
+    private static func canTurnReasoningOff(_ model: any FoundationModels.LanguageModel) async throws -> Bool {
+        guard let switchable = model as? any ReasoningSwitchable else { return false }
+        return try await switchable.canTurnReasoningOff()
+    }
+
+    @Test("a GGUF model whose chat template supports thinking can turn its reasoning off")
+    func thinkingGGUFModelCanTurnItsReasoningOff() async throws {
+        #expect(try await Self.canTurnReasoningOff(Self.makeThinkingModel()))
+    }
+
+    @Test("a GGUF model with no thinking in its chat template cannot turn its reasoning off")
+    func plainGGUFModelCannotTurnItsReasoningOff() async throws {
+        #expect(try await !Self.canTurnReasoningOff(Self.makeModel()))
+    }
+
+    @Test("the first pass of a reasoning-off call on a thinking GGUF container states the no_think level")
+    func reasoningOffCallOnAGGUFContainerStatesTheNoThinkLevel() async throws {
+        let container = try LiveLLMContainer.make(wrapping: Self.makeThinkingModel(), ref: Self.ref)
+        let backend = try #require(container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend)
+
+        let level = try await ReasoningOffRequest.$isRequested.withValue(true) {
+            try await backend.firstPassReasoningLevel()
+        }
+
+        #expect(level == ReasoningOffRequest.reasoningLevel)
+    }
+
     @Test("the live loader wraps the LlamaLanguageModel its model loader gives, and makes a session over it")
     func liveLoaderWrapsAGGUFModel() async throws {
         let model = try Self.makeModel()

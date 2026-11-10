@@ -64,8 +64,24 @@ comments:
     - evidence: 1 source file (Tests/FoundationModelsRouterTests/Helpers/OverlapGatedMetadataSource.swift) + card .md; `swift build --build-tests` clean (only the known mlx-swift_Cmlx.bundle missing-creator notice); `swift test` 2567 pass (2510 + 38 + 19), 0 failures
     - next: /review
   timestamp: 2026-11-09T22:33:22.281897+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7176xkt8e8cqj1e4bydhreb
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (6422ad77) — 0 findings (7 validator runs attempted, 0 failed); prior finding OverlapGatedMetadataSource.swift:58 ReplaceForEachWithForLoop checked and resolved
+    - next: none — task moved to done
+  timestamp: 2026-11-09T22:35:09.306199+00:00
+- actor: claude-code
+  id: 01m71778bf7ng0x16pgbz95hkg
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — OverlapGatedMetadataSource.swift (for-in loop)
+    - test: green — swift test 2567 passed, IntegrationTests builds
+    - commit: 6422ad77
+    - review: clean — 0 findings, 1/1 prior items checked
+  timestamp: 2026-11-09T22:35:20.303473+00:00
+position_column: done
+position_ordinal: fffffffff480
 title: 'GGUF: sizing a GGUF ref that names a GGUF drafter takes ~15 s longer than the plain ref'
 ---
 ## What

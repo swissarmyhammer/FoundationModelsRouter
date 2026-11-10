@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsExtrasLlamaCpp
+import FoundationModelsLlamaCpp
 import HuggingFace
 import MLXFoundationModels
 import MLXLLM
@@ -163,6 +164,23 @@ extension MLXLanguageModel: ReasoningSwitchable {
         let configuration = await (try await loadContainer()).configuration
         guard case .templateFlag = configuration.reasoningConfig?.promptStrategy else { return false }
         return true
+    }
+}
+
+/// A `LlamaLanguageModel` turns its reasoning off for one call when its chat
+/// template supports thinking (task ^r0dx34s). FoundationModelsLlamaCpp then
+/// reads ``ReasoningOffRequest/reasoningLevel`` as the MLX engine does, and
+/// renders the template with `enable_thinking = false`. A template with no
+/// thinking ignores each reasoning level.
+extension LlamaLanguageModel: ReasoningSwitchable {
+    /// Whether the chat template of this model supports thinking.
+    ///
+    /// - Returns: `true` when the chat template supports thinking, else
+    ///   `false`.
+    /// - Throws: Never. `throws` comes from the ``ReasoningSwitchable``
+    ///   requirement.
+    func canTurnReasoningOff() async throws -> Bool {
+        canTurnReasoningOff
     }
 }
 
@@ -412,9 +430,23 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// - Returns: The context options of the call.
     /// - Throws: What the read of the model configuration throws.
     private func prepareCall(includingSchema: Bool) async throws -> ContextOptions {
-        let firstPassLevel = try await callTurnsReasoningOff() ? ReasoningOffRequest.reasoningLevel : nil
-        sessionModelState.setFirstPassReasoningLevel(firstPassLevel)
+        sessionModelState.setFirstPassReasoningLevel(try await firstPassReasoningLevel())
         return includingSchema ? ContextOptions(includeSchemaInPrompt: true) : ContextOptions()
+    }
+
+    /// The reasoning level the first pass of the call that starts now
+    /// states: ``ReasoningOffRequest/reasoningLevel`` when the call turns the
+    /// reasoning of ``model`` off (``callTurnsReasoningOff()``), else `nil`.
+    ///
+    /// ``prepareCall(includingSchema:)`` states it for the first pass. The
+    /// tests of the GGUF container read it: a thinking `LlamaLanguageModel`
+    /// gets the level, as an MLX model with a template flag does.
+    ///
+    /// - Returns: The level of the first pass, or `nil` for the level of the
+    ///   SDK call.
+    /// - Throws: What the read of the model configuration throws.
+    func firstPassReasoningLevel() async throws -> ContextOptions.ReasoningLevel? {
+        try await callTurnsReasoningOff() ? ReasoningOffRequest.reasoningLevel : nil
     }
 
     /// The fragments of one stream call of ``liveSession``.
