@@ -53,6 +53,40 @@ struct GGUFRepoMetadataTests {
         return (RepoMetadataReader(source: source, cacheDir: cache.url), cache, source)
     }
 
+    /// The bytes past the end of the metadata that a second read may fetch,
+    /// as a divisor of the bytes of the metadata: a quarter more.
+    private static let overreadDivisor = 4
+
+    /// Sizes the one model file of a repo, and gives the ranges it read.
+    ///
+    /// - Parameter bytes: The bytes of the file.
+    /// - Returns: Each range read, in the order of the reads.
+    /// - Throws: The error of the read.
+    private static func headerReadRanges(of bytes: Data) async throws -> [Range<Int>] {
+        let (reader, cache, source) = try makeReader(
+            treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Int64(bytes.count))]),
+            files: ["model.gguf": bytes])
+        defer { cache.remove() }
+        _ = try await reader.metadata(for: ModelRef(repo: repo))
+        return await source.readRanges
+    }
+
+    /// Tells whether a header was read in two ranges: the first read, then
+    /// one read that continues it past the end of the metadata, by at most a
+    /// quarter of the bytes of the metadata.
+    ///
+    /// - Parameters:
+    ///   - ranges: The ranges read.
+    ///   - bytes: The bytes of the file.
+    /// - Returns: `true` when the ranges are such two reads.
+    /// - Throws: The error of the parse of the whole file.
+    private static func readsInTwo(_ ranges: [Range<Int>], of bytes: Data) throws -> Bool {
+        let metadataEnd = try GGUFHeader.parse(prefix: bytes).metadataByteCount
+        guard ranges.count == 2 else { return false }
+        return ranges[0] == 0..<firstReadBytes && ranges[1].lowerBound == firstReadBytes
+            && (metadataEnd...(metadataEnd + metadataEnd / overreadDivisor)).contains(ranges[1].upperBound)
+    }
+
     /// Sizes the one dense model file of a repo.
     ///
     /// - Returns: The metadata.
@@ -133,22 +167,79 @@ struct GGUFRepoMetadataTests {
         #expect(metadata.footprint.kvBytes(context: Self.unpaddedContext) == Int64(expected))
     }
 
-    @Test("a header whose metadata runs past the first read is read with larger ranges that continue the prefix")
+    @Test("a header whose metadata runs past the first read in its token array takes one more read")
     func headerGrowsItsRange() async throws {
         let bytes = try Data(contentsOf: LlamaCppTestFixtures.vocabURL(named: "qwen35"))
-        let (reader, cache, source) = try Self.makeReader(
+
+        // The 5.9 MB metadata of the fixture runs past the first read inside
+        // its 151,936 tokens, which size the second read.
+        let ranges = try await Self.headerReadRanges(of: bytes)
+
+        #expect(try Self.readsInTwo(ranges, of: bytes))
+    }
+
+    @Test("an 11 MB metadata section of Qwen3.5 takes two reads and about 11 MB")
+    func largeVocabularyTakesTwoReads() async throws {
+        let bytes = GGUFHeaderFixtures.largeVocabularyBytes
+
+        let ranges = try await Self.headerReadRanges(of: bytes)
+
+        #expect(try Self.readsInTwo(ranges, of: bytes))
+    }
+
+    @Test("a header read in two ranges sizes the model as the whole file sizes it")
+    func largeVocabularySizesAsTheWholeFile() async throws {
+        let bytes = GGUFHeaderFixtures.largeVocabularyBytes
+        let expected = try RepoMetadata(
+            ggufHeader: GGUFHeader.parse(prefix: bytes), weightBytes: Int64(bytes.count), name: Self.repo)
+        let (reader, cache, _) = try Self.makeReader(
             treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Int64(bytes.count))]),
             files: ["model.gguf": bytes])
         defer { cache.remove() }
 
-        _ = try await reader.metadata(for: ModelRef(repo: Self.repo))
+        let metadata = try await reader.metadata(for: ModelRef(repo: Self.repo))
 
-        // The 5.9 MB metadata of the fixture ends past 4 MB: each read
-        // doubles the prefix and fetches only the bytes past the last read.
+        #expect(metadata == expected)
+    }
+
+    @Test("an array of fixed-size elements that runs past the first read sizes the second read to its end")
+    func integerArrayTakesTwoReads() async throws {
+        let bytes = GGUFHeaderFixtures.largeIntegerArrayBytes
+
+        let ranges = try await Self.headerReadRanges(of: bytes)
+
+        #expect(try Self.readsInTwo(ranges, of: bytes))
+    }
+
+    @Test("an array of strings that runs past the first read sizes the second read from the strings read")
+    func stringArrayTakesTwoReads() async throws {
+        let bytes = GGUFHeaderFixtures.largeStringArrayBytes
+
+        let ranges = try await Self.headerReadRanges(of: bytes)
+
+        #expect(try Self.readsInTwo(ranges, of: bytes))
+    }
+
+    @Test("a string that runs past the first read is read to its end in the second read")
+    func longStringTakesTwoReads() async throws {
+        let bytes = GGUFHeaderFixtures.longChatTemplateBytes
+        let metadataEnd = try GGUFHeader.parse(prefix: bytes).metadataByteCount
+
+        let ranges = try await Self.headerReadRanges(of: bytes)
+
+        // The parse asks for the whole 3 MB chat template, the last value.
+        #expect(ranges == [0..<Self.firstReadBytes, Self.firstReadBytes..<metadataEnd])
+    }
+
+    @Test("metadata that runs past the first read in no array doubles the prefix with each read")
+    func scalarValuesDoubleThePrefix() async throws {
+        let ranges = try await Self.headerReadRanges(of: GGUFHeaderFixtures.manyValuesBytes)
+
+        // No array runs past a read of the 2.2 MB of scalar values, so each
+        // read doubles the prefix and fetches only the bytes past the last
+        // read.
         let megabyte = Self.firstReadBytes
-        #expect(
-            await source.readRanges == [0..<megabyte, megabyte..<(2 * megabyte), (2 * megabyte)..<(4 * megabyte),
-                (4 * megabyte)..<(8 * megabyte)])
+        #expect(ranges == [0..<megabyte, megabyte..<(2 * megabyte), (2 * megabyte)..<(4 * megabyte)])
     }
 
     @Test("a header read with larger ranges parses as the whole file parses")

@@ -143,14 +143,17 @@ extension RepoMetadata {
 /// model on the Hub is sized with no download of its weights.
 ///
 /// The first read is one megabyte. When the metadata section runs past the
-/// bytes read, the next read fetches only the bytes past them, up to at least
-/// twice the prefix, because the parse of a later value can need more again:
-/// the tokenizer arrays of a real model run to many megabytes.
+/// bytes read, the next read fetches only the bytes past them. The array that
+/// runs past the prefix sizes that read (``GGUFMetadataScan``): the tokenizer
+/// arrays of a real model run to many megabytes, so the token array predicts
+/// the arrays after it, and a model of 11 MB of metadata takes two reads.
+/// When no array predicts the end, the read grows the prefix to twice its
+/// bytes, because the parse of a later value can need more again.
 enum GGUFHeaderPrefix {
     /// The bytes of the first read.
     static let initialByteCount = 1 << 20
 
-    /// The factor by which each later read grows the prefix, at least.
+    /// The factor by which a read that no array sizes grows the prefix.
     private static let growthFactor = 2
 
     /// Reads and parses the GGUF header of a file.
@@ -169,7 +172,7 @@ enum GGUFHeaderPrefix {
             do {
                 return try GGUFHeader.parse(prefix: prefix)
             } catch GGUFHeaderError.needsMoreBytes(let atLeast) {
-                let wanted = max(atLeast, growthFactor * prefix.count)
+                let wanted = max(atLeast, nextReadEnd(after: prefix))
                 let more = try await fetch(prefix.count..<wanted)
                 guard !more.isEmpty else {
                     throw RepoMetadataError.metadataUnavailable(
@@ -180,5 +183,15 @@ enum GGUFHeaderPrefix {
                 throw RepoMetadataError.metadataUnavailable("the GGUF header of \(name) does not parse: \(error)")
             }
         }
+    }
+
+    /// The offset at which the read after a prefix should end: the end that
+    /// the array past the prefix predicts, or twice the prefix when no array
+    /// predicts one.
+    ///
+    /// - Parameter prefix: The bytes read so far, from the start of the file.
+    /// - Returns: The offset, from the start of the file.
+    private static func nextReadEnd(after prefix: Data) -> Int {
+        GGUFMetadataScan(prefix: prefix)?.predictedEnd() ?? growthFactor * prefix.count
     }
 }

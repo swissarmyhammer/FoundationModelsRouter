@@ -21,8 +21,19 @@ enum GGUFHeaderFixtures {
     /// The `gguf_type` of a `STRING` value.
     private static let textType: UInt32 = 8
 
+    /// The `gguf_type` of an `INT32` value.
+    private static let signedIntegerType: UInt32 = 5
+
+    /// The `gguf_type` of an `ARRAY` value.
+    private static let arrayType: UInt32 = 9
+
     /// The metadata key of the architecture.
     private static let architectureKey = "general.architecture"
+
+    /// A metadata value after the values under the prefix of the
+    /// architecture: its full key, and the bytes of its `gguf_type` and of
+    /// its value.
+    private typealias TrailingValue = (key: String, typedValue: Data)
 
     /// Builds the bytes of a header with no tensor.
     ///
@@ -31,12 +42,15 @@ enum GGUFHeaderFixtures {
     ///     keys are under this prefix.
     ///   - values: The `UINT32` values under the prefix of the architecture,
     ///     by the key after the prefix, e.g. `"block_count"`.
+    ///   - trailing: The values after them, by their full key.
     /// - Returns: The bytes.
-    private static func bytes(architecture: String, values: KeyValuePairs<String, UInt32>) -> Data {
+    private static func bytes(
+        architecture: String, values: KeyValuePairs<String, UInt32>, trailing: [TrailingValue] = []
+    ) -> Data {
         var data = magic
         append(version, to: &data)
         append(UInt64(0), to: &data)
-        append(UInt64(values.count + 1), to: &data)
+        append(UInt64(values.count + 1 + trailing.count), to: &data)
         append(text: architectureKey, to: &data)
         append(textType, to: &data)
         append(text: architecture, to: &data)
@@ -44,6 +58,10 @@ enum GGUFHeaderFixtures {
             append(text: "\(architecture).\(key)", to: &data)
             append(integerType, to: &data)
             append(value, to: &data)
+        }
+        for value in trailing {
+            append(text: value.key, to: &data)
+            data.append(value.typedValue)
         }
         return data
     }
@@ -106,17 +124,18 @@ enum GGUFHeaderFixtures {
     /// The groups of a recurrent block.
     private static let recurrentGroups: UInt32 = 16
 
+    /// The values of the dense model, under the prefix of its architecture.
+    private static let denseValues: KeyValuePairs<String, UInt32> = [
+        "block_count": denseBlocks,
+        "context_length": denseContext,
+        "embedding_length": denseEmbeddingWidth,
+        "attention.head_count": denseAttentionHeads,
+        "attention.head_count_kv": fewKeyValueHeads,
+    ]
+
     /// A dense model: four attention blocks of two K and V heads of 32
     /// elements each, with a training context of 8192 tokens.
-    static let denseBytes = bytes(
-        architecture: "llama",
-        values: [
-            "block_count": denseBlocks,
-            "context_length": denseContext,
-            "embedding_length": denseEmbeddingWidth,
-            "attention.head_count": denseAttentionHeads,
-            "attention.head_count_kv": fewKeyValueHeads,
-        ])
+    static let denseBytes = bytes(architecture: "llama", values: denseValues)
 
     /// A second dense model with a different training context, as a second
     /// quantization of a repository can carry.
@@ -161,10 +180,158 @@ enum GGUFHeaderFixtures {
             "attention.head_count_kv": fewKeyValueHeads,
         ])
 
+    /// The count of the tokens of the large vocabulary, as Qwen3.5 has.
+    private static let largeVocabularyTokenCount = 248_320
+
+    /// The count of the BPE merges of the large vocabulary, as Qwen3.5 has.
+    private static let largeVocabularyMergeCount = 247_587
+
+    /// The UTF-8 length of the first token of the large vocabulary.
+    private static let shortestTokenLength = 4
+
+    /// The UTF-8 lengths the tokens of the large vocabulary span above the
+    /// shortest: the tokens grow longer through the vocabulary, as the
+    /// merged tokens of a BPE vocabulary do, so the first megabyte holds
+    /// shorter tokens than the average.
+    private static let tokenLengthSpan = 16
+
+    /// The UTF-8 length of each merge of the large vocabulary.
+    private static let mergeLength = 12
+
+    /// The byte of each character of the strings of the large vocabulary.
+    private static let filler = UInt8(ascii: "a")
+
+    /// The size of the chat template of the large vocabulary, in bytes.
+    private static let chatTemplateLength = 7_763
+
+    /// A dense model with the tokenizer of Qwen3.5 after its values: the
+    /// tokens, their types, the BPE merges and the chat template, in the
+    /// order and the counts of the Qwen3.5 GGUF files. Its metadata section
+    /// ends near 11 MB, as the one of `Qwen3.5-0.8B-Q8_0.gguf` does.
+    static let largeVocabularyBytes = bytes(
+        architecture: "llama",
+        values: denseValues,
+        trailing: [
+            (
+                "tokenizer.ggml.tokens",
+                stringArray(
+                    lengths: (0..<largeVocabularyTokenCount).lazy.map {
+                        shortestTokenLength + $0 * tokenLengthSpan / largeVocabularyTokenCount
+                    })
+            ),
+            ("tokenizer.ggml.token_type", signedIntegerArray(count: largeVocabularyTokenCount)),
+            ("tokenizer.ggml.merges", stringArray(lengths: repeatElement(mergeLength, count: largeVocabularyMergeCount))),
+            ("tokenizer.chat_template", typedString(length: chatTemplateLength)),
+        ])
+
+    /// The size of the long chat template, in bytes: three megabytes.
+    private static let longChatTemplateLength = 3 << 20
+
+    /// The count of the elements of the large array of each kind: four
+    /// megabytes of `INT32` elements, or twelve of short strings.
+    private static let largeArrayCount = 1 << 20
+
+    /// The UTF-8 length of each string of the large array of strings.
+    private static let largeArrayStringLength = 4
+
+    /// A dense model with a chat template of three megabytes after its
+    /// values: a metadata section that runs past the first read in a string,
+    /// not in an array.
+    static let longChatTemplateBytes = bytes(
+        architecture: "llama",
+        values: denseValues,
+        trailing: [("tokenizer.chat_template", typedString(length: longChatTemplateLength))])
+
+    /// The count of the scalar values of the header of many values.
+    private static let manyValuesCount = 1 << 16
+
+    /// A dense model with 65,536 `UINT32` values after its values, about
+    /// 2.2 MB of keys and values with no array.
+    static let manyValuesBytes = bytes(
+        architecture: "llama",
+        values: denseValues,
+        trailing: (0..<manyValuesCount).map { index in
+            var typedValue = Data()
+            append(integerType, to: &typedValue)
+            append(UInt32(index), to: &typedValue)
+            return ("general.note.\(index)", typedValue)
+        })
+
+    /// A dense model with an array of four megabytes of `INT32` elements
+    /// after its values, and no token array.
+    static let largeIntegerArrayBytes = bytes(
+        architecture: "llama",
+        values: denseValues,
+        trailing: [("tokenizer.ggml.token_type", signedIntegerArray(count: largeArrayCount))])
+
+    /// A dense model with an array of about twelve megabytes of short
+    /// strings after its values, and no token array.
+    static let largeStringArrayBytes = bytes(
+        architecture: "llama",
+        values: denseValues,
+        trailing: [
+            (
+                "tokenizer.ggml.merges",
+                stringArray(lengths: repeatElement(largeArrayStringLength, count: largeArrayCount))
+            )
+        ])
+
     /// A dense model with no training context (`context_length`).
     static let noContextBytes = bytes(
         architecture: "llama",
         values: ["block_count": denseBlocks, "attention.head_count": denseAttentionHeads])
+
+    /// Builds a `STRING` value of filler characters, with its `gguf_type`.
+    ///
+    /// - Parameter length: The UTF-8 length of the string.
+    /// - Returns: The bytes.
+    private static func typedString(length: Int) -> Data {
+        var data = Data()
+        append(textType, to: &data)
+        append(fillerLength: length, to: &data)
+        return data
+    }
+
+    /// Builds an `ARRAY` value of `STRING` elements of filler characters,
+    /// with its `gguf_type`.
+    ///
+    /// - Parameter lengths: The UTF-8 length of each string.
+    /// - Returns: The bytes.
+    private static func stringArray(lengths: some Collection<Int>) -> Data {
+        var data = Data()
+        append(arrayType, to: &data)
+        append(textType, to: &data)
+        append(UInt64(lengths.count), to: &data)
+        for length in lengths {
+            append(fillerLength: length, to: &data)
+        }
+        return data
+    }
+
+    /// Builds an `ARRAY` value of zero `INT32` elements, with its
+    /// `gguf_type`.
+    ///
+    /// - Parameter count: The count of the elements.
+    /// - Returns: The bytes.
+    private static func signedIntegerArray(count: Int) -> Data {
+        var data = Data()
+        append(arrayType, to: &data)
+        append(signedIntegerType, to: &data)
+        append(UInt64(count), to: &data)
+        data.append(Data(count: count * MemoryLayout<Int32>.size))
+        return data
+    }
+
+    /// Appends a GGUF string of filler characters: its 64-bit length and its
+    /// bytes.
+    ///
+    /// - Parameters:
+    ///   - length: The UTF-8 length of the string.
+    ///   - data: The bytes to append to.
+    private static func append(fillerLength length: Int, to data: inout Data) {
+        append(UInt64(length), to: &data)
+        data.append(Data(repeating: filler, count: length))
+    }
 
     /// Appends a GGUF string: its 64-bit length and its UTF-8 bytes.
     ///
