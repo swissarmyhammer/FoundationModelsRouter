@@ -21,8 +21,14 @@ enum GGUFHeaderFixtures {
     /// The `gguf_type` of a `STRING` value.
     private static let textType: UInt32 = 8
 
+    /// The `gguf_type` of an `ARRAY` value.
+    private static let arrayType: UInt32 = 9
+
     /// The metadata key of the architecture.
     private static let architectureKey = "general.architecture"
+
+    /// The metadata key of the target layers of a DFlash drafter.
+    private static let dflashTargetLayersKey = "dflash.target_layers"
 
     /// Builds the bytes of a header with no tensor.
     ///
@@ -31,12 +37,19 @@ enum GGUFHeaderFixtures {
     ///     keys are under this prefix.
     ///   - values: The `UINT32` values under the prefix of the architecture,
     ///     by the key after the prefix, e.g. `"block_count"`.
+    ///   - targetLayers: The `UINT32` array of `dflash.target_layers`, or
+    ///     `nil` for a header with no such key.
     /// - Returns: The bytes.
-    private static func bytes(architecture: String, values: KeyValuePairs<String, UInt32>) -> Data {
+    private static func bytes(
+        architecture: String,
+        values: KeyValuePairs<String, UInt32>,
+        targetLayers: [UInt32]? = nil
+    ) -> Data {
         var data = magic
         append(version, to: &data)
         append(UInt64(0), to: &data)
-        append(UInt64(values.count + 1), to: &data)
+        let arrayCount = targetLayers == nil ? 0 : 1
+        append(UInt64(values.count + 1 + arrayCount), to: &data)
         append(text: architectureKey, to: &data)
         append(textType, to: &data)
         append(text: architecture, to: &data)
@@ -44,6 +57,10 @@ enum GGUFHeaderFixtures {
             append(text: "\(architecture).\(key)", to: &data)
             append(integerType, to: &data)
             append(value, to: &data)
+        }
+        if let targetLayers {
+            append(text: dflashTargetLayersKey, to: &data)
+            append(integers: targetLayers, to: &data)
         }
         return data
     }
@@ -149,17 +166,32 @@ enum GGUFHeaderFixtures {
             "ssm.group_count": recurrentGroups,
         ])
 
+    /// The `UINT32` values of each DFlash drafter: one block, under the
+    /// prefix of its architecture.
+    private static let dflashDrafterValues: KeyValuePairs<String, UInt32> = [
+        "block_count": 1,
+        "context_length": denseContext,
+        "embedding_length": denseEmbeddingWidth,
+        "attention.head_count": denseAttentionHeads,
+        "attention.head_count_kv": fewKeyValueHeads,
+    ]
+
+    /// The target layers of the DFlash drafter that llama.cpp loads.
+    private static let dflashTargetLayers: [UInt32] = [1, 2, 3]
+
     /// A drafter with the architecture `dflash-draft` of the fork
     /// converters, which mainline llama.cpp does not load as DFlash.
-    static let forkDFlashDrafterBytes = bytes(
-        architecture: "dflash-draft",
-        values: [
-            "block_count": 1,
-            "context_length": denseContext,
-            "embedding_length": denseEmbeddingWidth,
-            "attention.head_count": denseAttentionHeads,
-            "attention.head_count_kv": fewKeyValueHeads,
-        ])
+    static let forkDFlashDrafterBytes = bytes(architecture: "dflash-draft", values: dflashDrafterValues)
+
+    /// A drafter with the architecture `dflash` and its
+    /// `dflash.target_layers` key, which mainline llama.cpp loads as DFlash.
+    static let dflashDrafterBytes = bytes(
+        architecture: "dflash", values: dflashDrafterValues, targetLayers: dflashTargetLayers)
+
+    /// A drafter with the architecture `dflash` and no
+    /// `dflash.target_layers` key, as an older converter writes it, which
+    /// mainline llama.cpp does not load as DFlash.
+    static let noTargetLayersDFlashDrafterBytes = bytes(architecture: "dflash", values: dflashDrafterValues)
 
     /// A dense model with no training context (`context_length`).
     static let noContextBytes = bytes(
@@ -175,6 +207,21 @@ enum GGUFHeaderFixtures {
         let utf8 = Data(text.utf8)
         append(UInt64(utf8.count), to: &data)
         data.append(utf8)
+    }
+
+    /// Appends a GGUF array of `UINT32` values: its `gguf_type`, the
+    /// `gguf_type` of its elements, its 64-bit count and its elements.
+    ///
+    /// - Parameters:
+    ///   - integers: The elements.
+    ///   - data: The bytes to append to.
+    private static func append(integers: [UInt32], to data: inout Data) {
+        append(arrayType, to: &data)
+        append(integerType, to: &data)
+        append(UInt64(integers.count), to: &data)
+        for integer in integers {
+            append(integer, to: &data)
+        }
     }
 
     /// Appends a little-endian integer.

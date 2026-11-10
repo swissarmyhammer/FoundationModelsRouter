@@ -26,22 +26,61 @@ struct GGUFCacheSizing: Sendable, Equatable, Codable {
 
     /// The architecture that the fork converters give a DFlash drafter
     /// (for example jcuypers/Qwen3.6-35B-A3B-DFlash-GGUF). Mainline llama.cpp
-    /// (b12229) loads a DFlash drafter only with the architecture `dflash`,
-    /// so a model with such a drafter falls back to decoding with no drafter
-    /// (`drafterNotLoaded`): its output is correct, with no speedup.
+    /// (b12229) loads a DFlash drafter only with the architecture
+    /// ``dflashArchitecture``, so a model with such a drafter falls back to
+    /// decoding with no drafter (`drafterNotLoaded`): its output is correct,
+    /// with no speedup.
     static let forkDFlashArchitecture = "dflash-draft"
+
+    /// The architecture that mainline llama.cpp (b12229) loads as a DFlash
+    /// drafter, when the file also has the key `dflash.target_layers`. An
+    /// older converter writes this architecture with no such key (for example
+    /// lym00/Qwen3-4B-DFlash-GGUF-Test), and a model with that drafter falls
+    /// back to decoding with no drafter, as with ``forkDFlashArchitecture``.
+    static let dflashArchitecture = "dflash"
+
+    /// Why llama.cpp does not load a GGUF model as a DFlash drafter.
+    enum UnloadableDFlashDrafter: Sendable, Equatable {
+        /// The architecture is ``GGUFCacheSizing/forkDFlashArchitecture``.
+        case forkArchitecture
+
+        /// The architecture is ``GGUFCacheSizing/dflashArchitecture``, and the
+        /// file has no `dflash.target_layers` key.
+        case noTargetLayers
+
+        /// The words that state the cause after "a GGUF drafter has" in the
+        /// warning of the router.
+        var cause: String {
+            switch self {
+            case .forkArchitecture:
+                "the architecture \(GGUFCacheSizing.forkDFlashArchitecture) of the fork converters"
+            case .noTargetLayers:
+                """
+                the architecture \(GGUFCacheSizing.dflashArchitecture) with no dflash.target_layers key, \
+                as an older converter writes it
+                """
+            }
+        }
+    }
 
     /// The architecture of the model (`general.architecture`).
     let architecture: String
 
-    /// Whether the model is a DFlash drafter that llama.cpp does not load as
-    /// DFlash: its architecture is ``forkDFlashArchitecture``.
-    ///
-    /// The other DFlash drafter that does not load, the architecture
-    /// `dflash` with no `dflash.target_layers` key, is not detected:
-    /// `GGUFHeader` does not read that key.
-    var isUnloadableDFlashDrafter: Bool {
-        architecture == Self.forkDFlashArchitecture
+    /// Whether the GGUF header has the key `dflash.target_layers`: the layers
+    /// of the target model whose features a DFlash drafter reads.
+    let hasDFlashTargetLayers: Bool
+
+    /// Why llama.cpp does not load the model as a DFlash drafter, or `nil`
+    /// when nothing in the header stops that load: the model is not a DFlash
+    /// drafter, or it is one that llama.cpp loads.
+    var unloadableDFlashDrafter: UnloadableDFlashDrafter? {
+        if architecture == Self.forkDFlashArchitecture {
+            return .forkArchitecture
+        }
+        if architecture == Self.dflashArchitecture && !hasDFlashTargetLayers {
+            return .noTargetLayers
+        }
+        return nil
     }
 
     /// The bytes of the fp16 K and V caches of one cell: one token of the
@@ -58,6 +97,7 @@ struct GGUFCacheSizing: Sendable, Equatable, Codable {
     ///   shard of its split set.
     init(header: GGUFHeader) {
         architecture = header.architecture
+        hasDFlashTargetLayers = header.dflashTargetLayers != nil
         keyValueBytesPerCell = Int64(header.keyValueBytesPerToken(cacheType: .float16))
         recurrentStateBytes = Int64(
             header.recurrentStateBytes(sequenceCount: LlamaLanguageModel.Options.defaultMaxLiveSequences))
