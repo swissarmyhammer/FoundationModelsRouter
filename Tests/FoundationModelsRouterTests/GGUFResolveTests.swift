@@ -172,40 +172,63 @@ struct GGUFResolveTests {
         #expect(resolved.standard.chosen == ref)
     }
 
-    @Test("a drafter whose GGUF architecture llama.cpp does not load as DFlash logs a warning that names it")
-    func forkDFlashDrafterLogsAWarning() async throws {
-        let ref = ModelRef(repo: Self.ggufRef.repo, path: Self.ggufRef.path, drafter: Self.drafterRef)
-        let source = Self.source(
-            mlxBytes: Self.smallBytes, ggufBytes: Self.smallBytes,
-            drafterHeader: GGUFHeaderFixtures.forkDFlashDrafterBytes)
-
+    /// The messages of the warnings that a resolve logs for ``drafterRef``,
+    /// when the GGUF candidate drafts with it and it has `drafterHeader`.
+    ///
+    /// - Parameter drafterHeader: The GGUF header of the drafter.
+    /// - Returns: The messages, in the order of the log.
+    /// - Throws: What the resolve throws.
+    private static func drafterWarnings(drafterHeader: Data) async throws -> [String] {
+        let ref = ModelRef(repo: ggufRef.repo, path: ggufRef.path, drafter: drafterRef)
+        let source = source(mlxBytes: smallBytes, ggufBytes: smallBytes, drafterHeader: drafterHeader)
         let records = try await TelemetryCapture.run(forbidding: []) { context in
-            _ = try await Self.resolve(Self.profile(standard: [ref]), source: source, logger: context.logger)
+            _ = try await resolve(profile(standard: [ref]), source: source, logger: context.logger)
             return context.logRecords
         }
+        return records.filter {
+            $0.level == .warning && $0.metadata[RouterTelemetry.LogMetadataKey.modelRef] == "\(drafterRef.stringValue)"
+        }.map { "\($0.message)" }
+    }
+
+    /// The words that every drafter warning holds after its cause.
+    private static let drafterWarningConsequence =
+        "which llama.cpp does not load as a DFlash drafter; the model decodes with no drafter and no speedup"
+
+    @Test("a drafter whose GGUF architecture llama.cpp does not load as DFlash logs a warning that names it")
+    func forkDFlashDrafterLogsAWarning() async throws {
+        let warnings = try await Self.drafterWarnings(drafterHeader: GGUFHeaderFixtures.forkDFlashDrafterBytes)
 
         #expect(
-            records.contains {
-                $0.level == .warning
-                    && $0.metadata[RouterTelemetry.LogMetadataKey.modelRef] == "\(Self.drafterRef.stringValue)"
-            })
+            warnings == [
+                "a GGUF drafter has the architecture dflash-draft of the fork converters, "
+                    + Self.drafterWarningConsequence
+            ])
+    }
+
+    @Test("a dflash drafter with no dflash.target_layers key logs a warning that names the missing key")
+    func noTargetLayersDFlashDrafterLogsAWarning() async throws {
+        let warnings = try await Self.drafterWarnings(
+            drafterHeader: GGUFHeaderFixtures.noTargetLayersDFlashDrafterBytes)
+
+        #expect(
+            warnings == [
+                "a GGUF drafter has the architecture dflash with no dflash.target_layers key, "
+                    + "as an older converter writes it, " + Self.drafterWarningConsequence
+            ])
+    }
+
+    @Test("a dflash drafter with its dflash.target_layers key logs no drafter warning")
+    func dflashDrafterWithTargetLayersLogsNoWarning() async throws {
+        let warnings = try await Self.drafterWarnings(drafterHeader: GGUFHeaderFixtures.dflashDrafterBytes)
+
+        #expect(warnings.isEmpty)
     }
 
     @Test("a GGUF drafter that llama.cpp loads logs no drafter warning")
     func loadableDrafterLogsNoWarning() async throws {
-        let ref = ModelRef(repo: Self.ggufRef.repo, path: Self.ggufRef.path, drafter: Self.drafterRef)
-        let source = Self.source(mlxBytes: Self.smallBytes, ggufBytes: Self.smallBytes)
+        let warnings = try await Self.drafterWarnings(drafterHeader: GGUFHeaderFixtures.denseBytes)
 
-        let records = try await TelemetryCapture.run(forbidding: []) { context in
-            _ = try await Self.resolve(Self.profile(standard: [ref]), source: source, logger: context.logger)
-            return context.logRecords
-        }
-
-        #expect(
-            !records.contains {
-                $0.level == .warning
-                    && $0.metadata[RouterTelemetry.LogMetadataKey.modelRef] == "\(Self.drafterRef.stringValue)"
-            })
+        #expect(warnings.isEmpty)
     }
 
     /// A GGUF candidate whose drafter names its own file: the shape of a

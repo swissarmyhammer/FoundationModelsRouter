@@ -686,7 +686,8 @@ public actor Router {
     }
 
     /// Logs a warning for a GGUF drafter that llama.cpp does not load as a
-    /// DFlash drafter (``GGUFCacheSizing/isUnloadableDFlashDrafter``).
+    /// DFlash drafter (``GGUFCacheSizing/unloadableDFlashDrafter``), with its
+    /// cause (``GGUFCacheSizing/UnloadableDFlashDrafter/cause``).
     ///
     /// The router cannot know before the load that the model falls back to
     /// decoding with no drafter, so the drafter stays sized and charged. The
@@ -696,11 +697,13 @@ public actor Router {
     ///   - drafter: The drafter.
     ///   - result: Its sizing result.
     private func warnIfDrafterWillNotLoad(_ drafter: ModelRef, result: Result<RepoMetadata, RepoMetadataError>) {
-        guard case .success(let metadata) = result, metadata.gguf?.isUnloadableDFlashDrafter == true else { return }
+        guard case .success(let metadata) = result, let unloadable = metadata.gguf?.unloadableDFlashDrafter else {
+            return
+        }
         RouterTelemetry.logger(.repoMetadataReader, explicit: explicitLogger).warning(
             """
-            a GGUF drafter has the architecture dflash-draft of the fork converters, which llama.cpp \
-            does not load as a DFlash drafter; the model decodes with no drafter and no speedup
+            a GGUF drafter has \(unloadable.cause), which llama.cpp does not load as a DFlash drafter; \
+            the model decodes with no drafter and no speedup
             """,
             metadata: [RouterTelemetry.LogMetadataKey.modelRef: "\(drafter.stringValue)"])
     }
