@@ -30,11 +30,22 @@ struct LiveLLMContainerGGUFTests {
     /// The tokens the cut fixture keeps: fewer than `multiByteText` holds.
     private static let cutTokens = 5
 
-    /// A vocab-only Qwen 3.5 model: its vocabulary and its chat template.
-    private static func makeModel() throws -> LlamaLanguageModel {
+    /// A vocab-only Qwen 3.5 model: its vocabulary, and the chat template of
+    /// the GGUF unless `chatTemplate` names another.
+    ///
+    /// - Parameters:
+    ///   - loadedContext: The context the model loads at.
+    ///   - chatTemplate: The chat template the model renders with, or `nil`
+    ///     for the chat template of the GGUF.
+    /// - Returns: The model.
+    /// - Throws: Whatever the model load throws.
+    fileprivate static func makeModel(
+        contextSize loadedContext: Int = contextSize, chatTemplate: String? = nil
+    ) throws -> LlamaLanguageModel {
         try LlamaLanguageModel(
             gguf: LlamaCppTestFixtures.vocabURL(named: "qwen35"),
-            options: LlamaLanguageModel.Options(contextSize: contextSize))
+            options: LlamaLanguageModel.Options(contextSize: loadedContext),
+            chatTemplate: chatTemplate)
     }
 
     @Test("the window of a GGUF container is the context the model loaded at")
@@ -92,9 +103,7 @@ struct LiveLLMContainerGGUFTests {
     /// The vocab-only Qwen 3.5 model over ``thinkingTemplateName``: a model
     /// whose chat template supports thinking.
     private static func makeThinkingModel() throws -> LlamaLanguageModel {
-        try LlamaLanguageModel(
-            gguf: LlamaCppTestFixtures.vocabURL(named: "qwen35"),
-            options: LlamaLanguageModel.Options(contextSize: contextSize),
+        try makeModel(
             chatTemplate: String(contentsOf: LlamaCppTestFixtures.templateURL(named: thinkingTemplateName), encoding: .utf8))
     }
 
@@ -183,10 +192,8 @@ private struct ContextGGUFPoolLoader: PooledModelLoader {
     func poolKey(for key: ModelPoolKey) async throws -> ModelPoolKey { key }
 
     func load(_ key: ModelPoolKey) async throws -> any Sendable {
-        let defaults = LlamaLanguageModel.Options()
-        return try LlamaLanguageModel(
-            gguf: LlamaCppTestFixtures.vocabURL(named: "qwen35"),
-            options: LlamaLanguageModel.Options(contextSize: key.contextSize ?? defaults.contextSize))
+        try LiveLLMContainerGGUFTests.makeModel(
+            contextSize: key.contextSize ?? LlamaLanguageModel.Options().contextSize)
     }
 
     func evict(_ container: any Sendable) async {}

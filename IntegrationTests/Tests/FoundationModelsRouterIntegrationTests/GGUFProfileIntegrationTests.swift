@@ -205,6 +205,9 @@ private struct FixedWorkingSetProbe: MachineProbe {
 /// The pool is never `ModelPool.shared`, so no other suite can hold a model in
 /// it, and the test reads the eviction of each model of the profile from it.
 private struct GGUFRouterFixture {
+    /// The tag of the measurement line of each answer.
+    private static let label = "ggufProfile"
+
     /// The directory the router caches its sizing metadata under.
     let root: URL
 
@@ -235,13 +238,72 @@ private struct GGUFRouterFixture {
     /// - Parameter profile: The authored profile.
     /// - Returns: The resolved, resident profile.
     /// - Throws: Whatever the resolve throws.
-    func resolve(_ profile: ProfileDefinition) async throws -> LanguageModelProfile {
+    private func resolve(_ profile: ProfileDefinition) async throws -> LanguageModelProfile {
         try await router.resolve(profile: profile, reporting: ResolutionProgress())
+    }
+
+    /// Resolves `profile`, gives the resolved profile to `body`, then drops the
+    /// profile and expects the pool to drain until it has no resident model.
+    ///
+    /// `body` must not keep the resolved profile past its return, so the drop
+    /// releases the last reference to each model, and the pool evicts it.
+    ///
+    /// - Parameters:
+    ///   - profile: The authored profile.
+    ///   - body: The work on the resolved profile.
+    /// - Returns: What `body` returned.
+    /// - Throws: Whatever the resolve or `body` throws.
+    func withResolved<Result>(
+        _ profile: ProfileDefinition, _ body: (LanguageModelProfile) async throws -> Result
+    ) async throws -> Result {
+        var resolved: LanguageModelProfile? = try await resolve(profile)
+        let result = try await body(try #require(resolved))
+        resolved = nil
+        #expect(await pool.awaitNoResidentModel())
+        return result
+    }
+
+    /// Resolves `profile`, answers ``ggufPrompt`` one time on its `standard`
+    /// model, then drops the profile and expects the pool to drain.
+    ///
+    /// - Parameter profile: The authored profile.
+    /// - Returns: What the answer gave. Its calls hold at least one call.
+    /// - Throws: Whatever the resolve or the answer throws, or an expectation
+    ///   failure when the answer reported no generation call.
+    func answer(on profile: ProfileDefinition) async throws -> GGUFAnswer {
+        try await withResolved(profile) { try await Self.answerOnce(on: $0.standard) }
     }
 
     /// Removes the cache directory of the router.
     func removeRoot() {
         try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Makes one session on `model`, answers ``ggufPrompt`` one time, and
+    /// returns what the answer gave: the usage of each generation call, and
+    /// the reasoning of each pass that ran with the reasoning off.
+    ///
+    /// The session is local to this call, so it is gone when the call
+    /// returns, and the caller can drop the profile the session retains.
+    ///
+    /// - Parameter model: The model to answer on.
+    /// - Returns: What the answer gave. Its calls hold at least one call.
+    /// - Throws: Whatever the answer throws, or an expectation failure when the
+    ///   answer reported no generation call.
+    private static func answerOnce(on model: RoutedLLM) async throws -> GGUFAnswer {
+        let session = model.makeSession(instructions: ggufInstructions)
+        var recorder = GGUFAnswerRecorder()
+        let started = ContinuousClock.now
+        for try await event in await session.streamEvents(to: ggufPrompt, maxTokens: ggufAnswerTokenCeiling) {
+            recorder.record(event)
+        }
+        let answer = recorder.answer
+        try #require(!answer.calls.isEmpty)
+        // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
+        print(
+            "[\(label)] ref=\(model.chosen.stringValue) answer=\(ContinuousClock.now - started) calls=\(answer.calls) "
+                + "reasoningOffPassReasoning=\(answer.reasoningOffPassReasoning)")
+        return answer
     }
 }
 
@@ -291,18 +353,12 @@ private struct GGUFRouterFixture {
     .exclusiveRealModel
 )
 struct GGUFProfileIntegrationTests {
-    /// The tag of the measurement line of each answer.
-    private static let label = "ggufProfile"
-
     @Test("a GGUF standard model with no drafter answers and drafts with its MTP layers")
     func ggufAnswersWithMTP() async throws {
         let fixture = GGUFRouterFixture()
         defer { fixture.removeRoot() }
 
-        var profile: LanguageModelProfile? = try await fixture.resolve(ggufProfile)
-        let calls = try await Self.answerOnce(on: try #require(profile).standard).calls
-        profile = nil
-        #expect(await fixture.pool.awaitNoResidentModel())
+        let calls = try await fixture.answer(on: ggufProfile).calls
 
         for usage in calls {
             #expect(usage.tokensIn > 0)
@@ -319,10 +375,7 @@ struct GGUFProfileIntegrationTests {
         let fixture = GGUFRouterFixture()
         defer { fixture.removeRoot() }
 
-        var profile: LanguageModelProfile? = try await fixture.resolve(selfDraftingProfile)
-        let calls = try await Self.answerOnce(on: try #require(profile).standard).calls
-        profile = nil
-        #expect(await fixture.pool.awaitNoResidentModel())
+        let calls = try await fixture.answer(on: selfDraftingProfile).calls
 
         for usage in calls {
             #expect(usage.tokensOut > 0)
@@ -336,10 +389,7 @@ struct GGUFProfileIntegrationTests {
         let fixture = GGUFRouterFixture()
         defer { fixture.removeRoot() }
 
-        var profile: LanguageModelProfile? = try await fixture.resolve(ggufProfile)
-        let passes = try await Self.answerOnce(on: try #require(profile).standard).reasoningOffPassReasoning
-        profile = nil
-        #expect(await fixture.pool.awaitNoResidentModel())
+        let passes = try await fixture.answer(on: ggufProfile).reasoningOffPassReasoning
 
         // The first call reasons up to the ceiling, so the answer has at
         // least one reasoning stop and one pass with the reasoning off.
@@ -353,40 +403,10 @@ struct GGUFProfileIntegrationTests {
             probe: FixedWorkingSetProbe(recommendedMaxWorkingSetSize: mixedSlotWorkingSetBytes))
         defer { fixture.removeRoot() }
 
-        var profile: LanguageModelProfile? = try await fixture.resolve(mixedSlotProfile)
-        let standard = try #require(profile).standard.resolution
-        profile = nil
-        #expect(await fixture.pool.awaitNoResidentModel())
+        let standard = try await fixture.withResolved(mixedSlotProfile) { $0.standard.resolution }
 
         #expect(standard.chosen == ggufModel)
         #expect(standard.considered.map(\.ref) == [largeMLXModel, ggufModel])
         #expect(standard.considered.map(\.verdict) == [.tooLarge, .chosen])
-    }
-
-    /// Makes one session on `model`, answers ``ggufPrompt`` one time, and
-    /// returns what the answer gave: the usage of each generation call, and
-    /// the reasoning of each pass that ran with the reasoning off.
-    ///
-    /// The session is local to this call, so it is gone when the call
-    /// returns, and the caller can drop the profile the session retains.
-    ///
-    /// - Parameter model: The model to answer on.
-    /// - Returns: What the answer gave. Its calls hold at least one call.
-    /// - Throws: Whatever the answer throws, or an expectation failure when the
-    ///   answer reported no generation call.
-    private static func answerOnce(on model: RoutedLLM) async throws -> GGUFAnswer {
-        let session = model.makeSession(instructions: ggufInstructions)
-        var recorder = GGUFAnswerRecorder()
-        let started = ContinuousClock.now
-        for try await event in await session.streamEvents(to: ggufPrompt, maxTokens: ggufAnswerTokenCeiling) {
-            recorder.record(event)
-        }
-        let answer = recorder.answer
-        try #require(!answer.calls.isEmpty)
-        // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
-        print(
-            "[\(label)] ref=\(model.chosen.stringValue) answer=\(ContinuousClock.now - started) calls=\(answer.calls) "
-                + "reasoningOffPassReasoning=\(answer.reasoningOffPassReasoning)")
-        return answer
     }
 }
