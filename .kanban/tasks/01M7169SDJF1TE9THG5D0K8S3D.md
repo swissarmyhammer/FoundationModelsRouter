@@ -31,6 +31,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD (05402602) — 4 files reviewed, 0 findings (1 candidate refuted, 7 validators attempted, 0 failed); there are no prior findings sections
     - next: none; the orchestrator commits the kanban state in the main checkout
   timestamp: 2026-11-10T12:35:50.759709+00:00
+- actor: claude-code
+  id: 01m72rc459qnswxyf02vkrdepz
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — GGUFCacheSizing.swift, Router.swift, GGUFResolveTests.swift, GGUFHeaderFixtures.swift (worktree)
+    - test: green — swift test on merged main, 2515+38+19 passed
+    - commit: 05402602; merge d9fa5fd1
+    - review: clean
+  timestamp: 2026-11-10T12:54:20.073967+00:00
 position_column: done
 position_ordinal: fffffffff580
 title: 'GGUF: warn before download when a DFlash drafter has no dflash.target_layers'
