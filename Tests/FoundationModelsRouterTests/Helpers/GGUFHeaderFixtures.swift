@@ -298,10 +298,7 @@ enum GGUFHeaderFixtures {
     /// - Parameter lengths: The UTF-8 length of each string.
     /// - Returns: The bytes.
     private static func stringArray(lengths: some Collection<Int>) -> Data {
-        var data = Data()
-        append(arrayType, to: &data)
-        append(textType, to: &data)
-        append(UInt64(lengths.count), to: &data)
+        var data = arrayHeader(elementType: textType, count: lengths.count)
         for length in lengths {
             append(fillerLength: length, to: &data)
         }
@@ -314,11 +311,23 @@ enum GGUFHeaderFixtures {
     /// - Parameter count: The count of the elements.
     /// - Returns: The bytes.
     private static func signedIntegerArray(count: Int) -> Data {
+        var data = arrayHeader(elementType: signedIntegerType, count: count)
+        data.append(Data(count: count * MemoryLayout<Int32>.size))
+        return data
+    }
+
+    /// Builds the start of an `ARRAY` value: its `gguf_type`, the
+    /// `gguf_type` of its elements and their 64-bit count.
+    ///
+    /// - Parameters:
+    ///   - elementType: The `gguf_type` of the elements.
+    ///   - count: The count of the elements.
+    /// - Returns: The bytes, which the elements follow.
+    private static func arrayHeader(elementType: UInt32, count: Int) -> Data {
         var data = Data()
         append(arrayType, to: &data)
-        append(signedIntegerType, to: &data)
+        append(elementType, to: &data)
         append(UInt64(count), to: &data)
-        data.append(Data(count: count * MemoryLayout<Int32>.size))
         return data
     }
 
@@ -329,8 +338,7 @@ enum GGUFHeaderFixtures {
     ///   - length: The UTF-8 length of the string.
     ///   - data: The bytes to append to.
     private static func append(fillerLength length: Int, to data: inout Data) {
-        append(UInt64(length), to: &data)
-        data.append(Data(repeating: filler, count: length))
+        append(stringBytes: Data(repeating: filler, count: length), to: &data)
     }
 
     /// Appends a GGUF string: its 64-bit length and its UTF-8 bytes.
@@ -339,7 +347,15 @@ enum GGUFHeaderFixtures {
     ///   - text: The string.
     ///   - data: The bytes to append to.
     private static func append(text: String, to data: inout Data) {
-        let utf8 = Data(text.utf8)
+        append(stringBytes: Data(text.utf8), to: &data)
+    }
+
+    /// Appends the UTF-8 bytes of a GGUF string after their 64-bit length.
+    ///
+    /// - Parameters:
+    ///   - utf8: The UTF-8 bytes of the string.
+    ///   - data: The bytes to append to.
+    private static func append(stringBytes utf8: Data, to data: inout Data) {
         append(UInt64(utf8.count), to: &data)
         data.append(utf8)
     }
