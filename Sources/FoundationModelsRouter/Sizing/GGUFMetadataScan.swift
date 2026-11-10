@@ -21,8 +21,8 @@ struct GGUFMetadataScan {
         /// The metadata key of the array.
         let key: String
 
-        /// The `gguf_type` of the elements.
-        let elementType: UInt32
+        /// The type of the elements.
+        let elementType: ValueType
 
         /// The count of the elements.
         let count: Int
@@ -42,17 +42,30 @@ struct GGUFMetadataScan {
     /// the file before the count of the metadata values.
     private static let leadByteCount = 16
 
-    /// The type of a string value (`GGUF_TYPE_STRING`).
-    private static let stringType: UInt32 = 8
+    /// The type of a metadata value or of the elements of an array: a
+    /// `gguf_type`, in the order of its raw values from 0.
+    enum ValueType: UInt32 {
+        case uint8, int8, uint16, int16, uint32, int32, float32, bool, string, array, uint64, int64, float64
 
-    /// The type of an array value (`GGUF_TYPE_ARRAY`).
-    private static let arrayType: UInt32 = 9
-
-    /// The byte count of each value type that has a fixed size, by its type
-    /// (`gguf_type`).
-    private static let fixedByteCounts: [UInt32: Int] = [
-        0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8,
-    ]
+        /// The byte count of a value of the type, or `nil` for a string or an
+        /// array, whose byte count the value states.
+        var fixedByteCount: Int? {
+            switch self {
+            case .uint8: MemoryLayout<UInt8>.size
+            case .int8: MemoryLayout<Int8>.size
+            case .uint16: MemoryLayout<UInt16>.size
+            case .int16: MemoryLayout<Int16>.size
+            case .uint32: MemoryLayout<UInt32>.size
+            case .int32: MemoryLayout<Int32>.size
+            case .float32: MemoryLayout<Float32>.size
+            case .bool: MemoryLayout<Bool>.size
+            case .uint64: MemoryLayout<UInt64>.size
+            case .int64: MemoryLayout<Int64>.size
+            case .float64: MemoryLayout<Float64>.size
+            case .string, .array: nil
+            }
+        }
+    }
 
     /// The largest count or length that the scan accepts: the bound that
     /// `GGUFHeader.parse(prefix:)` sets, a value more than any GGUF file
@@ -91,7 +104,7 @@ struct GGUFMetadataScan {
             let valueCount = try cursor.count()
             for _ in 0..<valueCount {
                 let key = try cursor.string()
-                let type = try cursor.integer(UInt32.self)
+                let type = try cursor.valueType()
                 if let open = try Self.skipValue(of: type, key: key, cursor: &cursor) {
                     openArray = open
                     return
@@ -117,11 +130,11 @@ struct GGUFMetadataScan {
     ///   string runs past the prefix: no average predicts its end.
     func predictedEnd() -> Int? {
         let open = openArray
-        if open.key == Self.vocabularyTokensKey, open.elementType == Self.stringType {
+        if open.key == Self.vocabularyTokensKey, open.elementType == .string {
             return open.elementsStart + open.count * Self.vocabularyEntryByteBudget
         }
         let remaining: Int
-        if let elementBytes = Self.fixedByteCounts[open.elementType] {
+        if let elementBytes = open.elementType.fixedByteCount {
             remaining = (open.count - open.readCount) * elementBytes
         } else {
             guard open.readCount > 0 else { return nil }
@@ -134,25 +147,23 @@ struct GGUFMetadataScan {
     /// Skips one metadata value.
     ///
     /// - Parameters:
-    ///   - type: The `gguf_type` of the value.
+    ///   - type: The type of the value.
     ///   - key: The metadata key.
     ///   - cursor: The cursor at the value.
     /// - Returns: The array, when the value is an array whose elements run
     ///   past the prefix; `nil` when the value ends inside it.
     /// - Throws: ``Cursor/PrefixEnd`` when the prefix ends outside the
-    ///   elements of an array, or ``Cursor/Unreadable`` for a type that GGUF
-    ///   does not define.
-    private static func skipValue(of type: UInt32, key: String, cursor: inout Cursor) throws -> OpenArray? {
-        switch type {
-        case stringType:
-            try cursor.skipString()
-            return nil
-        case arrayType:
+    ///   elements of an array, or ``Cursor/Unreadable`` for an array whose
+    ///   bytes the scan does not read.
+    private static func skipValue(of type: ValueType, key: String, cursor: inout Cursor) throws -> OpenArray? {
+        if let byteCount = type.fixedByteCount {
+            try cursor.skip(byteCount)
+        } else if type == .array {
             return try skipArray(key: key, cursor: &cursor)
-        default:
-            try cursor.skip(fixedByteCount(of: type))
-            return nil
+        } else {
+            try cursor.skipString()
         }
+        return nil
     }
 
     /// Skips the elements of an array value.
@@ -163,10 +174,10 @@ struct GGUFMetadataScan {
     /// - Returns: The array, when its elements run past the prefix; `nil`
     ///   when they end inside it.
     /// - Throws: ``Cursor/PrefixEnd`` when the prefix ends before the first
-    ///   element, or ``Cursor/Unreadable`` for an element type that GGUF does
-    ///   not define in an array.
+    ///   element, or ``Cursor/Unreadable`` for an array of arrays, which GGUF
+    ///   does not define.
     private static func skipArray(key: String, cursor: inout Cursor) throws -> OpenArray? {
-        let elementType = try cursor.integer(UInt32.self)
+        let elementType = try cursor.valueType()
         let count = try cursor.count()
         let elementsStart = cursor.offset
         let open = { (readCount: Int, readEnd: Int) in
@@ -174,13 +185,13 @@ struct GGUFMetadataScan {
                 key: key, elementType: elementType, count: count, elementsStart: elementsStart,
                 readCount: readCount, readEnd: readEnd)
         }
-        guard elementType == stringType else {
-            let elementBytes = try fixedByteCount(of: elementType)
+        if let elementBytes = elementType.fixedByteCount {
             let readCount = min(cursor.remaining / elementBytes, count)
             guard readCount == count else { return open(readCount, elementsStart + readCount * elementBytes) }
             try cursor.skip(count * elementBytes)
             return nil
         }
+        guard elementType == .string else { throw Cursor.Unreadable() }
         for index in 0..<count {
             let elementStart = cursor.offset
             do {
@@ -190,16 +201,6 @@ struct GGUFMetadataScan {
             }
         }
         return nil
-    }
-
-    /// Gives the byte count of a value type that has a fixed size.
-    ///
-    /// - Parameter type: The `gguf_type`.
-    /// - Returns: The byte count.
-    /// - Throws: ``Cursor/Unreadable`` for a type that has no fixed size.
-    private static func fixedByteCount(of type: UInt32) throws -> Int {
-        guard let count = fixedByteCounts[type] else { throw Cursor.Unreadable() }
-        return count
     }
 }
 
@@ -241,6 +242,16 @@ extension GGUFMetadataScan {
             let start = data.startIndex + offset
             try skip(MemoryLayout<Value>.size)
             return data[start..<(data.startIndex + offset)].reversed().reduce(Value.zero) { ($0 << 8) | Value($1) }
+        }
+
+        /// Reads a `gguf_type`.
+        ///
+        /// - Returns: The type.
+        /// - Throws: ``Unreadable`` for a type that GGUF does not define, or
+        ///   ``PrefixEnd``.
+        mutating func valueType() throws -> ValueType {
+            guard let type = ValueType(rawValue: try integer(UInt32.self)) else { throw Unreadable() }
+            return type
         }
 
         /// Reads a 64-bit count or length.
