@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
@@ -616,6 +617,41 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// - Parameter interval: The interval to install. A non-positive interval
     ///   turns reporting off for later calls.
     func setGenerationStallReportInterval(_ interval: Duration)
+
+    /// Begins a lease of `kind` under `id` in the work registry of this
+    /// session, and gives its handle. A host calls it for work that it runs
+    /// for this session outside a tool call. Inside a tool call, a tool uses
+    /// `ToolContext.beginBackgroundWork(_:id:)` instead.
+    ///
+    /// The session has work until the lease ends, so a host lease counts as
+    /// a lease of a tool does: the session sends ``SessionEvent/workStarted``
+    /// when the lease opens on a session with no work, ``awaitIdle()`` waits
+    /// while the lease is open, and ``SessionEvent/workEnded`` comes after
+    /// the end of the last lease. Call ``BackgroundWork/end()`` when the work
+    /// settles, fails or is cancelled, for example in a `defer`. A handle
+    /// that is freed with no end ends the lease, and writes a warning log.
+    ///
+    /// The call is synchronous and needs no `await`, so a synchronous
+    /// `@Sendable` closure can call it, and the lease is open before the
+    /// work gives its first output. A scheduled firing of an agent that a
+    /// host restores holds a `.childSession` lease, the kind that
+    /// `AgentScheduleWorkSite` names:
+    ///
+    /// ```swift
+    /// let restored = try await runner.restoreSchedules(
+    ///     of: session.id, workSite: { session.beginBackgroundWork(.childSession, id: $0) })
+    /// ```
+    ///
+    /// After ``close()`` started, the work registry of the session is
+    /// closed. A call then gives a lease that is already ended: it is no
+    /// work, the session sends no ``SessionEvent/workStarted``, and its
+    /// ``BackgroundWork/end()`` does nothing.
+    ///
+    /// - Parameters:
+    ///   - kind: The kind of the work.
+    ///   - id: The id of the work, for example the id of a scheduled firing.
+    /// - Returns: The handle of the lease.
+    nonisolated func beginBackgroundWork(_ kind: WorkKind, id: String) -> BackgroundWork
 
     /// Waits until this session has no more work, and stops nothing. A host
     /// calls it when the stream of an answer ended while a background run of

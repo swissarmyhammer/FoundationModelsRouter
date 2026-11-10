@@ -62,6 +62,10 @@ struct SessionIdleWaitTests {
     /// answer and its mail starts one more answer.
     private static let promptsWithAMailAnswer = 2
 
+    /// The id of the lease that a host begins on a session, as the work site
+    /// of a restored scheduled firing does.
+    private static let hostWorkId = "restored-firing"
+
     // MARK: - Helpers
 
     /// Makes a session with `tools` over the backend that `container` vends.
@@ -390,5 +394,61 @@ struct SessionIdleWaitTests {
 
         #expect(await outbox.pending().events.map(\.isHeld) == [true])
         #expect(await session.isIdle())
+    }
+
+    // MARK: - A lease that a host begins
+
+    /// The production change that makes this test fail: a host lease that
+    /// does not go into the work registry of the session. The session then
+    /// has no work, so the idle wait returns while the lease is open.
+    @Test("a host lease is work: the idle wait waits while it is open, and returns after its end")
+    func aHostLeaseIsWorkUntilItEnds() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        defer { await fixture.end() }
+        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+
+        let lease = fixture.session.beginBackgroundWork(.childSession, id: Self.hostWorkId)
+        let idleWait = try await Self.startIdleWait(on: fixture.session)
+        #expect(idleWait.outcome.value == nil)
+        lease.end()
+
+        // Rule T1 quiet state: a lease whose end leaves the session busy hangs here, and no work-end event comes.
+        #expect(try await Self.result(of: idleWait.outcome) == true)
+        let outputs = await SessionWorkEventTests.outputs(throughNextWorkEnd: &feed)
+        #expect(SessionWorkEventTests.workEvents(of: outputs) == [.workStarted, .workEnded])
+    }
+
+    /// The production change that makes this test fail: a host lease that
+    /// begins in the registry but does not report the start of the work. The
+    /// first event of the session is then the work-end event, at the end of
+    /// the lease.
+    @Test("a host lease begun on an idle session sends the work-start event before it ends")
+    func aHostLeaseSendsTheWorkStartBeforeItEnds() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        defer { await fixture.end() }
+        var feed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+
+        let lease = fixture.session.beginBackgroundWork(.childSession, id: Self.hostWorkId)
+        // Rule T1 quiet state: a begin that sends no event hangs here, as the lease is still open.
+        let first = await feed.next()
+        lease.end()
+
+        #expect(first?.event == .workStarted)
+    }
+
+    /// The production change that makes this test fail: a host lease that
+    /// still opens in the registry after the close of the session. The
+    /// closed session would then hold work that no close ends.
+    @Test("a host lease begun after close() is ended at once and is no work")
+    func aHostLeaseAfterTheCloseIsNoWork() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        defer { await fixture.end() }
+        await fixture.session.close()
+
+        let lease = fixture.session.beginBackgroundWork(.childSession, id: Self.hostWorkId)
+        let openWork = fixture.session.runPlane.workRegistry.openWork
+        lease.end()
+
+        #expect(openWork.isEmpty)
     }
 }

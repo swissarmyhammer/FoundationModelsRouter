@@ -383,7 +383,11 @@ subagents wait only for the user is idle too, level by level up to the root.
 state with no call: ``SessionEvent/workStarted`` comes when the session gets
 work while it had none, and ``SessionEvent/workEnded``, the no-work event,
 comes when it has no work any more. Both have the origin ``Origin-enum/system``, and they come in turns,
-in order with the other outputs.
+in order with the other outputs. A host that runs work for the session
+outside a tool call, for example a scheduled firing that it restored, holds
+a lease of its own with ``beginBackgroundWork(_:id:)``, and that lease counts
+as the lease of a tool does.
 
 - ``awaitIdle()``
+- ``beginBackgroundWork(_:id:)``
 - ``close()``

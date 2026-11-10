@@ -397,6 +397,19 @@ extension RoutedSessionActor {
         return lease
     }
 
+    /// See ``RoutedSession/beginBackgroundWork(_:id:)``. A host lease is a
+    /// lease of the own work of the session (``beginWork(_:id:)``), so it
+    /// counts in the work events and in ``RoutedSession/awaitIdle()`` as the
+    /// lease of a tool does.
+    ///
+    /// - Parameters:
+    ///   - kind: The kind of the work.
+    ///   - id: The id of the work.
+    /// - Returns: The lease.
+    nonisolated func beginBackgroundWork(_ kind: WorkKind, id: String) -> BackgroundWork {
+        beginWork(kind, id: id)
+    }
+
     /// Sends ``SessionEvent/workStarted`` when the last work event said that
     /// the session had no work, and the registry has work now. After
     /// ``close()`` started, it sends nothing.
