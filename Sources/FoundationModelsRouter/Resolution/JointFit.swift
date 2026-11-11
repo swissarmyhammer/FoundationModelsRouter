@@ -20,22 +20,6 @@ struct JointResolution: Sendable, Equatable {
     /// flash, decision).
     let slots: [SlotResolution]
 
-    /// Creates a joint resolution.
-    ///
-    /// - Parameters:
-    ///   - embedding: The chosen embedding model.
-    ///   - standard: The chosen standard model.
-    ///   - flash: The chosen flash model.
-    ///   - decision: The model of the decision slot.
-    ///   - slots: Each slot's resolution, in allocation order.
-    init(embedding: ModelRef, standard: ModelRef, flash: ModelRef, decision: ModelRef, slots: [SlotResolution]) {
-        self.embedding = embedding
-        self.standard = standard
-        self.flash = flash
-        self.decision = decision
-        self.slots = slots
-    }
-
     /// This resolution, with the decision slot changed to the flash fallback.
     ///
     /// The decision slot then uses ``flash``, and records

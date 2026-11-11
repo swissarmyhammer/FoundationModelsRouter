@@ -33,6 +33,38 @@ comments:
     - process note: one filtered test run was run two times with no code change between the runs (the second run gave the same 2 failures). Do not repeat this.
     - next: /review
   timestamp: 2026-11-11T14:09:37.543301+00:00
+- actor: claude-code
+  id: 01m75fnwc2j299f082svey2spq
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (0f6fe12d); 1 finding (1 confirmed, 5 refuted) — Sources/FoundationModelsRouter/Resolution/JointFit.swift:31 (code-hygiene/idioms-swift UseSynthesizedInitializer)
+    - next: remove the explicit initializer that is identical to the synthesized initializer. Remove the same cause in all of JointFit.swift. Then do the review again.
+  timestamp: 2026-11-11T14:20:05.890749+00:00
+- actor: claude-code
+  id: 01m75fp7w8byrc54etvtd8vecs
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — about 30 files (ModelSlot.decision, JointResolution.decision flash fallback, DecisionSlotPlan, Router acquisition with shared key, LanguageModelProfile.decision, stubs in TestSupport)
+    - test: green — swift test, 2604 + 41 + 19 passed, 0 skipped; IntegrationTests build exit 0
+    - commit: 0f6fe12d
+    - review: findings — Sources/FoundationModelsRouter/Resolution/JointFit.swift:31
+  timestamp: 2026-11-11T14:20:17.672215+00:00
+- actor: claude-code
+  id: 01m75ft4evwnryxmg420pxp1bj
+  text: |-
+    Fix of the UseSynthesizedInitializer finding: removed the explicit `JointResolution.init(embedding:standard:flash:decision:slots:)` from `Resolution/JointFit.swift`. The synthesized memberwise init is internal with the same labels and order, so all callers stay the same.
+
+    I examined each other init in the files that commit 0f6fe12d added or changed. I kept each one, because it is not the same as the synthesized init:
+    - public or package init on a public or package type (ProfileDefinition, LanguageModelProfile, PooledDecisionContainer, SlotResolution, Router, ResolutionProgress, FixedContainerLoader, StubDecisionContainer, StubDecisionModel).
+    - default values (SlotProgress, CandidateReport.windowFit, BasicLLMContainer, StubLogits).
+    - private stored properties or a different argument order (RestoredSessionTree).
+    - different labels or a custom body (SharedBudget, TrioCandidates, UnavailableDecisionContainer, CompactionTrigger init(reason:)).
+    - class types, which get no memberwise init (RecordingLoader, StubLogits).
+
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Resolution/JointFit.swift; `swift test` one run, exit 0: 2604 tests in 302 suites, 41 tests in 23 suites, 19 tests in 3 suites passed. No source warnings. The build system shows one warning "missing creator for mutated node" for the mlx-swift_Cmlx.bundle; it is not from the source.
+    - next: /review
+  timestamp: 2026-11-11T14:22:25.243822+00:00
 depends_on:
 - 01M7468B410V0HR94ZBY52DT1Q
 - 01M7469KKAMMEPD1RQHTRT8SF1
@@ -77,3 +109,12 @@ Note: the default decision candidate is a Mapika GGUF. In the unit tests, the st
 4. **More switches.** Also update `Resolution/JointFit.swift` `verdict(blockedBy:)` (about line 702) and `Resolution/SlotResolution.swift` `blockedText` (about line 211). The decision slot never blocks the trio; give `.decision` the same text as `.flash`/`.embedding` and add a comment that the case does not occur.
 5. **Stub location.** Put `StubDecisionContainer` (and a stub `DecisionModel`) in `Tests/FoundationModelsRouterTestSupport/` (plan R7), not in the test helpers, because the public-surface tests need it. `Tests/FoundationModelsRouterRealModelSupport/RealModelHarness.swift` (about line 201) makes a real `PooledDecisionContainer` over the flash hold with `GenericPromptFormat()`, not a stub.
 6. **No network in unit tests.** `Router` uses `HuggingFaceMetadataSource()` by default. A test router with no stub source would fetch `Mapika/decider-4b-GGUF` on each resolve. Fix it: the shared test fixtures (`RouterTestFixtures`, `HandBuiltProfileFixtures` and the other `ProfileDefinition(` helpers that resolve) pass `decision: []`, or their stub sources throw for an unknown repo. Criterion: a unit resolve makes no fetch for the default decision ref (test with a recording metadata source).
+
+## Review Findings (2026-11-11 08:13)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 31 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:31` `code-hygiene/idioms-swift` — UseSynthesizedInitializer: remove this explicit initializer, which is identical to the compiler-synthesized initializer.
