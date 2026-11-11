@@ -200,67 +200,23 @@ private struct FixedWorkingSetProbe: MachineProbe {
 }
 
 /// One router of this suite over a live loader and a pool of its own, and the
-/// directory it caches under.
+/// answer of ``ggufPrompt`` on a profile of it.
 ///
-/// The pool is never `ModelPool.shared`, so no other suite can hold a model in
-/// it, and the test reads the eviction of each model of the profile from it.
+/// ``IsolatedPoolRouter`` holds the router, its pool and its cache directory,
+/// and resolves and drains each profile.
 private struct GGUFRouterFixture {
     /// The tag of the measurement line of each answer.
     private static let label = "ggufProfile"
 
-    /// The directory the router caches its sizing metadata under.
-    let root: URL
-
-    /// The pool the router resolves into.
-    let pool: ModelPool
-
-    /// The router.
-    let router: Router
+    /// The router of the fixture, over a pool of its own.
+    let isolatedRouter: IsolatedPoolRouter
 
     /// Makes a router over a live loader and a new pool.
     ///
     /// - Parameter probe: The machine probe behind the budget of the router.
     init(probe: any MachineProbe = SystemMachineProbe()) {
-        root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("GGUFProfileIntegrationTests-\(UUID().uuidString)", isDirectory: true)
-        pool = ModelPool()
-        router = Router(
-            cacheDir: root.appendingPathComponent("cache", isDirectory: true),
-            probe: probe,
-            loader: LiveModelLoader(),
-            samplingMode: ggufSamplingMode,
-            pool: pool
-        )
-    }
-
-    /// Resolves `profile` on the router.
-    ///
-    /// - Parameter profile: The authored profile.
-    /// - Returns: The resolved, resident profile.
-    /// - Throws: Whatever the resolve throws.
-    private func resolve(_ profile: ProfileDefinition) async throws -> LanguageModelProfile {
-        try await router.resolve(profile: profile, reporting: ResolutionProgress())
-    }
-
-    /// Resolves `profile`, gives the resolved profile to `body`, then drops the
-    /// profile and expects the pool to drain until it has no resident model.
-    ///
-    /// `body` must not keep the resolved profile past its return, so the drop
-    /// releases the last reference to each model, and the pool evicts it.
-    ///
-    /// - Parameters:
-    ///   - profile: The authored profile.
-    ///   - body: The work on the resolved profile.
-    /// - Returns: What `body` returned.
-    /// - Throws: Whatever the resolve or `body` throws.
-    func withResolved<Result>(
-        _ profile: ProfileDefinition, _ body: (LanguageModelProfile) async throws -> Result
-    ) async throws -> Result {
-        var resolved: LanguageModelProfile? = try await resolve(profile)
-        let result = try await body(try #require(resolved))
-        resolved = nil
-        #expect(await pool.awaitNoResidentModel())
-        return result
+        isolatedRouter = IsolatedPoolRouter(
+            label: "GGUFProfileIntegrationTests", samplingMode: ggufSamplingMode, probe: probe)
     }
 
     /// Resolves `profile`, answers ``ggufPrompt`` one time on its `standard`
@@ -271,12 +227,7 @@ private struct GGUFRouterFixture {
     /// - Throws: Whatever the resolve or the answer throws, or an expectation
     ///   failure when the answer reported no generation call.
     func answer(on profile: ProfileDefinition) async throws -> GGUFAnswer {
-        try await withResolved(profile) { try await Self.answerOnce(on: $0.standard) }
-    }
-
-    /// Removes the cache directory of the router.
-    func removeRoot() {
-        try? FileManager.default.removeItem(at: root)
+        try await isolatedRouter.withResolved(profile) { try await Self.answerOnce(on: $0.standard) }
     }
 
     /// Makes one session on `model`, answers ``ggufPrompt`` one time, and
@@ -356,7 +307,7 @@ struct GGUFProfileIntegrationTests {
     @Test("a GGUF standard model with no drafter answers and drafts with its MTP layers")
     func ggufAnswersWithMTP() async throws {
         let fixture = GGUFRouterFixture()
-        defer { fixture.removeRoot() }
+        defer { fixture.isolatedRouter.removeRoot() }
 
         let calls = try await fixture.answer(on: ggufProfile).calls
 
@@ -373,7 +324,7 @@ struct GGUFProfileIntegrationTests {
     @Test("a GGUF standard model with itself as its drafter drafts tokens")
     func ggufAnswersWithItselfAsDrafter() async throws {
         let fixture = GGUFRouterFixture()
-        defer { fixture.removeRoot() }
+        defer { fixture.isolatedRouter.removeRoot() }
 
         let calls = try await fixture.answer(on: selfDraftingProfile).calls
 
@@ -387,7 +338,7 @@ struct GGUFProfileIntegrationTests {
     @Test("each pass of a GGUF answer that runs with the reasoning off writes no reasoning")
     func ggufReasoningOffPassWritesNoReasoning() async throws {
         let fixture = GGUFRouterFixture()
-        defer { fixture.removeRoot() }
+        defer { fixture.isolatedRouter.removeRoot() }
 
         let passes = try await fixture.answer(on: ggufProfile).reasoningOffPassReasoning
 
@@ -401,9 +352,9 @@ struct GGUFProfileIntegrationTests {
     func mixedSlotResolvesByFit() async throws {
         let fixture = GGUFRouterFixture(
             probe: FixedWorkingSetProbe(recommendedMaxWorkingSetSize: mixedSlotWorkingSetBytes))
-        defer { fixture.removeRoot() }
+        defer { fixture.isolatedRouter.removeRoot() }
 
-        let standard = try await fixture.withResolved(mixedSlotProfile) { $0.standard.resolution }
+        let standard = try await fixture.isolatedRouter.withResolved(mixedSlotProfile) { $0.standard.resolution }
 
         #expect(standard.chosen == ggufModel)
         #expect(standard.considered.map(\.ref) == [largeMLXModel, ggufModel])

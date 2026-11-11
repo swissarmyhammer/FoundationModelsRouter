@@ -24,12 +24,18 @@ struct IsolatedPoolRouter {
     ///   - label: The prefix of the name of the cache directory, usually the
     ///     name of the suite.
     ///   - samplingMode: The decoding of each generation of the router.
-    init(label: String, samplingMode: GenerationOptions.SamplingMode) {
+    ///   - probe: The machine probe behind the budget of the router.
+    init(
+        label: String,
+        samplingMode: GenerationOptions.SamplingMode,
+        probe: any MachineProbe = SystemMachineProbe()
+    ) {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(label)-\(UUID().uuidString)", isDirectory: true)
         pool = ModelPool()
         router = Router(
             cacheDir: root.appendingPathComponent("cache", isDirectory: true),
+            probe: probe,
             loader: LiveModelLoader(),
             samplingMode: samplingMode,
             pool: pool

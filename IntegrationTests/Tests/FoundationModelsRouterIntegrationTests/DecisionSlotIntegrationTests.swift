@@ -73,6 +73,37 @@ private let flashPrompt = "Count from one to twenty in words, separated by comma
 
 // MARK: - Reference items
 
+/// The answer probabilities of the 2b model in the Metal reference, copied
+/// from the reference file.
+private enum MetalReferenceProbability {
+    /// `choice-department-billing`: the probability of "billing".
+    static let departmentBilling = 0.9480238662811801
+
+    /// `choice-department-billing`: the probability of "technical".
+    static let departmentTechnical = 0.025007250066927635
+
+    /// `choice-department-billing`: the probability of "sales".
+    static let departmentSales = 0.026968883651892286
+
+    /// `score-toxicity-high`: the probability of "not toxic".
+    static let toxicityNone = 0.11616452736265911
+
+    /// `score-toxicity-high`: the probability of "slightly toxic".
+    static let toxicitySlight = 0.18589375136494343
+
+    /// `score-toxicity-high`: the probability of "very toxic".
+    static let toxicityHigh = 0.6979417212723975
+}
+
+/// The index of the largest probability of `probabilities`: the index of the
+/// top answer.
+///
+/// - Parameter probabilities: The answer probabilities, in option order.
+/// - Returns: The index, or `nil` when `probabilities` is empty.
+private func topAnswerIndex(of probabilities: [Double]) -> Int? {
+    probabilities.indices.max { probabilities[$0] < probabilities[$1] }
+}
+
 /// One item of the Metal reference, with the result of the 2b model.
 private struct DeciderReferenceItem: Sendable {
     /// The name of the item in the reference file.
@@ -89,7 +120,7 @@ private struct DeciderReferenceItem: Sendable {
     let probabilities: [Double]
 
     /// The index of the top answer of the reference in ``probabilities``.
-    let topIndex: Int
+    var topIndex: Int? { topAnswerIndex(of: probabilities) }
 }
 
 /// The yes/no item `binary-invoice-paid` of the reference. Its answer is clear,
@@ -98,8 +129,7 @@ private let invoicePaidItem = DeciderReferenceItem(
     id: "binary-invoice-paid",
     state: .text("The invoice was paid in full on March 3."),
     question: .binary(instructions: "Has the invoice been paid?"),
-    probabilities: [0.0, 1.0],
-    topIndex: 1
+    probabilities: [0.0, 1.0]
 )
 
 /// Three items of the reference, one of each kind of question, with the
@@ -113,8 +143,11 @@ private let deciderReferenceItems: [DeciderReferenceItem] = [
             instructions: "Which department should handle this?",
             options: [ChoiceOption("billing"), ChoiceOption("technical"), ChoiceOption("sales")]
         ),
-        probabilities: [0.9480238662811801, 0.025007250066927635, 0.026968883651892286],
-        topIndex: 0
+        probabilities: [
+            MetalReferenceProbability.departmentBilling,
+            MetalReferenceProbability.departmentTechnical,
+            MetalReferenceProbability.departmentSales,
+        ]
     ),
     DeciderReferenceItem(
         id: "score-toxicity-high",
@@ -123,8 +156,11 @@ private let deciderReferenceItems: [DeciderReferenceItem] = [
             instructions: "How toxic is the message?",
             levels: ["not toxic", "slightly toxic", "very toxic"]
         ),
-        probabilities: [0.11616452736265911, 0.18589375136494343, 0.6979417212723975],
-        topIndex: 2
+        probabilities: [
+            MetalReferenceProbability.toxicityNone,
+            MetalReferenceProbability.toxicitySlight,
+            MetalReferenceProbability.toxicityHigh,
+        ]
     ),
 ]
 
@@ -331,8 +367,7 @@ struct DecisionSlotIntegrationTests {
                 let answer = try await DecisionSlotProbe.ask(item, on: profile.decision)
                 let probabilities = try DecisionSlotProbe.probabilities(of: answer, for: item)
                 try #require(probabilities.count == item.probabilities.count, "\(item.id): \(probabilities)")
-                let top = probabilities.indices.max { probabilities[$0] < probabilities[$1] }
-                #expect(top == item.topIndex, "\(item.id): \(probabilities)")
+                #expect(topAnswerIndex(of: probabilities) == item.topIndex, "\(item.id): \(probabilities)")
                 let largestDifference = zip(probabilities, item.probabilities).map { abs($0 - $1) }.max() ?? 0
                 #expect(largestDifference <= referenceProbabilityTolerance, "\(item.id): \(probabilities)")
             }
