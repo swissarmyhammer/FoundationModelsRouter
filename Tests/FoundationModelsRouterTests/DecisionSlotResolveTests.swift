@@ -280,20 +280,54 @@ struct DecisionSlotResolveTests {
 
     // MARK: - No network
 
-    @Test("a resolve of the shared test profile fetches no metadata of the default decision model")
+    /// Resolves `profile` over a ``RecordingMetadataSource`` and a stub
+    /// loader, in a fresh pool.
+    ///
+    /// - Parameter profile: The profile to resolve.
+    /// - Returns: The repo of each metadata fetch of the resolve, in order.
+    /// - Throws: The error of the resolve.
     @MainActor
-    func sharedTestProfileFetchesNoDefaultDecisionModel() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+    private static func fetchedRepos(resolving profile: ProfileDefinition) async throws -> [String] {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: cacheDir) }
         let source = RecordingMetadataSource()
         let router = Router(
             cacheDir: cacheDir, probe: RouterTestFixtures.stubProbe, metadataSource: source,
             loader: StubModelLoader(container: BasicLLMContainer(), dimension: RouterTestFixtures.stubDimension),
             pool: ModelPool())
+        _ = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        return source.fetchedRepos
+    }
+
+    @Test("a resolve of the shared test profile fetches no metadata of the default decision model")
+    @MainActor
+    func sharedTestProfileFetchesNoDefaultDecisionModel() async throws {
         let defaultDecisionRepos = Set(ProfileDefinition.defaultDecisionCandidates.map(\.repo))
 
-        _ = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let fetched = try await Self.fetchedRepos(resolving: RouterTestFixtures.profile())
 
-        #expect(Set(source.fetchedRepos).isDisjoint(with: defaultDecisionRepos))
+        #expect(Set(fetched).isDisjoint(with: defaultDecisionRepos))
+    }
+
+    // MARK: - Sizing
+
+    @Test("a resolve fetches the metadata of a decision candidate once")
+    @MainActor
+    func decisionCandidateIsFetchedOnce() async throws {
+        let fetched = try await Self.fetchedRepos(resolving: Self.profile)
+
+        #expect(fetched.filter { $0 == Self.deciderRef.repo }.count == 1)
+    }
+
+    @Test("a resolve fetches the metadata of a decision candidate that is also a flash candidate once")
+    @MainActor
+    func decisionCandidateSharedWithFlashIsFetchedOnce() async throws {
+        var profile = RouterTestFixtures.profile()
+        let flashRef = try #require(profile.flash.first)
+        profile.decision = [flashRef]
+
+        let fetched = try await Self.fetchedRepos(resolving: profile)
+
+        #expect(fetched.filter { $0 == flashRef.repo }.count == 1)
     }
 }

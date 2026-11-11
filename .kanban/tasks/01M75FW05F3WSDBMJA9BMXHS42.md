@@ -19,10 +19,26 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Resolution/ReasoningOffPromptFormat.swift (deleted), Sources/FoundationModelsRouter/Resolution/PooledDecisionContainer.swift, Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift. Decision pin 48d53e9 in Package.resolved and IntegrationTests/Package.resolved (local, gitignored). `grep -r ReasoningOffPromptFormat Sources Tests`: no result. Old pin f157c41: 2 open-think tests ran and failed (no error thrown). New pin: `swift build --build-tests` exit 0, only the known mlx bundle SwiftPM warning; `swift test` one run: 2604 tests in 302 suites, 41 in 23, 19 in 3, all passed.
     - next: /review
   timestamp: 2026-11-11T14:32:00.699530+00:00
+- actor: claude-code
+  id: 01m75ggzneczw55rweefy9pa48
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (03f93274). 0 findings, 0 confirmed, 0 refuted. The engine reviewed 3 files. It did not review 4 files in .kanban/ because of .reviewignore. Five code-hygiene tool rules did not examine ReasoningOffPromptFormat.swift because the commit deleted that file.
+    - next: none. The task is in done.
+  timestamp: 2026-11-11T14:34:53.998570+00:00
+- actor: claude-code
+  id: 01m75ghc9nq1fxz1v94zcak1bq
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — ReasoningOffPromptFormat.swift deleted, PooledDecisionContainer.swift, PooledDecisionContainerTests.swift; Decision pin 48d53e9 (local Package.resolved)
+    - test: green — swift test, 2604 + 41 + 19 passed, 0 skipped
+    - commit: 03f93274
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T14:35:06.933817+00:00
 depends_on:
 - 01M746A8SW146DW09CCNJPHQ4K
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffffe80
 title: 'Remove ReasoningOffPromptFormat: GenericPromptFormat now rejects an open thinking block'
 ---
 ## What

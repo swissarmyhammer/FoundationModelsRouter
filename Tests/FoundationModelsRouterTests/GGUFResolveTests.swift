@@ -142,6 +142,85 @@ struct GGUFResolveTests {
                 + drafter.footprint.kvBytes(context: Self.context))
     }
 
+    /// The GGUF candidate with ``drafterRef`` as its drafter.
+    private static let draftedGGUFRef = ModelRef(repo: ggufRef.repo, path: ggufRef.path, drafter: drafterRef)
+
+    /// The sizing of ``draftedGGUFRef`` and of its drafter, from the header
+    /// fixtures.
+    ///
+    /// - Returns: The metadata of each ref.
+    /// - Throws: The error of a parse.
+    private static func draftedGGUFMetadata() throws -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
+        [
+            draftedGGUFRef: .success(try ggufMetadata(GGUFHeaderFixtures.hybridBytes, weightBytes: smallBytes)),
+            drafterRef: .success(try ggufMetadata(GGUFHeaderFixtures.denseBytes, weightBytes: drafterBytes)),
+        ]
+    }
+
+    /// The footprint that the router charges ``draftedGGUFRef`` at
+    /// ``context`` when the profile lists it for `slot`.
+    ///
+    /// - Parameters:
+    ///   - slot: The one slot that lists the candidate.
+    ///   - residentKeys: The keys that the pool keeps resident.
+    ///   - allocatedKeys: The keys of the models that this resolve allocated.
+    /// - Returns: The footprint, or the sizing error.
+    /// - Throws: The error of a parse.
+    private static func draftedGGUFFootprint(
+        in slot: ModelSlot, residentKeys: Set<ModelPoolKey> = [], allocatedKeys: Set<ModelPoolKey> = []
+    ) throws -> Result<Int64, RepoMetadataError> {
+        Router.footprintBytes(
+            for: draftedGGUFRef, context: context, metadataByRef: try draftedGGUFMetadata(),
+            membership: [draftedGGUFRef: [slot]], residentKeys: residentKeys, allocatedKeys: allocatedKeys)
+    }
+
+    /// The key of the flash model ``draftedGGUFRef`` at `context`.
+    ///
+    /// - Parameter context: The context that the model loaded at.
+    /// - Returns: The pool key.
+    private static func flashKey(context: Int) -> ModelPoolKey {
+        ModelSlot.flash.poolKey(of: draftedGGUFRef, context: context)
+    }
+
+    @Test("a GGUF decision candidate gets the footprint of the same ref in the flash slot at the same context")
+    func ggufDecisionCandidateIsSizedLikeFlash() throws {
+        let decision = try Self.draftedGGUFFootprint(in: .decision).get()
+
+        #expect(try decision == Self.draftedGGUFFootprint(in: .flash).get())
+    }
+
+    @Test("a GGUF decision candidate that another router keeps resident costs one session KV cache")
+    func residentGGUFDecisionCandidateCostsTheSessionKV() throws {
+        let metadata = try Self.draftedGGUFMetadata()
+        let target = try #require(try metadata[Self.draftedGGUFRef]?.get())
+
+        let bytes = try Self.draftedGGUFFootprint(
+            in: .decision, residentKeys: [Self.flashKey(context: Self.context)]
+        ).get()
+
+        #expect(bytes == target.footprint.kvBytes(context: Self.context))
+    }
+
+    @Test("a GGUF decision candidate with the pool key of a model that this resolve allocated costs 0 bytes")
+    func allocatedGGUFDecisionCandidateCostsNothing() throws {
+        let bytes = try Self.draftedGGUFFootprint(
+            in: .decision, allocatedKeys: [Self.flashKey(context: Self.context)]
+        ).get()
+
+        #expect(bytes == 0)
+    }
+
+    @Test("a GGUF decision candidate is charged in full when this resolve allocated its model at a smaller context")
+    func smallerAllocatedGGUFDecisionCandidateIsChargedInFull() throws {
+        let full = try Self.draftedGGUFFootprint(in: .decision).get()
+
+        let bytes = try Self.draftedGGUFFootprint(
+            in: .decision, allocatedKeys: [Self.flashKey(context: Self.context - 1)]
+        ).get()
+
+        #expect(bytes == full)
+    }
+
     @Test("JointFit takes the GGUF candidate when the MLX candidate listed first does not fit")
     func ggufChosenWhenMLXDoesNotFit() async throws {
         let source = Self.source(mlxBytes: Self.hugeBytes, ggufBytes: Self.smallBytes)

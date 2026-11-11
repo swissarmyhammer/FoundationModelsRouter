@@ -994,21 +994,56 @@ struct RepoMetadataTests {
         #expect(try bytes.get() == Self.coreMLBundleBytes)
     }
 
-    @Test(
-        "a CoreML repo in a generation slot is rejected before any download, with a message that names the slot rule",
-        arguments: [ModelSlot.standard, ModelSlot.flash])
-    func coreMLRepoInGenerationSlotIsRejected(slot: ModelSlot) throws {
+    /// The sizing of the Core ML embedder `org/coreml-embedder` when the
+    /// profile lists it for `slots`.
+    ///
+    /// - Parameter slots: The slots that list the embedder.
+    /// - Returns: The footprint, or the sizing error.
+    /// - Throws: The error of the parse of the tree listing.
+    private static func coreMLFootprint(listedFor slots: Set<ModelSlot>) throws -> Result<Int64, RepoMetadataError> {
         let ref: ModelRef = "org/coreml-embedder"
         let metadata = try RepoMetadata(
             raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
-
-        let bytes = Router.footprintBytes(
+        return Router.footprintBytes(
             for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
-            membership: [ref: [slot]], residentKeys: [])
+            membership: [ref: slots], residentKeys: [])
+    }
+
+    @Test(
+        "a CoreML repo in a slot of the LLM role is rejected before any download, with a message that names the slot",
+        arguments: [
+            (ModelSlot.standard, "the standard slot"),
+            (ModelSlot.flash, "the flash slot"),
+            (ModelSlot.decision, "the decision slot"),
+        ])
+    func coreMLRepoInLLMSlotIsRejected(slot: ModelSlot, slotName: String) throws {
+        let bytes = try Self.coreMLFootprint(listedFor: [slot])
 
         #expect(
             throws: RepoMetadataError.metadataUnavailable(
-                "candidate org/coreml-embedder is a Core ML embedding model; it cannot fill the standard or flash slot"
+                "candidate org/coreml-embedder is a Core ML embedding model; it cannot fill \(slotName)"
+            )
+        ) { try bytes.get() }
+    }
+
+    @Test("a CoreML repo listed for the flash slot and the decision slot is rejected with a message that names both")
+    func coreMLRepoInFlashAndDecisionSlotsNamesBoth() throws {
+        let bytes = try Self.coreMLFootprint(listedFor: [.decision, .flash])
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "candidate org/coreml-embedder is a Core ML embedding model; it cannot fill the flash or decision slot"
+            )
+        ) { try bytes.get() }
+    }
+
+    @Test("a CoreML repo listed for the embedding slot and the decision slot is rejected")
+    func coreMLRepoInEmbeddingAndDecisionSlotsIsRejected() throws {
+        let bytes = try Self.coreMLFootprint(listedFor: [.embedding, .decision])
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "candidate org/coreml-embedder is a Core ML embedding model; it cannot fill the decision slot"
             )
         ) { try bytes.get() }
     }

@@ -811,11 +811,25 @@ public actor Router {
             .map { $0.weightBytes + $0.draftContextBytes(context: context) }
     }
 
+    /// The slots of the LLM role, in the order that a diagnostic names them.
+    private static let llmSlotOrder: [ModelSlot] = [.standard, .flash, .decision]
+
     /// The diagnostic for a Core ML embedding model that a profile lists for
-    /// the standard slot or the flash slot. Core ML loads embedding models
-    /// only, so such a candidate cannot load.
-    private static func coreMLInGenerationSlotMessage(for ref: ModelRef) -> String {
-        "candidate \(ref.stringValue) is a Core ML embedding model; it cannot fill the standard or flash slot"
+    /// a slot of the LLM role (standard, flash or decision). Core ML loads
+    /// embedding models only, so such a candidate cannot load.
+    ///
+    /// - Parameters:
+    ///   - ref: The Core ML embedding model.
+    ///   - slots: The slots of the LLM role that list `ref`. The diagnostic
+    ///     names each of them.
+    /// - Returns: The diagnostic, for example "… it cannot fill the flash or
+    ///   decision slot".
+    private static func coreMLInLLMSlotMessage(for ref: ModelRef, slots: Set<ModelSlot>) -> String {
+        let names = llmSlotOrder.filter(slots.contains).map(\.rawValue)
+        let listed = ([names.dropLast().joined(separator: ", ")] + names.suffix(1))
+            .filter { !$0.isEmpty }
+            .joined(separator: " or ")
+        return "candidate \(ref.stringValue) is a Core ML embedding model; it cannot fill the \(listed) slot"
     }
 
     /// The shared diagnostic for a candidate that has no fetched metadata.
@@ -852,66 +866,114 @@ public actor Router {
     /// The raw footprint bytes for one candidate at a context, sized under
     /// every slot it is a candidate for, with the largest figure kept.
     ///
-    /// A candidate that a key in `residentKeys` serves
-    /// (``ModelPoolKey/canServe(_:)``) is charged its
-    /// marginal cost: one session KV cache at `context` for a generation
-    /// model, and zero for an embedder. A generation model that loads at a
-    /// fixed context (GGUF) is resident under that context, so it serves
-    /// `context` only when it loaded at `context` or a larger one; any other
-    /// generation model is resident with no context, and serves every
-    /// context.
+    /// Each slot sizes the candidate under the key that the slot asks the
+    /// pool for (``ModelSlot/poolKey(of:context:)``). A slot of the LLM role
+    /// (standard, flash or decision) sizes it as a generation model: its
+    /// weights, its drafter and one session KV cache at `context`. Thus a
+    /// decision candidate costs the same as the same ref in the flash slot.
+    /// The embedding slot sizes it as an embedder.
+    ///
+    /// A candidate that a key in `allocatedKeys` serves
+    /// (``ModelPoolKey/canServe(_:)``) is a model that this resolve allocated
+    /// already, so it costs 0 more bytes. A candidate that a key in
+    /// `residentKeys` serves is a model that the pool keeps for another
+    /// owner, so it is charged its marginal cost: one session KV cache at
+    /// `context` for a generation model, and zero for an embedder. A
+    /// generation model that loads at a fixed context (GGUF) is resident
+    /// under that context, so it serves `context` only when it loaded at
+    /// `context` or a larger one; any other generation model is resident
+    /// with no context, and serves every context.
     ///
     /// A Core ML embedding model (``RepoMetadata/isCoreMLEmbedding``) that
-    /// is a candidate of the standard slot or of the flash slot is an error:
-    /// Core ML loads embedding models only. The error comes from the sizing,
-    /// thus before any download.
+    /// is a candidate of a slot of the LLM role is an error: Core ML loads
+    /// embedding models only. The message names each such slot. The error
+    /// comes from the sizing, thus before any download.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate to size.
+    ///   - context: The working context of the candidate.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - membership: Every slot that each ref is a candidate for.
+    ///   - residentKeys: The keys of the models that the pool keeps resident.
+    ///   - allocatedKeys: The keys of the models that this resolve allocated
+    ///     before it sizes `ref`. The fit of the embedding, standard and
+    ///     flash slots allocates none of them before it sizes a candidate.
+    /// - Returns: The largest footprint, or why the candidate cannot be sized.
     static func footprintBytes(
         for ref: ModelRef,
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         membership: [ModelRef: Set<ModelSlot>],
-        residentKeys: Set<ModelPoolKey>
+        residentKeys: Set<ModelPoolKey>,
+        allocatedKeys: Set<ModelPoolKey> = []
     ) -> Result<Int64, RepoMetadataError> {
         guard let metadataResult = metadataByRef[ref] else {
             return .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
         }
-        switch metadataResult {
-        case .failure(let error):
-            return .failure(error)
-        case .success(let metadata):
+        return metadataResult.flatMap { metadata in
             let slots = membership[ref] ?? []
-            if metadata.isCoreMLEmbedding && (slots.contains(.standard) || slots.contains(.flash)) {
-                return .failure(.metadataUnavailable(coreMLInGenerationSlotMessage(for: ref)))
+            let llmSlots = slots.filter { $0.poolRole == .llm }
+            if metadata.isCoreMLEmbedding && !llmSlots.isEmpty {
+                return .failure(.metadataUnavailable(coreMLInLLMSlotMessage(for: ref, slots: llmSlots)))
             }
-            var candidates: [Int64] = []
-            if slots.contains(.embedding) {
-                let key = ModelSlot.embedding.poolKey(of: ref, context: context)
-                let raw = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
-                candidates.append(residentKeys.contains(where: { $0.canServe(key) }) ? 0 : raw)
-            }
-            // A candidate of a slot of the LLM role (generation or decision)
-            // is sized as an LLM.
-            if slots.contains(where: { $0.poolRole == .llm }) {
-                let key = ModelSlot.standard.poolKey(of: ref, context: context)
-                let sessionKV = metadata.footprint.kvBytes(context: context)
-                if residentKeys.contains(where: { $0.canServe(key) }) {
-                    candidates.append(sessionKV)
-                } else {
-                    switch drafterBytes(of: ref, context: context, metadataByRef: metadataByRef) {
-                    case .failure(let error):
-                        return .failure(error)
-                    case .success(let drafterBytes):
-                        candidates.append(metadata.footprint.footprint(context: context) + drafterBytes)
-                    }
+            let pricing = SlotPricing(
+                ref: ref, metadata: metadata, context: context, metadataByRef: metadataByRef,
+                residentKeys: residentKeys, allocatedKeys: allocatedKeys)
+            return Result { () throws(RepoMetadataError) -> Int64 in
+                let figures = try slots.map { slot throws(RepoMetadataError) in try pricing.footprint(in: slot).get() }
+                // Total by construction: every ref in `metadataByRef` came
+                // from `def.candidatesBySlot`, so `membership[ref]` always
+                // has at least one slot, and thus at least one figure.
+                guard let largest = figures.max() else {
+                    preconditionFailure("a sized candidate is a member of at least one slot")
                 }
+                return largest
             }
-            // Total by construction: every ref in `metadataByRef` came from
-            // `def.candidatesBySlot`, so `membership[ref]` always has at
-            // least one slot, and thus at least one interpretation above.
-            guard let largest = candidates.max() else {
-                preconditionFailure("a sized candidate is a member of at least one slot")
+        }
+    }
+
+    /// The pricing of one sized candidate at one context, for each slot that
+    /// lists it (``footprintBytes(for:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
+    private struct SlotPricing {
+        /// The candidate.
+        let ref: ModelRef
+
+        /// The metadata of the candidate.
+        let metadata: RepoMetadata
+
+        /// The working context of the candidate.
+        let context: Int
+
+        /// The sizing metadata fetched for every candidate, the drafters
+        /// included.
+        let metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+
+        /// The keys of the models that the pool keeps resident.
+        let residentKeys: Set<ModelPoolKey>
+
+        /// The keys of the models that this resolve allocated already.
+        let allocatedKeys: Set<ModelPoolKey>
+
+        /// The bytes that the candidate costs in `slot`: 0 when this resolve
+        /// allocated its model, its marginal cost when the pool keeps it
+        /// resident, else its whole footprint.
+        ///
+        /// - Parameter slot: A slot that lists the candidate.
+        /// - Returns: The bytes, or the error of a drafter that could not be
+        ///   sized.
+        func footprint(in slot: ModelSlot) -> Result<Int64, RepoMetadataError> {
+            let key = slot.poolKey(of: ref, context: context)
+            guard !allocatedKeys.contains(where: { $0.canServe(key) }) else { return .success(0) }
+            let isResident = residentKeys.contains { $0.canServe(key) }
+            switch slot.poolRole {
+            case .embedding:
+                return .success(
+                    isResident ? 0 : Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context))
+            case .llm:
+                guard !isResident else { return .success(metadata.footprint.kvBytes(context: context)) }
+                return drafterBytes(of: ref, context: context, metadataByRef: metadataByRef)
+                    .map { metadata.footprint.footprint(context: context) + $0 }
             }
-            return .success(largest)
         }
     }
 
