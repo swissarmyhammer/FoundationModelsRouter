@@ -35,6 +35,9 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         let flash: ModelRef
         /// The concrete model chosen for the `.embedding` slot.
         let embedding: ModelRef
+        /// The concrete model chosen for the `.decision` slot. It is the
+        /// `.flash` model when no decision candidate was used.
+        let decision: ModelRef
         /// The working context, in tokens, shared by every slot.
         let context: Int
     }

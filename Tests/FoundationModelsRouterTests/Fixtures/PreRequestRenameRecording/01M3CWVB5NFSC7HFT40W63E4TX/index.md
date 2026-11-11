@@ -15,6 +15,7 @@ profile:
   standard: org/std-a
   flash: org/flash-a
   embedding: org/emb-a
+  decision: org/flash-a
   context: 1000
 configuration:
   workingDirectory: file:///fixture-work/

@@ -67,10 +67,26 @@ comments:
     - evidence: Tests/FoundationModelsRouterTests/JointFitTests.swift. `swift test` one full run: 2624 tests in 303 suites passed, plus 41 and 19, 0 failures, 0 compiler warnings. After the last edit (the GenerationSlot enum, JointFitTests.swift only): `swift test --filter JointFitTests` ran 45 tests in 2 suites, all passed, no warnings. Both review findings are checked `- [x]`.
     - next: /review
   timestamp: 2026-11-11T22:35:42.001240+00:00
+- actor: claude-code
+  id: 01m76c5v4k683v5wv7p4qhcpf8
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (b07060b1) — 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). All items in the earlier Review Findings section are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-11-11T22:38:09.043478+00:00
+- actor: claude-code
+  id: 01m76c68zxqv0wk9gmmwcznvff
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — Tests/FoundationModelsRouterTests/JointFitTests.swift (parameterized decision tests)
+    - test: green — swift test, 2624 + 41 + 19 passed, 0 skipped
+    - commit: b07060b1
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T22:38:23.229556+00:00
 depends_on:
 - 01M746AMZS89CKDJN8CGMQ628D
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffff8180
 title: 'R4: joint fit gives the decision slot only the memory left after embedding, standard and flash'
 ---
 ## What

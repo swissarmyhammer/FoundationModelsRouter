@@ -1207,6 +1207,7 @@ public actor Router {
             standard: resolution.standard,
             flash: resolution.flash,
             embedding: resolution.embedding,
+            decision: resolution.decision,
             context: Self.slotResolution(for: resolution, slot: .standard).contextTokens
         )
         return LanguageModelProfile(

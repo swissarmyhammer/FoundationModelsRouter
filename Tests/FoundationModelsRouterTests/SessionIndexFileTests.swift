@@ -95,7 +95,7 @@ import Testing
             grammar: #"{"type":"object"}"#,
             profile: SessionRecord.ResolvedProfile(
                 definitionName: "coding", standard: "org/std-a", flash: "org/flash-a", embedding: "org/emb-a",
-                context: context),
+                decision: "org/decider-a", context: context),
             agentSpawn: SessionRecord.AgentSpawn(parentSessionId: ULID.generate(), parentToolCallId: "call-42"),
             configuration: SessionConfiguration(
                 instructions: "You are terse.", workingDirectory: URL(fileURLWithPath: "/tmp/sample"),
