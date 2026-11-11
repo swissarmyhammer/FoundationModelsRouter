@@ -24,11 +24,6 @@ enum Verdict: Sendable, Equatable {
 
     /// This candidate could not be sized. The associated value is the reason.
     case metadataUnavailable(String)
-
-    /// This decision-slot candidate was not fitted against the budget, so it
-    /// was not chosen. The decision slot uses the flash model
-    /// (``SlotFallback/flashModel``).
-    case notFitted
 }
 
 /// The model that a slot uses when it chooses none of its own candidates.
@@ -247,8 +242,6 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
                 + "the standard and flash slots must use different models)"
         case .metadataUnavailable(let reason):
             return "metadata unavailable (\(reason))"
-        case .notFitted:
-            return "not fitted (the decision slot uses the flash model)"
         }
     }
 

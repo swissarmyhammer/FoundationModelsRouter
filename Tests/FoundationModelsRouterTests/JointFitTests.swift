@@ -44,8 +44,8 @@ struct JointFitTests {
     private static func provider(
         _ table: [ModelRef: Int64] = raw,
         unavailable: [ModelRef: String] = [:]
-    ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
-        { ref, _ in
+    ) -> JointFit.FootprintProvider {
+        { ref, _, _ in
             if let reason = unavailable[ref] {
                 return .failure(.metadataUnavailable(reason))
             }
@@ -295,8 +295,8 @@ struct JointFitTests {
     /// never needed to vary with context.
     private static func sizedFootprint(
         _ table: [ModelRef: Footprint]
-    ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
-        { ref, context in
+    ) -> JointFit.FootprintProvider {
+        { ref, context, _ in
             guard let footprint = table[ref] else {
                 return .failure(.metadataUnavailable("no footprint injected for \(ref.stringValue)"))
             }
@@ -898,5 +898,272 @@ struct JointFitTests {
         }
         #expect(failure.standardConsidered.map(\.verdict) == expectedVerdicts)
         #expect(failure.description.contains("There is no context, so no slot was sized."))
+    }
+
+    // MARK: - The decision pass
+
+    /// A decision candidate that fits the budget that the trio leaves in the
+    /// decision tests below.
+    private static let deciderSmall: ModelRef = "org/decider-small"
+
+    /// A decision candidate that does not fit the budget that the trio
+    /// leaves in the decision tests below. With it, the smaller standard
+    /// model ``std32b4`` and the whole trio would fit ``decisionRoomBudget``.
+    private static let deciderLarge: ModelRef = "org/decider-large"
+
+    /// A decision candidate with no injected footprint, so it cannot be sized.
+    private static let deciderUnsizable: ModelRef = "org/decider-no-config"
+
+    /// The bytes that each sized decision candidate costs.
+    private static let deciderBytes: [ModelRef: Int64] = [deciderSmall: 3_000, deciderLarge: 20_000]
+
+    /// The bytes that the portability trio with ``std32b8`` charges:
+    /// `500 + 32_000 + 2_000`. With this budget, no byte is left for the
+    /// decision slot.
+    private static let decisionNoRoomBudget: Int64 = 34_500
+
+    /// A budget that leaves 15_500 bytes after the portability trio with
+    /// ``std32b8``: room for ``deciderSmall``, not for ``deciderLarge``.
+    private static let decisionRoomBudget: Int64 = 50_000
+
+    /// The native window of ``windowNativeFits`` in the derived-window
+    /// decision tests. Its trio charges `100 + 4 × 8_192 + 100` bytes there.
+    private static let decisionNative = 8_192
+
+    /// A budget that leaves 7_032 bytes after the trio of
+    /// ``windowNativeFits`` at ``decisionNative``: room for ``deciderSmall``,
+    /// not for ``deciderLarge``.
+    private static let decisionWindowRoomBudget: Int64 = 40_000
+
+    /// The footprint table of the derived-window decision tests: the window
+    /// trio candidates, and each sized decision candidate with a flat
+    /// footprint of its ``deciderBytes``.
+    private static let windowDecisionFootprints = modelWindowFootprints
+        .merging(windowBigSmallFootprints) { _, new in new }
+        .merging(deciderBytes.mapValues { Footprint(weightBytes: $0, layers: 0, kvHeads: 0, headDim: 0) }) { _, new in new }
+
+    /// The models and the window that the trio chose, for the comparison of
+    /// two resolutions.
+    private struct TrioChoice: Equatable {
+        /// The embedding winner.
+        let embedding: ModelRef
+
+        /// The standard winner.
+        let standard: ModelRef
+
+        /// The flash winner.
+        let flash: ModelRef
+
+        /// The working context of the resolution.
+        let contextTokens: Int
+
+        /// The trio choice of `result`.
+        init(_ result: JointResolution) {
+            embedding = result.embedding
+            standard = result.standard
+            flash = result.flash
+            contextTokens = JointFitTests.resolution(result, for: .standard).contextTokens
+        }
+    }
+
+    /// `base`, with 0 bytes for a candidate that one of the allocated pool
+    /// keys serves, as the router prices it
+    /// (``Router/footprintBytes(for:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
+    private static func chargingAllocatedModelsNothing(
+        _ base: @escaping JointFit.FootprintProvider
+    ) -> JointFit.FootprintProvider {
+        { ref, context, allocatedKeys in
+            let request = ModelSlot.decision.poolKey(of: ref, context: context)
+            guard !allocatedKeys.contains(where: { $0.canServe(request) }) else { return .success(0) }
+            return base(ref, context, allocatedKeys)
+        }
+    }
+
+    /// Resolves the portability profile at its explicit context, with
+    /// `decision` as its decision candidates.
+    private static func resolveDecision(_ decision: [ModelRef], budgetBytes: Int64) throws -> JointResolution {
+        var profile = portabilityProfile()
+        profile.decision = decision
+        return try JointFit.resolve(
+            profile: profile,
+            budgetBytes: budgetBytes,
+            footprint: chargingAllocatedModelsNothing(provider(raw.merging(deciderBytes) { _, new in new })),
+            nativeMaxContext: neverCalledNativeMaxContext
+        )
+    }
+
+    /// Resolves the window profile of `standard` with a derived window, with
+    /// `decision` as its decision candidates.
+    private static func resolveDerivedDecision(
+        _ decision: [ModelRef], standard: ModelRef, budgetBytes: Int64
+    ) throws -> JointResolution {
+        var profile = windowProfile(standard: [standard])
+        profile.decision = decision
+        return try JointFit.resolve(
+            profile: profile,
+            budgetBytes: budgetBytes,
+            footprint: chargingAllocatedModelsNothing(sizedFootprint(windowDecisionFootprints)),
+            nativeMaxContext: nativeMaxTable([windowNativeFits: decisionNative, windowBig: windowBigNative])
+        )
+    }
+
+    /// The verdict of a decision candidate with no injected footprint.
+    private static var unsizableDeciderVerdict: Verdict {
+        .metadataUnavailable("no footprint injected for \(deciderUnsizable.stringValue)")
+    }
+
+    /// The report of a decision candidate that the trio allocated: chosen,
+    /// with 0 bytes.
+    private static func freeChosenReport(_ ref: ModelRef) -> CandidateReport {
+        CandidateReport(ref: ref, estimatedFootprintBytes: 0, chargedBytes: 0, verdict: .chosen)
+    }
+
+    @Test("with room, the decision slot chooses the first decision candidate that fits")
+    func decisionWithRoomChoosesTheFirstCandidateThatFits() throws {
+        let result = try Self.resolveDecision([Self.deciderLarge, Self.deciderSmall], budgetBytes: Self.decisionRoomBudget)
+
+        #expect(result.decision == Self.deciderSmall)
+    }
+
+    @Test("with room, the decision candidates after the chosen one are skipped")
+    func decisionWithRoomSkipsTheLaterCandidates() throws {
+        let result = try Self.resolveDecision(
+            [Self.deciderLarge, Self.deciderSmall, Self.deciderUnsizable], budgetBytes: Self.decisionRoomBudget)
+
+        #expect(
+            Self.resolution(result, for: .decision).considered.map(\.verdict)
+                == [.tooLarge, .chosen, .skippedHigherPreferenceChosen])
+    }
+
+    @Test("with room, the decision slot records no fallback")
+    func decisionWithRoomRecordsNoFallback() throws {
+        let result = try Self.resolveDecision([Self.deciderSmall], budgetBytes: Self.decisionRoomBudget)
+
+        #expect(Self.resolution(result, for: .decision).fallback == nil)
+    }
+
+    @Test("with room at a derived window, the decision slot chooses the first decision candidate that fits")
+    func derivedDecisionWithRoomChoosesTheFirstCandidateThatFits() throws {
+        let result = try Self.resolveDerivedDecision(
+            [Self.deciderLarge, Self.deciderSmall], standard: Self.windowNativeFits,
+            budgetBytes: Self.decisionWindowRoomBudget)
+
+        #expect(result.decision == Self.deciderSmall)
+    }
+
+    @Test("with no room, the decision slot uses the flash winner")
+    func decisionWithNoRoomUsesTheFlashWinner() throws {
+        let result = try Self.resolveDecision([Self.deciderSmall], budgetBytes: Self.decisionNoRoomBudget)
+
+        #expect(result.decision == Self.flash3b)
+    }
+
+    @Test("with no room, the decision slot records the flash fallback")
+    func decisionWithNoRoomRecordsTheFlashFallback() throws {
+        let result = try Self.resolveDecision([Self.deciderSmall], budgetBytes: Self.decisionNoRoomBudget)
+
+        #expect(Self.resolution(result, for: .decision).fallback == .flashModel)
+    }
+
+    @Test("with no room, each decision candidate records its rejection reason")
+    func decisionWithNoRoomRecordsEachRejectionReason() throws {
+        let result = try Self.resolveDecision(
+            [Self.deciderSmall, Self.deciderUnsizable], budgetBytes: Self.decisionNoRoomBudget)
+
+        #expect(
+            Self.resolution(result, for: .decision).considered.map(\.verdict)
+                == [.tooLarge, Self.unsizableDeciderVerdict])
+    }
+
+    @Test("with no room at a derived window, the decision slot uses the flash winner")
+    func derivedDecisionWithNoRoomUsesTheFlashWinner() throws {
+        let result = try Self.resolveDerivedDecision(
+            [Self.deciderSmall], standard: Self.windowBig, budgetBytes: Self.windowBigBudget)
+
+        #expect(result.decision == Self.windowFlash)
+    }
+
+    @Test("with no room at a derived window, each decision candidate records its rejection reason")
+    func derivedDecisionWithNoRoomRecordsEachRejectionReason() throws {
+        let result = try Self.resolveDerivedDecision(
+            [Self.deciderSmall, Self.deciderUnsizable], standard: Self.windowBig, budgetBytes: Self.windowBigBudget)
+
+        #expect(
+            Self.resolution(result, for: .decision).considered.map(\.verdict)
+                == [.tooLarge, Self.unsizableDeciderVerdict])
+    }
+
+    @Test("a decision candidate equal to the flash winner is chosen with 0 charged bytes")
+    func decisionEqualToTheFlashWinnerIsFree() throws {
+        let result = try Self.resolveDecision([Self.flash3b], budgetBytes: Self.decisionNoRoomBudget)
+
+        #expect(Self.resolution(result, for: .decision).considered == [Self.freeChosenReport(Self.flash3b)])
+    }
+
+    @Test("a decision candidate equal to the standard winner is chosen with 0 charged bytes")
+    func decisionEqualToTheStandardWinnerIsFree() throws {
+        let result = try Self.resolveDecision([Self.std32b8], budgetBytes: Self.decisionNoRoomBudget)
+
+        #expect(Self.resolution(result, for: .decision).considered == [Self.freeChosenReport(Self.std32b8)])
+    }
+
+    @Test("a decision candidate equal to the embedding winner has another pool key, so it is charged")
+    func decisionEqualToTheEmbeddingWinnerIsCharged() throws {
+        let result = try Self.resolveDecision([Self.embBge], budgetBytes: Self.decisionNoRoomBudget)
+
+        #expect(Self.resolution(result, for: .decision).considered.map(\.verdict) == [.tooLarge])
+    }
+
+    @Test("at a derived window, a decision candidate equal to the flash winner is chosen with 0 charged bytes")
+    func derivedDecisionEqualToTheFlashWinnerIsFree() throws {
+        let result = try Self.resolveDerivedDecision(
+            [Self.windowFlash], standard: Self.windowBig, budgetBytes: Self.windowBigBudget)
+
+        #expect(Self.resolution(result, for: .decision).considered == [Self.freeChosenReport(Self.windowFlash)])
+    }
+
+    @Test("at a derived window, a decision candidate equal to the standard winner is chosen with 0 charged bytes")
+    func derivedDecisionEqualToTheStandardWinnerIsFree() throws {
+        let result = try Self.resolveDerivedDecision(
+            [Self.windowBig], standard: Self.windowBig, budgetBytes: Self.windowBigBudget)
+
+        #expect(Self.resolution(result, for: .decision).considered == [Self.freeChosenReport(Self.windowBig)])
+    }
+
+    @Test("a large decision candidate does not change the trio winners")
+    func largeDecisionCandidateKeepsTheTrio() throws {
+        let withDecision = try Self.resolveDecision([Self.deciderLarge], budgetBytes: Self.decisionRoomBudget)
+        let withoutDecision = try Self.resolveDecision([], budgetBytes: Self.decisionRoomBudget)
+
+        #expect(TrioChoice(withDecision) == TrioChoice(withoutDecision))
+    }
+
+    @Test("at a derived window, a decision candidate does not change the trio winners or the window")
+    func derivedDecisionCandidateKeepsTheTrioAndTheWindow() throws {
+        let withDecision = try Self.resolveDerivedDecision(
+            [Self.deciderSmall], standard: Self.windowBig, budgetBytes: Self.windowBigBudget)
+        let withoutDecision = try Self.resolveDerivedDecision(
+            [], standard: Self.windowBig, budgetBytes: Self.windowBigBudget)
+
+        #expect(TrioChoice(withDecision) == TrioChoice(withoutDecision))
+    }
+
+    @Test("an empty decision list gives the flash fallback")
+    func emptyDecisionListGivesTheFlashFallback() throws {
+        let result = try Self.resolveDecision([], budgetBytes: Self.decisionRoomBudget)
+        let slot = Self.resolution(result, for: .decision)
+
+        #expect(slot.chosen == Self.flash3b)
+        #expect(slot.fallback == .flashModel)
+    }
+
+    @Test("at a derived window, an empty decision list gives the flash fallback")
+    func derivedEmptyDecisionListGivesTheFlashFallback() throws {
+        let result = try Self.resolveDerivedDecision(
+            [], standard: Self.windowNativeFits, budgetBytes: Self.decisionWindowRoomBudget)
+        let slot = Self.resolution(result, for: .decision)
+
+        #expect(slot.chosen == Self.windowFlash)
+        #expect(slot.fallback == .flashModel)
     }
 }

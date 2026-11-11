@@ -82,7 +82,9 @@ struct DecisionSlotPlanTests {
             decision: SlotResolution(
                 slot: .decision, remainingBudgetBytes: 0, chosen: flashRef,
                 considered: [
-                    CandidateReport(ref: deciderRef, estimatedFootprintBytes: nil, chargedBytes: nil, verdict: .notFitted)
+                    CandidateReport(
+                        ref: deciderRef, estimatedFootprintBytes: deciderFootprintBytes,
+                        chargedBytes: deciderFootprintBytes, verdict: .tooLarge)
                 ],
                 contextTokens: ScriptedSessionContext.tokens, fallback: .flashModel))
     }

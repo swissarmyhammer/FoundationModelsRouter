@@ -9,10 +9,12 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Tests of the decision slot through ``Router/resolve(profile:reporting:)``,
-/// over a stub loader and a stub metadata source. In this task the decision
-/// slot always uses the flash winner: the decision hold is a second hold of
-/// the flash entry, which costs no bytes and no second preload. No test
-/// downloads or loads a model, and no test makes a network request.
+/// over a stub loader and a stub metadata source. The decision candidate of
+/// these tests cannot be sized, so the decision slot uses the flash winner:
+/// the decision hold is a second hold of the flash entry, which costs no
+/// bytes and no second preload. `DecisionSlotFitTests` tests a decision
+/// candidate that fits. No test downloads or loads a model, and no test makes
+/// a network request.
 @Suite("The decision slot of a resolve")
 struct DecisionSlotResolveTests {
     // MARK: - Fixed values
@@ -22,6 +24,10 @@ struct DecisionSlotResolveTests {
 
     /// The one decision candidate of ``profile``.
     private static let deciderRef: ModelRef = "org/decider-a"
+
+    /// Why ``UnsizableDeciderMetadataSource`` gives no metadata of
+    /// ``deciderRef``.
+    private static let unsizableDeciderReason = "the stub source has no metadata of the decider"
 
     /// The model reference of the logits-capable live container.
     private static let liveContainerRef: ModelRef = "org/logits-stub"
@@ -123,6 +129,18 @@ struct DecisionSlotResolveTests {
         }
     }
 
+    /// A ``MetadataSource`` that gives the canned metadata of the fixtures
+    /// for each repo but the repo of ``deciderRef``. A fetch of that repo
+    /// throws, so the decision candidate cannot be sized.
+    private struct UnsizableDeciderMetadataSource: MetadataSource {
+        func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
+            guard repo != DecisionSlotResolveTests.deciderRef.repo else {
+                throw RepoMetadataError.metadataUnavailable(DecisionSlotResolveTests.unsizableDeciderReason)
+            }
+            return RouterTestFixtures.rawMetadata
+        }
+    }
+
     /// The result of one resolve: the profile, the loader, and the pool.
     private struct Resolved {
         /// The resolved profile.
@@ -140,8 +158,8 @@ struct DecisionSlotResolveTests {
 
     // MARK: - Helpers
 
-    /// Resolves ``profile`` over a ``RecordingLoader`` of `container`, in a
-    /// fresh pool.
+    /// Resolves ``profile`` over a ``RecordingLoader`` of `container` and an
+    /// ``UnsizableDeciderMetadataSource``, in a fresh pool.
     ///
     /// - Parameter container: The container of each generation slot.
     /// - Returns: The profile, the loader, the pool and the progress.
@@ -152,7 +170,9 @@ struct DecisionSlotResolveTests {
         defer { try? FileManager.default.removeItem(at: cacheDir) }
         let loader = RecordingLoader(container: container)
         let pool = ModelPool()
-        let router = RouterTestFixtures.makeRouter(cacheDir: cacheDir, loader: loader, pool: pool)
+        let router = Router(
+            cacheDir: cacheDir, probe: RouterTestFixtures.stubProbe,
+            metadataSource: UnsizableDeciderMetadataSource(), loader: loader, pool: pool)
         let progress = ResolutionProgress()
         let profile = try await router.resolve(profile: Self.profile, reporting: progress)
         return Resolved(profile: profile, loader: loader, pool: pool, progress: progress)
@@ -186,13 +206,13 @@ struct DecisionSlotResolveTests {
         #expect(resolved.profile.decision.resolution.fallback == .flashModel)
     }
 
-    @Test("the decision handle records each decision candidate as not fitted")
+    @Test("the decision handle records the decision candidate with the reason it cannot be sized")
     @MainActor
     func decisionHandleRecordsEachCandidate() async throws {
         let considered = try await Self.resolve().profile.decision.resolution.considered
 
         #expect(considered.map(\.ref) == [Self.deciderRef])
-        #expect(considered.allSatisfy { $0.verdict == .notFitted })
+        #expect(considered.map(\.verdict) == [.metadataUnavailable(Self.unsizableDeciderReason)])
     }
 
     @Test("the decision slot of the progress is ready with the flash winner")

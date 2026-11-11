@@ -73,16 +73,12 @@ extension SlotResolution {
 /// three slot models that co-fits one shared memory budget, and gives the
 /// decision slot its model.
 ///
-/// The decision slot always uses the flash winner: each decision candidate is
-/// recorded as ``Verdict/notFitted``, and the slot records
-/// ``SlotFallback/flashModel``. Thus the decision slot never blocks a profile
-/// and never makes the trio choose a smaller model.
-///
 /// Allocation runs in order against the shared budget: embedding, then
-/// standard, then flash. Each slot sees only what earlier slots left. In a slot,
-/// the candidates are tried in the author's preference order. The first
-/// candidate that fits wins. A candidate fits when its raw footprint estimate,
-/// the `charge`, is not more than the bytes that remain: `charge <= remaining`.
+/// standard, then flash, then decision. Each slot sees only what earlier slots
+/// left. In a slot, the candidates are tried in the author's preference order.
+/// The first candidate that fits wins. A candidate fits when its raw footprint
+/// estimate, the `charge`, is not more than the bytes that remain:
+/// `charge <= remaining`.
 ///
 /// The standard and flash slots never use the same model. The flash slot skips
 /// the model the standard slot chose, and records it as
@@ -90,6 +86,15 @@ extension SlotResolution {
 /// call on `flash` inside an open submission on `standard`, and each model has
 /// one FIFO work queue, so one model in both slots would wait on itself. Each
 /// slot thus loads its own container and is charged its whole footprint.
+///
+/// The decision slot is a pass after the trio (embedding, standard and flash)
+/// won, at the context that the trio chose. The pass gets only the budget that
+/// the trio left, so it can never make the trio choose a smaller model or a
+/// smaller window. A decision candidate that the pool key of a trio winner
+/// serves is the same model, so it costs 0 more bytes: the provider gets the
+/// pool keys of the three winners. When no decision candidate fits, the slot
+/// uses the flash winner and records ``SlotFallback/flashModel``. Thus the
+/// decision slot never blocks a profile, also when it names no candidate.
 ///
 /// When ``ProfileDefinition/context`` is explicit, every candidate is sized at
 /// that one context. When it is `nil`, the context is the largest window that
@@ -106,8 +111,13 @@ enum JointFit {
     /// looks for a fit in `smallestWindow...nativeMaxContext`.
     private static let smallestWindow = 1
 
-    /// The raw footprint of a candidate at a context, as the caller injects it.
-    typealias FootprintProvider = (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    /// The raw footprint of a candidate at a context, as the caller injects
+    /// it. The third argument is the pool keys of the models that this
+    /// resolve allocated before it sizes the candidate. A candidate that one
+    /// of these keys serves (``ModelPoolKey/canServe(_:)``) costs 0 more
+    /// bytes. The embedding, standard and flash slots allocate no model
+    /// before they size a candidate, so they pass an empty set.
+    typealias FootprintProvider = (ModelRef, Int, Set<ModelPoolKey>) -> Result<Int64, RepoMetadataError>
 
     /// The shared budget as the slots consume it, in allocation order.
     private struct SharedBudget {
@@ -126,8 +136,8 @@ enum JointFit {
         }
     }
 
-    /// Resolves a profile's three slots against one shared budget, and gives
-    /// the decision slot the flash winner.
+    /// Resolves a profile's three slots against one shared budget, and then
+    /// the decision slot against the budget that the three slots left.
     ///
     /// - Parameters:
     ///   - profile: The authored profile whose slots supply candidates in preference order.
@@ -136,6 +146,8 @@ enum JointFit {
     ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
     /// - Returns: The chosen trio, the decision model and per-slot
     ///   reasoning. The standard and flash models are never the same model.
+    ///   The decision model is the first decision candidate that fits, or the
+    ///   flash model.
     /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate,
     ///   or ``NoWindowFailure`` when the context is derived and no standard
     ///   candidate's window could be read.
@@ -188,51 +200,96 @@ enum JointFit {
             )
         }
 
-        return makeResolution(profile: profile, winner: winner, standard: winner.attempt.standard)
+        return makeResolution(
+            profile: profile, winner: winner, standard: winner.attempt.standard, footprint: footprint)
     }
 
     /// The joint resolution of a trio that co-fit: the three slots of the
-    /// trio, then the decision slot, which uses the flash winner.
+    /// trio, then the decision slot (``resolveDecision(profile:winner:footprint:)``).
     ///
     /// - Parameters:
-    ///   - profile: The authored profile, whose decision candidates are recorded.
+    ///   - profile: The authored profile, whose decision candidates are fitted.
     ///   - winner: The trio that co-fit.
     ///   - standard: The resolution of the standard slot to record.
+    ///   - footprint: The raw footprint of a candidate at a context.
     /// - Returns: The joint resolution.
     private static func makeResolution(
-        profile: ProfileDefinition, winner: TrioWinner, standard: SlotResolution
+        profile: ProfileDefinition, winner: TrioWinner, standard: SlotResolution, footprint: FootprintProvider
     ) -> JointResolution {
-        let flash = winner.attempt.flash
-        let notFitted = profile.decision.map {
-            CandidateReport(ref: $0, estimatedFootprintBytes: nil, chargedBytes: nil, verdict: .notFitted)
-        }
-        var budget = SharedBudget(totalBytes: flash.remainingBudgetBytes)
-        budget.charge(flash)
-        let decision = SlotResolution.flashFallback(
-            considered: notFitted, flashModel: winner.flash, remainingBudgetBytes: budget.remainingBytes,
-            contextTokens: flash.contextTokens)
+        let decision = resolveDecision(profile: profile, winner: winner, footprint: footprint)
         return JointResolution(
             embedding: winner.embedding,
             standard: winner.standard,
             flash: winner.flash,
-            decision: winner.flash,
-            slots: [winner.attempt.embedding, standard, flash, decision]
+            decision: decision.chosen ?? winner.flash,
+            slots: [winner.attempt.embedding, standard, winner.attempt.flash, decision]
         )
+    }
+
+    /// Resolves the decision slot after the trio of `winner` won, at the
+    /// context of the trio, against the budget that the trio left.
+    ///
+    /// The candidates are tried in preference order, and the first that fits
+    /// wins. A candidate that the pool key of a trio winner serves costs 0
+    /// more bytes. When no candidate fits, the slot uses the flash winner and
+    /// records ``SlotFallback/flashModel``, with the verdict of each candidate.
+    ///
+    /// - Parameters:
+    ///   - profile: The authored profile, whose decision candidates are fitted.
+    ///   - winner: The trio that co-fit.
+    ///   - footprint: The raw footprint of a candidate at a context.
+    /// - Returns: The resolution of the decision slot. Its ``SlotResolution/chosen``
+    ///   is never `nil`.
+    private static func resolveDecision(
+        profile: ProfileDefinition, winner: TrioWinner, footprint: FootprintProvider
+    ) -> SlotResolution {
+        let flash = winner.attempt.flash
+        let context = flash.contextTokens
+        var budget = SharedBudget(totalBytes: flash.remainingBudgetBytes)
+        budget.charge(flash)
+        let resolution = resolveSlot(
+            .decision,
+            candidates: profile.decision,
+            budget: budget,
+            context: context,
+            allocatedKeys: allocatedKeys(of: winner, context: context),
+            footprint: footprint
+        )
+        guard resolution.chosen == nil else { return resolution }
+        return SlotResolution.flashFallback(
+            considered: resolution.considered, flashModel: winner.flash,
+            remainingBudgetBytes: budget.remainingBytes, contextTokens: context)
+    }
+
+    /// The pool keys of the three models that `winner` chose, each under the
+    /// key that its slot asks the pool for at `context`
+    /// (``ModelSlot/poolKey(of:context:)``).
+    private static func allocatedKeys(of winner: TrioWinner, context: Int) -> Set<ModelPoolKey> {
+        [
+            ModelSlot.embedding.poolKey(of: winner.embedding, context: context),
+            ModelSlot.standard.poolKey(of: winner.standard, context: context),
+            ModelSlot.flash.poolKey(of: winner.flash, context: context),
+        ]
     }
 
     /// Resolves one slot against the remaining budget. The first viable
     /// candidate in preference order wins. Each candidate gets a verdict.
     ///
-    /// - Parameter excluded: The model the slot must not use, or `nil`. The
-    ///   flash slot passes the model the standard slot chose, because the
-    ///   standard and flash slots never use the same model. That candidate is
-    ///   recorded as ``Verdict/sameModelAsStandard`` and never sized.
+    /// - Parameters:
+    ///   - excluded: The model the slot must not use, or `nil`. The flash slot
+    ///     passes the model the standard slot chose, because the standard and
+    ///     flash slots never use the same model. That candidate is recorded as
+    ///     ``Verdict/sameModelAsStandard`` and never sized.
+    ///   - allocatedKeys: The pool keys of the models that this resolve
+    ///     allocated before this slot. The trio slots pass none (the
+    ///     default). The decision slot passes the keys of the trio winners.
     private static func resolveSlot(
         _ slot: ModelSlot,
         candidates: [ModelRef],
         excluding excluded: ModelRef? = nil,
         budget: SharedBudget,
         context: Int,
+        allocatedKeys: Set<ModelPoolKey> = [],
         footprint: FootprintProvider
     ) -> SlotResolution {
         var chosen: ModelRef?
@@ -254,7 +311,8 @@ enum JointFit {
                 continue
             }
 
-            let report = evaluateCandidate(ref, context: context, budget: budget, footprint: footprint)
+            let report = evaluateCandidate(
+                ref, context: context, budget: budget, allocatedKeys: allocatedKeys, footprint: footprint)
             considered.append(report)
             if report.verdict == .chosen {
                 chosen = ref
@@ -290,14 +348,16 @@ enum JointFit {
     }
 
     /// Sizes one candidate against the remaining budget at `context` and gives
-    /// its verdict. The candidate is charged its whole raw footprint estimate.
+    /// its verdict. The candidate is charged its whole raw footprint estimate,
+    /// as `footprint` gives it for `allocatedKeys`.
     private static func evaluateCandidate(
         _ ref: ModelRef,
         context: Int,
         budget: SharedBudget,
+        allocatedKeys: Set<ModelPoolKey>,
         footprint: FootprintProvider
     ) -> CandidateReport {
-        switch footprint(ref, context) {
+        switch footprint(ref, context, allocatedKeys) {
         case .failure(.metadataUnavailable(let reason)):
             return CandidateReport(
                 ref: ref,
@@ -609,12 +669,15 @@ enum JointFit {
     /// - Parameters:
     ///   - index: The candidate's position in ``ProfileDefinition/standard``.
     ///   - standardConsidered: The reports for standard candidates tried before this one.
+    ///   - footprint: The raw footprint of a candidate at a context, for the
+    ///     decision slot.
     private static func makeWindowSuccess(
         index: Int,
         profile: ProfileDefinition,
         standardConsidered: [CandidateReport],
         fit: WindowFit,
-        winner: TrioWinner
+        winner: TrioWinner,
+        footprint: FootprintProvider
     ) -> JointResolution {
         let winningReport = chosenReport(winner.attempt.standard)
         let report = CandidateReport(
@@ -640,7 +703,7 @@ enum JointFit {
             contextTokens: winner.attempt.standard.contextTokens
         )
 
-        return makeResolution(profile: profile, winner: winner, standard: standardResolution)
+        return makeResolution(profile: profile, winner: winner, standard: standardResolution, footprint: footprint)
     }
 
     /// Resolves a profile whose ``ProfileDefinition/context`` is `nil`. Standard
@@ -690,7 +753,8 @@ enum JointFit {
                         profile: profile,
                         standardConsidered: standardConsidered,
                         fit: fit,
-                        winner: winner
+                        winner: winner,
+                        footprint: footprint
                     )
                 case .unfit(let fit, let verdict):
                     lastTriedContext = smallestWindow

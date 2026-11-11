@@ -314,7 +314,8 @@ public actor Router {
     /// The slots a resolve acquires, in acquisition order: `standard` before
     /// `flash`, then the embedding, then the decision slot. The decision slot
     /// is last, so its key can be the key of a slot that this resolve holds
-    /// already (the flash fallback).
+    /// already (the flash fallback, or a decision candidate that is the
+    /// standard or flash model).
     private static let acquisitionOrder: [ModelSlot] = [.standard, .flash, .embedding, .decision]
 
     /// One slot's hold this resolve took, whether this resolve loaded the
@@ -620,7 +621,8 @@ public actor Router {
     /// pool (``PromptCacheSizing/withBudget(adding:isolation:_:)``).
     ///
     /// A slot whose key a hold of this resolve serves already (the decision
-    /// slot on the flash fallback) costs 0 bytes: the hold sends no footprint
+    /// slot on the flash fallback, or on the model of the standard or flash
+    /// slot) costs 0 bytes: the hold sends no footprint
     /// and no session bytes, the prompt cache gets no smaller budget, and the
     /// hold is not a new load. The model is resident once, so it is charged
     /// once.
@@ -898,6 +900,8 @@ public actor Router {
     ///   - allocatedKeys: The keys of the models that this resolve allocated
     ///     before it sizes `ref`. The fit of the embedding, standard and
     ///     flash slots allocates none of them before it sizes a candidate.
+    ///     The decision pass of the joint fit gives the keys of the three
+    ///     winners (``JointFit/FootprintProvider``).
     /// - Returns: The largest footprint, or why the candidate cannot be sized.
     static func footprintBytes(
         for ref: ModelRef,
@@ -1064,10 +1068,10 @@ public actor Router {
             return try JointFit.resolve(
                 profile: def,
                 budgetBytes: budget,
-                footprint: { ref, context in
+                footprint: { ref, context, allocatedKeys in
                     Self.footprintBytes(
                         for: ref, context: context, metadataByRef: metadataByRef,
-                        membership: membership, residentKeys: residentKeys
+                        membership: membership, residentKeys: residentKeys, allocatedKeys: allocatedKeys
                     )
                 },
                 nativeMaxContext: { ref in

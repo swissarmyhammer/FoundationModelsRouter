@@ -128,7 +128,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// keep the models of the resolve resident, so a tool that stores only
     /// this handle keeps its whole residency loaded after the profile object
     /// is gone. The hold of the decision slot can be a second hold of the
-    /// model of another slot (the flash fallback). A hold refers to nothing but the pool, its key and its container,
+    /// model of another slot (the flash fallback, or a decision candidate
+    /// that is the standard or flash model). A hold refers to nothing but the pool, its key and its container,
     /// so no cycle is possible. The last release of a hold starts the eviction
     /// of its model.
     ///

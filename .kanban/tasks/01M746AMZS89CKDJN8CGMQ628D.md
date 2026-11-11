@@ -25,10 +25,26 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/RepoMetadataTests.swift, Tests/FoundationModelsRouterTests/GGUFResolveTests.swift, Tests/FoundationModelsRouterTests/DecisionSlotResolveTests.swift; `swift test` once: 2612 tests in 302 suites passed (plus 41 and 19), 0 failures; only warning is the existing build-system "missing creator for mutated node" for mlx-swift_Cmlx.bundle.
     - next: /review
   timestamp: 2026-11-11T14:42:26.906214+00:00
+- actor: claude-code
+  id: 01m75h5gb7fggmb90z42s9zn4b
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (9d513c1e). 0 findings, 0 confirmed, 3 refuted. 4 code files reviewed. 4 .kanban files not reviewed (ignore rule).
+    - next: The task is in done. No work is open.
+  timestamp: 2026-11-11T14:46:06.439119+00:00
+- actor: claude-code
+  id: 01m75h5x4bdpxtddrz273dvv4r
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — Router.swift (per-slot pool key sizing, allocatedKeys 0-byte rule, Core ML message), 3 test files
+    - test: green — swift test, 2612 + 41 + 19 passed, 0 skipped
+    - commit: 9d513c1e
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T14:46:19.531846+00:00
 depends_on:
 - 01M746A8SW146DW09CCNJPHQ4K
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffff80
 title: 'R8: size decision candidates like generation candidates; reject Core ML'
 ---
 ## What

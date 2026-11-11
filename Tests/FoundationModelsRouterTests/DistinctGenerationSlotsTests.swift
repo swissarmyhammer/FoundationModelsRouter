@@ -41,7 +41,7 @@ struct DistinctGenerationSlotsTests {
     private static let routerRAMBytes: Int64 = 48 << 30
 
     /// A `footprint` closure that gives each model ``modelBytes`` at any context.
-    private static func flatFootprint(_: ModelRef, _: Int) -> Result<Int64, RepoMetadataError> {
+    private static func flatFootprint(_: ModelRef, _: Int, _: Set<ModelPoolKey>) -> Result<Int64, RepoMetadataError> {
         .success(modelBytes)
     }
 

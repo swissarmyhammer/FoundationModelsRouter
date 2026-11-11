@@ -5,9 +5,10 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Tests of the decision slot in the pure joint fit: the slot always uses the
-/// flash winner, records each of its candidates, and records the flash
-/// fallback. The decision fit of its own candidates is a later task. No
+/// Tests of the flash fallback of the decision slot in the pure joint fit. No
+/// decision candidate of these tests can be sized, so the slot uses the flash
+/// winner, records each of its candidates, and records the flash fallback.
+/// `JointFitTests` tests the decision pass with candidates that fit. No
 /// network and no I/O: the footprints are injected.
 @Suite("The decision slot of the joint fit")
 struct DecisionSlotJointFitTests {
@@ -22,7 +23,8 @@ struct DecisionSlotJointFitTests {
     /// The one embedding candidate.
     private static let embeddingRef: ModelRef = "org/embedding"
 
-    /// The decision candidates, in preference order.
+    /// The decision candidates, in preference order. ``footprints`` has no
+    /// entry for them, so they cannot be sized.
     private static let decisionRefs: [ModelRef] = ["org/decider-a", "org/decider-b"]
 
     /// The native window of each candidate, for the derived-window test.
@@ -73,6 +75,15 @@ struct DecisionSlotJointFitTests {
         )
     }
 
+    /// The reason that the footprint provider of ``resolve(_:sizedRefs:)``
+    /// gives for a ref with no footprint.
+    ///
+    /// - Parameter ref: The ref with no footprint.
+    /// - Returns: The reason.
+    private static func noFootprintReason(for ref: ModelRef) -> String {
+        "no footprint for \(ref.stringValue)"
+    }
+
     /// Runs the joint fit over ``footprints``, and records each sized ref in
     /// `sizedRefs`.
     ///
@@ -87,10 +98,10 @@ struct DecisionSlotJointFitTests {
         try JointFit.resolve(
             profile: profile,
             budgetBytes: budgetBytes,
-            footprint: { ref, _ in
+            footprint: { ref, _, _ in
                 sizedRefs.record(ref)
                 return footprints[ref].map { .success($0) }
-                    ?? .failure(.metadataUnavailable("no footprint for \(ref.stringValue)"))
+                    ?? .failure(.metadataUnavailable(noFootprintReason(for: ref)))
             },
             nativeMaxContext: { _ in .success(nativeWindow) }
         )
@@ -152,20 +163,21 @@ struct DecisionSlotJointFitTests {
         #expect(slot.fallback == .flashModel)
     }
 
-    @Test("the decision slot records each candidate, in preference order, as not fitted")
-    func decisionSlotRecordsEachCandidateAsNotFitted() throws {
+    @Test("the decision slot records each candidate, in preference order, with the reason it cannot be sized")
+    func decisionSlotRecordsEachCandidateAsUnsizable() throws {
         let slot = try Self.decisionSlot(of: Self.resolve())
 
-        #expect(slot.considered.map(\.ref) == Self.decisionRefs)
-        #expect(slot.considered.allSatisfy { $0.verdict == .notFitted })
+        #expect(
+            slot.considered.map(\.verdict)
+                == Self.decisionRefs.map { .metadataUnavailable(Self.noFootprintReason(for: $0)) })
     }
 
-    @Test("the joint fit sizes no decision candidate")
-    func jointFitSizesNoDecisionCandidate() throws {
+    @Test("the joint fit sizes each decision candidate when none fits")
+    func jointFitSizesEachDecisionCandidate() throws {
         let sizedRefs = SizedRefs()
         _ = try Self.resolve(sizedRefs: sizedRefs)
 
-        #expect(Set(sizedRefs.sized).isDisjoint(with: Self.decisionRefs))
+        #expect(Set(Self.decisionRefs).isSubset(of: sizedRefs.sized))
     }
 
     @Test("the fallback of a slot renders as \"fallback: flash model\"")
