@@ -10,10 +10,10 @@ import FoundationModelsExtras
 /// The pooled decision model therefore uses it through ``PooledLogits`` only.
 /// For a router load, that container is ``LiveLLMContainer``.
 ///
-/// The container checks that the chat template turns reasoning off. A
-/// thinking block before the answer gives incorrect probabilities, thus the
-/// container refuses a template that leaves a thinking block open (see
-/// ``ReasoningOffPromptFormat``).
+/// The container gives the format to the pooled decision model unchanged.
+/// A thinking block before the answer gives incorrect probabilities, thus
+/// `GenericPromptFormat` with no closed-think fallback refuses a chat
+/// template that leaves a thinking block open when reasoning is off.
 ///
 /// The type is `package`, so that the real-model harness of the test targets
 /// gives its hand-built profile a real decision container.
@@ -29,7 +29,7 @@ package struct PooledDecisionContainer: LoadedDecisionContainer {
     /// - Throws: ``PooledLogitsModelError/notLogitsCapable(_:)`` when the
     ///   container of `hold` does not conform to ``PooledLogits``.
     init(hold: ModelHold, format: any DecisionPromptFormat) throws {
-        decisionModel = try PooledDecisionModel(hold: hold, format: ReasoningOffPromptFormat.guarding(format))
+        decisionModel = try PooledDecisionModel(hold: hold, format: format)
     }
 
     /// Makes the container of a decision model that `pool` loads at the
@@ -46,7 +46,7 @@ package struct PooledDecisionContainer: LoadedDecisionContainer {
     ///   - format: The prompt format of the model. The default is the format
     ///     of the flash fallback, `GenericPromptFormat`.
     package init(model ref: ModelRef, pool: ModelPool, format: any DecisionPromptFormat = GenericPromptFormat()) {
-        decisionModel = PooledDecisionModel(ref: ref, pool: pool, format: ReasoningOffPromptFormat.guarding(format))
+        decisionModel = PooledDecisionModel(ref: ref, pool: pool, format: format)
     }
 }
 

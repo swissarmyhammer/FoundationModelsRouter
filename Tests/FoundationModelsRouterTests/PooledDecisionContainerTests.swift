@@ -26,6 +26,15 @@ struct PooledDecisionContainerTests {
     /// thinking block is open at the end.
     private static let openThinkingSuffix = "<think>\n"
 
+    /// The detail of the error that `GenericPromptFormat` with no
+    /// closed-think fallback throws for a chat template that leaves a
+    /// thinking block open. The constant of the format is not public, thus
+    /// the test gives the same text.
+    private static let openThinkingMessage =
+        "The chat template of the model leaves an open thinking block when reasoning is off, "
+        + "thus the answer would come from inside the thinking block. "
+        + "Set closedThinkFallback: true to close the block."
+
     /// The prompt limits of the stub in the prompt-limit test. Each limit is
     /// different from ``contextWindow``. The `nil` limit is the stub with no
     /// fixed limit.
@@ -142,17 +151,20 @@ struct PooledDecisionContainerTests {
     // MARK: - Reasoning off
 
     /// A chat template that leaves a thinking block open makes the decision
-    /// throw.
+    /// of the flash fallback throw. The check is in `GenericPromptFormat`
+    /// with no closed-think fallback: the container gives the format to the
+    /// pooled decision model unchanged.
     @Test("a template that cannot turn reasoning off makes a decision throw unsupportedModel")
     func openThinkingTemplateThrowsUnsupportedModel() async throws {
         let session = try await Self.makeSession(over: Self.makeLogits(reasoningOffSuffix: Self.openThinkingSuffix))
-        await #expect(throws: DecisionError.unsupportedModel(ReasoningOffPromptFormat.openThinkingMessage)) {
+        await #expect(throws: DecisionError.unsupportedModel(Self.openThinkingMessage)) {
             try await session.probability(of: Self.question)
         }
     }
 
     /// A chat template that leaves a thinking block open gives no
-    /// probabilities: the model evaluates no prompt.
+    /// probabilities: `GenericPromptFormat` throws before the model evaluates
+    /// a prompt.
     @Test("a template that cannot turn reasoning off gives no probabilities")
     func openThinkingTemplateReadsNoProbabilities() async throws {
         let logits = Self.makeLogits(reasoningOffSuffix: Self.openThinkingSuffix)
@@ -173,7 +185,7 @@ struct PooledDecisionContainerTests {
     }
 
     /// The closed-think fallback of the generic format closes the open block
-    /// itself, thus the container accepts the template.
+    /// itself, thus `GenericPromptFormat` accepts the template.
     @Test("the closed-think fallback of the generic format accepts an open thinking block")
     func closedThinkFallbackAcceptsOpenThinkingTemplate() async throws {
         let logits = Self.makeLogits(reasoningOffSuffix: Self.openThinkingSuffix)

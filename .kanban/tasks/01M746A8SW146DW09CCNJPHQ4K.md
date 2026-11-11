@@ -65,11 +65,27 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Resolution/JointFit.swift; `swift test` one run, exit 0: 2604 tests in 302 suites, 41 tests in 23 suites, 19 tests in 3 suites passed. No source warnings. The build system shows one warning "missing creator for mutated node" for the mlx-swift_Cmlx.bundle; it is not from the source.
     - next: /review
   timestamp: 2026-11-11T14:22:25.243822+00:00
+- actor: claude-code
+  id: 01m75fxrwq8cqvv0wng960m2nt
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (20bf38a4): 0 findings, 0 confirmed, 0 refuted; 7 validator runs, 0 failed. The prior finding (JointFit.swift:31) is checked.
+    - next: none. The task is in done.
+  timestamp: 2026-11-11T14:24:24.471347+00:00
+- actor: claude-code
+  id: 01m75fy7dpvm0eqssz98cccyha
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — Resolution/JointFit.swift (synthesized init)
+    - test: green — swift test, 2604 + 41 + 19 passed, 0 skipped
+    - commit: 20bf38a4
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T14:24:39.350673+00:00
 depends_on:
 - 01M7468B410V0HR94ZBY52DT1Q
 - 01M7469KKAMMEPD1RQHTRT8SF1
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffffd80
 title: 'R2/R6/R7b: ModelSlot.decision through the resolve to LanguageModelProfile.decision (flash fallback)'
 ---
 ## What
