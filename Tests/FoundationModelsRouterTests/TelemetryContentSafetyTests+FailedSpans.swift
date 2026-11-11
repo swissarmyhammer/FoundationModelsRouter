@@ -132,7 +132,7 @@ extension TelemetryContentSafetyTests {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
             let decider = HandBuiltProfileFixtures.makeDecider(
                 chosen: Self.failingSpanModel,
-                container: ThrowingDecisionContainer(failure: Self.contentBearingError),
+                container: UnavailableDecisionContainer(ref: Self.failingSpanModel, error: Self.contentBearingError),
                 routerId: ULID(),
                 tracer: context.tracer
             )

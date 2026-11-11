@@ -26,6 +26,9 @@ struct DecisionTelemetryTests {
     /// The span name of each decide call.
     private static let spanName = "FoundationModelsRouter.decide"
 
+    /// The name of each attribute of the decide span.
+    private static let attributeNames = ["router.id", "model.ref", "decision.question_count"]
+
     /// The model reference of the handle.
     private static let ref: ModelRef = "org/decider-traced"
 
@@ -78,7 +81,7 @@ struct DecisionTelemetryTests {
 
     /// The failure that a stub executor throws.
     private enum StubFailure: Error {
-        /// The decide call failed (``ThrowingDecisionContainer``).
+        /// The decide call failed (``UnavailableDecisionContainer``).
         case decide
 
         /// The prewarm call reached the stub executor.
@@ -200,34 +203,15 @@ struct DecisionTelemetryTests {
             .decide(questions)
     }
 
-    /// The decide spans that `tracer` holds and that have finished, in the
-    /// order that they finished.
-    ///
-    /// - Parameter tracer: The tracer that the work reported to.
-    /// - Returns: Each finished decide span.
-    private static func finishedDecideSpans(reportedTo tracer: InMemoryTracer) -> [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == spanName }
-    }
-
     /// The one finished decide span that `tracer` holds.
     ///
     /// - Parameter tracer: The tracer that the work reported to.
     /// - Returns: The span.
     /// - Throws: An issue when `tracer` holds no decide span or more than one.
     private static func onlyDecideSpan(reportedTo tracer: InMemoryTracer) throws -> FinishedInMemorySpan {
-        let spans = finishedDecideSpans(reportedTo: tracer)
+        let spans = tracer.finishedSpans(named: spanName)
         try #require(spans.count == 1)
         return spans[0]
-    }
-
-    /// The attributes of `span`, keyed by name.
-    ///
-    /// - Parameter span: The span.
-    /// - Returns: Each attribute of the span.
-    private static func attributes(of span: FinishedInMemorySpan) -> [String: SpanAttribute] {
-        var attributes: [String: SpanAttribute] = [:]
-        span.attributes.forEach { key, value in attributes[key] = value }
-        return attributes
     }
 
     // MARK: - Tests
@@ -237,7 +221,7 @@ struct DecisionTelemetryTests {
     func decideGivesOneSpan() async throws {
         let tracer = InMemoryTracer()
         try await Self.decideQuestions(reportingTo: tracer)
-        #expect(Self.finishedDecideSpans(reportedTo: tracer).count == 1)
+        #expect(tracer.finishedSpans(named: Self.spanName).count == 1)
     }
 
     /// The decide span is of kind client, as the embed span is.
@@ -256,12 +240,12 @@ struct DecisionTelemetryTests {
         let routerId = ULID()
         try await Self.decideQuestions(reportingTo: tracer, routerId: routerId)
 
-        let expected: [String: SpanAttribute] = [
+        let expected: SpanAttributes = [
             "router.id": .string(routerId.description),
             "model.ref": .string(Self.ref.stringValue),
             "decision.question_count": .int64(Int64(Self.questions.count)),
         ]
-        #expect(Self.attributes(of: try Self.onlyDecideSpan(reportedTo: tracer)) == expected)
+        #expect(try Self.onlyDecideSpan(reportedTo: tracer).attributes == expected)
     }
 
     /// The traced model gives the response of the inner model with no change.
@@ -277,7 +261,8 @@ struct DecisionTelemetryTests {
     @Test("a decide call that throws records the error type on its span")
     func failedDecideRecordsTheErrorType() async throws {
         let tracer = InMemoryTracer()
-        let session = Self.makeDecider(over: ThrowingDecisionContainer(failure: StubFailure.decide), tracer: tracer)
+        let session = Self.makeDecider(
+            over: UnavailableDecisionContainer(ref: Self.ref, error: StubFailure.decide), tracer: tracer)
             .makeSession(state: .text(Self.stateText))
 
         await #expect(throws: StubFailure.decide) {
@@ -289,14 +274,20 @@ struct DecisionTelemetryTests {
 
     /// No attribute value of the decide span holds the state, a question
     /// text, an option text or an answer.
+    ///
+    /// `SpanAttributes` is not a sequence. Thus the test reads the value of
+    /// each name in ``attributeNames``, and it requires that these values are
+    /// all of the attributes of the span.
     @Test("no decide span attribute holds the state, a question, an option or an answer")
     func decideSpanHoldsNoContent() async throws {
         let tracer = InMemoryTracer()
         try await Self.decideQuestions(reportingTo: tracer)
 
-        let values = Self.attributes(of: try Self.onlyDecideSpan(reportedTo: tracer)).values
+        let attributes = try Self.onlyDecideSpan(reportedTo: tracer).attributes
+        let values = Self.attributeNames.compactMap { attributes.get($0) }
         let rendered = values.map { String(describing: $0) }.joined(separator: "\n")
         try #require(!values.isEmpty)
+        try #require(values.count == attributes.count)
         #expect(
             RecordingRedactionScan.findings(in: rendered, file: Self.spanName, patterns: Self.markers).isEmpty)
     }

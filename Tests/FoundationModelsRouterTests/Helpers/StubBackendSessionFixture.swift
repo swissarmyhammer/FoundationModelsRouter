@@ -82,7 +82,7 @@ extension InMemoryTracer {
     /// and it opens a resolve span with one load span under it for each slot
     /// it loads.
     var finishedSubmissionSpans: [FinishedInMemorySpan] {
-        finishedSpans.filter { $0.operationName == RouterTelemetry.SpanName.submission }
+        finishedSpans(named: RouterTelemetry.SpanName.submission)
     }
 
     /// The finished submission spans whose cause is `cause`, in the order

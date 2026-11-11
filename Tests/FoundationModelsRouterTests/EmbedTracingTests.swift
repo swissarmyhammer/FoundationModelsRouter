@@ -42,7 +42,7 @@ struct EmbedTracingTests {
     private static func finishedEmbedSpans(
         reportedTo tracer: InMemoryTracer
     ) -> [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == spanName }
+        tracer.finishedSpans(named: spanName)
     }
 
     /// Resolves the shared test profile over a stub loader and the supplied

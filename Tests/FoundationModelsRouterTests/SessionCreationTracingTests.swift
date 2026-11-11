@@ -82,7 +82,7 @@ struct SessionCreationTracingTests {
     private static func finishedSessionSpans(
         reportedTo tracer: InMemoryTracer
     ) -> [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == spanName }
+        tracer.finishedSpans(named: spanName)
     }
 
     // MARK: - A session vended over a resident model
