@@ -62,7 +62,7 @@ struct CoreMLEmbeddingThroughRouterTests {
 
         _ = try await embedder.embed(texts: ["a"])
 
-        let span = try #require(tracer.finishedSpans.first { $0.operationName == Self.spanName })
+        let span = try #require(tracer.finishedSpans(named: Self.spanName).first)
         #expect(span.attributes.get("model.ref") == .string(Self.ref.stringValue))
     }
 
@@ -73,7 +73,7 @@ struct CoreMLEmbeddingThroughRouterTests {
 
         _ = try await embedder.embed(texts: ["a"])
 
-        let span = try #require(tracer.finishedSpans.first { $0.operationName == Self.spanName })
+        let span = try #require(tracer.finishedSpans(named: Self.spanName).first)
         #expect(span.attributes.get("embedding.dimension") == .int64(Int64(Self.dimension)))
     }
 

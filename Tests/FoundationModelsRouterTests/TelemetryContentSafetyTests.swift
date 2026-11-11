@@ -85,7 +85,7 @@ struct TelemetryContentSafetyTests {
 
             // A suite that measured nothing would pass silently, so say what was
             // measured before the capture says it was clean.
-            #expect(context.spans.contains { $0.operationName == ExtrasTelemetryNames.toolSpan })
+            #expect(!context.tracer.inMemoryTracer.finishedSpans(named: ExtrasTelemetryNames.toolSpan).isEmpty)
             context.expectLogged(
                 containing: RejectedToolCallRetry.retryLogMessage,
                 metadata: [

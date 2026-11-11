@@ -212,10 +212,9 @@ struct WatchStopUsageTests {
         let stoppedCall = try #require(events.generationCalls.first)
         #expect(stoppedCall.tokensOut > 0)
         let stoppedSpan = try #require(
-            tracer.finishedSpans.first {
-                $0.operationName == RouterTelemetry.SpanName.submission
-                    && $0.attributes.get(RouterTelemetry.AttributeKey.submissionId)
-                        == .string(SubmissionID(1).description)
+            tracer.finishedSpans(named: RouterTelemetry.SpanName.submission).first {
+                $0.attributes.get(RouterTelemetry.AttributeKey.submissionId)
+                    == .string(SubmissionID(1).description)
             })
         #expect(
             stoppedSpan.attributes.get(RouterTelemetry.AttributeKey.tokensIn) == .int64(Int64(stoppedCall.tokensIn)))

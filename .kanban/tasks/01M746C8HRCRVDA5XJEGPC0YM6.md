@@ -58,12 +58,28 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Tools.swift; `swift test` one time: 2638 tests in 305 suites + 41 + 19 passed, exit 0, no compiler warnings
     - next: /review
   timestamp: 2026-11-11T23:37:46.270700+00:00
+- actor: claude-code
+  id: 01m76fnxjz223hqtpccbx37zbe
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (890da904): 0 findings, 0 confirmed, 0 refuted; 7 attempted, 0 failed. All prior findings are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-11-11T23:39:21.567422+00:00
+- actor: claude-code
+  id: 01m76fpd5f596qabamvcnbc4tw
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — Sources/FoundationModelsRouter/Tools.swift (DecideTool synthesized init)
+    - test: green — swift test, 2638 + 41 + 19 passed, 0 skipped
+    - commit: 890da904
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T23:39:37.519081+00:00
 depends_on:
 - 01M746AWW5JWZK2017CJMC5VMJ
 - 01M746B9WYHASZZGR6P8SC4C1K
 - 01M746BHT4HMJY6R5ZFA9DKCBK
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffff8580
 title: 'R11: document the decision slot (README, docs/decision.md, DocC)'
 ---
 ## What

@@ -98,21 +98,6 @@ struct ToolTracingTests {
             rounds: [[ScriptedToolCall(id: "call-1", toolName: toolName, argument: .literal(step))]])
     }
 
-    /// Every finished span of `name` the driven work reported.
-    ///
-    /// Filtered by name rather than counted over the whole tracer: the fixture's
-    /// own ``Router/resolve(profile:reporting:)`` reports to the same tracer,
-    /// and it opens a resolve span with one load span under it for each slot.
-    ///
-    /// - Parameters:
-    ///   - name: The operation name to keep.
-    ///   - tracer: The tracer the driven work reported to.
-    /// - Returns: The matching finished spans, in finish order.
-    private static func spans(named name: String, in tracer: InMemoryTracer) -> [FinishedInMemorySpan]
-    {
-        tracer.finishedSpans.filter { $0.operationName == name }
-    }
-
     /// The single tool span a one-call answer opened.
     ///
     /// - Parameter tracer: The tracer the answer reported to.
@@ -121,7 +106,7 @@ struct ToolTracingTests {
     private static func singleToolSpan(reportedTo tracer: InMemoryTracer) throws
         -> FinishedInMemorySpan
     {
-        let spans = spans(named: toolSpanName, in: tracer)
+        let spans = tracer.finishedSpans(named: toolSpanName)
         try #require(spans.count == 1)
         return try #require(spans.first)
     }
@@ -161,10 +146,10 @@ struct ToolTracingTests {
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
-        let submissionSpans = Self.spans(named: Self.submissionSpanName, in: tracer)
+        let submissionSpans = tracer.finishedSpans(named: Self.submissionSpanName)
         try #require(submissionSpans.count == 1)
         let submissionSpan = try #require(submissionSpans.first)
-        let toolSpans = Self.spans(named: Self.toolSpanName, in: tracer)
+        let toolSpans = tracer.finishedSpans(named: Self.toolSpanName)
         #expect(toolSpans.count == 2)
         #expect(toolSpans.allSatisfy { $0.parentSpanID == submissionSpan.spanID })
     }
@@ -279,6 +264,6 @@ struct ToolTracingTests {
         // read back was truncated. Without this the span count below would pass
         // just as well on a session that was never capped at all.
         #expect(answer.contains(Self.truncationMarker))
-        #expect(Self.spans(named: Self.toolSpanName, in: tracer).count == 1)
+        #expect(tracer.finishedSpans(named: Self.toolSpanName).count == 1)
     }
 }

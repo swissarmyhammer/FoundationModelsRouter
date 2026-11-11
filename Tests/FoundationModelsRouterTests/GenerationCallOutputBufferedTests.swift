@@ -128,7 +128,7 @@ struct GenerationCallOutputBufferedTests {
         #expect(records.map(\.outputBuffered) == [true, false])
         let otherEvents = await fixture.recorder.events.filter { $0.kind != .generationCall }
         #expect(otherEvents.allSatisfy { $0.outputBuffered == nil })
-        let spans = tracer.finishedSpans.filter { $0.operationName == RouterTelemetry.SpanName.generationCall }
+        let spans = tracer.finishedSpans(named: RouterTelemetry.SpanName.generationCall)
         #expect(
             spans.map { $0.attributes.get(RouterTelemetry.AttributeKey.outputBuffered) } == [.bool(true), .bool(false)])
     }

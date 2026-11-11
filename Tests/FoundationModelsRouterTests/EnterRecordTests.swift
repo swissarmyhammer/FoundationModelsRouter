@@ -140,8 +140,7 @@ struct EnterRecordTests {
         of spanName: String,
         in context: TelemetryCapture.Context
     ) -> [SpanIDs] {
-        context.spans
-            .filter { $0.operationName == spanName }
+        context.tracer.inMemoryTracer.finishedSpans(named: spanName)
             .map { SpanIDs(traceID: $0.traceID, spanID: $0.spanID) }
     }
 

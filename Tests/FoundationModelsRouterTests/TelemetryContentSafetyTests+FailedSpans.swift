@@ -46,7 +46,7 @@ extension TelemetryContentSafetyTests {
         ofSpansNamed spanName: String,
         in context: TelemetryCapture.Context
     ) -> [String?] {
-        context.spans.filter { $0.operationName == spanName }.map(\.failureType)
+        context.tracer.inMemoryTracer.finishedSpans(named: spanName).map(\.failureType)
     }
 
     @Test("a session span whose work throws records the error type and no content")

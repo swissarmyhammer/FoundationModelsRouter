@@ -685,7 +685,7 @@ struct RecordedForkTreeRestoreTests {
             withExtendedLifetime(router2) {}
         }
 
-        let spans = tracer.finishedSpans.filter { $0.operationName == "FoundationModelsRouter.session" }
+        let spans = tracer.finishedSpans(named: "FoundationModelsRouter.session")
         #expect(spans.count == 2)
         func span(of id: ULID) throws -> FinishedInMemorySpan {
             let matching = spans.filter { $0.attributes.get("session.id") == .string(id.description) }

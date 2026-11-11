@@ -54,7 +54,7 @@ struct CompactionTracingTests {
     /// - Returns: The single finished compaction span.
     /// - Throws: When the tracer holds no compaction span, or more than one.
     private static func singleCompactionSpan(reportedTo tracer: InMemoryTracer) throws -> FinishedInMemorySpan {
-        let spans = tracer.finishedSpans.filter { $0.operationName == spanName }
+        let spans = tracer.finishedSpans(named: spanName)
         try #require(spans.count == 1)
         return try #require(spans.first)
     }

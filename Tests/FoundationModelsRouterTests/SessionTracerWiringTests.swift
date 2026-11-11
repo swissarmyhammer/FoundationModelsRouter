@@ -77,7 +77,7 @@ struct SessionTracerWiringTests {
     ) -> Bool {
         guard let tracer else { return false }
         tracer.withSpan(probeName, ofKind: .internal) { _ in }
-        return log.finishedSpans.contains { $0.operationName == probeName }
+        return !log.finishedSpans(named: probeName).isEmpty
     }
 
     @Test("a vended root session holds the tracer its handle carries")

@@ -77,19 +77,6 @@ struct ResolveTracingTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
     }
 
-    /// The finished spans of one operation name, in the order they ended.
-    ///
-    /// - Parameters:
-    ///   - name: The operation name to keep.
-    ///   - tracer: The tracer the resolve reported to.
-    /// - Returns: The matching finished spans.
-    private static func spans(
-        named name: String,
-        in tracer: InMemoryTracer
-    ) -> [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == name }
-    }
-
     @Test("one resolve opens one client span with one load span for each slot it loaded")
     func resolveOpensOneSpanWithAChildForEachLoad() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "ResolveTracingTests")
@@ -99,14 +86,14 @@ struct ResolveTracingTests {
         let router = Self.makeRouter(cacheDir: dir, loader: Self.succeedingLoader, tracer: tracer)
         _ = try await Self.resolve(on: router)
 
-        let resolveSpans = Self.spans(named: Self.resolveSpanName, in: tracer)
+        let resolveSpans = tracer.finishedSpans(named: Self.resolveSpanName)
         try #require(resolveSpans.count == 1)
         let resolveSpan = try #require(resolveSpans.first)
         #expect(resolveSpan.kind == .client)
         #expect(resolveSpan.parentSpanID == nil)
 
         // Nothing was resident yet, so every slot was loaded.
-        let loadSpans = Self.spans(named: Self.loadSpanName, in: tracer)
+        let loadSpans = tracer.finishedSpans(named: Self.loadSpanName)
         #expect(loadSpans.count == Self.slotCount)
         #expect(loadSpans.allSatisfy { $0.parentSpanID == resolveSpan.spanID })
         // The resolve span and its load spans are the whole trace: no other
@@ -123,7 +110,7 @@ struct ResolveTracingTests {
         let router = Self.makeRouter(cacheDir: dir, loader: Self.succeedingLoader, tracer: tracer)
         let profile = try await Self.resolve(on: router)
 
-        let span = try #require(Self.spans(named: Self.resolveSpanName, in: tracer).first)
+        let span = try #require(tracer.finishedSpans(named: Self.resolveSpanName).first)
         #expect(span.attributes.get("router.id") == .string(router.id.description))
         #expect(span.attributes.get("profile.definition_name") == .string(profile.definitionName))
         #expect(span.attributes.get("budget.bytes") == .int64(Self.freshRouterBudgetBytes))
@@ -145,7 +132,7 @@ struct ResolveTracingTests {
         let router = Self.makeRouter(cacheDir: dir, loader: Self.succeedingLoader, tracer: tracer)
         let profile = try await Self.resolve(on: router)
 
-        let loadSpans = Self.spans(named: Self.loadSpanName, in: tracer)
+        let loadSpans = tracer.finishedSpans(named: Self.loadSpanName)
         try #require(loadSpans.count == Self.slotCount)
         #expect(loadSpans.allSatisfy { $0.kind == .client })
 
@@ -174,8 +161,8 @@ struct ResolveTracingTests {
         let router = Self.makeRouter(cacheDir: dir, loader: Self.succeedingLoader, tracer: tracer)
 
         let first = try await Self.resolve(on: router)
-        let resolveSpansAfterFirst = Self.spans(named: Self.resolveSpanName, in: tracer).count
-        let loadSpansAfterFirst = Self.spans(named: Self.loadSpanName, in: tracer).count
+        let resolveSpansAfterFirst = tracer.finishedSpans(named: Self.resolveSpanName).count
+        let loadSpansAfterFirst = tracer.finishedSpans(named: Self.loadSpanName).count
         #expect(loadSpansAfterFirst == Self.slotCount)
 
         let second = try await Self.resolve(on: router)
@@ -188,9 +175,9 @@ struct ResolveTracingTests {
         // The second resolve added its own span, and no load span at all:
         // every slot came from the resident pool.
         #expect(
-            Self.spans(named: Self.resolveSpanName, in: tracer).count
+            tracer.finishedSpans(named: Self.resolveSpanName).count
                 == resolveSpansAfterFirst + 1)
-        #expect(Self.spans(named: Self.loadSpanName, in: tracer).count == loadSpansAfterFirst)
+        #expect(tracer.finishedSpans(named: Self.loadSpanName).count == loadSpansAfterFirst)
     }
 
     @Test("a resolve that fits nothing records the failure on its span and opens no load span")
@@ -216,10 +203,10 @@ struct ResolveTracingTests {
             _ = try await Self.resolve(on: router)
         }
 
-        let span = try #require(Self.spans(named: Self.resolveSpanName, in: tracer).first)
+        let span = try #require(tracer.finishedSpans(named: Self.resolveSpanName).first)
         let failureType = try #require(span.failureType)
         #expect(failureType.hasPrefix(String(reflecting: ResolutionFailure.self)))
-        #expect(Self.spans(named: Self.loadSpanName, in: tracer).isEmpty)
+        #expect(tracer.finishedSpans(named: Self.loadSpanName).isEmpty)
     }
 
     @Test("a loader failure is recorded on the load span that raised it and on the resolve span")
@@ -237,12 +224,12 @@ struct ResolveTracingTests {
             _ = try await Self.resolve(on: router)
         }
 
-        let resolveSpan = try #require(Self.spans(named: Self.resolveSpanName, in: tracer).first)
+        let resolveSpan = try #require(tracer.finishedSpans(named: Self.resolveSpanName).first)
         #expect(resolveSpan.failureType != nil)
 
         // The resolve stops at the first failing slot, so exactly one load
         // span was opened and it carries the loader's own error.
-        let loadSpans = Self.spans(named: Self.loadSpanName, in: tracer)
+        let loadSpans = tracer.finishedSpans(named: Self.loadSpanName)
         try #require(loadSpans.count == 1)
         #expect(loadSpans[0].failureType?.hasPrefix(String(reflecting: ModelLoaderError.self)) == true)
         #expect(loadSpans[0].attributes.get("slot") == .string(ModelSlot.standard.rawValue))

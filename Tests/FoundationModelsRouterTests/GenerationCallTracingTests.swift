@@ -54,10 +54,10 @@ struct GenerationCallTracingTests {
             calls: calls, context: contextTokens, tempDirPrefix: tempDirPrefix, tracer: tracer)
         defer { await fixture.end() }
         for try await _ in await fixture.session.streamEvents(to: prompt, maxTokens: nil) {}
-        let submissions = tracer.finishedSpans.filter { $0.operationName == RouterTelemetry.SpanName.submission }
+        let submissions = tracer.finishedSpans(named: RouterTelemetry.SpanName.submission)
         try #require(submissions.count == 1)
         let submission = try #require(submissions.first)
-        return (submission, tracer.finishedSpans.filter { $0.operationName == callSpanName })
+        return (submission, tracer.finishedSpans(named: callSpanName))
     }
 
     /// The integer attribute `key` of each span of `spans`, in order.

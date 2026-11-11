@@ -119,7 +119,7 @@ struct GenerationCallFirstTokenTests {
         await session.report(generationCall: usage)
 
         #expect(!usage.firstTokenSeen)
-        let span = try #require(tracer.finishedSpans.first { $0.operationName == RouterTelemetry.SpanName.generationCall })
+        let span = try #require(tracer.finishedSpans(named: RouterTelemetry.SpanName.generationCall).first)
         #expect(span.attributes.get(RouterTelemetry.AttributeKey.firstTokenSeen) == .bool(false))
         #expect(span.attributes.get(RouterTelemetry.AttributeKey.callMs) == .int64(Int64(callDuration.wholeMilliseconds)))
         #expect(span.attributes.get(RouterTelemetry.AttributeKey.timeToFirstTokenMs) == nil)
@@ -143,7 +143,7 @@ struct GenerationCallFirstTokenTests {
 
         _ = try await Self.driveAnswer(on: fixture)
 
-        let spans = tracer.finishedSpans.filter { $0.operationName == RouterTelemetry.SpanName.generationCall }
+        let spans = tracer.finishedSpans(named: RouterTelemetry.SpanName.generationCall)
         #expect(spans.count == calls.count)
         #expect(spans.allSatisfy { $0.attributes.get(RouterTelemetry.AttributeKey.firstTokenSeen) == .bool(true) })
         #expect(
