@@ -205,8 +205,11 @@ struct JointFitTests {
         #expect(error.profileName == Self.coderProfileName)
         #expect(error.budgetBytes == 5_000)
 
-        // The failure carries every slot's resolution, not just the unsatisfiable one.
+        // The failure carries the resolution of each slot of the trio, not just
+        // the unsatisfiable one. The decision slot never blocks a profile, thus
+        // the failure does not list it.
         #expect(error.slots.count == 3)
+        #expect(!error.slots.contains { $0.slot == .decision })
         #expect(error.slots.contains { $0.slot == .embedding })
         #expect(error.slots.contains { $0.slot == .flash })
 

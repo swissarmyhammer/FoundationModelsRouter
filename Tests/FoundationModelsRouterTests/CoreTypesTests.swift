@@ -106,6 +106,40 @@ struct CoreTypesTests {
         #expect(decoded.context == nil)
     }
 
+    /// The working context of the pool-key test of the decision slot.
+    private static let decisionSlotContext = 8192
+
+    /// The JSON of a list that holds the decision slot alone.
+    private static let decisionSlotJSON = #"["decision"]"#
+
+    @Test("the decision slot encodes to the wire form \"decision\"")
+    func decisionSlotEncodesToItsWireForm() throws {
+        let data = try JSONEncoder().encode([ModelSlot.decision])
+
+        #expect(String(decoding: data, as: UTF8.self) == Self.decisionSlotJSON)
+    }
+
+    @Test("the wire form \"decision\" decodes to the decision slot")
+    func decisionWireFormDecodesToTheDecisionSlot() throws {
+        let slots = try JSONDecoder().decode([ModelSlot].self, from: Data(Self.decisionSlotJSON.utf8))
+
+        #expect(slots == [.decision])
+    }
+
+    @Test("the decision slot uses the LLM pool role")
+    func decisionSlotPoolRoleIsLLM() {
+        #expect(ModelSlot.decision.poolRole == .llm)
+    }
+
+    @Test("the pool key of the decision slot has the context of the profile")
+    func decisionSlotPoolKeyHasTheProfileContext() {
+        let ref: ModelRef = "org/decider"
+
+        #expect(
+            ModelSlot.decision.poolKey(of: ref, context: Self.decisionSlotContext)
+                == ModelPoolKey(ref: ref, role: .llm, contextSize: Self.decisionSlotContext))
+    }
+
     @Test("JSONValue round-trips a nested object/array/scalars document")
     func jsonValueRoundTrip() throws {
         let document: JSONValue = .object([

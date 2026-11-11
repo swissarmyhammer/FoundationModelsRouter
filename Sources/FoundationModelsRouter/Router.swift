@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsDecision
 import FoundationModelsExtras
 import FoundationModelsHooks
 import Logging
@@ -73,6 +74,11 @@ public actor Router {
 
     /// The repo-metadata reader (fetch + parse + cache) behind sizing.
     private let metadataReader: RepoMetadataReader
+
+    /// The metadata fetch behind ``metadataReader``. The decision slot reads
+    /// the `decider_config.json` file of its model through it
+    /// (``DecisionSlotPlan``).
+    private let metadataSource: any MetadataSource
 
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
@@ -181,6 +187,7 @@ public actor Router {
         self.tracer = tracer
         self.probe = probe
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: cacheDirectory)
+        self.metadataSource = metadataSource
         self.loader = loader
         self.samplingMode = samplingMode
         self.pool = pool
@@ -305,11 +312,13 @@ public actor Router {
     }
 
     /// The slots a resolve acquires, in acquisition order: `standard` before
-    /// `flash`, then the embedding.
-    private static let acquisitionOrder: [ModelSlot] = [.standard, .flash, .embedding]
+    /// `flash`, then the embedding, then the decision slot. The decision slot
+    /// is last, so its key can be the key of a slot that this resolve holds
+    /// already (the flash fallback).
+    private static let acquisitionOrder: [ModelSlot] = [.standard, .flash, .embedding, .decision]
 
-    /// One slot's hold this resolve took, and whether this resolve loaded
-    /// the model.
+    /// One slot's hold this resolve took, whether this resolve loaded the
+    /// model, and the bytes that the hold charged.
     private struct AcquiredSlot {
         /// The hold of the slot. Dropping it gives it back to the pool.
         let hold: ModelHold
@@ -317,6 +326,10 @@ public actor Router {
         /// Whether this resolve loaded the model through its own loader, so
         /// its container needs a preload.
         let isNewLoad: Bool
+
+        /// The raw footprint estimate that the acquire charged: 0 for a key
+        /// that a slot of this resolve holds already.
+        let footprintBytes: Int64
     }
 
     /// What the admission job of one resolve gives back: the joint fit it
@@ -328,6 +341,9 @@ public actor Router {
         /// The hold of each slot, in ``acquisitionOrder``.
         let holds: [ModelHold]
 
+        /// The raw footprint estimate that the acquire of each slot charged.
+        let footprintBytes: [ModelSlot: Int64]
+
         /// The generation container of the `standard` slot.
         let standard: any LoadedLLMContainer
 
@@ -336,6 +352,9 @@ public actor Router {
 
         /// The embedding container of the `embedding` slot.
         let embedding: any LoadedEmbeddingContainer
+
+        /// The decision container of the `decision` slot.
+        let decision: any LoadedDecisionContainer
     }
 
     /// The body of ``resolve(profile:reporting:)``, running inside its span. It
@@ -431,9 +450,10 @@ public actor Router {
     }
 
     /// The admission job of one resolve: measures the budget, runs the joint
-    /// fit, and acquires the three slots. The job is the one job that runs in
-    /// the admission queue of the pool, so no other load and no eviction
-    /// occurs between the measurement and the acquires.
+    /// fit, gets the prompt format of the decision slot
+    /// (``DecisionSlotPlan``), and acquires the four slots. The job is the
+    /// one job that runs in the admission queue of the pool, so no other load
+    /// and no eviction occurs between the measurement and the acquires.
     ///
     /// - Parameters:
     ///   - admission: The pool inside this admission job.
@@ -460,18 +480,21 @@ public actor Router {
         let effectiveBudget = totalBudget - footprint.totalBytes
         span.attributes[RouterTelemetry.AttributeKey.budgetBytes] = effectiveBudget
 
-        let resolution = try await runJointFit(
+        let fitted = try await runJointFit(
             profile: def,
             budget: effectiveBudget,
             metadataByRef: metadataByRef,
             residentKeys: Set(footprint.resident.keys),
             progress: progress
         )
-        await markChosen(resolution: resolution, progress: progress)
+        let decisionPlan = await DecisionSlotPlan.make(
+            for: fitted, metadataByRef: metadataByRef, source: metadataSource,
+            logger: RouterTelemetry.logger(.repoMetadataReader, explicit: explicitLogger))
+        await markChosen(resolution: decisionPlan.resolution, progress: progress)
 
         do {
             return try await acquireSlots(
-                admission: admission, resolution: resolution, metadataByRef: metadataByRef, progress: progress)
+                admission: admission, plan: decisionPlan, metadataByRef: metadataByRef, progress: progress)
         } catch {
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow. A
@@ -484,8 +507,8 @@ public actor Router {
         }
     }
 
-    /// Acquires the three slots of `resolution`, preloads each model this
-    /// resolve loaded, and gets the container of each handle.
+    /// Acquires the four slots of the resolution of `plan`, preloads each
+    /// model this resolve loaded, and gets the container of each handle.
     ///
     /// Each hold is a local value, so a throw drops every hold this attempt
     /// took, and the pool gives it back: the last hold of a fresh load is
@@ -494,33 +517,36 @@ public actor Router {
     ///
     /// - Parameters:
     ///   - admission: The pool inside the admission job of this resolve.
-    ///   - resolution: The joint fit this resolve applies.
+    ///   - plan: The joint fit this resolve applies, and the prompt format
+    ///     of its decision slot.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
     ///   - progress: The progress to drive through acquisition.
     /// - Returns: The joint fit, the holds and the containers of the profile.
     /// - Throws: `CancellationError` when the calling task is cancelled, any
     ///   download, load or preload error, or an error when the container of
-    ///   a hold does not fit its slot.
+    ///   a generation or embedding hold does not fit its slot.
     private func acquireSlots(
         admission: ModelPoolAdmission,
-        resolution: JointResolution,
+        plan: DecisionSlotPlan,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         progress: ResolutionProgress
     ) async throws -> AdmittedResolve {
+        let resolution = plan.resolution
         await setPhase(.downloading, progress: progress)
         var acquired: [ModelSlot: AcquiredSlot] = [:]
         for slot in Self.acquisitionOrder {
             try Task.checkCancellation()
             acquired[slot] = try await acquire(
                 slot: slot, resolution: resolution, metadataByRef: metadataByRef,
-                admission: admission, progress: progress)
+                heldKeys: acquired.values.map(\.hold.key), admission: admission, progress: progress)
         }
 
         await setPhase(.loading, progress: progress)
         // Only the fresh loads of this resolve need preloading — a reused
-        // model was preloaded by the user that loaded it. No two slots of one
-        // resolve share a key: `standard` and `flash` never name the same
-        // model, and the embedding key has its own role.
+        // model was preloaded by the user that loaded it. Two slots of one
+        // resolve can share a key: the decision slot can use the model of the
+        // flash slot. The second hold of a key is not a new load, so each key
+        // is preloaded once.
         for slot in Self.acquisitionOrder {
             try Task.checkCancellation()
             guard let slotHold = acquired[slot], slotHold.isNewLoad else { continue }
@@ -529,17 +555,40 @@ public actor Router {
 
         try Task.checkCancellation()
         guard let standard = acquired[.standard], let flash = acquired[.flash],
-              let embedding = acquired[.embedding]
+              let embedding = acquired[.embedding], let decision = acquired[.decision]
         else {
-            preconditionFailure("the acquisition loop above populates all three slots")
+            preconditionFailure("the acquisition loop above populates all four slots")
         }
         return AdmittedResolve(
             resolution: resolution,
-            holds: [standard.hold, flash.hold, embedding.hold],
+            holds: [standard.hold, flash.hold, embedding.hold, decision.hold],
+            footprintBytes: acquired.mapValues(\.footprintBytes),
             standard: try await standard.hold.generationContainer(),
             flash: try await flash.hold.generationContainer(),
-            embedding: try PooledEmbeddingContainer(hold: embedding.hold)
+            embedding: try PooledEmbeddingContainer(hold: embedding.hold),
+            decision: Self.decisionContainer(hold: decision.hold, format: plan.format)
         )
+    }
+
+    /// The decision container of the hold of the decision slot.
+    ///
+    /// A hold whose container gives no log probabilities does not stop the
+    /// resolve: the decision slot never blocks a profile. Its container then
+    /// throws the error, usually ``PooledLogitsModelError/notLogitsCapable(_:)``,
+    /// at the first decision (``UnavailableDecisionContainer``).
+    ///
+    /// - Parameters:
+    ///   - hold: The hold of the decision slot.
+    ///   - format: The prompt format of the model of the hold.
+    /// - Returns: The decision container.
+    private static func decisionContainer(
+        hold: ModelHold, format: any DecisionPromptFormat
+    ) -> any LoadedDecisionContainer {
+        do {
+            return try PooledDecisionContainer(hold: hold, format: format)
+        } catch {
+            return UnavailableDecisionContainer(ref: hold.key.ref, error: error)
+        }
     }
 
     /// Names the model each slot chose on the resolve span.
@@ -549,7 +598,7 @@ public actor Router {
     ///
     /// - Parameters:
     ///   - resolution: The joint fit this resolve applied.
-    ///   - span: The resolve span to write the three keys on.
+    ///   - span: The resolve span to write one key for each slot on.
     private static func recordChosenModels(resolution: JointResolution, on span: any Span) {
         for slot in acquisitionOrder {
             span.attributes[RouterTelemetry.AttributeKey.chosenModelRef(slot: slot)] =
@@ -570,38 +619,50 @@ public actor Router {
     /// after a failed acquire, the budget goes back to the footprint of the
     /// pool (``PromptCacheSizing/withBudget(adding:isolation:_:)``).
     ///
+    /// A slot whose key a hold of this resolve serves already (the decision
+    /// slot on the flash fallback) costs 0 bytes: the hold sends no footprint
+    /// and no session bytes, the prompt cache gets no smaller budget, and the
+    /// hold is not a new load. The model is resident once, so it is charged
+    /// once.
+    ///
     /// - Parameters:
     ///   - slot: The slot being acquired.
     ///   - resolution: The joint fit this resolve applies.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - heldKeys: The key of each hold that this resolve took already.
     ///   - admission: The pool inside the admission job of this resolve.
     ///   - progress: The progress to drive through acquisition.
-    /// - Returns: The hold, and whether this call loaded the model.
+    /// - Returns: The hold, whether this call loaded the model, and the bytes
+    ///   that the hold charged.
     /// - Throws: Any error the loader raises.
     private func acquire(
         slot: ModelSlot,
         resolution: JointResolution,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        heldKeys: [ModelPoolKey],
         admission: ModelPoolAdmission,
         progress: ResolutionProgress
     ) async throws -> AcquiredSlot {
         let slotRes = Self.slotResolution(for: resolution, slot: slot)
         let chosen = Self.chosenRef(of: slot, in: resolution)
-        let footprintBytes = Self.chosenFootprint(for: slotRes)
-        let sessionBytes = Self.chosenSessionBytes(
-            of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef)
+        let request = slot.poolKey(of: chosen, context: slotRes.contextTokens)
+        let isHeldByThisResolve = heldKeys.contains { $0.canServe(request) }
+        let footprintBytes = isHeldByThisResolve ? 0 : Self.chosenFootprint(for: slotRes)
+        let sessionBytes = isHeldByThisResolve
+            ? 0
+            : Self.chosenSessionBytes(
+                of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef)
         let slotLoader = SlotPoolLoader(
             loader: loader, slot: slot, context: slotRes.contextTokens,
             reporting: Self.reporter(slot: slot, progress: progress))
-        let request = slot.poolKey(of: chosen, context: slotRes.contextTokens)
-        let isResident = admission.footprint.resident.keys.contains { $0.canServe(request) }
+        let isResident = isHeldByThisResolve || admission.footprint.resident.keys.contains { $0.canServe(request) }
 
         return try await promptCacheSizing.withBudget(adding: isResident ? sessionBytes : footprintBytes) {
             if isResident {
                 let hold = try await slotLoader.acquireHold(
                     of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
                 await setSlotState(slot, to: .ready, progress: progress)
-                return AcquiredSlot(hold: hold, isNewLoad: false)
+                return AcquiredSlot(hold: hold, isNewLoad: false, footprintBytes: footprintBytes)
             }
             // Only a model the pool did not hold opens a load span, so a
             // trace shows a fresh resolve's loads and a later resolve's
@@ -611,7 +672,7 @@ public actor Router {
                 return try await slotLoader.acquireHold(
                     of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
             }
-            return AcquiredSlot(hold: hold, isNewLoad: true)
+            return AcquiredSlot(hold: hold, isNewLoad: true, footprintBytes: footprintBytes)
         }
     }
 
@@ -828,7 +889,9 @@ public actor Router {
                 let raw = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
                 candidates.append(residentKeys.contains(where: { $0.canServe(key) }) ? 0 : raw)
             }
-            if slots.contains(.standard) || slots.contains(.flash) {
+            // A candidate of a slot of the LLM role (generation or decision)
+            // is sized as an LLM.
+            if slots.contains(where: { $0.poolRole == .llm }) {
                 let key = ModelSlot.standard.poolKey(of: ref, context: context)
                 let sessionKV = metadata.footprint.kvBytes(context: context)
                 if residentKeys.contains(where: { $0.canServe(key) }) {
@@ -1063,8 +1126,8 @@ public actor Router {
     /// admission job gave back, and the per-slot resolutions, stamping each
     /// handle with the router's id and recorder.
     ///
-    /// Each handle keeps all three holds. The profile holds the handles, so
-    /// the residency lives exactly as long as the last of the four objects,
+    /// Each handle keeps all four holds. The profile holds the handles, so
+    /// the residency lives exactly as long as the last of the five objects,
     /// and a tool that keeps only a handle keeps its models resident.
     ///
     /// - Parameters:
@@ -1087,13 +1150,20 @@ public actor Router {
             flash: makeRoutedModel(
                 slot: .flash, container: admitted.flash, admitted: admitted, resolvedProfile: resolvedProfile),
             embedding: makeRoutedModel(
-                slot: .embedding, container: admitted.embedding, admitted: admitted, resolvedProfile: resolvedProfile)
+                slot: .embedding, container: admitted.embedding, admitted: admitted, resolvedProfile: resolvedProfile),
+            decision: makeRoutedModel(
+                slot: .decision, container: admitted.decision, admitted: admitted, resolvedProfile: resolvedProfile)
         )
     }
 
     /// Builds a routed model handle for `slot` over `container`, with this
     /// router's id, recorder, tracer, sampling mode, transcripts root, hooks,
     /// and session directory.
+    ///
+    /// The footprint of the handle is the footprint that the acquire of the
+    /// slot charged, so a slot that shares the model of another slot reports
+    /// 0, and a host that adds the footprints of the handles counts each
+    /// model once.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -1114,7 +1184,7 @@ public actor Router {
         return RoutedModel(
             slot: slot,
             chosen: chosen,
-            footprintBytes: Self.chosenFootprint(for: resolution),
+            footprintBytes: admitted.footprintBytes[slot] ?? 0,
             resolution: resolution,
             container: container,
             routerId: id,
@@ -1166,6 +1236,7 @@ public actor Router {
         case .standard: resolution.standard
         case .flash: resolution.flash
         case .embedding: resolution.embedding
+        case .decision: resolution.decision
         }
     }
 
@@ -1186,11 +1257,8 @@ public actor Router {
     private func beginSizing(progress: ResolutionProgress) async {
         await MainActor.run {
             progress.phase = .sizing
-            progress.slots = [
-                .standard: SlotProgress(state: .sizing),
-                .flash: SlotProgress(state: .sizing),
-                .embedding: SlotProgress(state: .sizing),
-            ]
+            progress.slots = Dictionary(
+                uniqueKeysWithValues: Self.acquisitionOrder.map { ($0, SlotProgress(state: .sizing)) })
             progress.refreshFraction()
         }
     }

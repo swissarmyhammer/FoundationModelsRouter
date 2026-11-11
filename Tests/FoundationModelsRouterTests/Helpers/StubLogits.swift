@@ -1,5 +1,6 @@
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsRouterRealModelSupport
 import Synchronization
 
 /// A ``PooledLogits`` stub with no model. The decision tests put it in a
@@ -115,24 +116,7 @@ final class StubLogits: PooledLogits {
     }
 }
 
-/// A pool loader that gives one fixed container for each key.
-struct FixedContainerLoader: PooledModelLoader {
-    /// The container that each load gives.
-    let container: any Sendable
-
-    /// Gives ``container``.
-    ///
-    /// - Parameter key: The key to load. The loader ignores it.
-    /// - Returns: ``container``.
-    func load(_ key: ModelPoolKey) async throws -> any Sendable {
-        container
-    }
-
-    /// Evicts nothing: the container holds no resource.
-    ///
-    /// - Parameter container: The container to evict.
-    func evict(_ container: any Sendable) async {}
-
+extension FixedContainerLoader {
     /// Acquires a hold of `ref` as an LLM from a new pool, over `container`.
     ///
     /// - Parameters:

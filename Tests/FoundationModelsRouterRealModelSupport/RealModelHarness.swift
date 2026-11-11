@@ -130,7 +130,10 @@ public enum RealModelHarness {
     /// The `.standard` and the `.flash` slots both wrap `container`, so a compaction
     /// that prefers the flash tier generates over the same resident model. Both
     /// slots thus share the one generation queue that `container` owns, as they
-    /// would from a pool entry.
+    /// would from a pool entry. The `.decision` slot uses the flash fallback: a
+    /// real pooled decision container whose pool gives `container`, with the
+    /// generic prompt format. A decision on a container that gives no log
+    /// probabilities throws `notLogitsCapable`.
     ///
     /// - Parameters:
     ///   - model: The model reference to stamp every slot with. This is a
@@ -198,11 +201,28 @@ public enum RealModelHarness {
             recorder: recorder,
             durableRecording: durableRecording
         )
+        // The decision slot uses the flash fallback: a real pooled decision
+        // model over `container`, with the generic format. The pool of the
+        // decision model gives `container` for its one LLM key, so the
+        // decision model reads the logits of the flash model, and loads no
+        // other model.
+        let decision = RoutedDecider(
+            slot: .decision,
+            chosen: model,
+            footprintBytes: 0,
+            resolution: resolution(.decision),
+            container: PooledDecisionContainer(
+                model: model, pool: ModelPool(loader: FixedContainerLoader(container: container))),
+            routerId: router.id,
+            recorder: recorder,
+            durableRecording: durableRecording
+        )
         return LanguageModelProfile(
             definitionName: definitionName,
             standard: makeRoutedLLM(.standard),
             flash: makeRoutedLLM(.flash),
-            embedding: embedding
+            embedding: embedding,
+            decision: decision
         )
     }
 }

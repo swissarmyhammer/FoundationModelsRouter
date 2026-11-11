@@ -12,21 +12,23 @@ import Tracing
 /// place: a suite states the container, the model reference and the router, and
 /// no suite writes the slot resolution and the two generation handles again.
 ///
-/// The profile records to a fresh ``InMemoryRecorder``, and its embedding slot
-/// wraps a ``StubEmbeddingContainer``, because a hand-built profile resolves
-/// nothing and therefore holds no residency in its router.
+/// The profile records to a fresh ``InMemoryRecorder``, its embedding slot
+/// wraps a ``StubEmbeddingContainer``, and its decision slot wraps a
+/// ``StubDecisionContainer``, because a hand-built profile resolves nothing
+/// and therefore holds no residency in its router.
 ///
 /// ``RoutedModel`` and ``LanguageModelProfile`` construct through `@testable`
 /// access alone: card ^fmet68k took both initializers off the public surface,
 /// because a hand-built profile is a test shape and not a consumer shape. This
 /// factory is the entry point that shape goes through.
 enum HandBuiltProfileFixtures {
-    /// Builds a profile whose three slots all name one model reference.
+    /// Builds a profile whose four slots all name one model reference.
     ///
     /// Both generation handles wrap the one `container`, exactly as two
     /// handles over one pool entry do.
     ///
-    /// The embedding slot wraps its own stub container.
+    /// The embedding slot and the decision slot each wrap their own stub
+    /// container.
     ///
     /// - Parameters:
     ///   - definitionName: The name the profile reports as its definition.
@@ -61,6 +63,15 @@ enum HandBuiltProfileFixtures {
             embedding: makeEmbedder(
                 chosen: chosen,
                 container: StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
+                routerId: router.id,
+                recorder: recorder
+            ),
+            decision: RoutedDecider(
+                slot: .decision,
+                chosen: chosen,
+                footprintBytes: 0,
+                resolution: slotResolution(slot: .decision, chosen: chosen),
+                container: StubDecisionContainer(modelID: chosen.stringValue),
                 routerId: router.id,
                 recorder: recorder
             )

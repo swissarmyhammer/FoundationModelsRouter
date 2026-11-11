@@ -1,6 +1,9 @@
 import Foundation
 import FoundationModels
+import FoundationModelsDecision
+import FoundationModelsExtras
 import FoundationModelsRouterRealModelSupport
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -265,5 +268,39 @@ struct RealModelHarnessTests {
         await #expect(throws: RealModelHarness.NoEmbeddingModel.self) {
             try await embedder.embed(texts: ["anything"])
         }
+    }
+
+    // MARK: - The decision slot
+
+    /// The state of the decision session of the decision test.
+    private static let decisionState: DecisionState = "The build is red."
+
+    /// The yes-or-no question of the decision test.
+    private static let decisionQuestion = "Does the state report a failure?"
+
+    /// The start of an assistant message that turns reasoning off.
+    private static let closedThinkingSuffix = "<think>\n\n</think>\n\n"
+
+    /// The start of an assistant message that turns reasoning on.
+    private static let openThinkingSuffix = "<think>\n"
+
+    /// A decision through the decision slot of a harness profile reads the
+    /// log probabilities of the one container that the caller loaded.
+    @Test("the decision slot of a harness profile reads the logits of the container it was given")
+    func decisionSlotReadsTheLogitsOfTheContainer() async throws {
+        let logits = StubLogits(reasoningOffSuffix: Self.closedThinkingSuffix, reasoningOnSuffix: Self.openThinkingSuffix)
+        let container = LiveLLMContainer(
+            model: LogitsStubLanguageModel(logits: logits), ref: Self.model, contextWindow: Self.context,
+            tokenCounter: CharacterTokenCounter())
+        let decider = Self.withTemporaryDirectories { cacheDir, recordingsDir in
+            RealModelHarness.make(
+                model: Self.model, context: Self.context, container: container, cacheDir: cacheDir,
+                recordingsDir: recordingsDir
+            ).decision
+        }
+
+        _ = try await decider.makeSession(state: Self.decisionState).probability(of: Self.decisionQuestion)
+
+        #expect(logits.logProbabilityCallCount == 1)
     }
 }

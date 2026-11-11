@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsDecision
 import FoundationModelsExtras
+import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import Testing
 

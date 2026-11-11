@@ -24,6 +24,26 @@ enum Verdict: Sendable, Equatable {
 
     /// This candidate could not be sized. The associated value is the reason.
     case metadataUnavailable(String)
+
+    /// This decision-slot candidate was not fitted against the budget, so it
+    /// was not chosen. The decision slot uses the flash model
+    /// (``SlotFallback/flashModel``).
+    case notFitted
+}
+
+/// The model that a slot uses when it chooses none of its own candidates.
+package enum SlotFallback: Sendable, Equatable, CustomStringConvertible {
+    /// The slot uses the model that the flash slot chose. The decision slot
+    /// falls back to it, so the decision slot never blocks a profile.
+    case flashModel
+
+    /// A short label for the report of a slot: `fallback: flash model`.
+    package var description: String {
+        switch self {
+        case .flashModel:
+            return "fallback: flash model"
+        }
+    }
 }
 
 /// The record of the window search for one standard-slot candidate while the
@@ -108,24 +128,44 @@ package struct SlotResolution: Sendable, Equatable {
     /// Every slot in one ``JointResolution`` shares the same value.
     package let contextTokens: Int
 
+    /// The model the slot uses because it chose none of its own candidates,
+    /// or `nil` when ``chosen`` is one of its candidates (or `nil`). Only the
+    /// decision slot has a fallback. With a fallback, ``chosen`` is the
+    /// fallback model.
+    let fallback: SlotFallback?
+
     /// Creates a slot resolution.
+    ///
+    /// - Parameters:
+    ///   - slot: The slot this resolution is for.
+    ///   - remainingBudgetBytes: The budget available to this slot.
+    ///   - chosen: The model the slot uses, or `nil` when none fit.
+    ///   - considered: Every candidate considered, in preference order.
+    ///   - contextTokens: The working context of the slot.
+    ///   - fallback: The fallback that gave ``chosen``, or `nil` (the
+    ///     default) when ``chosen`` is one of the candidates.
     package init(
         slot: ModelSlot,
         remainingBudgetBytes: Int64,
         chosen: ModelRef?,
         considered: [CandidateReport],
-        contextTokens: Int
+        contextTokens: Int,
+        fallback: SlotFallback? = nil
     ) {
         self.slot = slot
         self.remainingBudgetBytes = remainingBudgetBytes
         self.chosen = chosen
         self.considered = considered
         self.contextTokens = contextTokens
+        self.fallback = fallback
     }
 }
 
 /// The error thrown when a profile's three slots cannot co-fit one budget. It
-/// carries every slot's ``SlotResolution``. A slot with no viable candidate has `chosen == nil`.
+/// carries the ``SlotResolution`` of each slot of the trio. A slot with no
+/// viable candidate has `chosen == nil`. The decision slot is not in the
+/// failure: it never blocks a profile, because it falls back to the flash
+/// model.
 struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
     /// The name of the profile that could not be resolved.
     let profileName: String
@@ -143,7 +183,7 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
             "ResolutionFailure: profile \"\(profileName)\" cannot co-fit a budget of \(budgetBytes) bytes."
         ]
         for slot in slots {
-            let outcome = slot.chosen.map { "chose \($0.stringValue)" } ?? "no viable candidate"
+            let outcome = Self.outcomeText(for: slot)
             lines.append(
                 "  \(slot.slot.rawValue) (remaining \(slot.remainingBudgetBytes) bytes, "
                     + "context \(slot.contextTokens) tokens): \(outcome)"
@@ -156,6 +196,14 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Renders the outcome of one slot: `chose <ref>`, then the fallback when
+    /// the slot has one, or `no viable candidate`.
+    private static func outcomeText(for slot: SlotResolution) -> String {
+        guard let chosen = slot.chosen else { return "no viable candidate" }
+        let choice = "chose \(chosen.stringValue)"
+        return slot.fallback.map { "\(choice) (\($0))" } ?? choice
     }
 
     /// Renders one candidate as `<ref> — <footprint> bytes: <verdict>`.
@@ -199,6 +247,8 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
                 + "the standard and flash slots must use different models)"
         case .metadataUnavailable(let reason):
             return "metadata unavailable (\(reason))"
+        case .notFitted:
+            return "not fitted (the decision slot uses the flash model)"
         }
     }
 
@@ -208,7 +258,10 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         switch slot {
         case .standard:
             return "too large"
-        case .embedding, .flash:
+        // The decision slot never blocks the trio, because it falls back to
+        // the flash model, so `.decision` does not occur here. It gets the
+        // text of the other slots of the trio.
+        case .embedding, .flash, .decision:
             return "trio blocked by \(slot.rawValue)"
         }
     }

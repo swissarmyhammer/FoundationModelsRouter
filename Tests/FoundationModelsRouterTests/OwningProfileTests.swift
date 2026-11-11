@@ -10,8 +10,8 @@ import Testing
 /// The slot has two properties, and this suite holds it to both.
 ///
 /// It is filled after the handle's initializer, because
-/// ``Router/resolve(profile:reporting:)`` builds the three handles first and
-/// passes them into ``LanguageModelProfile/init(definitionName:standard:flash:embedding:)``
+/// ``Router/resolve(profile:reporting:)`` builds the four handles first and
+/// passes them into ``LanguageModelProfile/init(definitionName:standard:flash:embedding:decision:)``
 /// afterwards. A handle therefore reports `nil` until a profile registers
 /// itself.
 ///
@@ -122,6 +122,15 @@ struct OwningProfileTests {
             #expect(profile.standard.owningProfile === profile)
             #expect(profile.flash.owningProfile === profile)
             #expect(profile.embedding.owningProfile === profile)
+        }
+    }
+
+    @Test("the profile's initializer registers the profile on the decision handle")
+    func profileInitRegistersItselfOnTheDecisionHandle() {
+        Self.withStubRouter { router in
+            let profile = Self.makeProfile(router: router)
+
+            #expect(profile.decision.owningProfile === profile)
         }
     }
 

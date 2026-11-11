@@ -12,6 +12,7 @@ extension RoutedSessionActor {
         case .standard: profile.standard.sessionDirectory
         case .flash: profile.flash.sessionDirectory
         case .embedding: profile.embedding.sessionDirectory
+        case .decision: profile.decision.sessionDirectory
         }
     }
 

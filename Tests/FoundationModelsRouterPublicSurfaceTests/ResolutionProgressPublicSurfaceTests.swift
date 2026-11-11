@@ -1,8 +1,10 @@
 import Foundation
 import FoundationModels
+import FoundationModelsDecision
 import Testing
 
 import FoundationModelsRouter
+import FoundationModelsRouterTestSupport
 
 /// Holds the per-slot surface of ``ResolutionProgress`` to the access level a
 /// consumer outside this package needs (task ^5545bna): `slots`, each slot's
@@ -90,6 +92,12 @@ struct ResolutionProgressPublicSurfaceTests {
 
     /// The one candidate of the `embedding` slot.
     private static let embeddingRef: ModelRef = "org/emb-a"
+
+    /// The state of each decision session of the suite.
+    private static let decisionState: DecisionState = "The build is red."
+
+    /// The yes-or-no question of the decision test of the suite.
+    private static let decisionQuestion = "Does the state report a failure?"
 
     /// The test profile: one candidate for each slot, so the chosen model of
     /// each slot is known before the resolve runs.
@@ -272,9 +280,14 @@ struct ResolutionProgressPublicSurfaceTests {
         #expect(slotProgress.progressFraction == 1, sourceLocation: sourceLocation)
     }
 
-    @Test("a plain import reads each slot's state, chosen model and byte counts after a resolve")
+    /// Resolves ``profile`` over ``ReportingLoader`` and
+    /// ``CannedMetadataSource``, in a fresh pool.
+    ///
+    /// - Returns: The resolved profile and the progress that the resolve
+    ///   drove.
+    /// - Throws: The error of the resolve.
     @MainActor
-    func readsEverySlotBackAfterAResolve() async throws {
+    private static func resolve() async throws -> (profile: LanguageModelProfile, progress: ResolutionProgress) {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(Self.tempDirPrefix)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
@@ -291,19 +304,57 @@ struct ResolutionProgressPublicSurfaceTests {
             loader: ReportingLoader(
                 generationDownload: Self.generationDownload,
                 embeddingDownload: Self.embeddingDownload,
-                dimension: Self.embeddingDimension)
+                dimension: Self.embeddingDimension),
+            pool: ModelPool()
         )
 
-        _ = try await router.resolve(profile: Self.profile, reporting: progress)
+        let profile = try await router.resolve(profile: Self.profile, reporting: progress)
+        return (profile, progress)
+    }
+
+    @Test("a plain import reads each slot's state, chosen model and byte counts after a resolve")
+    @MainActor
+    func readsEverySlotBackAfterAResolve() async throws {
+        let (_, progress) = try await Self.resolve()
 
         #expect(progress.phase == .ready)
         #expect(progress.fraction == 1)
-        #expect(Set(progress.slots.keys) == [.standard, .flash, .embedding])
+        #expect(Set(progress.slots.keys) == [.standard, .flash, .embedding, .decision])
         try Self.expectSlotReadsBack(
             .standard, of: progress, chosen: Self.standardRef, download: Self.generationDownload)
         try Self.expectSlotReadsBack(
             .flash, of: progress, chosen: Self.flashRef, download: Self.generationDownload)
         try Self.expectSlotReadsBack(
             .embedding, of: progress, chosen: Self.embeddingRef, download: Self.embeddingDownload)
+    }
+
+    // MARK: - The decision slot
+
+    @Test("a plain import reads the decision slot ready, with the flash model and no bytes of its own")
+    @MainActor
+    func readsTheDecisionSlotBackAfterAResolve() async throws {
+        let (_, progress) = try await Self.resolve()
+
+        try Self.expectSlotReadsBack(
+            .decision, of: progress, chosen: Self.flashRef,
+            download: DownloadProgress(bytesDownloaded: 0, bytesTotal: 0))
+    }
+
+    @Test("a plain import makes a decision session about a state over the decision handle")
+    @MainActor
+    func makesADecisionSessionOverTheDecisionHandle() async throws {
+        let (profile, _) = try await Self.resolve()
+
+        #expect(profile.decision.makeSession(state: Self.decisionState).state == Self.decisionState)
+    }
+
+    @Test("a plain import conforms the TestSupport stub to the public decision container protocol")
+    func stubDecisionContainerAnswersThroughThePublicProtocol() async throws {
+        let container: any LoadedDecisionContainer = StubDecisionContainer(modelID: Self.flashRef.stringValue)
+        let session = DecisionSession(model: container.decisionModel, state: Self.decisionState)
+
+        #expect(
+            try await session.probability(of: Self.decisionQuestion)
+                == StubDecisionModel.probability(of: Self.decisionQuestion))
     }
 }

@@ -91,18 +91,17 @@ struct RoutedDeciderTests {
 
     // MARK: - Helpers
 
-    /// Makes a decision handle over ``StubDecisionContainer``. The handle
-    /// reads no slot: the `decision` slot comes with a later task, thus the
-    /// handle names the `flash` slot, which a decision falls back to.
+    /// Makes a decision handle over ``StubDecisionContainer``, for the
+    /// `decision` slot.
     ///
     /// - Returns: The handle.
     private static func makeDecider() -> RoutedDecider {
         RoutedDecider(
-            slot: .flash,
+            slot: .decision,
             chosen: ref,
             footprintBytes: 0,
             resolution: SlotResolution(
-                slot: .flash, remainingBudgetBytes: 0, chosen: ref, considered: [],
+                slot: .decision, remainingBudgetBytes: 0, chosen: ref, considered: [],
                 contextTokens: ScriptedSessionContext.tokens),
             container: StubDecisionContainer(),
             routerId: ULID(),

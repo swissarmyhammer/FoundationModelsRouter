@@ -135,10 +135,10 @@ enum RouterTelemetry {
         ///
         /// A load span speaks for one slot, so it names its model under
         /// ``modelRef`` and its slot under ``slot``. A resolve span speaks for
-        /// all three slots at once, and one key cannot hold three answers
+        /// all four slots at once, and one key cannot hold four answers
         /// without losing which answer belongs to which slot — so the resolve
         /// span writes one key for each: `model.ref.standard`,
-        /// `model.ref.flash` and `model.ref.embedding`.
+        /// `model.ref.flash`, `model.ref.embedding` and `model.ref.decision`.
         ///
         /// - Parameter slot: The slot whose chosen model the key names.
         /// - Returns: The attribute key for that slot.

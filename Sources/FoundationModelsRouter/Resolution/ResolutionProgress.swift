@@ -82,7 +82,7 @@ public final class ResolutionProgress {
         case downloading
         /// Loading/warming the downloaded models.
         case loading
-        /// All three models are resident; resolution succeeded.
+        /// The model of each slot is resident; resolution succeeded.
         case ready
         /// Resolution failed; the associated value is the diagnostic message.
         case failed(String)

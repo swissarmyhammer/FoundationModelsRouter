@@ -95,11 +95,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// for the readers that race the one registration.
     ///
     /// The slot is filled after this handle's initializer, and not by it,
-    /// because ``Router/resolve(profile:reporting:)`` builds the three handles
+    /// because ``Router/resolve(profile:reporting:)`` builds the four handles
     /// first and passes them into the profile's initializer afterwards. The
     /// profile does not exist while a handle is initialized.
     ///
-    /// The reference is weak because the profile holds its three handles
+    /// The reference is weak because the profile holds its four handles
     /// strongly. A strong back-reference would make a cycle, so neither the
     /// profile nor its handles — and therefore no handle's ``ModelHold``
     /// references — would ever be released. A vended session reads the profile
@@ -124,10 +124,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// one ``ModelHold`` for each slot of the resolve, or none for a
     /// hand-built handle that resolved nothing.
     ///
-    /// The two sibling handles of the same resolve keep the same holds. The
-    /// holds keep the three models resident, so a tool that stores only this
-    /// handle keeps its whole residency loaded after the profile object is
-    /// gone. A hold refers to nothing but the pool, its key and its container,
+    /// The sibling handles of the same resolve keep the same holds. The holds
+    /// keep the models of the resolve resident, so a tool that stores only
+    /// this handle keeps its whole residency loaded after the profile object
+    /// is gone. The hold of the decision slot can be a second hold of the
+    /// model of another slot (the flash fallback). A hold refers to nothing but the pool, its key and its container,
     /// so no cycle is possible. The last release of a hold starts the eviction
     /// of its model.
     ///
@@ -209,16 +210,26 @@ public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 public typealias RoutedDecider = RoutedModel<any LoadedDecisionContainer>
 
 /// A profile resolved for this machine: the three models that co-fit the
-/// budget, held resident while this profile OR any handle it vended is alive.
+/// budget (`standard`, `flash` and `embedding`), and the model of the
+/// decision slot, held resident while this profile OR any handle it vended is
+/// alive.
+///
+/// The profile has four handles:
+///
+/// - ``standard``: the primary generation model (``RoutedLLM``).
+/// - ``flash``: the fast generation model (``RoutedLLM``).
+/// - ``embedding``: the embedding model (``RoutedEmbedder``).
+/// - ``decision``: the decision model (``RoutedDecider``). When no decision
+///   candidate fits, it uses the model of ``flash``, with no second copy.
 ///
 /// Residency is pooled. The Extras ``ModelPool`` counts the holds of each
 /// resident model, across every profile and every other user of the pool.
-/// The three handles this profile vended keep the same three ``ModelHold``s,
-/// and dropping the last of them releases the holds and evicts only the
-/// models whose hold count drops to zero. There is no explicit release:
-/// residency ends when the last reference goes away.
+/// The four handles this profile vended keep the same ``ModelHold``s, one for
+/// each slot, and dropping the last of them releases the holds and evicts
+/// only the models whose hold count drops to zero. There is no explicit
+/// release: residency ends when the last reference goes away.
 ///
-/// This object needs no hold of its own, and no `deinit`: it holds its three
+/// This object needs no hold of its own, and no `deinit`: it holds its four
 /// handles strongly, so while this profile lives the holds do too, and the
 /// residency ends only once this object AND every handle it vended is gone.
 public final class LanguageModelProfile: Sendable {
@@ -236,6 +247,14 @@ public final class LanguageModelProfile: Sendable {
     /// The resident `.embedding` model.
     public let embedding: RoutedEmbedder
 
+    /// The resident `.decision` model.
+    ///
+    /// When no decision candidate fits, it is the model of ``flash``: its
+    /// ``RoutedModel/chosen`` is the flash model, and its
+    /// ``RoutedModel/footprintBytes`` is 0, because the model is resident
+    /// once.
+    public let decision: RoutedDecider
+
     /// Creates a resolved profile. ``Router/resolve(profile:reporting:)`` is the
     /// one way a consumer obtains a profile.
     ///
@@ -244,16 +263,19 @@ public final class LanguageModelProfile: Sendable {
     ///   - standard: The resident `.standard` model.
     ///   - flash: The resident `.flash` model.
     ///   - embedding: The resident `.embedding` model.
+    ///   - decision: The resident `.decision` model.
     package init(
         definitionName: String,
         standard: RoutedLLM,
         flash: RoutedLLM,
-        embedding: RoutedEmbedder
+        embedding: RoutedEmbedder,
+        decision: RoutedDecider
     ) {
         self.definitionName = definitionName
         self.standard = standard
         self.flash = flash
         self.embedding = embedding
+        self.decision = decision
 
         // Register the weak back-reference now that `self` is fully initialized,
         // so a session vended from any of these handles can retain this profile
@@ -261,5 +283,6 @@ public final class LanguageModelProfile: Sendable {
         standard.registerOwningProfile(self)
         flash.registerOwningProfile(self)
         embedding.registerOwningProfile(self)
+        decision.registerOwningProfile(self)
     }
 }

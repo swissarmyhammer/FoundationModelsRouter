@@ -385,7 +385,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 routedLLM = owningProfile.standard
             case .flash:
                 routedLLM = owningProfile.flash
-            case .embedding:
+            case .embedding, .decision:
                 throw SessionTreeRestorationError.slotNotInProfile(session: node.id, slot: slot)
             }
             guard routedLLM.chosen == node.record.model else {

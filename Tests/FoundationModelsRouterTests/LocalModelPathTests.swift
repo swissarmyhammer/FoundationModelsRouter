@@ -90,4 +90,16 @@ struct LocalModelPathTests {
             [resolved.standard, resolved.flash, resolved.embedding].flatMap { $0.map(\.repo) }
                 == ["/Users/someone/s", "/work/project/f", "/e"])
     }
+
+    @Test("a profile definition keeps its decision candidates, with their local paths resolved")
+    func profileResolvesTheDecisionCandidates() {
+        let profile = ProfileDefinition(
+            name: "local", description: "local models",
+            standard: [ModelRef(repo: "~/s")], flash: [ModelRef(repo: "./f")], embedding: [ModelRef(repo: "/e")],
+            decision: [ModelRef(repo: "~/d"), ModelRef(repo: "org/decider")])
+
+        let resolved = profile.resolvingLocalModelPaths(home: Self.home, workingDirectory: Self.workingDirectory)
+
+        #expect(resolved.decision.map(\.repo) == ["/Users/someone/d", "org/decider"])
+    }
 }

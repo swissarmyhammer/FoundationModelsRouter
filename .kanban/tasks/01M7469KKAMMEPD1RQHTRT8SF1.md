@@ -21,10 +21,26 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Resolution/DecisionFormatLoader.swift (new), Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift, Sources/FoundationModelsRouter/Sizing/LocalRepoMetadata.swift, Tests/FoundationModelsRouterTests/DecisionFormatLoaderTests.swift (new, 7 tests), Tests/FoundationModelsRouterTests/RepoMetadataTests.swift (+3), Tests/FoundationModelsRouterTests/GGUFRepoMetadataTests.swift (+1), Tests/FoundationModelsRouterTests/LocalRepoMetadataTests.swift (+3). RED: `swift build --build-tests` failed with "cannot find 'DecisionFormatLoader' in scope". GREEN: filtered run, 14 tests in 4 suites passed. Full `swift test` one time: exit 0; 2566 tests in 299 suites, 38 in 23, 19 in 3, all passed; no compiler warnings.
     - next: /review
   timestamp: 2026-11-11T13:40:44.835915+00:00
+- actor: claude-code
+  id: 01m75dpcp26mx8m35vgvw7hvy6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (00706d8a). 0 findings, 0 confirmed, 2 refuted. 7 files reviewed. 4 .kanban files not reviewed (ignore rule).
+    - next: none. The task moved to done.
+  timestamp: 2026-11-11T13:45:25.442339+00:00
+- actor: claude-code
+  id: 01m75dpswamjmsktr5hatpnscs
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — Resolution/DecisionFormatLoader.swift (new), Sizing/RepoMetadata.swift, Sizing/LocalRepoMetadata.swift, 4 test files
+    - test: green — swift test, 2566 + 38 + 19 passed, 0 skipped
+    - commit: 00706d8a
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T13:45:38.954762+00:00
 depends_on:
 - 01M7468WP7Q3TQZ31MBTKJJW9J
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffffc80
 title: 'R7a: fetch decider_config.json through the metadata source and select the prompt format'
 ---
 ## What

@@ -62,10 +62,15 @@ let hooksProduct: Target.Dependency = .product(name: hooksPackage, package: hook
 // library target links its core product for the decision types and its pooled
 // product for `PooledDecisionModel`, which reads the decisions of the
 // `decision` slot from a model in the model pool. The unit test target links
-// the same two products to make a decision model and a session.
+// the same two products to make a decision model and a session. The
+// TestSupport target and the public-surface target link the core product
+// only: the stub decision container of TestSupport conforms to the public
+// `LoadedDecisionContainer`, and a consumer names `DecisionState` and
+// `DecisionSession` from the core product.
 let decisionPackage = "FoundationModelsDecision"
+let decisionCoreProduct: Target.Dependency = .product(name: decisionPackage, package: decisionPackage)
 let decisionProducts: [Target.Dependency] = [
-    .product(name: decisionPackage, package: decisionPackage),
+    decisionCoreProduct,
     .product(name: "\(decisionPackage)Pooled", package: decisionPackage),
 ]
 
@@ -304,10 +309,13 @@ let package = Package(
         // tool-using scenario, its transcript normalization, and the outcome
         // shape — which the ungated scripted suite and the gated real-model
         // suite each run and then compare against the other (task ^w8dzvee),
-        // so the unit test target depends on it too.
+        // so the unit test target depends on it too. It carries
+        // `StubDecisionContainer` too, the decision container of a profile
+        // that a test builds by hand, which the public-surface target also
+        // reads; thus it links the core decision product.
         .target(
             name: "\(packageName)TestSupport",
-            dependencies: [.target(name: packageName)],
+            dependencies: [.target(name: packageName), decisionCoreProduct],
             path: "Tests/\(packageName)TestSupport"
         ),
         // Test-only support for the suites that drive a REAL model (task
@@ -457,16 +465,18 @@ let package = Package(
         // `SessionDirectory` port and its value types (ROUTER-3), which the
         // router does not re-export. A consumer that gives a token provider
         // names the swift-huggingface `TokenProvider`, thus the target links
-        // that product too. It links the TestSupport target for
+        // that product too. A consumer of `LanguageModelProfile.decision`
+        // names `DecisionState` and `DecisionSession`, thus the target links
+        // the core decision product. It links the TestSupport target for
         // `StubURLProtocol`, the one URL stub that this target and the unit
-        // test target share. It is a root test target, so `swift test` at the
+        // test target share, and for `StubDecisionContainer`. It is a root test target, so `swift test` at the
         // root runs it on every run, in CI and locally.
         .testTarget(
             name: "\(packageName)PublicSurfaceTests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
-                huggingFaceProduct,
+                huggingFaceProduct, decisionCoreProduct,
             ],
             path: "Tests/\(packageName)PublicSurfaceTests"
         ),

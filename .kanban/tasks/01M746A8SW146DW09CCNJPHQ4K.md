@@ -1,11 +1,43 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m75e104b2dkbcf9bnepzz7n3
+  text: |-
+    Picked up. Research results:
+    - `Router.sizeCandidates` and `slotMembership` read `candidatesBySlot`, thus after `.decision` is in the map, the decision candidates are sized. All unit-test resolves use stub metadata sources (no `Router(...)` with the default `HuggingFaceMetadataSource` resolves in a unit test), thus no network request. `RouterTestFixtures.profile` gets `decision: []`.
+    - `footprintBytes(for:...)` must treat a decision-only ref as a generation model, else its precondition "a sized candidate is a member of at least one slot" is false after the change.
+    - The Extras pool `holdIfResident` adds `sessionBytes` to the entry. A decision hold on a key that a slot of this resolve holds sends 0/0 and a 0 prompt-cache budget; it is not a new load, thus `finalize` runs once for the key.
+    - Design: `SlotResolution.fallback: SlotFallback?` (`.flashModel`, text "fallback: flash model"), new `Verdict.notFitted` for each decision candidate in this task. `JointResolution.decision`. A new `DecisionSlotPlan` (Resolution/) gives the format: the flash fallback gets `GenericPromptFormat()` with no fetch; another decision model gets `DecisionFormatLoader`; a load failure logs and changes the decision slot to the flash fallback before any acquire.
+    - A hold whose container is not `PooledLogits` gives a decision container whose model throws the error of `PooledDecisionContainer` (`notLogitsCapable`) at the first decision.
+    - `StubDecisionContainer` + `StubDecisionModel` go to `Tests/FoundationModelsRouterTestSupport/`; that target and the public-surface target get the `FoundationModelsDecision` product (manifest dependency only, no new target).
+  timestamp: 2026-11-11T13:51:13.035350+00:00
+- actor: claude-code
+  id: 01m75eybtpxdyyxqv2dzqq20sg
+  text: |-
+    Implementation notes:
+    - Latent bug found and corrected: `ProfileDefinition.resolvingLocalModelPaths` (Core/LocalModelPath.swift) dropped the `decision` list, so each resolve used `defaultDecisionCandidates` (the Mapika ref) whatever the profile said. New test `LocalModelPathTests.profileResolvesTheDecisionCandidates`. Without the fix, `RouterTestFixtures.profile()` with `decision: []` still fetched the Mapika metadata.
+    - `RealModelHarness.make` is synchronous and has no pool hold, thus its decision handle is a real `PooledDecisionContainer(model:pool:format:)` (new `package` init, lazy `PooledDecisionModel(ref:pool:)`) whose pool gives the harness container through `FixedContainerLoader`. `FixedContainerLoader` moved from the unit-test helpers to `FoundationModelsRouterRealModelSupport` (public) to keep one copy; the unit tests keep `llmHold` as an extension.
+    - The handle footprint is the footprint that the acquire charged (`AdmittedResolve.footprintBytes`), so the decision handle of a shared key reports 0.
+    - `SlotProgress` of `.decision` for a shared key: state `.ready`, chosen = flash ref, bytes 0/0 (the decision slot downloads nothing of its own).
+    - The format fetch of a non-fallback decision model (R4 path) runs in the admission job, after the joint fit and before `markChosen`, so a failed load changes the slot to the flash fallback before any acquire.
+  timestamp: 2026-11-11T14:07:15.286089+00:00
+- actor: claude-code
+  id: 01m75f2pr7zj67g4c3hx1x3te7
+  text: |-
+    ### implement — changed
+    - evidence: `swift build --build-tests` after removing the intermediates of this package (`.build/out/Intermediates.noindex/FoundationModelsRouter.build/Debug`): 0 warnings, 0 errors (only the build-system note "missing creator for mutated node", which is there before this change). One full `swift test --skip-build`: 2604 tests in 302 suites passed, 41 tests in 23 suites passed, 19 tests in 3 suites passed, 0 issues, exit 0.
+    - source files: Core/ModelSlot.swift, Core/ProfileDefinition.swift, Core/LocalModelPath.swift, Resolution/SlotResolution.swift, Resolution/JointFit.swift, Resolution/DecisionSlotPlan.swift (new), Resolution/PooledDecisionContainer.swift, Resolution/ResolutionProgress.swift, Router.swift, LanguageModelProfile.swift, Session/RoutedSessionActorClosing.swift, Recording/SessionTreeRestoration.swift, Tracing/RouterTelemetry.swift, Package.swift.
+    - test files: DecisionSlotResolveTests.swift, DecisionSlotJointFitTests.swift, DecisionSlotPlanTests.swift (new); TestSupport/StubDecisionContainer.swift, RealModelSupport/FixedContainerLoader.swift (new); changed CoreTypesTests, JointFitTests, LocalModelPathTests, OwningProfileTests, RoutedDeciderTests, RealModelHarnessTests, PooledDecisionContainerTests (import), Helpers/StubLogits, Helpers/RouterTestFixtures, Helpers/HandBuiltProfileFixtures, RealModelHarness, ResolutionProgressPublicSurfaceTests.
+    - process note: one filtered test run was run two times with no code change between the runs (the second run gave the same 2 failures). Do not repeat this.
+    - next: /review
+  timestamp: 2026-11-11T14:09:37.543301+00:00
 depends_on:
 - 01M7468B410V0HR94ZBY52DT1Q
 - 01M7469KKAMMEPD1RQHTRT8SF1
-position_column: todo
-position_ordinal: '8480'
+position_column: doing
+position_ordinal: '80'
 title: 'R2/R6/R7b: ModelSlot.decision through the resolve to LanguageModelProfile.decision (flash fallback)'
 ---
 ## What
@@ -24,17 +56,17 @@ Source: ../FoundationModelsDecision/plan.md section 7, R2, R6 and R7, decisions 
 Note: the default decision candidate is a Mapika GGUF. In the unit tests, the stub metadata sources do not know it, so it is sized as `metadataUnavailable` and the slot falls back to flash. Check that no unit test makes a network request for it.
 
 ## Acceptance Criteria
-- [ ] `ModelSlot.decision.poolRole == .llm`; its pool key has the profile context.
-- [ ] Each resolved profile has `profile.decision`, and `profile.decision.chosen == profile.flash.chosen` in this task.
-- [ ] The resolution of the decision slot records each candidate and "fallback: flash model".
-- [ ] A resolve with a shared decision/flash key takes one extra hold of the same entry, preloads once, and the pool footprint does not grow.
-- [ ] A profile over stub LLM containers resolves; a decision on it throws `notLogitsCapable`.
-- [ ] All existing tests pass with no change other than the call sites above.
+- [x] `ModelSlot.decision.poolRole == .llm`; its pool key has the profile context.
+- [x] Each resolved profile has `profile.decision`, and `profile.decision.chosen == profile.flash.chosen` in this task.
+- [x] The resolution of the decision slot records each candidate and "fallback: flash model".
+- [x] A resolve with a shared decision/flash key takes one extra hold of the same entry, preloads once, and the pool footprint does not grow.
+- [x] A profile over stub LLM containers resolves; a decision on it throws `notLogitsCapable`.
+- [x] All existing tests pass with no change other than the call sites above.
 
 ## Tests
-- [ ] New `Tests/FoundationModelsRouterTests/DecisionSlotResolveTests.swift`: resolve with stub loader and stub metadata; `profile.decision.chosen` is the flash winner; resolution records the fallback; pool hold count and footprint for the shared key; `notLogitsCapable` at first decision with a stub container; a stub logits-capable container gives a decision.
-- [ ] Update `Tests/FoundationModelsRouterTests/CoreTypesTests.swift` for the wire form and pool role of `.decision`.
-- [ ] Run `swift test` once. All tests pass, no new warnings (clean build; see the memory note on cache-hit builds).
+- [x] New `Tests/FoundationModelsRouterTests/DecisionSlotResolveTests.swift`: resolve with stub loader and stub metadata; `profile.decision.chosen` is the flash winner; resolution records the fallback; pool hold count and footprint for the shared key; `notLogitsCapable` at first decision with a stub container; a stub logits-capable container gives a decision.
+- [x] Update `Tests/FoundationModelsRouterTests/CoreTypesTests.swift` for the wire form and pool role of `.decision`.
+- [x] Run `swift test` once. All tests pass, no new warnings (clean build; see the memory note on cache-hit builds).
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #decision

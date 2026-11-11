@@ -12,20 +12,87 @@ struct JointResolution: Sendable, Equatable {
     /// The chosen flash (latency-sensitive generation) model.
     let flash: ModelRef
 
-    /// Each slot's resolution, in allocation order (embedding, standard, flash).
+    /// The model of the decision slot. It is ``flash`` when the decision slot
+    /// uses the flash fallback (``SlotFallback/flashModel``).
+    let decision: ModelRef
+
+    /// Each slot's resolution, in allocation order (embedding, standard,
+    /// flash, decision).
     let slots: [SlotResolution]
 
     /// Creates a joint resolution.
-    init(embedding: ModelRef, standard: ModelRef, flash: ModelRef, slots: [SlotResolution]) {
+    ///
+    /// - Parameters:
+    ///   - embedding: The chosen embedding model.
+    ///   - standard: The chosen standard model.
+    ///   - flash: The chosen flash model.
+    ///   - decision: The model of the decision slot.
+    ///   - slots: Each slot's resolution, in allocation order.
+    init(embedding: ModelRef, standard: ModelRef, flash: ModelRef, decision: ModelRef, slots: [SlotResolution]) {
         self.embedding = embedding
         self.standard = standard
         self.flash = flash
+        self.decision = decision
         self.slots = slots
+    }
+
+    /// This resolution, with the decision slot changed to the flash fallback.
+    ///
+    /// The decision slot then uses ``flash``, and records
+    /// ``SlotFallback/flashModel``. The candidate that the decision slot chose
+    /// gets the verdict ``Verdict/metadataUnavailable(_:)`` with `reason`.
+    /// Each other candidate keeps its verdict. The other slots do not change.
+    ///
+    /// - Parameter reason: Why the decision slot cannot use its chosen model.
+    /// - Returns: The changed resolution.
+    func fallingBackToFlash(because reason: String) -> JointResolution {
+        let changedSlots = slots.map { slot -> SlotResolution in
+            guard slot.slot == .decision else { return slot }
+            let considered = slot.considered.map { report -> CandidateReport in
+                guard report.verdict == .chosen else { return report }
+                return CandidateReport(
+                    ref: report.ref, estimatedFootprintBytes: report.estimatedFootprintBytes,
+                    chargedBytes: report.chargedBytes, verdict: .metadataUnavailable(reason),
+                    windowFit: report.windowFit)
+            }
+            return SlotResolution.flashFallback(
+                considered: considered, flashModel: flash, remainingBudgetBytes: slot.remainingBudgetBytes,
+                contextTokens: slot.contextTokens)
+        }
+        return JointResolution(
+            embedding: embedding, standard: standard, flash: flash, decision: flash, slots: changedSlots)
+    }
+}
+
+extension SlotResolution {
+    /// The resolution of the decision slot when the slot uses the flash
+    /// model: ``chosen`` is the flash model, and ``fallback`` is
+    /// ``SlotFallback/flashModel``.
+    ///
+    /// - Parameters:
+    ///   - considered: The report of each decision candidate, in preference
+    ///     order. None of them has the verdict ``Verdict/chosen``.
+    ///   - flashModel: The model that the flash slot chose.
+    ///   - remainingBudgetBytes: The budget that the flash slot left.
+    ///   - contextTokens: The working context of the resolve.
+    /// - Returns: The resolution of the decision slot.
+    static func flashFallback(
+        considered: [CandidateReport], flashModel: ModelRef, remainingBudgetBytes: Int64, contextTokens: Int
+    ) -> SlotResolution {
+        SlotResolution(
+            slot: .decision, remainingBudgetBytes: remainingBudgetBytes, chosen: flashModel,
+            considered: considered, contextTokens: contextTokens, fallback: .flashModel)
     }
 }
 
 /// The pure joint allocation that picks the highest-preference combination of
-/// three slot models that co-fits one shared memory budget.
+/// three slot models that co-fits one shared memory budget, and gives the
+/// decision slot its model.
+///
+/// The decision slot always uses the flash winner: each decision candidate is
+/// recorded as ``Verdict/notFitted``, and the slot records
+/// ``SlotFallback/flashModel``. Thus the decision slot never blocks a profile
+/// and never makes the trio choose a smaller model.
 ///
 /// Allocation runs in order against the shared budget: embedding, then
 /// standard, then flash. Each slot sees only what earlier slots left. In a slot,
@@ -75,15 +142,16 @@ enum JointFit {
         }
     }
 
-    /// Resolves a profile's three slots against one shared budget.
+    /// Resolves a profile's three slots against one shared budget, and gives
+    /// the decision slot the flash winner.
     ///
     /// - Parameters:
     ///   - profile: The authored profile whose slots supply candidates in preference order.
     ///   - budgetBytes: The shared memory budget, in bytes.
     ///   - footprint: The raw footprint of a candidate at a context. May be a marginal cost for a resident model.
     ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
-    /// - Returns: The chosen trio and per-slot reasoning. The standard and
-    ///   flash models are never the same model.
+    /// - Returns: The chosen trio, the decision model and per-slot
+    ///   reasoning. The standard and flash models are never the same model.
     /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate,
     ///   or ``NoWindowFailure`` when the context is derived and no standard
     ///   candidate's window could be read.
@@ -136,11 +204,35 @@ enum JointFit {
             )
         }
 
+        return makeResolution(profile: profile, winner: winner, standard: winner.attempt.standard)
+    }
+
+    /// The joint resolution of a trio that co-fit: the three slots of the
+    /// trio, then the decision slot, which uses the flash winner.
+    ///
+    /// - Parameters:
+    ///   - profile: The authored profile, whose decision candidates are recorded.
+    ///   - winner: The trio that co-fit.
+    ///   - standard: The resolution of the standard slot to record.
+    /// - Returns: The joint resolution.
+    private static func makeResolution(
+        profile: ProfileDefinition, winner: TrioWinner, standard: SlotResolution
+    ) -> JointResolution {
+        let flash = winner.attempt.flash
+        let notFitted = profile.decision.map {
+            CandidateReport(ref: $0, estimatedFootprintBytes: nil, chargedBytes: nil, verdict: .notFitted)
+        }
+        var budget = SharedBudget(totalBytes: flash.remainingBudgetBytes)
+        budget.charge(flash)
+        let decision = SlotResolution.flashFallback(
+            considered: notFitted, flashModel: winner.flash, remainingBudgetBytes: budget.remainingBytes,
+            contextTokens: flash.contextTokens)
         return JointResolution(
             embedding: winner.embedding,
             standard: winner.standard,
             flash: winner.flash,
-            slots: attempt.slots
+            decision: winner.flash,
+            slots: [winner.attempt.embedding, standard, flash, decision]
         )
     }
 
@@ -564,12 +656,7 @@ enum JointFit {
             contextTokens: winner.attempt.standard.contextTokens
         )
 
-        return JointResolution(
-            embedding: winner.embedding,
-            standard: winner.standard,
-            flash: winner.flash,
-            slots: [winner.attempt.embedding, standardResolution, winner.attempt.flash]
-        )
+        return makeResolution(profile: profile, winner: winner, standard: standardResolution)
     }
 
     /// Resolves a profile whose ``ProfileDefinition/context`` is `nil`. Standard
@@ -699,7 +786,10 @@ enum JointFit {
         switch slot {
         case .standard:
             return .tooLarge
-        case .embedding, .flash:
+        // The decision slot never blocks the trio, because it falls back to
+        // the flash model, so `.decision` does not occur here. It gets the
+        // verdict of the other slots of the trio.
+        case .embedding, .flash, .decision:
             return .trioBlocked(slot)
         }
     }

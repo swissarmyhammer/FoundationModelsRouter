@@ -121,7 +121,7 @@ public struct ProfileDefinition: Sendable, Codable {
     /// The mapping is total — it contains an entry for every ``ModelSlot``
     /// case — and each list preserves the author's preference order.
     var candidatesBySlot: [ModelSlot: [ModelRef]] {
-        [.standard: standard, .flash: flash, .embedding: embedding]
+        [.standard: standard, .flash: flash, .embedding: embedding, .decision: decision]
     }
 
     /// The one model that both the `standard` list and the `flash` list name
