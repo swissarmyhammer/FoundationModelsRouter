@@ -283,4 +283,45 @@ struct LocalRepoMetadataTests {
             try await reader.metadata(for: ModelRef(repo: folder.url.appending(path: "model.bin").path))
         }
     }
+
+    /// The size of the `decider_config.json` file of a local folder.
+    private static let deciderConfigurationBytes = 96
+
+    @Test("a local MLX folder with decider_config.json at the top records the size of that file")
+    func mlxFolderDeciderConfigurationIsRecorded() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-decider-mlx")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeMLXFolder(folder)
+        try folder.writeFile("decider_config.json", byteCount: Self.deciderConfigurationBytes)
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.path))
+
+        #expect(metadata.deciderConfigurationByteCount == Int64(Self.deciderConfigurationBytes))
+    }
+
+    @Test("a local GGUF folder with decider_config.json at the top records the file")
+    func ggufFolderDeciderConfigurationIsRecorded() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-decider-gguf")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel("model.gguf", in: folder)
+        try folder.writeFile("decider_config.json", byteCount: Self.deciderConfigurationBytes)
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.path))
+
+        #expect(metadata.hasDeciderConfiguration)
+    }
+
+    @Test("a local folder with no decider_config.json records no decider configuration")
+    func folderWithoutDeciderConfiguration() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-no-decider")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel("model.gguf", in: folder)
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.path))
+
+        #expect(!metadata.hasDeciderConfiguration)
+    }
 }

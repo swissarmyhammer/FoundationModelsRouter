@@ -32,7 +32,7 @@ public protocol MetadataSource: Sendable {
 
     /// Fetches a range of the bytes of one file of a repo at a revision: the
     /// read that gives the GGUF header of a model with no download of its
-    /// weights.
+    /// weights, and the `decider_config.json` file of a decision model.
     ///
     /// - Parameters:
     ///   - repo: The Hugging Face repository id, e.g. `"org/repo"`.
@@ -47,7 +47,8 @@ public protocol MetadataSource: Sendable {
 
 extension MetadataSource {
     /// Refuses each read of file bytes: a source that does not implement
-    /// the read sizes no GGUF model, and sizes each other model as before.
+    /// the read sizes no GGUF model and reads no `decider_config.json` file,
+    /// and sizes each other model as before.
     ///
     /// - Parameters:
     ///   - repo: The Hugging Face repository id.
@@ -58,7 +59,7 @@ extension MetadataSource {
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)``, always.
     public func fetchFileBytes(repo: String, revision: String?, path: String, range: Range<Int>) async throws -> Data {
         throw RepoMetadataError.metadataUnavailable(
-            "the metadata source of \(repo) reads no file bytes, so it cannot read the GGUF header of \(path)")
+            "the metadata source of \(repo) reads no file bytes, so it cannot read \(path)")
     }
 }
 
@@ -121,6 +122,21 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// architecture fields above.
     let gguf: GGUFCacheSizing?
 
+    /// The byte count of the `decider_config.json` file at the root of the
+    /// repository, or `nil` when the root has no such file.
+    ///
+    /// The file gives the prompt format of a decision model (decision D13);
+    /// ``DecisionFormatLoader`` reads it. The tree listing, or the files of a
+    /// local folder, give the value: see ``recordingDeciderConfiguration(in:)``.
+    /// A local `.gguf` file has no folder, so it has no value.
+    let deciderConfigurationByteCount: Int64?
+
+    /// Whether the root of the repository has a `decider_config.json` file.
+    var hasDeciderConfiguration: Bool { deciderConfigurationByteCount != nil }
+
+    /// The name of the file that gives the prompt format of a decision model.
+    static let deciderConfigurationFileName = "decider_config.json"
+
     /// Whether the repo is a Core ML embedding model.
     ///
     /// The Extras `HubModelFormat.detect(paths:)` rule decides this, and
@@ -136,6 +152,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// `numFullAttentionLayers` defaults to `numHiddenLayers`. `nativeMaxContext`
     /// has no default; every caller passes the figure it read, or `nil` for a
     /// Core ML repo. `gguf` defaults to `nil`: the repo is not GGUF.
+    /// `deciderConfigurationByteCount` defaults to `nil`: the repo has no
+    /// `decider_config.json` file.
     init(
         weightBytes: Int64,
         numHiddenLayers: Int,
@@ -145,7 +163,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         hiddenSize: Int?,
         numFullAttentionLayers: Int? = nil,
         nativeMaxContext: Int?,
-        gguf: GGUFCacheSizing? = nil
+        gguf: GGUFCacheSizing? = nil,
+        deciderConfigurationByteCount: Int64? = nil
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -156,6 +175,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         self.numFullAttentionLayers = numFullAttentionLayers ?? numHiddenLayers
         self.nativeMaxContext = nativeMaxContext
         self.gguf = gguf
+        self.deciderConfigurationByteCount = deciderConfigurationByteCount
     }
 
     /// Parses sizing metadata from raw fetched artifacts.
@@ -183,6 +203,31 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         try self.init(
             entries: entries, format: HubModelFormat.detect(paths: entries.map(\.path)),
             configJSON: raw.configJSON, repo: repo)
+        self = recordingDeciderConfiguration(in: entries)
+    }
+
+    /// A copy of this metadata that records the `decider_config.json` file
+    /// at the root of a repository.
+    ///
+    /// - Parameter entries: Every file of the repository, with its path
+    ///   relative to the root of the repository.
+    /// - Returns: A copy whose ``deciderConfigurationByteCount`` is the size
+    ///   of the file at the root, or `nil` when the root has no such file.
+    func recordingDeciderConfiguration(in entries: [TreeEntry]) -> RepoMetadata {
+        RepoMetadata(
+            weightBytes: weightBytes,
+            numHiddenLayers: numHiddenLayers,
+            numAttentionHeads: numAttentionHeads,
+            numKeyValueHeads: numKeyValueHeads,
+            headDim: headDim,
+            hiddenSize: hiddenSize,
+            numFullAttentionLayers: numFullAttentionLayers,
+            nativeMaxContext: nativeMaxContext,
+            gguf: gguf,
+            deciderConfigurationByteCount: entries.first {
+                $0.isFile && $0.path == Self.deciderConfigurationFileName
+            }?.byteCount
+        )
     }
 
     /// Parses sizing metadata from the files of a repo and the format that was
@@ -668,26 +713,29 @@ struct RepoMetadataReader: Sendable {
     ///
     /// A GGUF model under the path of the reference reads the GGUF header of
     /// its first shard from the source; any other repo is parsed as
-    /// ``RepoMetadata/init(raw:repo:)`` parses it.
+    /// ``RepoMetadata/init(raw:repo:)`` parses it. Both record the
+    /// `decider_config.json` file at the root of the repository; see
+    /// ``RepoMetadata/recordingDeciderConfiguration(in:)``.
     ///
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the raw
     ///   artifacts lack sizing inputs, or any error from the header read or
     ///   the cache write.
     private func parseAndCache(_ raw: RawRepoMetadata, for ref: ModelRef) async throws -> RepoMetadata {
         let entries = try RepoMetadata.decodeTreeEntries(raw.treeJSON, repo: ref.repo)
-        let parsed: RepoMetadata
+        let sized: RepoMetadata
         if let files = try RepoMetadata.ggufFileSet(in: entries, under: ref.path, name: ref.stringValue) {
             let header = try await GGUFHeaderPrefix.read(name: "\(ref.repo)/\(files.model)") { range in
                 try await source.fetchFileBytes(repo: ref.repo, revision: ref.revision, path: files.model, range: range)
             }
-            parsed = try RepoMetadata(
+            sized = try RepoMetadata(
                 ggufHeader: header, weightBytes: RepoMetadata.ggufWeightBytes(of: files, in: entries),
                 name: ref.stringValue)
         } else {
-            parsed = try RepoMetadata(
+            sized = try RepoMetadata(
                 entries: entries, format: HubModelFormat.detect(paths: entries.map(\.path)),
                 configJSON: raw.configJSON, repo: ref.repo)
         }
+        let parsed = sized.recordingDeciderConfiguration(in: entries)
         try cache.save(parsed, for: ref)
         return parsed
     }
@@ -879,7 +927,7 @@ public struct HuggingFaceMetadataSource: MetadataSource {
         case Self.rangeNotSatisfiableStatus:
             return Data()
         default:
-            throw RepoMetadataError.metadataUnavailable("reading \(path) of \(repo) for its GGUF header gave HTTP \(status)")
+            throw RepoMetadataError.metadataUnavailable("reading \(path) of \(repo) gave HTTP \(status)")
         }
     }
 

@@ -88,10 +88,27 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift. `swift build --build-tests`: no compiler warning (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, not from this change). Mutation run (filter PooledDecisionContainerTests): 16 tests, 3 expected issues. Full `swift test --skip-build` once after restore: 2552 tests in 298 suites, 38 in 23 suites, 19 in 3 suites, all passed. Finding item "Review Findings (2026-11-11 07:25)" checked.
     - next: /review. Task stays in doing.
   timestamp: 2026-11-11T13:31:10.127210+00:00
+- actor: claude-code
+  id: 01m75d12ecvwac2nn854hp5kf5
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (83bd8163) gave 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). 1 file reviewed. The 2 `.kanban/` files are excluded by `.reviewignore`. All items in the two prior `## Review Findings` sections are checked.
+    - next: The task is in `done`. No more work is necessary.
+  timestamp: 2026-11-11T13:33:46.828835+00:00
+- actor: claude-code
+  id: 01m75d1m8jkpdgqhnbjc1wkd60
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift
+    - test: green — swift test, 2552 + 38 + 19 passed, 0 skipped
+    - commit: 83bd8163
+    - review: clean — 0 findings
+    - open follow-up: delete ReasoningOffPromptFormat when FoundationModelsDecision ^p0q6pbk is on origin/main
+  timestamp: 2026-11-11T13:34:05.074503+00:00
 depends_on:
 - 01M7467X77633VE23P71VC8XXV
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffffffffb80
 title: 'R5: decision container, RoutedDecider handle and prompt-format selection'
 ---
 ## What

@@ -16,6 +16,9 @@ extension RepoMetadata {
     /// ``init(localGGUF:)``. Any other folder is sized by
     /// ``init(localDirectory:names:entries:)``. No Hub call is made.
     ///
+    /// A folder records the `decider_config.json` file at its top, as a Hub
+    /// tree listing records it; see ``recordingDeciderConfiguration(in:)``.
+    ///
     /// - Parameter location: The absolute path of the file or the folder.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the
     ///   location is a file that is not a `.gguf` file, or as the two
@@ -35,9 +38,10 @@ extension RepoMetadata {
         let entries = try Self.fileEntries(in: location)
         if HubModelFormat.detect(paths: entries.map(\.path)) == .gguf {
             try await self.init(localGGUF: location)
-            return
+        } else {
+            try self.init(localDirectory: location, names: names, entries: entries)
         }
-        try self.init(localDirectory: location, names: names, entries: entries)
+        self = recordingDeciderConfiguration(in: entries)
     }
 
     /// Parses sizing metadata from a model folder on the disk.

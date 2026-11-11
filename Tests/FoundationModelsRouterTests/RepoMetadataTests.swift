@@ -1026,6 +1026,50 @@ struct RepoMetadataTests {
         #expect(throws: RepoMetadataError.self) { try bytes.get() }
     }
 
+    /// The size the tree listings below give the `decider_config.json` file.
+    private static let deciderConfigurationBytes: Int64 = 96
+
+    /// The tree listing of an MLX repo with the extra entries.
+    ///
+    /// - Parameter extra: The entries after the weights and `config.json`.
+    /// - Returns: The bytes of the listing.
+    private static func mlxTreeJSON(with extra: [HubTreeListing.Entry]) -> Data {
+        HubTreeListing.json([.file("model.safetensors", size: expectedWeightBytes), .file("config.json", size: 700)] + extra)
+    }
+
+    @Test("a tree listing with decider_config.json at the root records the size of that file")
+    func deciderConfigurationAtRootIsRecorded() async throws {
+        let tree = Self.mlxTreeJSON(with: [.file("decider_config.json", size: Self.deciderConfigurationBytes)])
+        let (reader, dir, _) = Self.makeReader(raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "org/decider")
+
+        #expect(metadata.deciderConfigurationByteCount == Self.deciderConfigurationBytes)
+    }
+
+    @Test("a tree listing with no decider_config.json records no decider configuration")
+    func noDeciderConfigurationIsRecorded() async throws {
+        let tree = Self.mlxTreeJSON(with: [])
+        let (reader, dir, _) = Self.makeReader(raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "org/model")
+
+        #expect(!metadata.hasDeciderConfiguration)
+    }
+
+    @Test("a decider_config.json below the root of the repository is not recorded")
+    func nestedDeciderConfigurationIsNotRecorded() async throws {
+        let tree = Self.mlxTreeJSON(with: [.file("extra/decider_config.json", size: Self.deciderConfigurationBytes)])
+        let (reader, dir, _) = Self.makeReader(raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "org/model")
+
+        #expect(!metadata.hasDeciderConfiguration)
+    }
+
     /// Builds a reader over a fresh temp cache dir, returning the dir for cleanup
     /// and the stub source for fetch-count assertions.
     private static func makeReader(

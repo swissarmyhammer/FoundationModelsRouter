@@ -353,4 +353,22 @@ struct GGUFRepoMetadataTests {
 
         #expect(metadata.weightBytes == Self.otherQuantBytes)
     }
+
+    /// The size the tree listing gives the `decider_config.json` file.
+    private static let deciderConfigurationBytes: Int64 = 96
+
+    @Test("a GGUF repo with decider_config.json at the root records the size of that file")
+    func deciderConfigurationIsRecorded() async throws {
+        let (reader, cache, _) = try Self.makeReader(
+            treeJSON: HubTreeListing.json([
+                .lfsFile("model.gguf", size: Self.modelBytes),
+                .file("decider_config.json", size: Self.deciderConfigurationBytes),
+            ]),
+            files: ["model.gguf": GGUFHeaderFixtures.denseBytes])
+        defer { cache.remove() }
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: Self.repo))
+
+        #expect(metadata.deciderConfigurationByteCount == Self.deciderConfigurationBytes)
+    }
 }
