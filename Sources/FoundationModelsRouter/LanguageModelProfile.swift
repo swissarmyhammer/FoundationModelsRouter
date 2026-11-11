@@ -53,8 +53,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The recorder a vended session or embed call is born holding.
     let recorder: any TranscriptRecorder
 
-    /// The tracer an embed call opens its span through, or `nil` to read
-    /// `InstrumentationSystem.tracer` at call time.
+    /// The tracer an embed call or a decide call opens its span through, or
+    /// `nil` to read `InstrumentationSystem.tracer` at call time.
     ///
     /// `nil` is the resolve-late shape, and it is the default: an application
     /// that bootstraps a tracing backend *after* it constructs its ``Router``
@@ -151,8 +151,9 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - routerId: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
     ///   - durableRecording: The durable recording root and index writer, or `nil`.
-    ///   - tracer: The tracer an embed call opens its span through, or `nil`
-    ///     (the default) to read `InstrumentationSystem.tracer` at call time.
+    ///   - tracer: The tracer an embed call or a decide call opens its span
+    ///     through, or `nil` (the default) to read
+    ///     `InstrumentationSystem.tracer` at call time.
     ///   - samplingMode: The decoding strategy every backend made through
     ///     this handle decodes with, or `nil` (the default) for the
     ///     container's default.

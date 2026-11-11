@@ -29,11 +29,27 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Recording/SessionRecord.swift, Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/DecisionRecordingTests.swift (new), Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift, Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/index.md. `swift test --filter DecisionRecordingTests`: 3 tests passed. `swift test` (one run): 2627 tests in 304 suites passed, plus 41 and 19 in the other test products, 0 warnings.
     - next: /review
   timestamp: 2026-11-11T22:44:23.037301+00:00
+- actor: claude-code
+  id: 01m76cpxvp7155t7qrqac92rc5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (50a8b6d5). 0 findings, 0 confirmed, 1 refuted, 7 attempted, 0 failed.
+    - next: None. The task is in done.
+  timestamp: 2026-11-11T22:47:28.886565+00:00
+- actor: claude-code
+  id: 01m76cqbajjjtbm4pny6hdf9jh
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — Recording/SessionRecord.swift, Router.swift, DecisionRecordingTests.swift (new), SessionIndexFileTests.swift, one recorded fixture
+    - test: green — swift test, 2627 + 41 + 19 passed, 0 skipped; IntegrationTests build exit 0
+    - commit: 50a8b6d5
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T22:47:42.674001+00:00
 depends_on:
 - 01M746A8SW146DW09CCNJPHQ4K
 - 01M746AWW5JWZK2017CJMC5VMJ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffff8280
 title: 'R9: SessionRecord records the decision model; a decision never goes in the transcript'
 ---
 ## What

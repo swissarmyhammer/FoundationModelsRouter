@@ -127,6 +127,27 @@ extension TelemetryContentSafetyTests {
         }
     }
 
+    @Test("a decide span whose model throws records the error type and no content")
+    func failedDecideSpanRecordsOnlyTheErrorType() async throws {
+        try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
+            let decider = HandBuiltProfileFixtures.makeDecider(
+                chosen: Self.failingSpanModel,
+                container: ThrowingDecisionContainer(failure: Self.contentBearingError),
+                routerId: ULID(),
+                tracer: context.tracer
+            )
+            let session = decider.makeSession(state: .text(Self.failureContent))
+
+            await #expect(throws: ContentBearingError.self) {
+                _ = try await session.probability(of: Self.failureContent)
+            }
+
+            #expect(
+                Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.decide, in: context)
+                    == ["\(ContentBearingError.self)"])
+        }
+    }
+
     /// Makes a scripted session that reports to `context`, runs `body` on it,
     /// and then ends the fixture, for a test that drives a span of the session
     /// directly.

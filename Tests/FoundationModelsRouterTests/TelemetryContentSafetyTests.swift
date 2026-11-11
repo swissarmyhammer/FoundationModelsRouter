@@ -30,9 +30,9 @@ import Testing
 /// with no edit to this file.
 ///
 /// The extension in `TelemetryContentSafetyTests+FailedSpans.swift` adds the
-/// failure half: a session, compact, submission and embed span whose
-/// work throws an error with content records the error type and none of
-/// the content.
+/// failure half: a session, compact, submission, embed and decide span
+/// whose work throws an error with content records the error type and none
+/// of the content.
 ///
 /// Each session gets the logger and the metrics factory of the capture
 /// explicitly: the pump of a session is a detached task, and it does not

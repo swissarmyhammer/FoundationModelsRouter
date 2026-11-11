@@ -29,9 +29,10 @@ import Tracing
 ///
 /// A span attribute, a log message, a log metadata value and a metric
 /// dimension value must never carry
-/// prompt text, response text, tool arguments, tool output, or embed input
-/// text. A finished span and a log record leave the process through whatever
-/// backend the host application bootstrapped, and the router cannot know where
+/// prompt text, response text, tool arguments, tool output, embed input
+/// text, or the state, question, option or answer of a decision. A finished
+/// span and a log record leave the process through whatever backend the host
+/// application bootstrapped, and the router cannot know where
 /// that backend sends what it receives, so the payload stays free of the
 /// caller's own content. Identifiers, names, counts and sizes are safe; content
 /// is not.
@@ -45,8 +46,8 @@ import Tracing
 ///
 /// The rule is proved, not merely stated: `TelemetryContentSafetyTests` drives
 /// a submission, a tool call, a compaction, a compaction shortfall, an embed,
-/// a rejected tool call retry, and a session, compact, submission and
-/// embed span whose work throws an error that holds content, inside the
+/// a rejected tool call retry, and a session, compact, submission, embed and
+/// decide span whose work throws an error that holds content, inside the
 /// `TelemetryCapture` of FoundationModelsExtras. It reads each span name and
 /// attribute, each recorded error and status message of a span, each log
 /// message and metadata value, and each metric name and dimension, and it
@@ -70,6 +71,10 @@ enum RouterTelemetry {
     enum SpanName {
         /// One ``RoutedModel/embed(texts:)`` call.
         static let embed = prefix + "embed"
+
+        /// One batch of questions that a session of ``RoutedModel/makeSession(state:)``
+        /// sends to the decision model (``TracedDecisionModel``).
+        static let decide = prefix + "decide"
 
         /// One submission of a session: one SDK call of the chain that
         /// answers its messages, with every tool call inside it.
@@ -121,8 +126,8 @@ enum RouterTelemetry {
         static let modelRef = "model.ref"
 
         /// The type name of the error that ended the work of a span: the
-        /// attempt of a submission, or the work of a session, compact or
-        /// embed span. ``RouterTelemetry/recordFailure(of:on:)`` writes it.
+        /// attempt of a submission, or the work of a session, compact,
+        /// embed or decide span. ``RouterTelemetry/recordFailure(of:on:)`` writes it.
         /// Never the description of the error: a description can hold the
         /// caller's content.
         static let errorType = "error.type"
@@ -285,6 +290,10 @@ enum RouterTelemetry {
         /// The span does not have this key when the call throws or produces
         /// no vector.
         static let embeddingDimension = "embedding.dimension"
+
+        /// How many questions one batch of a decision session sends to the
+        /// decision model.
+        static let decisionQuestionCount = "decision.question_count"
     }
 
     /// The value ``AttributeKey/compactionTrigger`` carries: what asked for a

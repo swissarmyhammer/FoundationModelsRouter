@@ -66,15 +66,41 @@ enum HandBuiltProfileFixtures {
                 routerId: router.id,
                 recorder: recorder
             ),
-            decision: RoutedDecider(
-                slot: .decision,
+            decision: makeDecider(
                 chosen: chosen,
-                footprintBytes: 0,
-                resolution: slotResolution(slot: .decision, chosen: chosen),
                 container: StubDecisionContainer(modelID: chosen.stringValue),
                 routerId: router.id,
                 recorder: recorder
             )
+        )
+    }
+
+    /// Builds one decision handle over `container`.
+    ///
+    /// - Parameters:
+    ///   - chosen: The model reference the handle names.
+    ///   - container: The container the handle wraps.
+    ///   - routerId: The recording root id of the router the handle reports.
+    ///   - recorder: The recorder the handle holds.
+    ///   - tracer: The tracer of the decide span, or `nil` (the default) to
+    ///     read `InstrumentationSystem.tracer` at call time.
+    /// - Returns: The decision handle.
+    static func makeDecider(
+        chosen: ModelRef,
+        container: any LoadedDecisionContainer,
+        routerId: ULID,
+        recorder: any TranscriptRecorder = InMemoryRecorder(),
+        tracer: (any Tracer)? = nil
+    ) -> RoutedDecider {
+        RoutedDecider(
+            slot: .decision,
+            chosen: chosen,
+            footprintBytes: 0,
+            resolution: slotResolution(slot: .decision, chosen: chosen),
+            container: container,
+            routerId: routerId,
+            recorder: recorder,
+            tracer: tracer
         )
     }
 
