@@ -55,6 +55,39 @@ comments:
     - evidence: 3 files — Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift, Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift, Tests/FoundationModelsRouterTests/Helpers/StubLogits.swift. `swift build --build-tests`: no compiler warning (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, not from this change). Filtered run: 19 tests in 3 suites passed. Full `swift test` once: 2550 tests in 298 suites, 38 in 23 suites, 19 in 3 suites, all passed, exit 0. Finding item checked.
     - next: /review. Task stays in doing.
   timestamp: 2026-11-11T13:23:59.881770+00:00
+- actor: claude-code
+  id: 01m75cmkxxay7r705s6bnse221
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (0261bd9c). 1 finding (1 confirmed, 0 refuted): Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift:178 `completeness/inverse-operation-coverage`.
+    - next: Do the item in "Review Findings (2026-11-11 07:25)". Add a forwarding check for `reasoning: true` in `liveContainerForwardsRenderChatTemplate`. Then run the review again.
+  timestamp: 2026-11-11T13:26:58.749482+00:00
+- actor: claude-code
+  id: 01m75cn2vpkwa31b9k11rvx0k6
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — RoutedDeciderTests.swift, PooledDecisionContainerTests.swift, Helpers/StubLogits.swift
+    - test: green — swift test, 2550 + 38 + 19 passed, 0 skipped
+    - commit: 0261bd9c
+    - review: findings — Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift:178
+  timestamp: 2026-11-11T13:27:14.038197+00:00
+- actor: claude-code
+  id: 01m75cw6tz75jeartfm7640wey
+  text: |-
+    Fix of the finding completeness/inverse-operation-coverage (PooledDecisionContainerTests.swift:178). The cause: a forwarding test sends only one of the argument variants that the stub tells apart. A container that drops or hardcodes that argument passes. I removed the cause from all four forwarding tests:
+    - renderChatTemplate: the test is parameterized over `reasoningRequests = [false, true]`, and compares with the stub for the same request. New test `stubRendersEachReasoningRequestDifferently` asserts that the stub output for `false` and for `true` differ.
+    - tokenize: the test tokenizes `texts = ["", text, "other text"]` in order through the container (helper `tokenizeEach(_:with:)`) and compares with the stub. New test `stubTokenizesEachTextDifferently` asserts that the stub gives a different result for each text. The old test used one text, and a container that tokenized a fixed text passed.
+    - maximumPromptTokens: `promptLimits` is now `[512, 2048, nil]`. The `nil` case is a logits model with no fixed limit; a container that gives its context window in that case fails.
+    - logProbabilities: no change. Its arguments already give four different values (each candidate and each prompt sum changes the value), and the plain-model tests already cover the throw.
+    - Mutation check (all three at the same time in LiveLLMContainerLogits.swift: `reasoning: false` hardcoded, tokenize of the fixed text "some text", and `?? contextWindow` on the prompt limit): the filtered run of 16 tests failed with 3 issues, one for each mutation, at the argument `reasoning → true`, the tokenize test, and `promptLimit → nil`. The old tests pass with each of these mutations. Source restored from a scratch copy; `git status` shows no change in Sources.
+  timestamp: 2026-11-11T13:31:07.487694+00:00
+- actor: claude-code
+  id: 01m75cw9dfckx1pcvmmhafn7tr
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift. `swift build --build-tests`: no compiler warning (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, not from this change). Mutation run (filter PooledDecisionContainerTests): 16 tests, 3 expected issues. Full `swift test --skip-build` once after restore: 2552 tests in 298 suites, 38 in 23 suites, 19 in 3 suites, all passed. Finding item "Review Findings (2026-11-11 07:25)" checked.
+    - next: /review. Task stays in doing.
+  timestamp: 2026-11-11T13:31:10.127210+00:00
 depends_on:
 - 01M7467X77633VE23P71VC8XXV
 position_column: doing
@@ -103,3 +136,12 @@ Source: ../FoundationModelsDecision/plan.md section 7, R5, and decision D13. The
 > - `.kanban/ (from .reviewignore)` — 4 file(s)
 
 - [x] `Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift:56` `test-integrity/no-hard-code` — The test stub executor returns the same constant, RoutedDeciderTests.stubProbability (0.75), that the test then asserts on at line 93. The assertion only proves that the session passes the executor's answer through unchanged. It does not prove that the session computes a probability from the model's answers, so a session that returned a fixed value would also pass. Make the stub answer depend on its input, for example by giving each question a distinct probability or by echoing a value derived from the question, and assert that the session returns the value for the specific question. Keep the routing assertion, but make the expected value come from the input rather than a constant that the stub also returns.
+
+## Review Findings (2026-11-11 07:25)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift:178` `completeness/inverse-operation-coverage` — The stub now takes a `reasoning` flag and gives a different suffix for `reasoning: true`, and its doc comment says a test sees when a caller forwards the wrong arguments. But `liveContainerForwardsRenderChatTemplate` only forwards `reasoning: false`. A `LiveLLMContainer.renderChatTemplate` that drops the flag or hardcodes `false` would still pass this test, so the `reasoning: true` input variant is never checked through the forwarding path. Add a second assertion, or a parameterized case, that calls `container.renderChatTemplate(Self.messages, reasoning: true)` and compares it with `logits.renderChatTemplate(Self.messages, reasoning: true)`. Confirm the two outputs differ, so the test fails if the flag is not forwarded.
