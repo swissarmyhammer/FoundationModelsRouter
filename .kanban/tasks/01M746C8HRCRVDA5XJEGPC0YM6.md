@@ -30,6 +30,34 @@ comments:
     - evidence: README.md, docs/decision.md (new), docs/residency.md, docs/testing.md, Sources/FoundationModelsRouter/Tools.swift, Sources/FoundationModelsRouter/FoundationModelsRouter.docc/FoundationModelsRouter.md (new), Tests/FoundationModelsRouterTests/ExamplesTests.swift; `swift test` one time: 2638 tests in 305 suites + 41 + 19 passed, exit 0, no warnings
     - next: /review
   timestamp: 2026-11-11T23:33:27.595393+00:00
+- actor: claude-code
+  id: 01m76ffpxc12pmnmsw5e4tdg28
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (dd400003); 1 finding (1 confirmed, 0 refuted) — Sources/FoundationModelsRouter/Tools.swift:77
+    - next: implement the unchecked item in the "Review Findings (2026-11-11 18:35)" section. Remove the explicit initializer that is identical to the synthesized initializer, and remove each other example of this cause in Tools.swift.
+  timestamp: 2026-11-11T23:35:58.124687+00:00
+- actor: claude-code
+  id: 01m76fg33zdjr93d5m07dg4s3h
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — README.md, docs/decision.md (new), docs/residency.md, docs/testing.md, Tools.swift (DecideTool), FoundationModelsRouter.docc/FoundationModelsRouter.md (new), ExamplesTests.swift
+    - test: green — swift test, 2638 + 41 + 19 passed, 0 skipped
+    - commit: dd400003
+    - review: findings — Sources/FoundationModelsRouter/Tools.swift:77
+  timestamp: 2026-11-11T23:36:10.623149+00:00
+- actor: claude-code
+  id: 01m76fk0gyx96s4h4zg4rddnaa
+  text: |-
+    Fix for the UseSynthesizedInitializer finding.
+    - I removed the explicit `init(model:)` from `DecideTool`. The synthesized memberwise initializer is internal and has the same signature, so `DecideTool(model: profile.decision)` in ExamplesTests did not change.
+    - The type DocC now tells how to create the tool: the memberwise initializer `DecideTool(model:)` with a resolved `RoutedDecider`. The `model` property doc tells that the tool decides through it.
+    - I examined the other lines that dd400003 added. The new test code (`makeDecisionProfile`, `decideAboutAState`, `decideThroughATool`) has no explicit initializer. I did not change the older tools (`SummarizeTool`, `EmbedTool`).
+
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Tools.swift; `swift test` one time: 2638 tests in 305 suites + 41 + 19 passed, exit 0, no compiler warnings
+    - next: /review
+  timestamp: 2026-11-11T23:37:46.270700+00:00
 depends_on:
 - 01M746AWW5JWZK2017CJMC5VMJ
 - 01M746B9WYHASZZGR6P8SC4C1K
@@ -58,3 +86,20 @@ Source: ../FoundationModelsDecision/plan.md section 7, R11. Write all text in AS
 - Use `/tdd` — write failing tests first, then implement to make them pass. #decision
 ## Changes from the board check
 - `Sources/FoundationModelsRouter/Tools.swift` says "Pass `profile.flash`, `profile.standard`, or `profile.embedding` in". Add `profile.decision`, and add a `DecideTool` example next to `EmbedTool` (a tool that takes a `RoutedDecider` and answers one yes/no question). Add a test for it in `Tests/FoundationModelsRouterTests/ExamplesTests.swift` with the stub decider.
+
+
+## Review Findings (2026-11-11 18:35)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 9 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 5 file(s) not reviewed — no validator matched:
+> - `README.md` — no validator matches this file
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/FoundationModelsRouter.md` — no validator matches this file
+> - `docs/decision.md` — no validator matches this file
+> - `docs/residency.md` — no validator matches this file
+> - `docs/testing.md` — no validator matches this file
+
+- [x] `Sources/FoundationModelsRouter/Tools.swift:77` `code-hygiene/idioms-swift` — UseSynthesizedInitializer: remove this explicit initializer, which is identical to the compiler-synthesized initializer.

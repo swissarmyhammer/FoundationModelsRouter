@@ -65,18 +65,13 @@ struct EmbedTool: Sendable {
 /// A tool that answers one yes-or-no question through an injected
 /// ``RoutedDecider``.
 ///
-/// Each ``probability(of:about:)`` makes a fresh decision session. A decision
+/// Create it with the memberwise initializer `DecideTool(model:)`, which takes
+/// the resolved ``RoutedDecider`` to decide through. Each
+/// ``probability(of:about:)`` makes a fresh decision session. A decision
 /// writes nothing to the transcript.
 struct DecideTool: Sendable {
-    /// The injected decision handle.
+    /// The injected decision handle, which the tool decides through.
     let model: RoutedDecider
-
-    /// Creates a decider over a resolved decision handle.
-    ///
-    /// - Parameter model: The ``RoutedDecider`` to decide through.
-    init(model: RoutedDecider) {
-        self.model = model
-    }
 
     /// Gives the probability of "yes" to one yes-or-no question about a state.
     ///
