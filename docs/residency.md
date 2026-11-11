@@ -31,7 +31,9 @@ queue of the pool. `Router.resolve` measures the footprint of the pool, fits
 the profile, and loads each slot in one admission job. Thus no other load and
 no eviction occurs between the measurement and the loads.
 
-Each handle of a resolved profile keeps the three model holds of its resolve.
+Each handle of a resolved profile keeps the four model holds of its resolve,
+one for each slot. The hold of the `decision` slot can be a second hold of the
+`flash` model or of the `standard` model; see [Decisions](decision.md).
 A model stays resident while a profile, a handle of that profile, or a hold
 of another user still exists anywhere in the process. There is no release
 call. When the last hold of a model goes, the pool submits an eviction job. A

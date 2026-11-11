@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsDecision
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -174,6 +175,28 @@ struct ExamplesTests {
                 pool: ModelPool()
             )
             return (router, cacheDir)
+        }
+
+        /// Builds a profile whose `decision` handle answers through a stub
+        /// decider, for the decision examples.
+        ///
+        /// A resolve through ``makeRouter(cannedResponse:cannedResponses:embeddingDimension:)``
+        /// holds no model that gives log probabilities, so each decision of
+        /// its `decision` handle throws. Thus the decision examples build the
+        /// profile by hand: its `decision` handle wraps a
+        /// ``StubDecisionContainer``, whose model answers each yes-or-no
+        /// question with ``StubDecisionModel/probability(of:)``.
+        ///
+        /// - Parameter router: The router that the profile reports its
+        ///   residency to. Nothing is resolved through it.
+        /// - Returns: The hand-built profile.
+        static func makeDecisionProfile(router: Router) -> LanguageModelProfile {
+            HandBuiltProfileFixtures.makeProfile(
+                definitionName: "triage",
+                chosen: ProfileDefinition.defaultDecisionCandidates[0],
+                container: UndrivenLanguageModelContainer(),
+                router: router
+            )
         }
     }
 
@@ -354,6 +377,40 @@ struct ExamplesTests {
         ])
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == vectorLength })
+    }
+
+    // MARK: - Decision
+
+    @Test("Ask the decision model for the probability of yes to a question about a state")
+    @MainActor
+    func decideAboutAState() async throws {
+        let (router, cacheDir) = ExampleHarness.makeRouter()
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
+        let profile = ExampleHarness.makeDecisionProfile(router: router)
+        let ticket = "The checkout page is down for all customers."
+        let question = "Does this convey urgency?"
+
+        // The README example: one decision session about the ticket, and one
+        // yes-or-no question. The answer is the probability of "yes".
+        let urgency = try await profile.decision.makeSession(state: .text(ticket))
+            .probability(of: question)
+
+        #expect(urgency == StubDecisionModel.probability(of: question))
+    }
+
+    @Test("Answer a yes-or-no question through a tool that takes the decision handle")
+    @MainActor
+    func decideThroughATool() async throws {
+        let (router, cacheDir) = ExampleHarness.makeRouter()
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
+        let profile = ExampleHarness.makeDecisionProfile(router: router)
+        let question = "Does the build log report a failure?"
+
+        // A tool takes the resolved decision handle in its initializer.
+        let tool = DecideTool(model: profile.decision)
+        let failure = try await tool.probability(of: question, about: .text("error: 3 tests failed"))
+
+        #expect(failure == StubDecisionModel.probability(of: question))
     }
 
     // MARK: - Guided generation: raw

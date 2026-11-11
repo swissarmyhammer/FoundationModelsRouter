@@ -31,4 +31,4 @@ CI runs the same two commands.
 Every public API has a worked example in
 [`Tests/FoundationModelsRouterTests/ExamplesTests.swift`](../Tests/FoundationModelsRouterTests/ExamplesTests.swift):
 resolution, sessions, streaming, guided (grammar-constrained) generation,
-embeddings, forking, and residency.
+embeddings, decisions, forking, and residency.
