@@ -21,8 +21,24 @@ comments:
     - evidence: 13 files in Tests/FoundationModelsRouterTests — ResolveTracingTests.swift, ToolTracingTests.swift, CompactionTracingTests.swift, GenerationCallOutputBufferedTests.swift, GenerationCallFirstTokenTests.swift, GenerationCallTracingTests.swift, RecordedForkTreeRestoreTests.swift, EnterRecordTests.swift, TelemetryContentSafetyTests+FailedSpans.swift, TelemetryContentSafetyTests.swift, WatchStopUsageTests.swift, CoreMLEmbeddingThroughRouterTests.swift, SessionTracerWiringTests.swift; `swift test` once: 2638 + 41 + 19 tests passed, exit 0.
     - next: /review. The integration-test copy is in ^4nn39ea.
   timestamp: 2026-11-11T23:42:36.029663+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m76fzrv2cvmej4k39e2adpnr
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (a58d4717). 0 findings, 0 confirmed, 0 refuted. 13 files reviewed. 6 files in .kanban/ not reviewed (.reviewignore).
+    - next: none. The task is in done.
+  timestamp: 2026-11-11T23:44:44.386381+00:00
+- actor: claude-code
+  id: 01m76g07r6h93v78h8ypqk566j
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 13 test files use InMemoryTracer.finishedSpans(named:); new task ^4nn39ea for the integration-test copy
+    - test: green — swift test, 2638 + 41 + 19 passed, 0 skipped
+    - commit: a58d4717
+    - review: clean — 0 findings
+  timestamp: 2026-11-11T23:44:59.654002+00:00
+position_column: done
+position_ordinal: ffffffffff8680
 title: Use InMemoryTracer.finishedSpans(named:) for each span-name filter in the tests
 ---
 ## What
