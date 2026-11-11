@@ -15,6 +15,10 @@ swift test --package-path IntegrationTests
 
 # The real-model smoke tier alone — does compaction work at all? Seconds.
 swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
+
+# The decision slot alone — decider-2b against its Metal reference, and the
+# flash fallback. Downloads about 1.3 GB on the first run. Seconds after that.
+swift test --package-path IntegrationTests --filter DecisionSlotIntegrationTests
 ```
 
 `FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`

@@ -24,6 +24,12 @@ let mlxPackage = "mlx-swift-lm"
 // the root unit test target links, to read a router's finished spans back.
 let tracingPackage = "swift-distributed-tracing"
 
+// The decision package the root manifest pins. The decision-slot suite names
+// `DecisionState`, `Question` and `Answer` from its core product, and reads the
+// format of a decision model through `PooledDecisionModel` of its pooled
+// product.
+let decisionPackage = "FoundationModelsDecision"
+
 // The router package's products: the library under test and the three test
 // support libraries the root package publishes for this package (see the
 // root manifest's `products` list).
@@ -66,6 +72,10 @@ let package = Package(
             url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
             branch: "main"
         ),
+        .package(
+            url: "git@github.com:swissarmyhammer/\(decisionPackage).git",
+            branch: "main"
+        ),
     ],
     targets: [
         // The real-model suites (milestone 7): they download real models and
@@ -80,6 +90,8 @@ let package = Package(
                 mlxFoundationModelsProduct,
                 .product(name: "InMemoryTracing", package: tracingPackage),
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
+                .product(name: decisionPackage, package: decisionPackage),
+                .product(name: "\(decisionPackage)Pooled", package: decisionPackage),
             ],
             path: "Tests/\(routerPackage)IntegrationTests"
         ),
