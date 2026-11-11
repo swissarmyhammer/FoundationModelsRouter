@@ -17,19 +17,22 @@ struct PooledDecisionContainerTests {
     /// The model reference of each hold.
     private static let ref: ModelRef = "org/decision-stub"
 
-    /// A chat template that turns reasoning off: the thinking block is closed.
-    private static let closedThinkingTemplate =
-        "<|im_start|>user\nquestion<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    /// The start of an assistant message that turns reasoning off: the
+    /// thinking block is closed.
+    private static let closedThinkingSuffix = "<think>\n\n</think>\n\n"
 
-    /// A chat template that cannot turn reasoning off: the thinking block is
-    /// open at the end, also for `reasoning: false`.
-    private static let openThinkingTemplate = "<|im_start|>user\nquestion<|im_end|>\n<|im_start|>assistant\n<think>\n"
+    /// The start of an assistant message that turns reasoning on: the
+    /// thinking block is open at the end.
+    private static let openThinkingSuffix = "<think>\n"
 
-    /// The prompt limit of the stub.
-    private static let promptLimit = 2048
+    /// The prompt limits of the stub in the prompt-limit test. Each limit is
+    /// different from ``contextWindow``.
+    private static let promptLimits = [512, 2048]
 
-    /// The log probability of each candidate of the stub.
-    private static let stubLogProbability = -0.5
+    /// The context window of each live container. It is different from each
+    /// prompt limit, thus a container that gives its context window as the
+    /// prompt limit fails a test.
+    private static let contextWindow = 4096
 
     /// The text of each tokenize test.
     private static let text = "some text"
@@ -51,13 +54,21 @@ struct PooledDecisionContainerTests {
 
     // MARK: - Helpers
 
-    /// Makes a stub with `template` as its chat template.
+    /// Makes a stub whose chat template opens the assistant message with
+    /// `reasoningOffSuffix` for `reasoning: false`, and with an open thinking
+    /// block for `reasoning: true`.
     ///
-    /// - Parameter template: The text of the chat template.
+    /// - Parameters:
+    ///   - reasoningOffSuffix: The start of the assistant message for
+    ///     `reasoning: false`.
+    ///   - maximumPromptTokens: The prompt limit of the stub.
     /// - Returns: The stub.
-    private static func makeLogits(template: String = closedThinkingTemplate) -> StubLogits {
+    private static func makeLogits(
+        reasoningOffSuffix: String = closedThinkingSuffix, maximumPromptTokens: Int? = nil
+    ) -> StubLogits {
         StubLogits(
-            renderedTemplate: template, maximumPromptTokens: promptLimit, logProbability: stubLogProbability)
+            reasoningOffSuffix: reasoningOffSuffix, reasoningOnSuffix: openThinkingSuffix,
+            maximumPromptTokens: maximumPromptTokens)
     }
 
     /// Makes a live container over `model`.
@@ -66,7 +77,7 @@ struct PooledDecisionContainerTests {
     /// - Returns: The container.
     private static func liveContainer(over model: any FoundationModels.LanguageModel) -> LiveLLMContainer {
         LiveLLMContainer(
-            model: model, ref: ref, contextWindow: promptLimit, tokenCounter: CharacterTokenCounter())
+            model: model, ref: ref, contextWindow: contextWindow, tokenCounter: CharacterTokenCounter())
     }
 
     /// Makes a decision session over a container of a hold of `logits`.
@@ -109,7 +120,7 @@ struct PooledDecisionContainerTests {
     /// throw.
     @Test("a template that cannot turn reasoning off makes a decision throw unsupportedModel")
     func openThinkingTemplateThrowsUnsupportedModel() async throws {
-        let session = try await Self.makeSession(over: Self.makeLogits(template: Self.openThinkingTemplate))
+        let session = try await Self.makeSession(over: Self.makeLogits(reasoningOffSuffix: Self.openThinkingSuffix))
         await #expect(throws: DecisionError.unsupportedModel(ReasoningOffPromptFormat.openThinkingMessage)) {
             try await session.probability(of: Self.question)
         }
@@ -119,7 +130,7 @@ struct PooledDecisionContainerTests {
     /// probabilities: the model evaluates no prompt.
     @Test("a template that cannot turn reasoning off gives no probabilities")
     func openThinkingTemplateReadsNoProbabilities() async throws {
-        let logits = Self.makeLogits(template: Self.openThinkingTemplate)
+        let logits = Self.makeLogits(reasoningOffSuffix: Self.openThinkingSuffix)
         let session = try await Self.makeSession(over: logits)
         await #expect(throws: DecisionError.self) {
             try await session.probability(of: Self.question)
@@ -140,7 +151,7 @@ struct PooledDecisionContainerTests {
     /// itself, thus the container accepts the template.
     @Test("the closed-think fallback of the generic format accepts an open thinking block")
     func closedThinkFallbackAcceptsOpenThinkingTemplate() async throws {
-        let logits = Self.makeLogits(template: Self.openThinkingTemplate)
+        let logits = Self.makeLogits(reasoningOffSuffix: Self.openThinkingSuffix)
         let session = try await Self.makeSession(over: logits, format: GenericPromptFormat(closedThinkFallback: true))
         _ = try await session.probability(of: Self.question)
         #expect(logits.logProbabilityCallCount == 1)
@@ -161,25 +172,28 @@ struct PooledDecisionContainerTests {
     /// logits.
     @Test("the live container forwards renderChatTemplate to a logits model")
     func liveContainerForwardsRenderChatTemplate() async throws {
-        let container = Self.liveContainer(over: LogitsStubLanguageModel(logits: Self.makeLogits()))
+        let logits = Self.makeLogits()
+        let container = Self.liveContainer(over: LogitsStubLanguageModel(logits: logits))
         let rendered = try await container.renderChatTemplate(Self.messages, reasoning: false)
-        #expect(rendered == Self.closedThinkingTemplate)
+        #expect(rendered == (try await logits.renderChatTemplate(Self.messages, reasoning: false)))
     }
 
     /// The live container reads the log probabilities of a model that gives
     /// logits.
     @Test("the live container forwards logProbabilities to a logits model")
     func liveContainerForwardsLogProbabilities() async throws {
-        let container = Self.liveContainer(over: LogitsStubLanguageModel(logits: Self.makeLogits()))
+        let logits = Self.makeLogits()
+        let container = Self.liveContainer(over: LogitsStubLanguageModel(logits: logits))
         let rows = try await container.logProbabilities(of: Self.candidates, after: Self.prompts)
-        #expect(rows == Self.prompts.map { _ in Self.candidates.map { _ in Self.stubLogProbability } })
+        #expect(rows == (try await logits.logProbabilities(of: Self.candidates, after: Self.prompts)))
     }
 
     /// The live container gives the prompt limit of a model that gives logits.
-    @Test("the live container forwards maximumPromptTokens to a logits model")
-    func liveContainerForwardsMaximumPromptTokens() {
-        let container = Self.liveContainer(over: LogitsStubLanguageModel(logits: Self.makeLogits()))
-        #expect(container.maximumPromptTokens == Self.promptLimit)
+    @Test("the live container forwards maximumPromptTokens to a logits model", arguments: promptLimits)
+    func liveContainerForwardsMaximumPromptTokens(promptLimit: Int) {
+        let logits = Self.makeLogits(maximumPromptTokens: promptLimit)
+        let container = Self.liveContainer(over: LogitsStubLanguageModel(logits: logits))
+        #expect(container.maximumPromptTokens == logits.maximumPromptTokens)
     }
 
     /// The live container cannot tokenize with a model that gives no logits.

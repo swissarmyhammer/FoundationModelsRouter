@@ -21,6 +21,40 @@ comments:
     - evidence: 10 files. New: Sources/FoundationModelsRouter/RoutedDecider.swift, Sources/FoundationModelsRouter/Resolution/PooledDecisionContainer.swift, Resolution/LiveLLMContainerLogits.swift, Resolution/DecisionFormatSelection.swift, Resolution/ReasoningOffPromptFormat.swift, Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift, DecisionFormatSelectionTests.swift, RoutedDeciderTests.swift, Helpers/StubLogits.swift. Changed: Resolution/ModelLoader.swift (LoadedDecisionContainer), LanguageModelProfile.swift (RoutedDecider typealias). `swift build --build-tests`: no compiler warning (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, which is not from this change). Filtered run: 19 tests in 3 suites passed. Full `swift test` once: 2550 tests in 298 suites, 38 in 23 suites, 19 in 3 suites, all passed.
     - next: /review. Task stays in doing.
   timestamp: 2026-11-11T13:10:13.079008+00:00
+- actor: claude-code
+  id: 01m75c52shdge5t762dkdb6wx5
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (da3a05c2); 1 finding (1 confirmed, 2 refuted) — Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift:56 (test-integrity/no-hard-code)
+    - next: Do the open item in "Review Findings (2026-11-11 07:13)". Then review again.
+  timestamp: 2026-11-11T13:18:29.681872+00:00
+- actor: claude-code
+  id: 01m75c5mtqeh86c3fksp6mjn3w
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 9 new files, 2 changed (container, RoutedDecider, LiveLLMContainer logits, format selection, ReasoningOffPromptFormat, tests)
+    - test: green — swift test, 2550 + 38 + 19 passed, 0 skipped
+    - commit: da3a05c2
+    - review: findings — Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift:56
+  timestamp: 2026-11-11T13:18:48.151179+00:00
+- actor: claude-code
+  id: 01m75cf25yw1c63c2b1p78g0yk
+  text: |-
+    Fix of the finding test-integrity/no-hard-code (RoutedDeciderTests.swift:56). The cause: a stub gives a constant that does not depend on its input, and the test asserts that same constant. I removed the cause from the three test files of this task:
+    - RoutedDeciderTests: the stub executor reads the probability of each binary question from the table `answers` (two questions, 0.75 and 0.25), by the instructions of the question. An unknown question throws. The test has one argument for each question and expects the probability of that question. A session that gives one fixed value fails one argument.
+    - StubLogits (Helpers): the chat template now renders the messages (ChatML) and then a suffix that changes with `reasoning` (`reasoningOffSuffix`, `reasoningOnSuffix`). Each log probability is `-(candidate + sum of the prompt token IDs)`. The `renderedTemplate` and `logProbability` init parameters are gone.
+    - PooledDecisionContainerTests: the render and log-probability forwarding tests compare with the result of the stub for the same arguments (the same shape as the tokenize test). The prompt-limit test has two arguments (512, 2048), and the context window of the live container (4096) is different from each limit.
+    - DecisionFormatSelectionTests has no stub; its expected temperature comes from the fixture input. No change.
+    - Mutation check: with `LiveLLMContainer.renderChatTemplate` forcing `reasoning: true`, the render forwarding test fails (1 issue). Source restored.
+    - Discovery: the sibling ../FoundationModelsDecision is now at 3571ec5 "fix(generic): throw unsupportedModel on open thinking block". The pinned checkout is still f157c41. When the Router takes that version, `ReasoningOffPromptFormat` can go (see the first comment).
+  timestamp: 2026-11-11T13:23:56.734538+00:00
+- actor: claude-code
+  id: 01m75cf5894zcxwmm9smqwftp0
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift, Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift, Tests/FoundationModelsRouterTests/Helpers/StubLogits.swift. `swift build --build-tests`: no compiler warning (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, not from this change). Filtered run: 19 tests in 3 suites passed. Full `swift test` once: 2550 tests in 298 suites, 38 in 23 suites, 19 in 3 suites, all passed, exit 0. Finding item checked.
+    - next: /review. Task stays in doing.
+  timestamp: 2026-11-11T13:23:59.881770+00:00
 depends_on:
 - 01M7467X77633VE23P71VC8XXV
 position_column: doing
@@ -60,3 +94,12 @@ Source: ../FoundationModelsDecision/plan.md section 7, R5, and decision D13. The
 ## Changes from the board check
 - `maximumPromptTokens` is a property that cannot throw. For a model that does not conform to `PooledLogits`, it gives `nil`. The criterion "throws `notLogitsCapable`" applies only to `tokenize`, `renderChatTemplate` and `logProbabilities`.
 #decision
+
+## Review Findings (2026-11-11 07:13)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 11 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift:56` `test-integrity/no-hard-code` — The test stub executor returns the same constant, RoutedDeciderTests.stubProbability (0.75), that the test then asserts on at line 93. The assertion only proves that the session passes the executor's answer through unchanged. It does not prove that the session computes a probability from the model's answers, so a session that returned a fixed value would also pass. Make the stub answer depend on its input, for example by giving each question a distinct probability or by echoing a value derived from the question, and assert that the session returns the value for the specific question. Keep the routing assertion, but make the expected value come from the input rather than a constant that the stub also returns.

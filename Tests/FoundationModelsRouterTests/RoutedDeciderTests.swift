@@ -13,19 +13,27 @@ struct RoutedDeciderTests {
     /// The model reference of the handle.
     private static let ref: ModelRef = "org/decider-stub"
 
-    /// The probability of "yes" that the stub model gives.
-    private static let stubProbability = 0.75
-
     /// The state of each session.
     private static let state: DecisionState = "The build is red."
 
-    /// The yes-or-no question of each test.
-    private static let question = "Does the state report a failure?"
+    /// The yes-or-no questions of the tests, each with the probability of
+    /// "yes" that the stub model gives for it. Each question has a different
+    /// probability, thus a session that gives one fixed value fails a test.
+    private static let answers = [
+        "Does the state report a failure?": 0.75,
+        "Does the state report a success?": 0.25,
+    ]
 
     // MARK: - Stubs
 
-    /// A decision model whose executor answers each binary question with
-    /// ``RoutedDeciderTests/stubProbability``.
+    /// The error of the stub executor.
+    private enum StubDecisionError: Error {
+        /// The question is not a binary question of ``RoutedDeciderTests/answers``.
+        case unknownQuestion(Question)
+    }
+
+    /// A decision model whose executor answers each binary question with the
+    /// probability that ``RoutedDeciderTests/answers`` gives for it.
     private struct StubDecisionModel: DecisionModel {
         /// The model reference, as text.
         var modelID: String { RoutedDeciderTests.ref.stringValue }
@@ -43,17 +51,35 @@ struct RoutedDeciderTests {
 
     /// The executor of ``StubDecisionModel``.
     private struct StubDecisionExecutor: DecisionModelExecutor {
-        /// Answers each question with a binary answer of
-        /// ``RoutedDeciderTests/stubProbability``.
+        /// Answers each question with a binary answer, with the probability
+        /// that ``RoutedDeciderTests/answers`` gives for its instructions.
         ///
         /// - Parameters:
         ///   - questions: The questions.
         ///   - state: The state. Unread.
         /// - Returns: One answer for each question.
+        /// - Throws: ``StubDecisionError/unknownQuestion(_:)`` for a question
+        ///   that is not a binary question of ``RoutedDeciderTests/answers``.
         func decide(_ questions: [Question], about state: DecisionState) async throws -> DecisionSession.Response {
             DecisionSession.Response(
                 modelID: RoutedDeciderTests.ref.stringValue,
-                answers: questions.map { _ in .binary(probability: RoutedDeciderTests.stubProbability) })
+                answers: try questions.map { .binary(probability: try Self.probability(of: $0)) })
+        }
+
+        /// Gives the probability of "yes" for `question`.
+        ///
+        /// - Parameter question: The question.
+        /// - Returns: The probability that ``RoutedDeciderTests/answers``
+        ///   gives for the instructions of `question`.
+        /// - Throws: ``StubDecisionError/unknownQuestion(_:)`` for a question
+        ///   that is not a binary question of ``RoutedDeciderTests/answers``.
+        private static func probability(of question: Question) throws -> Double {
+            guard case .binary(let instructions, _) = question,
+                let probability = RoutedDeciderTests.answers[instructions]
+            else {
+                throw StubDecisionError.unknownQuestion(question)
+            }
+            return probability
         }
     }
 
@@ -86,11 +112,14 @@ struct RoutedDeciderTests {
 
     // MARK: - Tests
 
-    /// A session of the handle answers through the stub model.
-    @Test("a session of the decider gives the probability of the stub model")
-    func sessionAnswersThroughTheContainerModel() async throws {
+    /// A session of the handle answers each question through the stub
+    /// model, with the probability of that question.
+    @Test(
+        "a session of the decider gives the probability of the stub model for each question",
+        arguments: answers.keys.sorted())
+    func sessionAnswersThroughTheContainerModel(question: String) async throws {
         let session = Self.makeDecider().makeSession(state: Self.state)
-        #expect(try await session.probability(of: Self.question) == Self.stubProbability)
+        #expect(try await session.probability(of: question) == Self.answers[question])
     }
 
     /// A session of the handle is about the state that the caller gives.

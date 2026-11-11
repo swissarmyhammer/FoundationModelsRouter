@@ -10,18 +10,31 @@ import Synchronization
 /// each label variant of a decision format is one token, and two labels never
 /// share a token.
 ///
-/// The chat template is a fixed text, the same for each value of
-/// `reasoning`. Each log probability is the same value. The stub counts the
-/// calls of ``logProbabilities(of:after:)``.
+/// The chat template renders each message in the ChatML layout, then opens
+/// the assistant message with one of two fixed texts: one for
+/// `reasoning: false` and one for `reasoning: true`. The log probability of a
+/// candidate after a prompt comes from the candidate and the prompt. Thus each
+/// result depends on the arguments of its call, and a test sees when a caller
+/// forwards the wrong arguments. The stub counts the calls of
+/// ``logProbabilities(of:after:)``.
 final class StubLogits: PooledLogits {
-    /// The text that each ``renderChatTemplate(_:reasoning:)`` call gives.
-    let renderedTemplate: String
+    /// The text that starts each message.
+    private static let messageStart = "<|im_start|>"
+
+    /// The text that ends each message.
+    private static let messageEnd = "<|im_end|>\n"
+
+    /// The role of the message that the template opens at the end.
+    private static let assistantRole = "assistant"
+
+    /// The text after the assistant message start, for `reasoning: false`.
+    let reasoningOffSuffix: String
+
+    /// The text after the assistant message start, for `reasoning: true`.
+    let reasoningOnSuffix: String
 
     /// The prompt limit that the stub gives.
     let maximumPromptTokens: Int?
-
-    /// The log probability of each candidate, for each prompt.
-    let logProbability: Double
 
     /// The token ID of each text that the stub saw, and the count of the
     /// ``logProbabilities(of:after:)`` calls.
@@ -30,13 +43,15 @@ final class StubLogits: PooledLogits {
     /// Makes a stub.
     ///
     /// - Parameters:
-    ///   - renderedTemplate: The text of the chat template.
+    ///   - reasoningOffSuffix: The text after the assistant message start, for
+    ///     `reasoning: false`.
+    ///   - reasoningOnSuffix: The text after the assistant message start, for
+    ///     `reasoning: true`.
     ///   - maximumPromptTokens: The prompt limit, or `nil` for no limit.
-    ///   - logProbability: The log probability of each candidate.
-    init(renderedTemplate: String, maximumPromptTokens: Int? = nil, logProbability: Double = -1) {
-        self.renderedTemplate = renderedTemplate
+    init(reasoningOffSuffix: String, reasoningOnSuffix: String, maximumPromptTokens: Int? = nil) {
+        self.reasoningOffSuffix = reasoningOffSuffix
+        self.reasoningOnSuffix = reasoningOnSuffix
         self.maximumPromptTokens = maximumPromptTokens
-        self.logProbability = logProbability
     }
 
     /// The count of the ``logProbabilities(of:after:)`` calls.
@@ -56,26 +71,47 @@ final class StubLogits: PooledLogits {
         }
     }
 
-    /// Gives ``renderedTemplate``, for each value of `reasoning`.
+    /// Renders each message in the ChatML layout, then opens the assistant
+    /// message with the suffix of `reasoning`.
     ///
     /// - Parameters:
-    ///   - messages: The messages of the chat. The stub ignores them.
-    ///   - reasoning: The reasoning request. The stub ignores it.
-    /// - Returns: ``renderedTemplate``.
+    ///   - messages: The messages of the chat, each with a `role` and a
+    ///     `content`.
+    ///   - reasoning: The reasoning request.
+    /// - Returns: The rendered messages, then the assistant message start and
+    ///   ``reasoningOnSuffix`` or ``reasoningOffSuffix``.
     func renderChatTemplate(_ messages: [[String: String]], reasoning: Bool) async throws -> String? {
-        renderedTemplate
+        let rendered = messages.map { message in
+            Self.messageStart + (message["role"] ?? "") + "\n" + (message["content"] ?? "") + Self.messageEnd
+        }
+        let suffix = reasoning ? reasoningOnSuffix : reasoningOffSuffix
+        return rendered.joined() + Self.messageStart + Self.assistantRole + "\n" + suffix
     }
 
-    /// Counts the call and gives ``logProbability`` for each candidate of
-    /// each prompt.
+    /// Counts the call and gives, for each prompt, the log probability of each
+    /// candidate.
     ///
     /// - Parameters:
     ///   - candidates: The token IDs to read.
     ///   - prompts: The prompts.
-    /// - Returns: One row for each prompt, with one value for each candidate.
+    /// - Returns: One row for each prompt, with one value for each candidate:
+    ///   the value of ``logProbability(of:after:)``.
     func logProbabilities(of candidates: [Int], after prompts: [[Int]]) async throws -> [[Double]] {
         state.withLock { $0.logProbabilityCalls += 1 }
-        return prompts.map { _ in candidates.map { _ in logProbability } }
+        return prompts.map { prompt in candidates.map { Self.logProbability(of: $0, after: prompt) } }
+    }
+
+    /// Gives the log probability of `candidate` after `prompt`: the negative
+    /// of the sum of the candidate and the prompt token IDs. The value is not
+    /// more than zero for token IDs that are not negative, and it changes
+    /// with each argument.
+    ///
+    /// - Parameters:
+    ///   - candidate: The token ID to read.
+    ///   - prompt: The prompt.
+    /// - Returns: The log probability.
+    private static func logProbability(of candidate: Int, after prompt: [Int]) -> Double {
+        -Double(candidate + prompt.reduce(0, +))
     }
 }
 
