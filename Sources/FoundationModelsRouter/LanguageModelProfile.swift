@@ -14,8 +14,9 @@ private struct WeakProfile: Sendable {
 /// A resolved, resident model: the storage a profile exposes for one slot,
 /// generic over the kind of loaded container it holds.
 ///
-/// The two concrete handles are ``RoutedLLM`` and ``RoutedEmbedder``. Each
-/// gains its own methods through container-constrained extensions.
+/// The concrete handles are ``RoutedLLM``, ``RoutedEmbedder`` and
+/// ``RoutedDecider``. Each gains its own methods through
+/// container-constrained extensions.
 public final class RoutedModel<Container: Sendable>: Sendable {
     /// The slot this model fills.
     let slot: ModelSlot
@@ -202,6 +203,10 @@ public typealias RoutedLLM = RoutedModel<any LoadedLLMContainer>
 /// A resolved, resident embedding model: the handle a profile exposes for its
 /// `.embedding` slot. Pass it into a tool's constructor.
 public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
+
+/// A resolved, resident decision model: the handle a profile exposes for its
+/// `decision` slot. Pass it into a tool's constructor.
+public typealias RoutedDecider = RoutedModel<any LoadedDecisionContainer>
 
 /// A profile resolved for this machine: the three models that co-fit the
 /// budget, held resident while this profile OR any handle it vended is alive.

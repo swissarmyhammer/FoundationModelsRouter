@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsDecision
 
 /// A single download-progress observation for one model: the bytes that have
 /// arrived out of the total.
@@ -167,6 +168,16 @@ extension LoadedLLMContainer {
 /// code uses a pooled embedding container through ``PooledEmbedding`` and
 /// never casts it to this protocol.
 public protocol LoadedEmbeddingContainer: LoadedModelContainer, PooledEmbedding {}
+
+/// A loaded decision model container. ``RoutedDecider`` makes each of its
+/// ``DecisionSession`` values over the decision model of this container.
+///
+/// The live container is a pooled decision model over the hold of the
+/// `decision` slot. A unit test gives a stub container with a stub model.
+public protocol LoadedDecisionContainer: LoadedModelContainer {
+    /// The decision model that answers the questions of each session.
+    var decisionModel: any DecisionModel { get }
+}
 
 /// The download-and-load step behind ``Router/resolve(profile:reporting:)``.
 /// The live implementation is ``LiveModelLoader``.

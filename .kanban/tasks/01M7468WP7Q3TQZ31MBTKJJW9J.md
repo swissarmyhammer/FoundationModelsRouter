@@ -1,10 +1,30 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m75bnsxmrh0xfgfcanmhwdbw
+  text: |-
+    Research and discoveries:
+    - The checkouts in .build/checkouts are the same as the sibling repositories (FoundationModelsDecision f157c41, FoundationModelsExtras ddf5bf7).
+    - `GenericPromptFormat` rejects only one template output: `nil` (no chat template). It does NOT reject an open thinking block. With `closedThinkFallback: false` (the default) it tokenizes the rendered text as it is. Thus the flash-fallback criterion cannot pass from the Decision package alone. The Router now owns the check: new internal `Resolution/ReasoningOffPromptFormat.swift`. `PooledDecisionContainer.init` wraps the format with `ReasoningOffPromptFormat.guarding(_:)`. The wrapper wraps the source of the plan; when the format renders with `reasoning: false` and the text (with no whitespace at the end) ends with `<think>` or `<|channel>thought`, it throws `DecisionError.unsupportedModel(ReasoningOffPromptFormat.openThinkingMessage)` before any `logProbabilities` call.
+    - Only a `GenericPromptFormat` with no closed-think fallback gets the check. `GenericPromptFormat(closedThinkFallback: true)` closes the block itself, and `DeciderPromptFormat` (chat layout) closes the three decider-ai blocks itself in `DeciderChatTemplate`. A check on those formats would refuse templates that they handle correctly.
+    - If the Decision package later adds this check to `GenericPromptFormat`, the Router wrapper can go.
+    - `MLXLanguageModel` already conforms to `PooledLogits` (Extras `MLXLogits.swift`), so `UnloadableMLXModel` is not a non-conforming model. The tests use new stubs in `Tests/FoundationModelsRouterTests/Helpers/StubLogits.swift`: `StubLogits`, `FixedContainerLoader` (with `llmHold(over:ref:)`), a generic `UndrivenExecutor`, `PlainStubLanguageModel` and `LogitsStubLanguageModel`.
+    - `RoutedDeciderTests` builds the handle with slot `.flash`, because `ModelSlot.decision` comes with R2. The handle reads no slot.
+    - Mutation check: with `PooledDecisionContainer` passing the format unchanged, the two open-thinking tests fail (3 issues).
+  timestamp: 2026-11-11T13:10:09.076730+00:00
+- actor: claude-code
+  id: 01m75bnxtppthdfzman0zc6an0
+  text: |-
+    ### implement — changed
+    - evidence: 10 files. New: Sources/FoundationModelsRouter/RoutedDecider.swift, Sources/FoundationModelsRouter/Resolution/PooledDecisionContainer.swift, Resolution/LiveLLMContainerLogits.swift, Resolution/DecisionFormatSelection.swift, Resolution/ReasoningOffPromptFormat.swift, Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift, DecisionFormatSelectionTests.swift, RoutedDeciderTests.swift, Helpers/StubLogits.swift. Changed: Resolution/ModelLoader.swift (LoadedDecisionContainer), LanguageModelProfile.swift (RoutedDecider typealias). `swift build --build-tests`: no compiler warning (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, which is not from this change). Filtered run: 19 tests in 3 suites passed. Full `swift test` once: 2550 tests in 298 suites, 38 in 23 suites, 19 in 3 suites, all passed.
+    - next: /review. Task stays in doing.
+  timestamp: 2026-11-11T13:10:13.079008+00:00
 depends_on:
 - 01M7467X77633VE23P71VC8XXV
-position_column: todo
-position_ordinal: '8280'
+position_column: doing
+position_ordinal: '80'
 title: 'R5: decision container, RoutedDecider handle and prompt-format selection'
 ---
 ## What
@@ -22,20 +42,21 @@ Source: ../FoundationModelsDecision/plan.md section 7, R5, and decision D13. The
    - DocC: a decision writes nothing to the transcript, the same as an embed call.
 
 ## Acceptance Criteria
-- [ ] `PooledDecisionContainer(hold:format:)` over a hold whose container conforms to `PooledLogits` gives a `decisionModel` whose `modelID` is the ref of the hold.
-- [ ] Over a hold whose container does not conform, the init throws `PooledLogitsModelError.notLogitsCapable`.
-- [ ] `LiveLLMContainer` forwards `tokenize`, `renderChatTemplate`, `logProbabilities` and `maximumPromptTokens` to a model that conforms, and throws `notLogitsCapable` for a model that does not.
-- [ ] `DecisionFormatSelection.format(deciderConfiguration:)` gives `DeciderPromptFormat` for config data and `GenericPromptFormat` for `nil`; malformed data throws.
-- [ ] `makeSession(state:)` on a decider over a stub container answers through the stub model.
-- [ ] Flash fallback on a reasoning model (request from the FoundationModelsDecision session): a `PooledDecisionContainer` with `GenericPromptFormat()` over a stub `PooledLogits` whose chat template cannot turn reasoning off (it renders a thinking prefix also for `reasoning: false`) makes a decision throw `DecisionError.unsupportedModel`, and gives no probabilities.
+- [x] `PooledDecisionContainer(hold:format:)` over a hold whose container conforms to `PooledLogits` gives a `decisionModel` whose `modelID` is the ref of the hold.
+- [x] Over a hold whose container does not conform, the init throws `PooledLogitsModelError.notLogitsCapable`.
+- [x] `LiveLLMContainer` forwards `tokenize`, `renderChatTemplate`, `logProbabilities` and `maximumPromptTokens` to a model that conforms, and throws `notLogitsCapable` for a model that does not.
+- [x] `DecisionFormatSelection.format(deciderConfiguration:)` gives `DeciderPromptFormat` for config data and `GenericPromptFormat` for `nil`; malformed data throws.
+- [x] `makeSession(state:)` on a decider over a stub container answers through the stub model.
+- [x] Flash fallback on a reasoning model (request from the FoundationModelsDecision session): a `PooledDecisionContainer` with `GenericPromptFormat()` over a stub `PooledLogits` whose chat template cannot turn reasoning off (it renders a thinking prefix also for `reasoning: false`) makes a decision throw `DecisionError.unsupportedModel`, and gives no probabilities.
 
 ## Tests
-- [ ] New `Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift`: stub `PooledLogits` container in a `ModelPool` with a stub loader (no model download); the throwing case; the `LiveLLMContainer` forwarding with a stub `LanguageModel` that conforms to `PooledLogits` and one that does not; the reasoning-template case that throws `DecisionError.unsupportedModel` (read `GenericPromptFormat` in ../FoundationModelsDecision to find what template output it rejects).
-- [ ] New `Tests/FoundationModelsRouterTests/DecisionFormatSelectionTests.swift`: the three cases, with a small `decider_config.json` fixture string.
-- [ ] New `Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift`: `makeSession(state:)` with a stub `DecisionModel` container; `probability(of:)` gives the stub value.
-- [ ] Run `swift test` once. All tests pass.
+- [x] New `Tests/FoundationModelsRouterTests/PooledDecisionContainerTests.swift`: stub `PooledLogits` container in a `ModelPool` with a stub loader (no model download); the throwing case; the `LiveLLMContainer` forwarding with a stub `LanguageModel` that conforms to `PooledLogits` and one that does not; the reasoning-template case that throws `DecisionError.unsupportedModel` (read `GenericPromptFormat` in ../FoundationModelsDecision to find what template output it rejects).
+- [x] New `Tests/FoundationModelsRouterTests/DecisionFormatSelectionTests.swift`: the three cases, with a small `decider_config.json` fixture string.
+- [x] New `Tests/FoundationModelsRouterTests/RoutedDeciderTests.swift`: `makeSession(state:)` with a stub `DecisionModel` container; `probability(of:)` gives the stub value.
+- [x] Run `swift test` once. All tests pass.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass.
 ## Changes from the board check
 - `maximumPromptTokens` is a property that cannot throw. For a model that does not conform to `PooledLogits`, it gives `nil`. The criterion "throws `notLogitsCapable`" applies only to `tokenize`, `renderChatTemplate` and `logProbabilities`.
+#decision

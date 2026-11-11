@@ -1,0 +1,205 @@
+import FoundationModels
+import FoundationModelsExtras
+import Synchronization
+
+/// A ``PooledLogits`` stub with no model. The decision tests put it in a
+/// ``ModelPool`` with a stub loader, and wrap it in a stub `LanguageModel`.
+///
+/// The tokenizer gives one new token ID to each distinct text, and the same
+/// ID each time it sees that text again. The empty text gives no token. Thus
+/// each label variant of a decision format is one token, and two labels never
+/// share a token.
+///
+/// The chat template is a fixed text, the same for each value of
+/// `reasoning`. Each log probability is the same value. The stub counts the
+/// calls of ``logProbabilities(of:after:)``.
+final class StubLogits: PooledLogits {
+    /// The text that each ``renderChatTemplate(_:reasoning:)`` call gives.
+    let renderedTemplate: String
+
+    /// The prompt limit that the stub gives.
+    let maximumPromptTokens: Int?
+
+    /// The log probability of each candidate, for each prompt.
+    let logProbability: Double
+
+    /// The token ID of each text that the stub saw, and the count of the
+    /// ``logProbabilities(of:after:)`` calls.
+    private let state = Mutex((vocabulary: [String: Int](), logProbabilityCalls: 0))
+
+    /// Makes a stub.
+    ///
+    /// - Parameters:
+    ///   - renderedTemplate: The text of the chat template.
+    ///   - maximumPromptTokens: The prompt limit, or `nil` for no limit.
+    ///   - logProbability: The log probability of each candidate.
+    init(renderedTemplate: String, maximumPromptTokens: Int? = nil, logProbability: Double = -1) {
+        self.renderedTemplate = renderedTemplate
+        self.maximumPromptTokens = maximumPromptTokens
+        self.logProbability = logProbability
+    }
+
+    /// The count of the ``logProbabilities(of:after:)`` calls.
+    var logProbabilityCallCount: Int { state.withLock { $0.logProbabilityCalls } }
+
+    /// Gives the token ID of `text`: a new ID for a text that the stub did
+    /// not see before.
+    ///
+    /// - Parameter text: The text to tokenize.
+    /// - Returns: No token for the empty text, else one token.
+    func tokenize(_ text: String) async throws -> [Int] {
+        guard !text.isEmpty else { return [] }
+        return state.withLock { state in
+            let id = state.vocabulary[text] ?? state.vocabulary.count
+            state.vocabulary[text] = id
+            return [id]
+        }
+    }
+
+    /// Gives ``renderedTemplate``, for each value of `reasoning`.
+    ///
+    /// - Parameters:
+    ///   - messages: The messages of the chat. The stub ignores them.
+    ///   - reasoning: The reasoning request. The stub ignores it.
+    /// - Returns: ``renderedTemplate``.
+    func renderChatTemplate(_ messages: [[String: String]], reasoning: Bool) async throws -> String? {
+        renderedTemplate
+    }
+
+    /// Counts the call and gives ``logProbability`` for each candidate of
+    /// each prompt.
+    ///
+    /// - Parameters:
+    ///   - candidates: The token IDs to read.
+    ///   - prompts: The prompts.
+    /// - Returns: One row for each prompt, with one value for each candidate.
+    func logProbabilities(of candidates: [Int], after prompts: [[Int]]) async throws -> [[Double]] {
+        state.withLock { $0.logProbabilityCalls += 1 }
+        return prompts.map { _ in candidates.map { _ in logProbability } }
+    }
+}
+
+/// A pool loader that gives one fixed container for each key.
+struct FixedContainerLoader: PooledModelLoader {
+    /// The container that each load gives.
+    let container: any Sendable
+
+    /// Gives ``container``.
+    ///
+    /// - Parameter key: The key to load. The loader ignores it.
+    /// - Returns: ``container``.
+    func load(_ key: ModelPoolKey) async throws -> any Sendable {
+        container
+    }
+
+    /// Evicts nothing: the container holds no resource.
+    ///
+    /// - Parameter container: The container to evict.
+    func evict(_ container: any Sendable) async {}
+
+    /// Acquires a hold of `ref` as an LLM from a new pool, over `container`.
+    ///
+    /// - Parameters:
+    ///   - container: The container of the hold.
+    ///   - ref: The model reference of the hold.
+    /// - Returns: The hold.
+    /// - Throws: The error of the acquire.
+    static func llmHold(over container: any Sendable, ref: ModelRef) async throws -> ModelHold {
+        try await ModelPool().acquire(
+            ModelPoolKey(ref: ref, role: .llm), footprintBytes: 0, sessionBytes: 0,
+            loader: FixedContainerLoader(container: container))
+    }
+}
+
+/// An executor that runs no generation. The stub models of the decision tests
+/// use it: a test reads their logits, never a reply.
+struct UndrivenExecutor<Model: FoundationModels.LanguageModel>: LanguageModelExecutor {
+    /// The executor cache key. The executor keeps no state, thus all keys are
+    /// equal.
+    struct Configuration: Sendable, Hashable {}
+
+    /// The error of each generation.
+    enum UndrivenError: Error {
+        /// A test asked the stub model for a reply.
+        case generationNotSupported
+    }
+
+    /// Makes the executor.
+    ///
+    /// - Parameter configuration: The cache key. Unread.
+    init(configuration: Configuration) {}
+
+    /// Throws ``UndrivenError/generationNotSupported`` and generates nothing.
+    ///
+    /// - Parameters:
+    ///   - request: The generation request. Unread.
+    ///   - model: The stub model. Unread.
+    ///   - channel: The generation channel. Unread.
+    /// - Throws: ``UndrivenError/generationNotSupported``, always.
+    func respond(
+        to request: LanguageModelExecutorGenerationRequest,
+        model: Model,
+        streamingInto channel: LanguageModelExecutorGenerationChannel
+    ) async throws {
+        throw UndrivenError.generationNotSupported
+    }
+}
+
+/// A `LanguageModel` that does not conform to ``PooledLogits``.
+struct PlainStubLanguageModel: FoundationModels.LanguageModel {
+    /// No capabilities.
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }
+
+    /// The executor, which runs no generation.
+    typealias Executor = UndrivenExecutor<PlainStubLanguageModel>
+
+    /// The one cache key of the executor.
+    var executorConfiguration: Executor.Configuration { .init() }
+}
+
+/// A `LanguageModel` that conforms to ``PooledLogits``. Each logits call goes
+/// to ``logits``.
+struct LogitsStubLanguageModel: FoundationModels.LanguageModel, PooledLogits {
+    /// The stub that answers each logits call.
+    let logits: StubLogits
+
+    /// No capabilities.
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }
+
+    /// The executor, which runs no generation.
+    typealias Executor = UndrivenExecutor<LogitsStubLanguageModel>
+
+    /// The one cache key of the executor.
+    var executorConfiguration: Executor.Configuration { .init() }
+
+    /// The prompt limit of ``logits``.
+    var maximumPromptTokens: Int? { logits.maximumPromptTokens }
+
+    /// Tokenizes with ``logits``.
+    ///
+    /// - Parameter text: The text to tokenize.
+    /// - Returns: The tokens that ``logits`` gives.
+    func tokenize(_ text: String) async throws -> [Int] {
+        try await logits.tokenize(text)
+    }
+
+    /// Renders with ``logits``.
+    ///
+    /// - Parameters:
+    ///   - messages: The messages of the chat.
+    ///   - reasoning: The reasoning request.
+    /// - Returns: The text that ``logits`` gives.
+    func renderChatTemplate(_ messages: [[String: String]], reasoning: Bool) async throws -> String? {
+        try await logits.renderChatTemplate(messages, reasoning: reasoning)
+    }
+
+    /// Reads the log probabilities from ``logits``.
+    ///
+    /// - Parameters:
+    ///   - candidates: The token IDs to read.
+    ///   - prompts: The prompts.
+    /// - Returns: The rows that ``logits`` gives.
+    func logProbabilities(of candidates: [Int], after prompts: [[Int]]) async throws -> [[Double]] {
+        try await logits.logProbabilities(of: candidates, after: prompts)
+    }
+}
