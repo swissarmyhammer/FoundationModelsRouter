@@ -58,6 +58,17 @@ let huggingFacePackage = "swift-huggingface"
 let hooksPackage = "FoundationModelsHooks"
 let hooksProduct: Target.Dependency = .product(name: hooksPackage, package: hooksPackage)
 
+// The decision package of the family (see the `dependencies` list). The
+// library target links its core product for the decision types and its pooled
+// product for `PooledDecisionModel`, which reads the decisions of the
+// `decision` slot from a model in the model pool. The unit test target links
+// the same two products to make a decision model and a session.
+let decisionPackage = "FoundationModelsDecision"
+let decisionProducts: [Target.Dependency] = [
+    .product(name: decisionPackage, package: decisionPackage),
+    .product(name: "\(decisionPackage)Pooled", package: decisionPackage),
+]
+
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
 // The fork is referenced by URL on its `stable` branch (see the `dependencies`
 // list), so every checkout of the router — this machine, another machine, CI —
@@ -191,6 +202,17 @@ let package = Package(
             url: "git@github.com:swissarmyhammer/\(hooksPackage).git",
             branch: "main"
         ),
+        // The decision models of the family: the decision types, the
+        // `DecisionSession` and the `PooledDecisionModel`, which reads the
+        // logits of a model in the model pool of FoundationModelsExtras. The
+        // router gives the `decision` slot of a profile to a pooled decision
+        // model. The decision package depends on FoundationModelsExtras on the
+        // same branch, and on no router package, thus this edge makes no
+        // cycle.
+        .package(
+            url: "git@github.com:swissarmyhammer/\(decisionPackage).git",
+            branch: "main"
+        ),
         // The llama.cpp backend of a GGUF model. The Extras GGUF loader makes
         // its `LlamaLanguageModel`; the router wraps that model in a live
         // container and counts tokens with its `LlamaTokenizer`. The same
@@ -219,7 +241,7 @@ let package = Package(
                 // this manifest).
                 .product(name: "FoundationModelsExtrasLlamaCpp", package: "FoundationModelsExtras"),
                 .product(name: "FoundationModelsLlamaCpp", package: "FoundationModelsLlamaCpp"),
-            ],
+            ] + decisionProducts,
             path: "Sources/\(packageName)",
             // The DocC catalog (task ^j0pp9yp) is documentation input for
             // `docc`, not build input; the Swift Build backend does not
@@ -259,7 +281,7 @@ let package = Package(
                 // The token tests give a `TokenProvider` to the live loader and
                 // read the token of its `HubClient` back.
                 huggingFaceProduct,
-            ] + mlxProducts,
+            ] + mlxProducts + decisionProducts,
             path: "Tests/\(packageName)Tests",
             // `Fixtures` holds recordings. A test reads them from disk, at a
             // path relative to its source file. They are not SwiftPM
