@@ -44,6 +44,31 @@ comments:
     - evidence: 5 files — Tests/FoundationModelsRouterTests/{ConsecutiveRecoveryBudgetTests,ReasoningStopRecoveryTests,Helpers/RepeatingReasoningModel,Helpers/StagedReasoningModel,Helpers/AnswerLimitsModel}.swift; `swift test` exit 0, 2642+41+19 passed
     - next: /review
   timestamp: 2026-11-12T17:17:11.664460+00:00
+- actor: claude-code
+  id: 01m78c9sm61arrd94tvwj38n8f
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (96634123) — 1 finding (1 confirmed, 0 refuted): Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:287 code-hygiene/magic-numbers-swift. Prior items (unbounded-wait, reuse) checked off and present in the commit: stopHoldLimit + Issue.record in RepeatingReasoningModel.swift, .timeLimit(.minutes(1)) on the suite, shared driver in Helpers/StagedReasoningModel.swift.
+    - next: fix the magic-numbers finding across RepeatingReasoningModel.swift, then re-review.
+  timestamp: 2026-11-12T17:18:47.430707+00:00
+- actor: claude-code
+  id: 01m78ca2x067k3ydmzvx8gk141
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 5 test files (bounded stop hold, shared staged-answer driver)
+    - test: green — swift test, 2642+41+19 passed
+    - commit: 96634123
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:287
+  timestamp: 2026-11-12T17:18:56.928490+00:00
+- actor: claude-code
+  id: 01m78ce6cx5bnh94wt2prvvvds
+  text: |-
+    Magic-numbers finding worked. `RepeatingReasoningModel.Executor` now has `static let stopHoldLimitSeconds = 10` with a doc comment (why the limit is long, and why it stays below the suite time limit), and `stopHoldLimit: Duration = .seconds(stopHoldLimitSeconds)`. To sweep both files, swiftlint 0.65.0 ran with the rule's own child config (`only_rules: [no_magic_numbers]`, `allowed_numbers: [0, 1, -1, 100]`) on RepeatingReasoningModel.swift and ConsecutiveRecoveryBudgetTests.swift. Before the change it reported 1 violation, the `.seconds(10)`. After the change it reports 0. The other literals in RepeatingReasoningModel.swift are either `0`/`1` or a value a `static let` already names. ConsecutiveRecoveryBudgetTests.swift's `.timeLimit(.minutes(1))` uses `1`, which is in the rule's allow-list. swiftlint does not report it, so it stays as it is.
+
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift; swiftlint no_magic_numbers 1 → 0 violations; `swift test` exit 0, 2642 tests/306 suites + 41 + 19 passed, 0 failures; the only warning is the known mlx-swift_Cmlx.bundle build notice
+    - next: /review
+  timestamp: 2026-11-12T17:21:11.581576+00:00
 position_column: doing
 position_ordinal: '80'
 title: Recovery budget counts consecutive stops with no progress, not every stop in the answer
@@ -93,3 +118,12 @@ The host log line "no recovery was left" and the `router.recoveries` / `router.s
 
 - [x] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:38` `caller/unbounded-wait` — Every test in this suite runs `reasoningStopScript` (`RepeatingReasoningScript.reasoningHeldAtLimit()`). Its `.untilStopped` hold waits on an `AwaitedEvent` that no code sends (`RepeatingReasoningModel.Executor.waitForStop`), so only a cancel from the session can end it. `StagedReasoningModel` picks each script by call count (`log.renders.count`), not by what the session asked for. So when the budget behaves wrongly, a held script can land on a call that the session never stops, for example a call after the reasoning-off final pass that runs when no recovery is left. The test then waits forever instead of failing. The suite has no `.timeLimit` trait. This is what happened on the first RED run against the old code: three tests stayed in flight for more than 13 minutes. Make a wrong behavior fail, not hang. Give the hold a bound: `waitForStop` races the event that is never sent against a deadline far above the passing run (under 0.1 s), and when the deadline passes it records an `Issue` that names the call index, then throws. As a backstop, add `.timeLimit(.minutes(1))` to `@Suite` here. Running out of scripts is not a hang: a call after the last script answers at once.
 - [x] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:60` `reuse/reuse` — The new `runStagedAnswer` helper re-implements the same staged-answer driver that already exists in `ReasoningStopRecoveryTests`. The new copy only differs in its detection, tool, and temp-dir prefix, so two near-identical drivers will diverge as the fixture changes. Parameterize the existing helper rather than adding a parallel copy. Move the common driver into one shared helper (for example in `Helpers/StagedReasoningModel.swift` beside `StagedReasoningSessionFixture.make`) that takes the scripts, detection, and tools as parameters. Have both `ConsecutiveRecoveryBudgetTests` and `ReasoningStopRecoveryTests` call it, passing `RepetitionDetection()` and `CountingRunCodeTool(runs: RunCount())` from this suite.
+
+## Review Findings (2026-11-12 11:17)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:287` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.

@@ -279,12 +279,16 @@ struct RepeatingReasoningModel: LanguageModel {
         /// The line feed the model writes after each reasoning line.
         static let lineFeed = "\n"
 
+        /// The number of seconds that ``stopHoldLimit`` holds. A passing run
+        /// stops each held call in far less than a second; the limit is long,
+        /// because many suites run at the same time, and it stays below the
+        /// time limit of a suite, so the hold fails the test on its own issue
+        /// first.
+        static let stopHoldLimitSeconds = 10
+
         /// The upper limit of one ``RepeatingReasoningHold/untilStopped``
-        /// hold. A passing run stops each held call in far less than a
-        /// second; the limit is long, because many suites run at the same
-        /// time, and it stays below the time limit of a suite, so the hold
-        /// fails the test on its own issue first.
-        static let stopHoldLimit: Duration = .seconds(10)
+        /// hold: ``stopHoldLimitSeconds`` seconds.
+        static let stopHoldLimit: Duration = .seconds(stopHoldLimitSeconds)
 
         /// The cache-key configuration the SDK constructed this executor with.
         private let configuration: Configuration
