@@ -82,8 +82,9 @@ extension RoutedSessionActor {
 
     /// Whether every call of the round in flight gave its result. The
     /// boundary sees each result, so the last result of the round stops the
-    /// call, and no call of the round loses its result.
-    private var roundIsComplete: Bool {
+    /// call, and no call of the round loses its result. The run mail stop
+    /// (``noteRunMailDue()``) reads it too.
+    var roundIsComplete: Bool {
         noOpToolCallRound.results.count >= (currentRoundCalls()?.count ?? 1)
     }
 
@@ -92,7 +93,7 @@ extension RoutedSessionActor {
     /// of the call is set.
     private var mayStopForDelegationHint: Bool {
         inFlightModelCall != nil && !isWorkCancelled && toolResultWatch.yield == nil && noOpToolCallStop == nil
-            && repetitionWatch.stop == nil && delegationHintStop == nil
+            && repetitionWatch.stop == nil && delegationHintStop == nil && runMailStop == nil
     }
 
     /// Takes the hint marker of the attempt that just failed.
@@ -131,10 +132,8 @@ extension RoutedSessionActor {
         attempt: StoppedAttempt,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        let rebuilt = InFlightTranscript.rebuilt(
-            settledEntries: backend.transcriptEntries(), sources: [stop.liveEntries], results: stop.results,
-            entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
-        await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
-        return try await runContinuation(after: attempt, prompt: Self.delegationHintPrompt(stop.hint), body: body)
+        try await continueAfterCompleteRound(
+            liveEntries: stop.liveEntries, results: stop.results, attempt: attempt,
+            prompt: Self.delegationHintPrompt(stop.hint), body: body)
     }
 }

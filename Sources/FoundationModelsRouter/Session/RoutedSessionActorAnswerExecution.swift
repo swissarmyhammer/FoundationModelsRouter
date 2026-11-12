@@ -484,6 +484,7 @@ extension RoutedSessionActor {
             // Taken first, so that each failure clears it. Another stop of
             // the attempt wins over it, and the hint stays due.
             let hintStop = takeDelegationHintStop()
+            let runMailStop = takeRunMailStop()
             if let noOpStop = takeNoOpToolCallStop() {
                 if hintStop != nil { releaseDelegationHint() }
                 return try await continueAfterNoOpToolCallStop(noOpStop, attempt: attempt, body: body)
@@ -498,6 +499,9 @@ extension RoutedSessionActor {
             }
             if let hintStop {
                 return try await continueAfterDelegationHint(hintStop, attempt: attempt, body: body)
+            }
+            if let runMailStop {
+                return try await continueAfterRunMailStop(runMailStop, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
             // The retry delivers the user-type mail and the catalog-change
@@ -830,8 +834,9 @@ extension RoutedSessionActor {
         }
         // The tool-result append boundary of this model call: each tool result
         // the model reads next goes through it (see ``noteToolResult(_:)``),
-        // and then the check of the delegate hint
-        // (``noteDelegationHintDue()``).
+        // then the check of the delegate hint (``noteDelegationHintDue()``),
+        // and then the check of the run mail that waits
+        // (``noteRunMailDue()``).
         // The no-op check and then the repetition check run before each tool
         // body of the call (see ``checkToolCallForNoOp(toolName:arguments:)``
         // and ``checkToolCallForRepetition(_:)``). The tool hooks of the
@@ -842,6 +847,7 @@ extension RoutedSessionActor {
             boundary: ToolResultAppendBoundary {
                 await self.noteToolResult($0)
                 await self.noteDelegationHintDue()
+                await self.noteRunMailDue()
             },
             checks: ModelCallToolChecks(
                 noOp: ToolCallNoOpCheck { try await self.checkToolCallForNoOp(toolName: $0, arguments: $1) },

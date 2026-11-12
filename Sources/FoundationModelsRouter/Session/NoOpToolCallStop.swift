@@ -2,17 +2,27 @@ import FoundationModels
 import FoundationModelsExtras
 
 /// The host check that tells the session which tool call does no work
-/// (task ^rw72f4j).
+/// (tasks ^rw72f4j and ^zetnz36).
 ///
 /// A model that waits for a pending operation can make one tool call after
 /// another that does nothing, for example a `runCode` call whose snippet
-/// calls no tool. While at least one operation of the session is pending,
-/// the session does not run such a call, does not answer it, and does not put
-/// it in the context. Every other call of the same round runs, and its result
-/// goes into the context as usual. When the round has no other call, the
-/// session stops the generation and waits: the injected result of the pending
-/// operation is the next message that starts the model. With no pending
-/// operation, the check changes nothing.
+/// calls no tool. The session never runs such a call. Every other call of
+/// the same round runs, and its result goes into the context as usual. At
+/// the end of the round the session stops the generation:
+///
+/// - When the round has a real call, the answer goes on with the real
+///   results, and the context holds no trace of the no-op call.
+/// - When the round has only no-op calls and at least one operation of the
+///   session is pending, the answer ends, and the context holds no trace of
+///   the no-op calls. The injected result of the pending operation is the
+///   next message that starts the model.
+/// - When the round has only no-op calls and nothing is pending, nothing can
+///   arrive, so the answer ends. Each no-op call gets a fixed output that
+///   tells the model why (``RoutedSessionActor/noOpToolCallEndReason``), and
+///   the reply of the answer is the last text of the model.
+///
+/// A no-op call never runs, so it is never progress for the recovery budget
+/// of the repetition watch (``RepetitionDetection/recoveriesPerAnswer``).
 ///
 /// The router does not know which call of a tool does no work. The host that
 /// owns the tool knows it, so the host gives this check on
@@ -117,8 +127,8 @@ struct NoOpToolCallRound {
 }
 
 /// The marker a session sets when it stops the model call in flight at the
-/// end of a round that held a no-op tool call while an operation is pending,
-/// and the facts it needs to go on (task ^rw72f4j).
+/// end of a round that held a no-op tool call, and the facts it needs to go
+/// on (tasks ^rw72f4j and ^zetnz36).
 struct NoOpToolCallStop: Sendable {
     /// The backend transcript read inside the tool call, before the stop.
     let liveEntries: [Transcript.Entry]
@@ -126,27 +136,36 @@ struct NoOpToolCallStop: Sendable {
     /// The results of the real calls of the round, in order. Empty when the
     /// round held only no-op calls.
     let results: [ToolResultAppend]
+
+    /// Whether an operation of the session was pending at the stop
+    /// (``RoutedSessionActor/hasPendingOperation()``): its result then
+    /// starts the model later.
+    let operationPending: Bool
 }
 
-/// ``RoutedSessionActor``'s handling of a no-op tool call (task ^rw72f4j).
+/// ``RoutedSessionActor``'s handling of a no-op tool call (tasks ^rw72f4j
+/// and ^zetnz36).
 ///
 /// Before each tool body of the session's own open model call,
 /// ``checkToolCallForNoOp(toolName:arguments:)`` asks the host check
-/// (``isNoOpToolCall``). While at least one operation of the session is
-/// pending (``hasPendingOperation()``), the body of a marked call does not
-/// run. It waits until every real call of its round gave its result
-/// (``noteRealToolResult(_:)``). Then the session sets the stop marker and
-/// cancels ``inFlightModelCall``. The SDK runs the calls of one round at the
-/// same time, so the real calls run to their end.
+/// (``isNoOpToolCall``). The body of a marked call never runs. It waits
+/// until every real call of its round gave its result
+/// (``noteRealToolResult(_:)``). Then the session reads whether an operation
+/// is pending (``hasPendingOperation()``), sets the stop marker and cancels
+/// ``inFlightModelCall``. The SDK runs the calls of one round at the same
+/// time, so the real calls run to their end.
 ///
 /// The failed attempt then goes on in
-/// ``continueAfterNoOpToolCallStop(_:attempt:body:)``. The session records
-/// the attempt with the real results and with no no-op call. A round with a
-/// real call goes on in one more submission of the same answer, with
+/// ``continueAfterNoOpToolCallStop(_:attempt:body:)``. A round with a real
+/// call records the attempt with the real results and with no no-op call,
+/// and goes on in one more submission of the same answer, with
 /// ``noOpToolCallContinuationPrompt``: the model continues with the real
-/// results. A round of only no-op calls ends the answer, and the pump
-/// delivers the result of the pending operation as the next message when it
-/// settles (``RoutedSessionActor/settledRunDeliveryPrompt``).
+/// results. A round of only no-op calls ends the answer. While an operation
+/// is pending, the attempt holds no no-op call, and the pump delivers the
+/// result of the pending operation as the next message when it settles
+/// (``RoutedSessionActor/settledRunDeliveryPrompt``). With nothing pending,
+/// each no-op call gets ``noOpToolCallEndReason`` as its output, and the
+/// answer ends with the last text of the model.
 ///
 /// This is not a stop of the repetition watch: it has no count and no
 /// recovery, and it does not change the render of the watch.
@@ -156,12 +175,20 @@ extension RoutedSessionActor {
     /// the real calls and no trace of the no-op call.
     static let noOpToolCallContinuationPrompt = "Your tool results are above. Continue the task."
 
-    /// Holds the body of a no-op tool call while an operation of the session
-    /// is pending, and stops the model call at the end of its round.
+    /// The output of each no-op call of a round of only no-op calls while no
+    /// operation of the session is pending (task ^zetnz36). It tells the
+    /// model why its answer ended. The router does not know the tools of the
+    /// host, so the text names no tool.
+    static let noOpToolCallEndReason = """
+        This tool call does no work here. Nothing is pending, so nothing can arrive, \
+        and the answer ends. Write your report as text.
+        """
+
+    /// Holds the body of a no-op tool call, and stops the model call at the
+    /// end of its round.
     ///
-    /// A call that the host check does not mark, a call outside an open model
-    /// call of this session, and a call while no operation is pending return
-    /// at once: the tool body then runs.
+    /// A call that the host check does not mark and a call outside an open
+    /// model call of this session return at once: the tool body then runs.
     ///
     /// - Parameters:
     ///   - toolName: The name of the tool whose body is about to run.
@@ -171,7 +198,6 @@ extension RoutedSessionActor {
     func checkToolCallForNoOp(toolName: String, arguments: GeneratedContent) async throws {
         guard SessionCallMark.current?.isOpenCall(of: id) == true, isNoOpToolCall(toolName, arguments)
         else { return }
-        guard await hasPendingOperation() else { return }
         await waitForTheRealCallsOfTheRound(ofNoOpCallOf: toolName)
         throw CancellationError()
     }
@@ -179,8 +205,7 @@ extension RoutedSessionActor {
     /// Whether at least one operation of the session is pending: a
     /// background run is open, or the mail holds a result that starts a
     /// submission by itself (``SessionOutbox/canStartASubmission(_:runTokens:)``).
-    /// Held mail starts no submission, so it is not pending. A stop of a
-    /// no-op call that is already set counts as pending.
+    /// Held mail starts no submission, so it is not pending.
     ///
     /// A run that waits only for the user is pending here, but it is no work
     /// for ``isIdle()``: the result of the run comes to the model later, so a
@@ -188,7 +213,6 @@ extension RoutedSessionActor {
     ///
     /// - Returns: `true` when the pump delivers a result to the model later.
     func hasPendingOperation() async -> Bool {
-        guard noOpToolCallStop == nil else { return true }
         let runTokens = await readBackgroundRunTokens()
         let mail = await outbox.pending().events
         return !runTokens.open.isEmpty || SessionOutbox.canStartASubmission(mail, runTokens: runTokens)
@@ -204,6 +228,8 @@ extension RoutedSessionActor {
     /// The wait is ``ChangeSignal/waitUntil(isolation:_:)`` on
     /// ``noOpRoundChanges``. It ends when a stop is set or when the round is
     /// complete. Only a complete round with no stop stops the model call.
+    /// The stop reads whether an operation is pending at the end of the
+    /// round, so a run that settled while the real calls ran counts.
     ///
     /// - Parameter toolName: The name of the tool of the no-op call.
     private func waitForTheRealCallsOfTheRound(ofNoOpCallOf toolName: String) async {
@@ -211,8 +237,12 @@ extension RoutedSessionActor {
         let roundEnded = await noOpRoundChanges.waitUntil {
             noOpToolCallStop != nil || noOpToolCallRound.isComplete
         }
-        guard roundEnded, noOpToolCallStop == nil, mayStopForNoOpToolCall else { return }
-        stopModelCall(forNoOpToolCallOf: toolName)
+        guard roundEnded, noOpToolCallStop == nil else { return }
+        let operationPending = await hasPendingOperation()
+        // The read suspends: another no-op call or another stop can land
+        // meanwhile.
+        guard noOpToolCallStop == nil, mayStopForNoOpToolCall else { return }
+        stopModelCall(forNoOpToolCallOf: toolName, operationPending: operationPending)
     }
 
     /// Reads the round of the no-op call in flight, and records the count of
@@ -262,15 +292,19 @@ extension RoutedSessionActor {
     /// Logs the stop, sets the marker, wakes each no-op call of the round
     /// that waits, and cancels ``inFlightModelCall``.
     ///
-    /// - Parameter toolName: The name of the tool of the no-op call.
-    private func stopModelCall(forNoOpToolCallOf toolName: String) {
+    /// - Parameters:
+    ///   - toolName: The name of the tool of the no-op call.
+    ///   - operationPending: Whether an operation of the session is pending.
+    private func stopModelCall(forNoOpToolCallOf toolName: String, operationPending: Bool) {
         noOpToolCallStop = NoOpToolCallStop(
-            liveEntries: backend.transcriptEntries(), results: noOpToolCallRound.results)
+            liveEntries: backend.transcriptEntries(), results: noOpToolCallRound.results,
+            operationPending: operationPending)
         sessionLogger(.noOpToolCallStop).notice(
-            "a round with a no-op tool call while an operation is pending ends the model call",
+            "a round with a no-op tool call ends the model call",
             metadata: [
                 RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
                 RouterTelemetry.LogMetadataKey.toolName: "\(toolName)",
+                RouterTelemetry.LogMetadataKey.operationPending: "\(operationPending)",
             ])
         noOpRoundChanges.signal()
         inFlightModelCall?.cancel()
@@ -292,39 +326,105 @@ extension RoutedSessionActor {
     /// Records the stopped attempt, then goes on with the real results or
     /// ends the answer.
     ///
-    /// The rebuilt transcript (``InFlightTranscript``) keeps every entry of
-    /// the attempt, with no unanswered no-op call
-    /// (``removingUnansweredNoOpCalls(from:entryIdsBeforeAttempt:)``) and
-    /// with the output of each real call of the round. So the context holds
-    /// no trace of a no-op call.
+    /// - A round with a real call: the rebuilt transcript
+    ///   (``InFlightTranscript``) keeps every entry of the attempt, with no
+    ///   unanswered no-op call
+    ///   (``removingUnansweredNoOpCalls(from:entryIdsBeforeAttempt:)``) and
+    ///   with the output of each real call of the round. One more submission
+    ///   of the same answer goes on with the real results.
+    /// - A round of only no-op calls while an operation is pending: the
+    ///   rebuilt transcript holds no trace of a no-op call, and the answer
+    ///   ends with an empty reply. The result of the operation starts the
+    ///   model later.
+    /// - A round of only no-op calls with nothing pending (task ^zetnz36):
+    ///   nothing can arrive. Each no-op call gets
+    ///   ``noOpToolCallEndReason`` as its output, so the model learns why its
+    ///   answer ended, and the answer ends with the last text of the model in
+    ///   the attempt.
     ///
     /// - Parameters:
     ///   - stop: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
     ///   - body: The model work to run.
     /// - Returns: The response text of the next attempt when the round had a
-    ///   real call, else an empty reply: the model did no work after the
-    ///   stop.
+    ///   real call; else the last text of the model in the attempt when
+    ///   nothing is pending, or an empty reply.
     /// - Throws: What the next attempt throws.
     func continueAfterNoOpToolCallStop(
         _ stop: NoOpToolCallStop,
         attempt: StoppedAttempt,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
+        guard stop.results.isEmpty else {
+            await recordAttemptWithNoNoOpCall(stop, attempt: attempt)
+            return try await runContinuation(after: attempt, prompt: Self.noOpToolCallContinuationPrompt, body: body)
+        }
+        guard !stop.operationPending else {
+            await recordAttemptWithNoNoOpCall(stop, attempt: attempt)
+            return ""
+        }
+        let rebuilt = InFlightTranscript.rebuilt(
+            settledEntries: backend.transcriptEntries(), sources: [stop.liveEntries],
+            results: endReasons(answeringTheNoOpCallsOf: stop.liveEntries, attempt: attempt),
+            entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
+        await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
+        return Self.lastResponseText(of: rebuilt, entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt)
+    }
+
+    /// Records the stopped attempt with the output of each real call of the
+    /// round and with no unanswered no-op call, so the context holds no
+    /// trace of a no-op call.
+    ///
+    /// - Parameters:
+    ///   - stop: The stop marker of the stopped attempt.
+    ///   - attempt: The stopped attempt.
+    private func recordAttemptWithNoNoOpCall(_ stop: NoOpToolCallStop, attempt: StoppedAttempt) async {
         let ids = attempt.entryIdsBeforeAttempt
         let rebuilt = InFlightTranscript.rebuilt(
             settledEntries: removingUnansweredNoOpCalls(from: backend.transcriptEntries(), entryIdsBeforeAttempt: ids),
             sources: [removingUnansweredNoOpCalls(from: stop.liveEntries, entryIdsBeforeAttempt: ids)],
             results: stop.results, entryIdsBeforeAttempt: ids, composedPrompt: attempt.composedPrompt)
         await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
-        guard !stop.results.isEmpty else { return "" }
-        return try await runContinuation(after: attempt, prompt: Self.noOpToolCallContinuationPrompt, body: body)
+    }
+
+    /// One result with ``noOpToolCallEndReason`` for each unanswered no-op
+    /// call of the attempt in `entries`, in transcript order.
+    ///
+    /// - Parameters:
+    ///   - entries: The backend transcript read at the stop.
+    ///   - attempt: The stopped attempt.
+    /// - Returns: The results, which the rebuild pairs to the calls by tool
+    ///   name and order.
+    private func endReasons(
+        answeringTheNoOpCallsOf entries: [Transcript.Entry], attempt: StoppedAttempt
+    ) -> [ToolResultAppend] {
+        let attemptEntries = entries.filter { !attempt.entryIdsBeforeAttempt.contains($0.id) }
+        return InFlightTranscript.openCalls(in: attemptEntries)
+            .filter { isNoOpToolCall($0.toolName, $0.arguments) }
+            .map { ToolResultAppend(toolName: $0.toolName, arguments: $0.arguments, text: Self.noOpToolCallEndReason) }
+    }
+
+    /// The text of the last `.response` entry of the attempt in `entries`.
+    ///
+    /// - Parameters:
+    ///   - entries: The rebuilt transcript.
+    ///   - entryIdsBeforeAttempt: The ids of the entries from before the
+    ///     attempt.
+    /// - Returns: The text, or an empty text when the attempt wrote none.
+    private static func lastResponseText(
+        of entries: [Transcript.Entry], entryIdsBeforeAttempt: Set<String>
+    ) -> String {
+        for entry in entries.reversed() where !entryIdsBeforeAttempt.contains(entry.id) {
+            guard case .response(let response) = entry else { continue }
+            return WatchedText.text(of: response.segments)
+        }
+        return ""
     }
 
     /// `entries` with each no-op call of the attempt that has no output
     /// removed from its `.toolCalls` entry, and that entry removed when no
-    /// call is left. A no-op call that ran, because no operation was pending
-    /// then, has an output and stays.
+    /// call is left. A no-op call that got ``noOpToolCallEndReason`` as its
+    /// output has an output and stays.
     ///
     /// - Parameters:
     ///   - entries: The entries to read.

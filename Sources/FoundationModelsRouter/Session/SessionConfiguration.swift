@@ -103,14 +103,16 @@ public struct SessionConfiguration: Sendable {
     /// session runs each call as it did before the check existed.
     public static let defaultIsNoOpToolCall: NoOpToolCallCheck = { _, _ in false }
 
-    /// The host check that marks a tool call as a no-op (task ^rw72f4j).
+    /// The host check that marks a tool call as a no-op (tasks ^rw72f4j and
+    /// ^zetnz36).
     ///
-    /// While at least one operation of the session is pending, the session
-    /// does not run a call that this check marks, does not answer it, and
-    /// does not put it in the context. Every other call of the same round
-    /// runs. A round of only marked calls stops the generation, and the
-    /// injected result of the pending operation is the next message that
-    /// starts the model. See ``NoOpToolCallCheck``.
+    /// The session never runs a call that this check marks. Every other call
+    /// of the same round runs. A round of only marked calls ends the answer:
+    /// while an operation of the session is pending, the context holds no
+    /// trace of the marked calls, and the injected result of the pending
+    /// operation is the next message that starts the model. With nothing
+    /// pending, each marked call gets a fixed output that tells the model
+    /// why its answer ended. See ``NoOpToolCallCheck``.
     ///
     /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
     /// ``persistable`` does not record it. A restore gets

@@ -33,6 +33,22 @@ struct ConsecutiveRecoveryBudgetTests {
     /// The code of the fourth distinct tool call.
     private static let fourthCode = "edit(query, line: 42)"
 
+    /// The code of a call that the host check of
+    /// ``isNoOp(toolName:arguments:)`` marks as a no-op (task ^zetnz36).
+    private static let noOpCode = "return waiting-1"
+
+    /// The host check of the no-op test: a `runCode` call whose snippet is
+    /// ``noOpCode`` is a no-op.
+    ///
+    /// - Parameters:
+    ///   - toolName: The name of the called tool.
+    ///   - arguments: The arguments of the call.
+    /// - Returns: `true` for a no-op call.
+    private static func isNoOp(toolName: String, arguments: GeneratedContent) -> Bool {
+        let code = try? arguments.value(String.self, forProperty: "code")
+        return toolName == CountingRunCodeTool.toolName && code == noOpCode
+    }
+
     /// A script whose reasoning reaches the default reasoning limit with new
     /// lines only, and that then waits until the session stops it
     /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``, whose hold
@@ -55,14 +71,18 @@ struct ConsecutiveRecoveryBudgetTests {
     /// the default ``RepetitionDetection`` and one ``CountingRunCodeTool``.
     /// The caller ends the fixture.
     ///
-    /// - Parameter scripts: The script of each call, in call order.
+    /// - Parameters:
+    ///   - scripts: The script of each call, in call order.
+    ///   - isNoOpToolCall: The host check of the no-op tool calls.
     /// - Returns: The fixture and the events of the answer, in order.
     private static func runStagedAnswer(
-        scripts: [RepeatingReasoningScript]
+        scripts: [RepeatingReasoningScript],
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         try await StagedReasoningSessionFixture.answer(
             to: prompt, scripts: scripts, detection: RepetitionDetection(),
-            tools: [CountingRunCodeTool(runs: RunCount())], tempDirPrefix: tempDirPrefix)
+            tools: [CountingRunCodeTool(runs: RunCount())], isNoOpToolCall: isNoOpToolCall,
+            tempDirPrefix: tempDirPrefix)
     }
 
     @Test("stop, act, stop, act, stop, act, stop, act: each of the four reasoning stops recovers")
@@ -95,6 +115,21 @@ struct ConsecutiveRecoveryBudgetTests {
         defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1, 1, 2])
+    }
+
+    @Test("a no-op call in the round of a repeated call does not start the count again")
+    func noOpCallIsNoProgress() async throws {
+        let (fixture, events) = try await Self.runStagedAnswer(
+            scripts: [
+                Self.toolCallScript(running: Self.firstCode), Self.reasoningStopScript,
+                RepeatingReasoningScript(
+                    reasoningLines: [], hold: .noHold, ending: .runCodes([Self.firstCode, Self.noOpCode])),
+                Self.reasoningStopScript,
+            ],
+            isNoOpToolCall: Self.isNoOp(toolName:arguments:))
+        defer { await fixture.end() }
+
+        #expect(events.reasoningStops.map(\.recovery) == [1, 2])
     }
 
     @Test("a repeated-tool-call stop and reasoning stops share one consecutive count")

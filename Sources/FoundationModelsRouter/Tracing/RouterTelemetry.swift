@@ -401,9 +401,13 @@ enum RouterTelemetry {
         /// A pass that reasoned and did not act, and stops (task ^hm9trt5).
         case reasoningStop = "ReasoningStop"
 
-        /// A no-op tool call that stops the model call while an operation of
-        /// the session is pending (task ^rw72f4j).
+        /// A no-op tool call that stops the model call (tasks ^rw72f4j and
+        /// ^zetnz36).
         case noOpToolCallStop = "NoOpToolCallStop"
+
+        /// A model call that stops so that the answer delivers the run mail
+        /// that arrived while the call ran its tools (task ^zetnz36).
+        case runMailStop = "RunMailStop"
 
         /// The `index.md` of a session folder.
         case sessionIndex = "SessionIndex"
@@ -525,6 +529,10 @@ enum RouterTelemetry {
 
         /// The model-facing name of a tool.
         static let toolName = prefix + "tool.name"
+
+        /// Whether an operation of the session was pending at a no-op tool
+        /// call stop (task ^zetnz36).
+        static let operationPending = prefix + "operation.pending"
 
         /// The ordinal of a retry in its answer.
         static let retryOrdinal = prefix + "retry.ordinal"

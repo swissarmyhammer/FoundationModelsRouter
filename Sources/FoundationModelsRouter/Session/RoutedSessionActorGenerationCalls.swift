@@ -208,6 +208,7 @@ extension RoutedSessionActor {
         noOpToolCallStop = nil
         noOpToolCallRound = NoOpToolCallRound()
         delegationHintStop = nil
+        runMailStop = nil
     }
 
     /// Closes the ledger of the attempt.

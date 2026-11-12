@@ -23,9 +23,10 @@ struct RepetitionWatchState {
     ///
     /// Progress is a tool result of a call that is not identical to an
     /// earlier call of the answer (``noteToolCallProgress(_:)``): it sets the
-    /// count to zero. So ``RepetitionDetection/recoveriesPerAnswer`` bounds
-    /// the consecutive stops with no progress between them, not every stop
-    /// of the answer. The pump sets it to zero for each new answer
+    /// count to zero. A no-op tool call never runs and gives no result, so
+    /// it is never progress (task ^zetnz36). So
+    /// ``RepetitionDetection/recoveriesPerAnswer`` bounds the consecutive
+    /// stops with no progress between them, not every stop of the answer. The pump sets it to zero for each new answer
     /// (``RoutedSessionActor/startAnswerLimits()``), and a continuation
     /// submission of the same answer keeps it.
     var recoveriesSinceProgress = 0

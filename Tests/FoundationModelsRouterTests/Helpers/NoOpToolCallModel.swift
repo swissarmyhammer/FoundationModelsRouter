@@ -266,21 +266,37 @@ struct NoOpToolCallSessionFixture {
         _ container: LiveBackendContainer<NoOpToolCallModel>, _ tools: [any Tool], _ tempDirPrefix: String
     ) async throws -> SessionFixtureLifecycle.Started
 
+    /// Makes the `runCode` tool of a fixture from the run count and the
+    /// latch of the job.
+    ///
+    /// - Parameters:
+    ///   - runs: The count of the runs of `runCode`.
+    ///   - gate: The latch that holds the background job.
+    /// - Returns: The tool, named ``CountingRunCodeTool/toolName``.
+    typealias RunCodeToolMaker = @Sendable (_ runs: RunCount, _ gate: RunLatch) -> any Tool
+
+    /// The `runCode` tool of a fixture by default: a ``CountingRunCodeTool``.
+    static let countingRunCodeTool: RunCodeToolMaker = { runs, _ in CountingRunCodeTool(runs: runs) }
+
     /// Builds a router and vends a session over a ``NoOpToolCallModel``.
     ///
     /// - Parameters:
     ///   - startsJob: Whether the model starts the background job first.
     ///   - codes: The snippets of the `runCode` calls of the model, all in
     ///     one round.
+    ///   - runCodeTool: Makes the `runCode` tool of the session (task
+    ///     ^zetnz36).
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws.
     static func make(
-        startsJob: Bool, codes: [String], tempDirPrefix: String
+        startsJob: Bool, codes: [String], runCodeTool: @escaping RunCodeToolMaker = countingRunCodeTool,
+        tempDirPrefix: String
     ) async throws -> NoOpToolCallSessionFixture {
         try await make(
-            startsJob: startsJob, codes: codes, tempDirPrefix: tempDirPrefix, sessionStep: vendSession)
+            startsJob: startsJob, codes: codes, runCodeTool: runCodeTool, tempDirPrefix: tempDirPrefix,
+            sessionStep: vendSession)
     }
 
     /// Makes the shared parts of a fixture (the log, the run count, the
@@ -291,19 +307,25 @@ struct NoOpToolCallSessionFixture {
     ///   - startsJob: Whether the model starts the background job first.
     ///   - codes: The snippets of the `runCode` calls of the model, all in
     ///     one round.
+    ///   - runCodeTool: Makes the `runCode` tool of the session.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     ///   - sessionStep: The step that gets the session of the fixture.
     /// - Returns: The fixture.
     /// - Throws: Whatever `sessionStep` throws.
     private static func make(
-        startsJob: Bool, codes: [String], tempDirPrefix: String, sessionStep: SessionStep
+        startsJob: Bool, codes: [String], runCodeTool: RunCodeToolMaker = countingRunCodeTool,
+        tempDirPrefix: String, sessionStep: SessionStep
     ) async throws -> NoOpToolCallSessionFixture {
         let log = RenderProbeLog()
         let runs = RunCount()
         let gate = RunLatch()
         let container = LiveBackendContainer(model: NoOpToolCallModel(log: log, startsJob: startsJob, codes: codes))
-        let started = try await sessionStep(container, tools(runs: runs, gate: gate), tempDirPrefix)
+        let tools = [
+            runCodeTool(runs, gate),
+            LatchedBackgroundToolRunner(name: NoOpToolCallModel.jobToolName, gate: gate, output: jobOutput),
+        ]
+        let started = try await sessionStep(container, tools, tempDirPrefix)
         return NoOpToolCallSessionFixture(started: started, log: log, runs: runs, gate: gate)
     }
 
@@ -325,20 +347,6 @@ struct NoOpToolCallSessionFixture {
             over: container,
             configuration: SessionConfiguration(tools: tools, isNoOpToolCall: isNoOp(toolName:arguments:)),
             prefix: tempDirPrefix)
-    }
-
-    /// The tools of the fixture: one ``CountingRunCodeTool`` and one
-    /// ``LatchedBackgroundToolRunner`` named ``NoOpToolCallModel/jobToolName``.
-    ///
-    /// - Parameters:
-    ///   - runs: The count of the runs of `runCode`.
-    ///   - gate: The latch that holds the background job.
-    /// - Returns: The tools, in order.
-    private static func tools(runs: RunCount, gate: RunLatch) -> [any Tool] {
-        [
-            CountingRunCodeTool(runs: runs),
-            LatchedBackgroundToolRunner(name: NoOpToolCallModel.jobToolName, gate: gate, output: jobOutput),
-        ]
     }
 
     /// Records a session with no no-op check, then restores it on a second
@@ -442,5 +450,41 @@ struct NoOpToolCallSessionFixture {
     /// opens the gate, closes the session and removes the directory.
     func end() async {
         await SessionFixtureLifecycle.end(started, opening: [gate])
+    }
+}
+
+/// A `runCode` tool whose body lets the background job of a
+/// ``NoOpToolCallSessionFixture`` settle while the model call waits in the
+/// tool call (task ^zetnz36).
+///
+/// The body counts one run, opens the latch of the job, and then waits until
+/// the test opens ``settled``: the test opens it when the session sent
+/// ``SessionEvent/runSettled(_:)`` for the job. So the result of the call
+/// goes back to the model only after the settled job queued its mail.
+struct JobSettlingRunCodeTool: Tool {
+    /// The name the scripted model calls.
+    let name = CountingRunCodeTool.toolName
+
+    /// The description the model reads.
+    let description = "Runs one snippet of code."
+
+    /// The count of the runs of this tool.
+    let runs: RunCount
+
+    /// The latch that holds the background job.
+    let gate: RunLatch
+
+    /// The latch the test opens when the job settled.
+    let settled: RunLatch
+
+    /// Counts one run, lets the job settle, and waits for the test.
+    ///
+    /// - Parameter arguments: The snippet. Unread.
+    /// - Returns: ``CountingRunCodeTool/output``.
+    func call(arguments: RunCodeArguments) async throws -> String {
+        runs.increment()
+        await gate.open()
+        await settled.waitUntilOpen()
+        return CountingRunCodeTool.output
     }
 }

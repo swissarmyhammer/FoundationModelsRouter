@@ -109,7 +109,11 @@ The session pushes settlement to the model — the model never polls:
   submission, and return while a run is in flight.
 - The terminal of a settled run is mail. The pump of the session delivers it
   to the model in a later submission, with no caller call, and it is also
-  reported as ``SessionEvent/runSettled(_:)``.
+  reported as ``SessionEvent/runSettled(_:)``. When the run settles while an
+  answer calls tools, the answer delivers it with the next tool result: at
+  the end of that round of calls the generation stops, and the next
+  submission of the same answer reads the terminal after the tool results.
+  The same holds for a message of a background run.
 - A background run can send a message to its session while it continues
   (`ToolContext.message(_:)`). The message is mail too: the pump delivers it
   in a later submission, with no caller call, and it is also reported as
@@ -135,15 +139,19 @@ The session pushes settlement to the model — the model never polls:
 - `status` and `wait` give an earlier look; they are not required.
 - A model that waits for a run must do nothing. A host can give
   ``SessionConfiguration/isNoOpToolCall``, the check that marks a tool call
-  that does no work (``NoOpToolCallCheck``). While at least one run is open,
-  or a settled run's terminal waits as mail, the session does not run a
-  marked call, does not answer it, and does not put it in the transcript.
-  Every other call of the same round runs to its end, and its result goes
-  into the transcript. Then the generation stops. When the round had a real
-  call, the answer goes on with the real results. When the round had only
-  marked calls, the answer ends, and the terminal of the run is the next
-  message that starts the model. With no pending run, the check changes
-  nothing. The recording does not hold the check, so a host gives it again to
+  that does no work (``NoOpToolCallCheck``). The session never runs a marked
+  call. Every other call of the same round runs to its end, and its result
+  goes into the transcript. Then the generation stops. When the round had a
+  real call, the answer goes on with the real results, and the transcript
+  holds no marked call. When the round had only marked calls, the answer
+  ends. While at least one run is open, or a settled run's terminal waits as
+  mail, the transcript holds no marked call, and the terminal of the run is
+  the next message that starts the model. With nothing pending, nothing can
+  arrive: each marked call gets a fixed output that tells the model why its
+  answer ended, and the reply is the last text of the model. A marked call
+  never runs, so it never counts as progress for
+  ``RepetitionDetection/recoveriesPerAnswer``. The recording does not hold
+  the check, so a host gives it again to
   ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``
   when it restores a session.
 

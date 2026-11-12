@@ -457,7 +457,7 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// - Returns: The joining mail, in take order.
     func takeMailJoiningTheAnswer() -> [Mail] {
-        guard case .answer(let options) = pumpWork?.kind, !openAnswerMail.isSilenced else { return [] }
+        guard let options = joiningAnswerOptions else { return [] }
         let isGuided = grammar != nil
         let joining = takeScreenedMail { candidate, _ in
             Self.joinsRunningAnswer(candidate, options: options, isGuided: isGuided)
@@ -465,6 +465,21 @@ extension RoutedSessionActor: SessionMailObserver {
         deliver(joining)
         recordMailQueueDepth()
         return joining
+    }
+
+    /// The options of the running answer when a continuation of it takes
+    /// joining mail, else `nil`: no answer runs, or ``cancelAll()`` stopped
+    /// the open answer.
+    private var joiningAnswerOptions: SubmissionOptions? {
+        guard case .answer(let options) = pumpWork?.kind, !openAnswerMail.isSilenced else { return nil }
+        return options
+    }
+
+    /// Whether a continuation of the running answer takes joining mail
+    /// (``takeMailJoiningTheAnswer()``). The run mail stop reads it
+    /// (``noteRunMailDue()``).
+    var answerTakesJoiningMail: Bool {
+        joiningAnswerOptions != nil
     }
 
     /// Ends the running work: its id and a cancel requested for it.
@@ -487,7 +502,9 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - ``RepetitionWatchState/finalPassRan``: an answer runs at most one
     ///   final pass after its last recovery (task ^0dcsd3t);
     /// - ``RepetitionWatchState/toolCallRun``: the count of identical
-    ///   consecutive tool calls runs within one answer (task ^8eq31j0).
+    ///   consecutive tool calls runs within one answer (task ^8eq31j0);
+    /// - ``runMailStoppedIds``: one run mail stops at most one model call of
+    ///   the answer (task ^zetnz36).
     ///
     /// The third limit, the one overflow retry, is no stored state: the first
     /// submission of each answer gets the permission
@@ -504,5 +521,6 @@ extension RoutedSessionActor: SessionMailObserver {
         repetitionWatch.toolCallsThisAnswer = []
         repetitionWatch.finalPassRan = false
         repetitionWatch.toolCallRun = IdenticalToolCallRun()
+        runMailStoppedIds = []
     }
 }

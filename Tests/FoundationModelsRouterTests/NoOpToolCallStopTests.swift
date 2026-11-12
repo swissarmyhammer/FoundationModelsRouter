@@ -10,8 +10,8 @@ import Testing
 /// not go into the context. A round of only no-op calls stops the generation,
 /// and the injected result of the pending operation is the next message that
 /// starts the model. A real call always runs, also in the same round as a
-/// no-op call, and with no pending operation a no-op call runs as before.
-/// Task ^4nk083c: a restored session gets the check from the restore call.
+/// no-op call. Task ^zetnz36: with no pending operation a no-op call does
+/// not run either. Task ^4nk083c: a restored session gets the check from the restore call.
 ///
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``NoOpToolCallModel``. No GPU is in the loop. A ``RunLatch`` holds
@@ -156,16 +156,14 @@ struct NoOpToolCallStopTests {
         #expect(Self.holdsRunCodeCall(await fixture.session.transcript))
     }
 
-    @Test("no pending operation and a no-op call: the call runs as before")
-    func aNoOpCallRunsWithNoPendingOperation() async throws {
+    @Test("no pending operation and a no-op call: the call does not run (task ^zetnz36)")
+    func aNoOpCallDoesNotRunWithNoPendingOperation() async throws {
         let fixture = try await NoOpToolCallSessionFixture.make(
             startsJob: false, codes: [NoOpToolCallSessionFixture.noOpCode], tempDirPrefix: Self.tempDirPrefix)
         defer { await fixture.end() }
 
-        let answer = try await fixture.session.respond(to: Self.prompt)
+        _ = try await fixture.session.respond(to: Self.prompt)
 
-        #expect(fixture.runs.value == 1)
-        #expect(answer == NoOpToolCallModel.Executor.answerText)
-        #expect(Self.holdsRunCodeCall(await fixture.session.transcript))
+        #expect(fixture.runs.value == 0)
     }
 }

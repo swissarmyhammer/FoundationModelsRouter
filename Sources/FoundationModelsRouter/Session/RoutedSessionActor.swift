@@ -733,6 +733,16 @@ actor RoutedSessionActor: RoutedSession {
     /// (``noteRealToolResult(_:)``).
     nonisolated let noOpRoundChanges = ChangeSignal()
 
+    /// The stop marker of the model call in flight when run mail stopped it,
+    /// else `nil`. ``openGenerationCallLedger(usageBefore:responseTokenCeiling:)``
+    /// clears it for each attempt. See ``RunMailStop``.
+    var runMailStop: RunMailStop?
+
+    /// The ids of the run mail that already stopped a model call of the
+    /// running answer (``noteRunMailDue()``). The same mail never stops the
+    /// answer twice. The pump empties it for each new answer.
+    var runMailStoppedIds: Set<MailID> = []
+
     /// The advisor of the hint to give a code change to an agent, or `nil`
     /// when the session gets no hint. The vending site binds it before it
     /// returns the session (``bind(delegationAdvisor:)``). See

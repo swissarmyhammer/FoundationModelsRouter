@@ -189,8 +189,9 @@ extension RoutedSessionActor {
     }
 
     /// Puts `rebuilt` into ``backend``, and records the attempt that a stop
-    /// cancelled while the SDK waited in a tool call: a compaction yield, or
-    /// a no-op tool call while an operation is pending (task ^rw72f4j).
+    /// cancelled while the SDK waited in a tool call: a compaction yield, a
+    /// no-op tool call (tasks ^rw72f4j and ^zetnz36), the delegate hint, or
+    /// run mail (task ^zetnz36).
     ///
     /// The usage of the attempt, and the generation call that the backend
     /// reported since the last report, are read before the backend is

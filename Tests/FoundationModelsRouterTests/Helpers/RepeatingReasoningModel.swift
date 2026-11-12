@@ -20,6 +20,11 @@ enum RepeatingReasoningEnding: Sendable, Hashable {
     /// code given, so two scripts can make two distinct calls (task
     /// ^0jbps9v). The code holds no quote and no backslash.
     case runCode(String)
+
+    /// The call asks for one ``CountingRunCodeTool`` call for each code
+    /// given, in order, all in one round (task ^zetnz36). Each code holds no
+    /// quote and no backslash.
+    case runCodes([String])
 }
 
 /// What one call of a ``RepeatingReasoningModel`` does after its last
@@ -138,6 +143,11 @@ struct RepeatingReasoningScript: Sendable, Hashable {
 
     /// What the call writes after the hold.
     var ending: RepeatingReasoningEnding = .answer
+
+    /// The response text a ``StagedReasoningModel`` call writes after the
+    /// hold and before the tool calls of its ending, or `nil` for none (task
+    /// ^zetnz36).
+    var leadingText: String?
 
     /// The token count that each reasoning line reports to the session. The
     /// usage of a call sums these counts. Zero gives a call whose usage does
@@ -393,6 +403,10 @@ struct RepeatingReasoningModel: LanguageModel {
                 await sendToolCall(into: channel)
             case .runCode(let code):
                 await sendToolCall(running: code, into: channel)
+            case .runCodes(let codes):
+                for code in codes {
+                    await sendToolCall(running: code, into: channel)
+                }
             }
             return true
         }
