@@ -12,19 +12,21 @@ import FoundationModelsRouterRealModelSupport
 /// is what ``gatedRealProfileResidentContainerCount`` counts.
 ///
 /// One definition for the whole target. ``IntegrationTests`` resolves it end to
-/// end, and ``CrossRouterPoolIntegrationTests`` resolves it from two routers
-/// over one pool. A second copy would drift from the first.
+/// end on one router. A second copy would drift from the first.
 ///
 /// The decision slot names no candidate, so it always uses the flash model.
-/// These suites test the trio. `DecisionSlotIntegrationTests` tests the
-/// decision slot with a profile of its own. The default decision candidate
-/// (``ProfileDefinition/defaultDecisionCandidates``) is a fourth container
-/// when it fits in the memory that the trio leaves, and it does not fit on
-/// each runner. Thus with the default, the count of resident containers
-/// changes with the memory of the runner. Also, on the runner `mini-01`, the
-/// default decision model of the first router of
-/// ``CrossRouterPoolIntegrationTests`` took the memory that the second
-/// router needs for one more session of the flash model (CI run 43122216651).
+/// This profile tests the trio on one router. `DecisionSlotIntegrationTests`
+/// tests the decision slot with a profile of its own. The default decision
+/// candidate (``ProfileDefinition/defaultDecisionCandidates``) is a fourth
+/// container when it fits in the memory that the trio leaves, and it does not
+/// fit on each runner. Thus with the default, the count of resident containers
+/// changes with the memory of the runner.
+///
+/// `CrossRouterPoolIntegrationTests` does not use this profile. Its two
+/// routers keep all their models loaded at the same time, and these models
+/// with a decision model did not fit on the runner `mini-01` (CI run
+/// 43122216651). That suite resolves a profile of small models, with a
+/// decision model of its own.
 let gatedRealProfile = ProfileDefinition(
     name: "integration-real",
     description: "Real mlx-community models for the gated integration suite.",

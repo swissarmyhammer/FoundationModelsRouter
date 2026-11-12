@@ -1,8 +1,19 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m77p6qxr9441ryhs5eyz6vnp
+  text: |-
+    ### Decision — the user selected: use smaller models in the cross-router test
+    - The user decided (relayed by the FoundationModelsDecision session): no revocable hold and no Extras API.
+    - Reason: the pool counts the holds. `ModelHold.deinit` releases a hold, and the last release evicts the model. The handles keep the decision hold in `residencyHolds` with a weak link back to the profile. `CrossRouterPoolIntegrationTests` keeps both profiles alive on purpose, so all the models are loaded and in use. The models of `gatedRealProfile` with a decision model were too large for the memory of `mini-01`.
+    - Done: `CrossRouterPoolIntegrationTests` resolves a profile of its own, `crossRouterProfile`: standard `mlx-community/Llama-3.2-1B-Instruct-4bit`, flash `mlx-community/Qwen3-1.7B-4bit`, embedding `RealModels.embedding`, decision `Mapika/decider-2b-GGUF/decider-2b-v12-Q4_K_M.gguf`, context 4096. The first test also expects the decider in the decision slot, and each count includes the decision container (4).
+    - `gatedRealProfile` keeps `decision: []`. Only `IntegrationTests` uses it, on one router, with no pool shared across routers.
+    - test: green — `swift test --package-path IntegrationTests --filter CrossRouterPoolIntegrationTests`, 4 tests in 1 suite passed after 37.360 seconds, 0 warnings.
+  timestamp: 2026-11-12T10:52:38.712999+00:00
+position_column: done
+position_ordinal: ffffffffff8880
 title: A decision model of one resolve can make the trio of a later resolve on the same pool not fit
 ---
 ## What
@@ -22,5 +33,5 @@ The router cannot give that memory back now:
 3. A fit that counts decision memory as free is NOT an option: it loads over the budget.
 
 ## Acceptance Criteria
-- [ ] The user selects an option.
-- [ ] The selected option is implemented with unit tests over stub loaders, or documented in the DocC article of the decision slot. #decision
+- [x] The user selects an option: smaller models in the cross-router test (no revocable hold, no Extras API).
+- [x] `CrossRouterPoolIntegrationTests` resolves a profile of small models with `decider-2b` in the decision slot, and its 4 tests pass. #decision

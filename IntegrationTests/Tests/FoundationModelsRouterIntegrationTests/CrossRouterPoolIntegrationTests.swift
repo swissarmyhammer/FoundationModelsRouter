@@ -17,6 +17,66 @@ import Testing
 /// two routers share decodes with each router's own mode.
 private let crossRouterSamplingMode: GenerationOptions.SamplingMode = .greedy
 
+// MARK: - Profile
+
+/// The `standard` candidate of ``crossRouterProfile``: Llama 3.2 1B, 680 MB,
+/// the small MLX instruct model of `DecisionSlotIntegrationTests`.
+private let crossRouterStandardModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
+
+/// The `flash` candidate of ``crossRouterProfile``: Qwen3 1.7B, about 1 GB,
+/// the flash model of `PromptCacheBudgetIntegrationTests`.
+///
+/// It is an MLX model, because a `PooledModel` of this suite loads it through
+/// the Extras `MLXModelLoader`. It is not ``crossRouterStandardModel``,
+/// because the two generation slots of one resolved profile never use the
+/// same model.
+private let crossRouterFlashModel: ModelRef = "mlx-community/Qwen3-1.7B-4bit"
+
+/// The decision candidate of ``crossRouterProfile``: `decider-2b` in the
+/// `Q4_K_M` GGUF conversion, about 1.3 GB, at the revision that
+/// `DecisionSlotIntegrationTests` uses.
+private let crossRouterDeciderModel = ModelRef(
+    repo: "Mapika/decider-2b-GGUF",
+    path: "decider-2b-v12-Q4_K_M.gguf",
+    revision: "0df001b8fe4e5298c5dd45d875d3795fcdaea0ab"
+)
+
+/// The working context of ``crossRouterProfile``, in tokens.
+private let crossRouterContext = 4096
+
+/// The profile that both routers of this suite resolve: small models in all
+/// four slots, with a decision model of its own.
+///
+/// Each test keeps the profiles of both routers alive at the same time, so all
+/// the models are loaded and in use. The pool counts the holds: the last
+/// release of a hold evicts its model, and not before. Thus the four models
+/// and one more flash session of the second router must fit in the memory of
+/// each runner together. The models of `gatedRealProfile` did not fit on the
+/// runner `mini-01` with the default decision model (CI run 43122216651, task
+/// ^0f5h2a2), so this suite uses small models.
+///
+/// The decision slot names a candidate, so the suite also proves that the
+/// second router shares the decision model of the first router.
+private let crossRouterProfile = ProfileDefinition(
+    name: "integration-cross-router",
+    description: "Small real models in all four slots for two routers over one pool.",
+    standard: [crossRouterStandardModel],
+    flash: [crossRouterFlashModel],
+    embedding: [RealModels.embedding],
+    decision: [crossRouterDeciderModel],
+    context: crossRouterContext
+)
+
+/// How many resident containers ``crossRouterProfile`` asks a fresh pool to
+/// load, and so how many `load` spans one resolve opens on an empty pool.
+///
+/// The pool loads one container for each distinct residency key. The four
+/// slots name four different models, and the decision model fits beside the
+/// trio, so each slot loads one container.
+private var crossRouterResidentContainerCount: Int {
+    Set([crossRouterStandardModel, crossRouterFlashModel, RealModels.embedding, crossRouterDeciderModel]).count
+}
+
 /// The instructions each session of this suite is vended with.
 private let crossRouterInstructions = "You are a terse assistant."
 
@@ -60,12 +120,12 @@ private struct PooledRouter {
         return PooledRouter(router: router, tracer: tracer)
     }
 
-    /// Resolves ``gatedRealProfile`` on this router.
+    /// Resolves ``crossRouterProfile`` on this router.
     ///
     /// - Returns: The resolved, resident profile.
     /// - Throws: Whatever the resolve throws.
     func resolve() async throws -> LanguageModelProfile {
-        try await router.resolve(profile: gatedRealProfile, reporting: ResolutionProgress())
+        try await router.resolve(profile: crossRouterProfile, reporting: ResolutionProgress())
     }
 
     /// The `load` spans this router opened so far.
@@ -133,9 +193,11 @@ private func modelRefs(of spans: [FinishedInMemorySpan]) -> Set<String> {
 /// form.
 ///
 /// - Parameter profile: The resolved profile.
-/// - Returns: The distinct references its three handles chose.
+/// - Returns: The distinct references its four handles chose.
 private func distinctModelRefs(of profile: LanguageModelProfile) -> Set<String> {
-    Set([profile.standard.chosen, profile.flash.chosen, profile.embedding.chosen].map(\.stringValue))
+    Set(
+        [profile.standard.chosen, profile.flash.chosen, profile.embedding.chosen, profile.decision.chosen]
+            .map(\.stringValue))
 }
 
 /// Vends one session from the `standard` handle of `profile`.
@@ -169,7 +231,7 @@ private func answer(on session: any RoutedSession) async throws -> String {
 ///
 /// ## What it proves
 ///
-/// The first router resolves ``gatedRealProfile`` on an empty pool and opens one
+/// The first router resolves ``crossRouterProfile`` on an empty pool and opens one
 /// `load` span for each resident container the profile asks for. The second
 /// router resolves the same profile on the same pool and opens no `load` span
 /// at all: every key is resident, so the pool never calls the second router's
@@ -196,19 +258,11 @@ private func answer(on session: any RoutedSession) async throws -> String {
 /// shared pool would let a resident of another suite satisfy a key here, and
 /// the span counts would then depend on the order the suites ran in.
 ///
-/// ## The measurement of 2026-09-05
+/// ## The measurement of 2026-11-12
 ///
-/// Two runs on one Apple silicon box with every model in the Hugging Face
-/// cache: the suite alone, then the whole nested package.
-///
-/// | alone | whole package | test |
-/// |---|---|---|
-/// | 47.2 | 46.3 | the second router's resolve opens no load span, and a session from each router answers |
-/// | 25.9 | 26.0 | a release from the first router keeps the second router's session alive |
-///
-/// The first test pays two resolves and two answers, the second two resolves
-/// and one answer. The dearer test ran at 39 percent of the two-minute budget of
-/// that time. The suite has no time limit now.
+/// One run of the suite alone on one Apple silicon box, with every model of
+/// ``crossRouterProfile`` in the Hugging Face cache: the four tests passed in
+/// 37.4 seconds. The suite has no time limit.
 @Suite(
     "Gated real-model coverage: two live routers over one pool load a model one time",
     .serialized,
@@ -222,7 +276,8 @@ struct CrossRouterPoolIntegrationTests {
 
         var firstProfile: LanguageModelProfile? = try await fixture.first.resolve()
         let firstLoadSpans = fixture.first.loadSpans
-        #expect(firstLoadSpans.count == gatedRealProfileResidentContainerCount)
+        #expect(try #require(firstProfile).decision.chosen == crossRouterDeciderModel)
+        #expect(firstLoadSpans.count == crossRouterResidentContainerCount)
         #expect(modelRefs(of: firstLoadSpans) == distinctModelRefs(of: try #require(firstProfile)))
 
         var secondProfile: LanguageModelProfile? = try await fixture.second.resolve()
@@ -231,7 +286,7 @@ struct CrossRouterPoolIntegrationTests {
                 == distinctModelRefs(of: try #require(firstProfile)))
         #expect(fixture.second.loadSpans.isEmpty)
         #expect(fixture.first.loadSpans.count == firstLoadSpans.count)
-        #expect(fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
+        #expect(fixture.pool.residentModelCount == crossRouterResidentContainerCount)
 
         let firstAnswer = try await answer(on: makeSession(from: try #require(firstProfile)))
         #expect(!firstAnswer.isEmpty)
@@ -262,7 +317,7 @@ struct CrossRouterPoolIntegrationTests {
         // Residency follows ARC: the drop of the first profile releases its holds.
         firstProfile = nil
         // The second profile still holds every key, so the pool evicts nothing.
-        #expect(fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
+        #expect(fixture.pool.residentModelCount == crossRouterResidentContainerCount)
 
         let reply = try await answer(on: secondSession)
         #expect(!reply.isEmpty)
@@ -305,7 +360,7 @@ struct CrossRouterPoolIntegrationTests {
         let fixture = PooledModelFixture.make()
         defer { fixture.removeDirectories() }
 
-        var session: PooledSession? = try await PooledModel(ref: RealModels.flash, pool: fixture.pool)
+        var session: PooledSession? = try await PooledModel(ref: crossRouterFlashModel, pool: fixture.pool)
             .session(instructions: crossRouterInstructions)
         var profile: LanguageModelProfile? = try await fixture.router.resolve()
         // The session of the router is a temporary value: a live session keeps
@@ -318,11 +373,11 @@ struct CrossRouterPoolIntegrationTests {
         // The pool loader loaded the flash model one time, and the router
         // loaded only the other models of the profile.
         #expect(!reply.isEmpty)
-        #expect(try #require(profile).flash.chosen == RealModels.flash)
+        #expect(try #require(profile).flash.chosen == crossRouterFlashModel)
         #expect(fixture.poolLoader.loadCount == 1)
-        #expect(!modelRefs(of: fixture.router.loadSpans).contains(RealModels.flash.stringValue))
-        #expect(fixture.router.loadSpans.count == gatedRealProfileResidentContainerCount - 1)
-        #expect(fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
+        #expect(!modelRefs(of: fixture.router.loadSpans).contains(crossRouterFlashModel.stringValue))
+        #expect(fixture.router.loadSpans.count == crossRouterResidentContainerCount - 1)
+        #expect(fixture.pool.residentModelCount == crossRouterResidentContainerCount)
 
         withExtendedLifetime(session) {}
         session = nil
