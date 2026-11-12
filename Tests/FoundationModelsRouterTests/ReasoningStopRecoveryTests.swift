@@ -60,11 +60,9 @@ struct ReasoningStopRecoveryTests {
         RepeatingReasoningScript(reasoningLines: [], hold: .noHold, ending: .toolCall)
     }
 
-    /// Runs one streamed answer over a ``StagedReasoningSessionFixture``.
-    ///
-    /// When the answer throws, this helper first closes the session and
-    /// removes the temp directory of the fixture (rule T1). When it returns,
-    /// the caller ends the fixture.
+    /// Runs one streamed answer to ``prompt`` with
+    /// ``StagedReasoningSessionFixture/answer(to:scripts:detection:tools:tempDirPrefix:)``.
+    /// The caller ends the fixture.
     ///
     /// - Parameters:
     ///   - scripts: The script of each call, in call order.
@@ -76,12 +74,8 @@ struct ReasoningStopRecoveryTests {
         detection: RepetitionDetection = detection,
         tools: [any Tool] = []
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
-        let fixture = try await StagedReasoningSessionFixture.make(
-            scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
-        let events = try await fixture.endingOnThrow {
-            try await collect(fixture.session.streamEvents(to: prompt))
-        }
-        return (fixture, events)
+        try await StagedReasoningSessionFixture.answer(
+            to: prompt, scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
     }
 
     /// Runs one streamed answer over a ``CeilingProbeSessionFixture`` under

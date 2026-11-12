@@ -10,8 +10,9 @@ import FoundationModelsRouterTestSupport
 /// Call `i` writes the reasoning of `scripts[i]` and does what its hold names,
 /// as a ``RepeatingReasoningModel`` call does, then writes the ending of the
 /// script: the answer, or one ``CountingRunCodeTool`` call. A call whose
-/// hold is ``RepeatingReasoningHold/untilStopped`` writes no ending: only
-/// the stop of the session ends it. A call after the
+/// hold is ``RepeatingReasoningHold/untilStopped`` writes no ending: the
+/// stop of the session ends it, or the hold fails the test when no stop comes
+/// inside ``RepeatingReasoningModel/Executor/stopHoldLimit``. A call after the
 /// last script answers with ``RepeatingReasoningModel/Executor/answerText``
 /// at once. So a test can make the first call repeat itself and the next
 /// calls reason past the limit, or make a recovery call a tool. Each call
@@ -94,7 +95,8 @@ struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
             configuration.log.record(reasoningLevel: request.contextOptions.reasoningLevel)
             if configuration.scripts.indices.contains(callIndex) {
                 let script = configuration.scripts[callIndex]
-                try await RepeatingReasoningModel.Executor.writeReasoning(script, into: channel)
+                try await RepeatingReasoningModel.Executor.writeReasoning(
+                    script, callIndex: callIndex, into: channel)
                 if await RepeatingReasoningModel.Executor.sendToolCall(endingWith: script.ending, into: channel) {
                     return
                 }
@@ -159,6 +161,34 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: tools, repetitionDetection: detection))
         return StagedReasoningSessionFixture(session: session, log: log, recorder: recorder, directory: directory)
+    }
+
+    /// Builds a fixture with ``make(scripts:detection:tools:tempDirPrefix:)``
+    /// and streams one answer to `prompt` over it.
+    ///
+    /// When the answer throws, this helper first closes the session and
+    /// removes the temp directory of the fixture (rule T1). When it returns,
+    /// the caller ends the fixture.
+    ///
+    /// - Parameters:
+    ///   - prompt: The message of the answer.
+    ///   - scripts: The script of each call, in call order.
+    ///   - detection: The repetition detection the session is made with.
+    ///   - tools: The tools the session mounts.
+    ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
+    ///     is attributable.
+    /// - Returns: The fixture and the events of the answer, in order.
+    /// - Throws: What profile resolution or the answer throws.
+    static func answer(
+        to prompt: String, scripts: [RepeatingReasoningScript], detection: RepetitionDetection,
+        tools: [any Tool] = [], tempDirPrefix: String
+    ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
+        let fixture = try await make(
+            scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
+        let events = try await fixture.endingOnThrow {
+            try await collect(fixture.session.streamEvents(to: prompt))
+        }
+        return (fixture, events)
     }
 }
 

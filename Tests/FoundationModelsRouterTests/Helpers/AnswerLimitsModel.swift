@@ -41,6 +41,9 @@ final class AnswerLimitsScript: Sendable {
 
         /// The calls that found no step.
         var unscriptedCalls = 0
+
+        /// The calls that took a step or found none, so far.
+        var calls = 0
     }
 
     /// The state, which the executor changes on the tasks of the SDK.
@@ -55,14 +58,17 @@ final class AnswerLimitsScript: Sendable {
 
     /// Takes the next step, or counts a call that found none.
     ///
-    /// - Returns: The next step, or `nil` when no step waits.
-    func takeNextStep() -> AnswerLimitsStep? {
+    /// - Returns: The index of the call among the calls of the model, from
+    ///   zero, and the next step, or `nil` when no step waits.
+    func takeNextStep() -> (callIndex: Int, step: AnswerLimitsStep?) {
         state.withLock { state in
+            let callIndex = state.calls
+            state.calls += 1
             guard !state.steps.isEmpty else {
                 state.unscriptedCalls += 1
-                return nil
+                return (callIndex, nil)
             }
-            return state.steps.removeFirst()
+            return (callIndex, state.steps.removeFirst())
         }
     }
 
@@ -208,7 +214,8 @@ struct AnswerLimitsModel: LanguageModel {
                 await Self.send(Self.summaryText, usage: AnswerLimitsModel.smallUsage, into: channel)
                 return
             }
-            switch configuration.script.takeNextStep() {
+            let (callIndex, step) = configuration.script.takeNextStep()
+            switch step {
             case .ceilingStopThatCompacts:
                 await Self.send(AnswerLimitsModel.longCutText, usage: AnswerLimitsModel.ceilingStopUsage, into: channel)
             case .ceilingStopWithNothingToCompact:
@@ -217,7 +224,7 @@ struct AnswerLimitsModel: LanguageModel {
                 // The hold of the script waits until the watch stops the
                 // call, so this call always throws and writes no answer.
                 try await RepeatingReasoningModel.Executor.writeReasoning(
-                    AnswerLimitsModel.repeatingScript, into: channel)
+                    AnswerLimitsModel.repeatingScript, callIndex: callIndex, into: channel)
             case .answer:
                 await Self.send(AnswerLimitsModel.answerText, usage: AnswerLimitsModel.smallUsage, into: channel)
             case nil:

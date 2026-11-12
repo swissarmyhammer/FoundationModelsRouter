@@ -29,11 +29,14 @@ enum RepeatingReasoningHold: Sendable, Hashable {
     /// call: the session has no watch, or the call writes no reasoning.
     case noHold
 
-    /// The call waits until the session stops it with a cancel. Nothing
-    /// else ends the wait, so the call never writes its ending. Use it for a
-    /// call that the session must stop: when the session does not stop the
-    /// call, the answer does not end, and a stack of the test process shows
-    /// the hang.
+    /// The call waits until the session stops it with a cancel, and never
+    /// writes its ending. Use it for a call that the session must stop.
+    ///
+    /// The wait is bounded by
+    /// ``RepeatingReasoningModel/Executor/stopHoldLimit``. When no stop comes
+    /// inside that limit, the call records an `Issue` that names the call and
+    /// throws ``StopHoldExpired``, so a session that does not stop the call
+    /// fails the test and does not hang it.
     case untilStopped
 
     /// The call waits until the test opens the gate, then writes its ending.
@@ -43,6 +46,21 @@ enum RepeatingReasoningHold: Sendable, Hashable {
     /// (``RepeatingReasoningSessionFixture/answer(to:)``). So the call cannot
     /// end before that read, and a stop could only come from an earlier read.
     case untilOpened(ReasoningHoldGate)
+}
+
+/// The error of a ``RepeatingReasoningHold/untilStopped`` hold that no stop of
+/// the session ended inside ``RepeatingReasoningModel/Executor/stopHoldLimit``.
+struct StopHoldExpired: Error, CustomStringConvertible {
+    /// The index of the held call among the calls of the model, from zero.
+    let callIndex: Int
+
+    /// The limit the hold waited for.
+    let limit: Duration
+
+    /// What went wrong, and on which call.
+    var description: String {
+        "call \(callIndex) held for a stop, and no stop of the session came inside \(limit)"
+    }
 }
 
 /// The gate of a ``RepeatingReasoningHold/untilOpened(_:)`` hold: one call
@@ -261,6 +279,13 @@ struct RepeatingReasoningModel: LanguageModel {
         /// The line feed the model writes after each reasoning line.
         static let lineFeed = "\n"
 
+        /// The upper limit of one ``RepeatingReasoningHold/untilStopped``
+        /// hold. A passing run stops each held call in far less than a
+        /// second; the limit is long, because many suites run at the same
+        /// time, and it stays below the time limit of a suite, so the hold
+        /// fails the test on its own issue first.
+        static let stopHoldLimit: Duration = .seconds(10)
+
         /// The cache-key configuration the SDK constructed this executor with.
         private let configuration: Configuration
 
@@ -286,10 +311,11 @@ struct RepeatingReasoningModel: LanguageModel {
             model: RepeatingReasoningModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
+            let callIndex = configuration.log.renders.count
             configuration.log.record(render: request.transcript)
             configuration.log.record(reasoningLevel: request.contextOptions.reasoningLevel)
             if playsScript(request.transcript) {
-                try await Self.writeReasoning(configuration.script, into: channel)
+                try await Self.writeReasoning(configuration.script, callIndex: callIndex, into: channel)
                 if await Self.sendToolCall(endingWith: configuration.script.ending, into: channel) {
                     return
                 }
@@ -372,11 +398,14 @@ struct RepeatingReasoningModel: LanguageModel {
         ///
         /// - Parameters:
         ///   - script: The lines and the hold.
+        ///   - callIndex: The index of this call among the calls of the
+        ///     model, from zero, which an expired hold names.
         ///   - channel: The generation channel this call emits into.
         /// - Throws: `CancellationError` when the session stops the call, and
-        ///   always for a ``RepeatingReasoningHold/untilStopped`` hold.
+        ///   ``StopHoldExpired`` when a ``RepeatingReasoningHold/untilStopped``
+        ///   hold ends with no stop.
         static func writeReasoning(
-            _ script: RepeatingReasoningScript, into channel: LanguageModelExecutorGenerationChannel
+            _ script: RepeatingReasoningScript, callIndex: Int, into channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let entryID = "reasoning-\(UUID().uuidString)"
             for line in script.reasoningLines {
@@ -385,37 +414,48 @@ struct RepeatingReasoningModel: LanguageModel {
                     .reasoning(
                         entryID: entryID, action: .appendText(line + lineFeed, tokenCount: script.lineTokenCount)))
             }
-            try await hold(script.hold)
+            try await hold(script.hold, callIndex: callIndex)
         }
 
         /// Does what `hold` names.
         ///
-        /// - Parameter hold: The hold of the script.
+        /// - Parameters:
+        ///   - hold: The hold of the script.
+        ///   - callIndex: The index of the call, which an expired hold names.
         /// - Throws: `CancellationError` when the session stops the call, and
-        ///   always for a ``RepeatingReasoningHold/untilStopped`` hold.
-        private static func hold(_ hold: RepeatingReasoningHold) async throws {
+        ///   ``StopHoldExpired`` when a ``RepeatingReasoningHold/untilStopped``
+        ///   hold ends with no stop.
+        private static func hold(_ hold: RepeatingReasoningHold, callIndex: Int) async throws {
             switch hold {
             case .noHold:
                 return
             case .untilStopped:
-                try await waitForStop()
+                try await waitForStop(callIndex: callIndex)
             case .untilOpened(let gate):
                 try await gate.wait()
             }
         }
 
-        /// Waits until the session stops the call: the stop cancels the task
-        /// of the call.
+        /// Waits until the session stops the call, for at most
+        /// ``stopHoldLimit``: the stop cancels the task of the call, and the
+        /// cancel ends the sleep at once.
         ///
-        /// No code sends the event that the wait is on, so only the cancel
-        /// ends the wait.
+        /// When the limit ends first, the session did not stop the call. The
+        /// wait then records an `Issue` that names the call, and throws, so
+        /// the call ends and the test fails on its issue and its expectations.
         ///
-        /// - Throws: `CancellationError`, always.
-        private static func waitForStop() async throws {
-            let neverSent = AwaitedEvent()
-            // Rule T1 quiet state: a session that does not stop the call hangs here; only the stop under test can end it.
-            try? await neverSent.wait()
-            throw CancellationError()
+        /// - Parameter callIndex: The index of the call, which the issue names.
+        /// - Throws: `CancellationError` when the session stops the call, and
+        ///   ``StopHoldExpired`` when no stop comes inside the limit.
+        private static func waitForStop(callIndex: Int) async throws {
+            do {
+                try await Task.sleep(for: stopHoldLimit)
+            } catch {
+                throw CancellationError()
+            }
+            let expired = StopHoldExpired(callIndex: callIndex, limit: stopHoldLimit)
+            Issue.record(expired, Comment(rawValue: expired.description))
+            throw expired
         }
     }
 }

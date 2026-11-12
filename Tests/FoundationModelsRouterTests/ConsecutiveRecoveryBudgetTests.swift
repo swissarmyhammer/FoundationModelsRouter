@@ -13,7 +13,7 @@ import Testing
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``StagedReasoningModel``. No GPU is in the loop. The session's
 /// counter is the ``CharacterTokenCounter``: one token per character.
-@Suite("The recovery budget counts consecutive stops with no progress between them")
+@Suite("The recovery budget counts consecutive stops with no progress between them", .timeLimit(.minutes(1)))
 struct ConsecutiveRecoveryBudgetTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "ConsecutiveRecoveryBudgetTests"
@@ -34,7 +34,9 @@ struct ConsecutiveRecoveryBudgetTests {
     private static let fourthCode = "edit(query, line: 42)"
 
     /// A script whose reasoning reaches the default reasoning limit with new
-    /// lines only, and that then waits until the session stops it.
+    /// lines only, and that then waits until the session stops it
+    /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``, whose hold
+    /// fails the test when no stop comes).
     private static var reasoningStopScript: RepeatingReasoningScript {
         RepeatingReasoningScript.reasoningHeldAtLimit()
     }
@@ -48,25 +50,19 @@ struct ConsecutiveRecoveryBudgetTests {
         RepeatingReasoningScript(reasoningLines: [], hold: .noHold, ending: .runCode(code))
     }
 
-    /// Runs one streamed answer over a ``StagedReasoningSessionFixture`` with
+    /// Runs one streamed answer to ``prompt`` with
+    /// ``StagedReasoningSessionFixture/answer(to:scripts:detection:tools:tempDirPrefix:)``,
     /// the default ``RepetitionDetection`` and one ``CountingRunCodeTool``.
-    ///
-    /// When the answer throws, this helper first closes the session and
-    /// removes the temp directory of the fixture (rule T1). When it returns,
-    /// the caller ends the fixture.
+    /// The caller ends the fixture.
     ///
     /// - Parameter scripts: The script of each call, in call order.
     /// - Returns: The fixture and the events of the answer, in order.
     private static func runStagedAnswer(
         scripts: [RepeatingReasoningScript]
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
-        let fixture = try await StagedReasoningSessionFixture.make(
-            scripts: scripts, detection: RepetitionDetection(), tools: [CountingRunCodeTool(runs: RunCount())],
-            tempDirPrefix: tempDirPrefix)
-        let events = try await fixture.endingOnThrow {
-            try await collect(fixture.session.streamEvents(to: prompt))
-        }
-        return (fixture, events)
+        try await StagedReasoningSessionFixture.answer(
+            to: prompt, scripts: scripts, detection: RepetitionDetection(),
+            tools: [CountingRunCodeTool(runs: RunCount())], tempDirPrefix: tempDirPrefix)
     }
 
     @Test("stop, act, stop, act, stop, act, stop, act: each of the four reasoning stops recovers")
