@@ -19,7 +19,23 @@ comments:
     - evidence: 13 files: Sources/FoundationModelsRouter/Session/{IdenticalToolCallRun,ReasoningStop,RepetitionDetection,RoutedSessionActor,RoutedSessionActorCompactionYield,RoutedSessionActorPump,RoutedSessionActorReasoningStop,RoutedSessionActorRepetitionWatch,WatchStop}.swift; Tests/FoundationModelsRouterTests/{ConsecutiveRecoveryBudgetTests (new), Helpers/RepeatingReasoningModel, Helpers/SessionEventCollection, Helpers/StagedReasoningModel}.swift; `swift test` exit 0
     - next: /review
   timestamp: 2026-11-12T16:55:12.377032+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m78bwx7q9mk2wdn1w16dv0cn
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (caaefa73). The engine found 1 (confirmed 1, refuted 0). The caller-requested unbounded-wait check found 1 more. Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:38 (caller/unbounded-wait), Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:60 (reuse/reuse)
+    - next: bound the `.untilStopped` hold so a wrong behavior fails instead of hanging, and add a suite time limit. Then merge `runStagedAnswer` with the driver in ReasoningStopRecoveryTests into one shared helper.
+  timestamp: 2026-11-12T17:11:45.143972+00:00
+- actor: claude-code
+  id: 01m78bxcetwbkpv2ca5j9e7jxq
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 9 Session sources, ConsecutiveRecoveryBudgetTests.swift (new), 3 helpers
+    - test: green — swift test, 2642+41+19 passed; new suite 15/15 repeat runs
+    - commit: caaefa73 (pushed so ACPAgent can take the fix)
+    - review: findings — Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:38 (unbounded wait), Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:60 (reuse)
+  timestamp: 2026-11-12T17:12:00.730805+00:00
+position_column: review
 position_ordinal: '80'
 title: Recovery budget counts consecutive stops with no progress, not every stop in the answer
 ---
@@ -56,3 +72,15 @@ The host log line "no recovery was left" and the `router.recoveries` / `router.s
 - [x] A test: a recovery followed by a tool call identical to an earlier one does not reset the count.
 - [x] Repetition stops (text repetition and repeated tool call) and reasoning-limit stops share the same consecutive count. Pin one mixed case.
 - [x] `swift test` green. #recovery
+
+## Review Findings (2026-11-12 11:09)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 13 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> The `caller/unbounded-wait` item comes from the check the caller asked for: can these tests, or the staged-reasoning helpers they use, wait forever when the behavior is wrong. The engine's own items carry a validator name.
+
+- [ ] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:38` `caller/unbounded-wait` — Every test in this suite runs `reasoningStopScript` (`RepeatingReasoningScript.reasoningHeldAtLimit()`). Its `.untilStopped` hold waits on an `AwaitedEvent` that no code sends (`RepeatingReasoningModel.Executor.waitForStop`), so only a cancel from the session can end it. `StagedReasoningModel` picks each script by call count (`log.renders.count`), not by what the session asked for. So when the budget behaves wrongly, a held script can land on a call that the session never stops, for example a call after the reasoning-off final pass that runs when no recovery is left. The test then waits forever instead of failing. The suite has no `.timeLimit` trait. This is what happened on the first RED run against the old code: three tests stayed in flight for more than 13 minutes. Make a wrong behavior fail, not hang. Give the hold a bound: `waitForStop` races the event that is never sent against a deadline far above the passing run (under 0.1 s), and when the deadline passes it records an `Issue` that names the call index, then throws. As a backstop, add `.timeLimit(.minutes(1))` to `@Suite` here. Running out of scripts is not a hang: a call after the last script answers at once.
+- [ ] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:60` `reuse/reuse` — The new `runStagedAnswer` helper re-implements the same staged-answer driver that already exists in `ReasoningStopRecoveryTests`. The new copy only differs in its detection, tool, and temp-dir prefix, so two near-identical drivers will diverge as the fixture changes. Parameterize the existing helper rather than adding a parallel copy. Move the common driver into one shared helper (for example in `Helpers/StagedReasoningModel.swift` beside `StagedReasoningSessionFixture.make`) that takes the scripts, detection, and tools as parameters. Have both `ConsecutiveRecoveryBudgetTests` and `ReasoningStopRecoveryTests` call it, passing `RepetitionDetection()` and `CountingRunCodeTool(runs: RunCount())` from this suite.
