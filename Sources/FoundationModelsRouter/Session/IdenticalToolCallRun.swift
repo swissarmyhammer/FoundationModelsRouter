@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 
 /// A tool call that the model made again and again with the same arguments
 /// (task ^8eq31j0): its tool and how many identical calls came one after
@@ -28,8 +29,9 @@ public struct RepeatedToolCall: Sendable, Equatable, Codable {
 
 /// One tool call as the count of identical consecutive tool calls compares
 /// it (task ^8eq31j0): two calls are identical when they have the same tool
-/// name and the same arguments.
-struct ToolCallIdentity: Sendable, Equatable {
+/// name and the same arguments. The recovery budget compares the calls of an
+/// answer the same way (task ^0jbps9v).
+struct ToolCallIdentity: Sendable, Hashable {
     /// The name of the tool.
     let toolName: String
 
@@ -58,6 +60,19 @@ struct ToolCallIdentity: Sendable, Equatable {
     init?(toolName: String, arguments: some Any) {
         guard let content = ToolArgumentsContent.of(arguments) else { return nil }
         self.init(toolName: toolName, argumentsJSON: content.jsonString)
+    }
+
+    /// Creates the identity of the call that gave `result`, or `nil` when
+    /// the arguments of the call do not give their generated content
+    /// (task ^0jbps9v).
+    ///
+    /// The JSON text of the generated content of the arguments compares the
+    /// arguments, as for the arguments that the tool body gets.
+    ///
+    /// - Parameter result: The tool result that the model reads next.
+    init?(result: ToolResultAppend) {
+        guard let arguments = result.arguments else { return nil }
+        self.init(toolName: result.toolName, argumentsJSON: arguments.jsonString)
     }
 }
 

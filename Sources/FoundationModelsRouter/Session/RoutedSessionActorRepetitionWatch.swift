@@ -4,7 +4,8 @@ import FoundationModelsExtras
 import Logging
 
 /// The repetition watch of one session: the watch of the model call in
-/// flight, the stop it found, and the recoveries of the answer in flight.
+/// flight, the stop it found, and the recoveries of the answer in flight
+/// since its last progress.
 struct RepetitionWatchState {
     /// The last watch id that ``RoutedSessionActor/runWatchedModelCall(composedPrompt:_:)``
     /// handed out. Monotonic.
@@ -17,11 +18,23 @@ struct RepetitionWatchState {
     /// The stop that the watch of the attempt in flight found, or `nil`.
     var stop: WatchStopMarker?
 
-    /// How many recoveries the running answer ran, after repetition stops
-    /// and reasoning stops together. The pump sets it to zero for each new
-    /// answer (``RoutedSessionActor/startAnswerLimits()``), and a
-    /// continuation submission of the same answer keeps it.
-    var recoveriesThisAnswer = 0
+    /// How many recoveries the running answer ran since its last progress,
+    /// after repetition stops and reasoning stops together (task ^0jbps9v).
+    ///
+    /// Progress is a tool result of a call that is not identical to an
+    /// earlier call of the answer (``noteToolCallProgress(_:)``): it sets the
+    /// count to zero. So ``RepetitionDetection/recoveriesPerAnswer`` bounds
+    /// the consecutive stops with no progress between them, not every stop
+    /// of the answer. The pump sets it to zero for each new answer
+    /// (``RoutedSessionActor/startAnswerLimits()``), and a continuation
+    /// submission of the same answer keeps it.
+    var recoveriesSinceProgress = 0
+
+    /// The tool calls of the running answer that gave a result
+    /// (task ^0jbps9v). A result of a call in this set is a repeat, not
+    /// progress, so a loop of identical tool calls still uses up the
+    /// recoveries. The pump empties it for each new answer.
+    var toolCallsThisAnswer: Set<ToolCallIdentity> = []
 
     /// Whether the running answer ran its final pass: the one continuation
     /// after a stop that found no recovery left, whose first model pass runs
@@ -155,7 +168,10 @@ struct WatchStopMarker: Sendable {
 /// as a ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
 /// stopped attempt is recorded whole, the repeated part leaves the render,
 /// and the same answer goes on with the continuation prompt of the stop, at
-/// most ``RepetitionDetection/recoveriesPerAnswer`` times in one answer.
+/// most ``RepetitionDetection/recoveriesPerAnswer`` times in a row with no
+/// progress between the stops (task ^0jbps9v). A tool result of a call that
+/// is not a repeat is progress (``noteToolCallProgress(_:)``), and the count
+/// starts again.
 ///
 /// Each recovery runs the first pass of its model call with the reasoning of
 /// the model off (``ReasoningOffRequest``), and the render closes the stopped
@@ -304,11 +320,30 @@ extension RoutedSessionActor {
 
     /// The number of the recovery that follows a stop now, from 1, or `nil`
     /// when the running answer ran ``RepetitionDetection/recoveriesPerAnswer``
-    /// recoveries already. Repetition stops and reasoning stops share the
-    /// count.
+    /// recoveries since its last progress already. Repetition stops and
+    /// reasoning stops share the count (task ^0jbps9v).
     var nextRecovery: Int? {
-        let recoveries = repetitionWatch.recoveriesThisAnswer
+        let recoveries = repetitionWatch.recoveriesSinceProgress
         return recoveries < repetitionDetection.recoveriesPerAnswer ? recoveries + 1 : nil
+    }
+
+    /// Records the progress of one tool result of the running answer
+    /// (task ^0jbps9v).
+    ///
+    /// A result of a call that is not identical to an earlier call of the
+    /// answer, in tool name and arguments (``ToolCallIdentity``), is
+    /// progress: the count of the recoveries since the last progress goes to
+    /// zero, so the next stop gets a recovery again. A repeat is no progress,
+    /// so a loop of identical tool calls still ends the answer after
+    /// ``RepetitionDetection/recoveriesPerAnswer`` recoveries. A result whose
+    /// arguments cannot be compared is no progress either.
+    ///
+    /// - Parameter result: The tool result that the model reads next.
+    func noteToolCallProgress(_ result: ToolResultAppend) {
+        guard let call = ToolCallIdentity(result: result),
+            repetitionWatch.toolCallsThisAnswer.insert(call).inserted
+        else { return }
+        repetitionWatch.recoveriesSinceProgress = 0
     }
 
     /// Whether the watch named by `watchId` may stop the model call in
@@ -608,7 +643,7 @@ extension RoutedSessionActor {
         guard let recovery = report.recovery else {
             return try await runFinalPass(after: report, attempt: attempt, body: body)
         }
-        repetitionWatch.recoveriesThisAnswer = recovery
+        repetitionWatch.recoveriesSinceProgress = recovery
         guard compacts else {
             return try await runContinuation(
                 after: attempt, prompt: report.continuationPrompt, reasoningOff: true, body: body)

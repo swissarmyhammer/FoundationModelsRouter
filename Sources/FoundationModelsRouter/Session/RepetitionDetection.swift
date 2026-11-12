@@ -73,12 +73,20 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// that repeat by nature (```, `"""`, `)`, `...`) do not stop a call.
     public var minimumLineLength: Int
 
-    /// How many times one answer goes on after a repetition stop. An answer
-    /// is the chain of submissions from the first delivery to the final
-    /// answer, so a continuation submission does not reset the count. After
-    /// the last recovery, a stop leads to one final pass, whose first model
-    /// pass runs with the reasoning of the model off, and then the answer ends
-    /// (tasks ^0dcsd3t and ^bhdj5v9).
+    /// How many times in a row one answer goes on after a stop with no
+    /// progress between the stops (task ^0jbps9v). Repetition stops and
+    /// reasoning stops share the count.
+    ///
+    /// Progress is a tool call after a recovery that gives a tool result and
+    /// is not identical, in tool name and arguments, to an earlier call of
+    /// the answer. Progress starts the count again, so an answer that stops,
+    /// acts, stops and acts never runs out of recoveries. A repeat is no
+    /// progress, so a loop of identical tool calls still uses up the count.
+    /// An answer is the chain of submissions from the first delivery to the
+    /// final answer, so a continuation submission does not reset the count.
+    /// After the last recovery, a stop leads to one final pass, whose first
+    /// model pass runs with the reasoning of the model off, and then the
+    /// answer ends (tasks ^0dcsd3t and ^bhdj5v9).
     ///
     /// The key of this value in a stored session's `index.md` is
     /// `recoveriesPerTurn`, the name of the property before the rename, so
@@ -126,7 +134,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``,
     /// whose first model pass runs with the reasoning of the model off, which
     /// tells the model to act. The recovery counts against
-    /// ``recoveriesPerAnswer``. A detection that is not enabled sets no limit.
+    /// ``recoveriesPerAnswer``, with the other stops since the last progress.
+    /// A detection that is not enabled sets no limit.
     public var reasoningTokenLimit: Int?
 
     /// The most identical consecutive tool calls of one answer (task
@@ -137,8 +146,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// the final pass keep it, and a different call that comes between
     /// starts it again. The call that reaches this limit stops before its
     /// tool body runs (``RoutedSessionActor/checkToolCallForRepetition(_:)``).
-    /// The stop is a repetition stop, with the same recoveries and the same
-    /// final pass, and its recovery prompt names the tool and the count. A
+    /// The stop is a repetition stop, with the same consecutive count of
+    /// recoveries (``recoveriesPerAnswer``) and the same final pass, and its recovery prompt names the tool and the count. A
     /// detection that is not enabled sets no limit.
     public var identicalToolCallLimit: Int?
 
@@ -168,7 +177,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     ///   - windowTokens: The window, in generated tokens, that must hold at
     ///     least one new line.
     ///   - minimumLineLength: The minimum length of a line that always counts.
-    ///   - recoveriesPerAnswer: How many times one answer goes on after a stop.
+    ///   - recoveriesPerAnswer: How many times in a row one answer goes on
+    ///     after a stop with no progress between the stops.
     ///   - passTokenLimit: The most output tokens of one generation pass when
     ///     the caller names no ceiling.
     ///   - comparesLineShapes: Whether the detector compares the shape of
@@ -363,8 +373,10 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     /// The settings in force for the stop.
     public let detection: RepetitionDetection
 
-    /// The number of the recovery attempt that follows the stop, from 1, or
-    /// `nil` when the answer has no recovery left: one final pass, whose first
+    /// The number of the recovery attempt that follows the stop, counted
+    /// from 1 since the last progress of the answer
+    /// (``RepetitionDetection/recoveriesPerAnswer``), or `nil` when the
+    /// answer has no recovery left: one final pass, whose first
     /// model pass runs with the reasoning of the model off, then follows
     /// (tasks ^0dcsd3t and ^bhdj5v9).
     public let recovery: Int?

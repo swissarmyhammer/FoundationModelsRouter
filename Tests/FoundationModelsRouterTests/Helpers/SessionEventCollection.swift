@@ -161,6 +161,21 @@ extension Sequence<SessionEvent> {
         }
     }
 
+    /// The repetition stops and the reasoning stops among these events, as
+    /// their short reports, in the order they came (task ^0jbps9v).
+    var watchStops: [WatchStop] {
+        compactMap { event in
+            switch event {
+            case .repetitionStopped(let stop):
+                return WatchStop(stop)
+            case .reasoningStopped(let stop):
+                return WatchStop(stop)
+            default:
+                return nil
+            }
+        }
+    }
+
     /// The usage of each generation call among these events, in order.
     var generationCalls: [GenerationCallUsage] {
         compactMap { event in

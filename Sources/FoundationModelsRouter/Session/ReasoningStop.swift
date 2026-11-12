@@ -37,8 +37,10 @@ public struct ReasoningStop: Sendable, Equatable, CustomStringConvertible {
     /// The settings in force for the stop.
     public let detection: RepetitionDetection
 
-    /// The number of the recovery attempt that follows the stop, from 1, or
-    /// `nil` when the answer has no recovery left: one final pass, whose first
+    /// The number of the recovery attempt that follows the stop, counted
+    /// from 1 since the last progress of the answer
+    /// (``RepetitionDetection/recoveriesPerAnswer``), or `nil` when the
+    /// answer has no recovery left: one final pass, whose first
     /// model pass runs with the reasoning of the model off, then follows
     /// (tasks ^0dcsd3t and ^bhdj5v9).
     public let recovery: Int?

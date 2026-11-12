@@ -97,7 +97,9 @@ enum ReasoningOnlyOutput {
 ///   answer goes on in ``continueAfterReasoningEnd(_:attempt:body:)``.
 ///
 /// Both recoveries count against ``RepetitionDetection/recoveriesPerAnswer``,
-/// with the recoveries after repetition stops. The first model pass of each
+/// with the recoveries after repetition stops, since the last progress of
+/// the answer: a tool result of a call that is not a repeat starts the count
+/// again (task ^0jbps9v). The first model pass of each
 /// recovery runs with the reasoning of the model off, and after the last one
 /// a final pass, whose first model pass also runs with the reasoning off,
 /// asks for the final answer

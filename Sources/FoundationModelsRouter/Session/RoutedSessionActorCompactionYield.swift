@@ -44,12 +44,15 @@ extension RoutedSessionActor {
     /// (``noOpToolCallStop``).
     ///
     /// Before the check, the round of the no-op check records the result
-    /// (``noteRealToolResult(_:)``, task ^rw72f4j), and the boundary is a
-    /// settled point of the transcript (``settleTranscriptAtToolResult()``).
+    /// (``noteRealToolResult(_:)``, task ^rw72f4j), the recovery budget
+    /// records the progress of the result (``noteToolCallProgress(_:)``,
+    /// task ^0jbps9v), and the boundary is a settled point of the transcript
+    /// (``settleTranscriptAtToolResult()``).
     ///
     /// - Parameter result: The tool result that the model reads next.
     func noteToolResult(_ result: ToolResultAppend) {
         noteRealToolResult(result)
+        noteToolCallProgress(result)
         settleTranscriptAtToolResult()
         guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall,
             !isWorkCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil, noOpToolCallStop == nil

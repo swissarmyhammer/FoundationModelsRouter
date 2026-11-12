@@ -479,9 +479,11 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// - ``compactionYieldsStopped``: a compaction inside the answer that
     ///   applied no summary stops the next ones of that answer only;
-    /// - ``RepetitionWatchState/recoveriesThisAnswer``: the answer goes on
+    /// - ``RepetitionWatchState/recoveriesSinceProgress`` and
+    ///   ``RepetitionWatchState/toolCallsThisAnswer``: the answer goes on
     ///   after at most ``RepetitionDetection/recoveriesPerAnswer`` repetition
-    ///   stops and reasoning stops together;
+    ///   stops and reasoning stops together in a row, and a tool result of a
+    ///   call that is not a repeat starts the count again (task ^0jbps9v);
     /// - ``RepetitionWatchState/finalPassRan``: an answer runs at most one
     ///   final pass after its last recovery (task ^0dcsd3t);
     /// - ``RepetitionWatchState/toolCallRun``: the count of identical
@@ -498,7 +500,8 @@ extension RoutedSessionActor: SessionMailObserver {
     /// limits of its answer.
     private func startAnswerLimits() {
         compactionYieldsStopped = false
-        repetitionWatch.recoveriesThisAnswer = 0
+        repetitionWatch.recoveriesSinceProgress = 0
+        repetitionWatch.toolCallsThisAnswer = []
         repetitionWatch.finalPassRan = false
         repetitionWatch.toolCallRun = IdenticalToolCallRun()
     }

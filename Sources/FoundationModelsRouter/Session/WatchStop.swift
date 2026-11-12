@@ -37,12 +37,14 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
     /// Why the stopped pass ended.
     public let passFinishReason: FinishReason
 
-    /// The number of the recovery that follows the stop, from 1, or `nil`
-    /// when the answer has no recovery left.
+    /// The number of the recovery that follows the stop, counted from 1
+    /// since the last progress of the answer, or `nil` when the answer has no
+    /// recovery left (task ^0jbps9v). A host that counts the stops with a
+    /// recovery gets the total of the recoveries of the answer.
     public let recovery: Int?
 
-    /// How many recoveries one answer runs at most
-    /// (``RepetitionDetection/recoveriesPerAnswer``).
+    /// How many recoveries one answer runs at most in a row with no progress
+    /// between the stops (``RepetitionDetection/recoveriesPerAnswer``).
     public let recoveriesAllowed: Int
 
     /// The tool call that the answer repeated up to a repetition stop
@@ -59,7 +61,8 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
     ///   - limit: The limit that the tokens reached, or `nil`.
     ///   - passFinishReason: Why the stopped pass ended.
     ///   - recovery: The number of the recovery that follows, or `nil`.
-    ///   - recoveriesAllowed: How many recoveries one answer runs at most.
+    ///   - recoveriesAllowed: How many recoveries one answer runs at most in
+    ///     a row with no progress between the stops.
     ///   - repeatedToolCall: The tool call that the answer repeated up to the
     ///     stop, or `nil`.
     public init(
@@ -95,8 +98,9 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
             recoveriesAllowed: stop.detection.recoveriesPerAnswer)
     }
 
-    /// How many recoveries the answer used before this stop: one less than
-    /// ``recovery``, or all of ``recoveriesAllowed`` when no recovery is left.
+    /// How many recoveries the answer used since its last progress, before
+    /// this stop: one less than ``recovery``, or all of
+    /// ``recoveriesAllowed`` when no recovery is left.
     public var recoveriesUsed: Int {
         recovery.map { $0 - 1 } ?? recoveriesAllowed
     }

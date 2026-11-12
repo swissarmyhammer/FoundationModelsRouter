@@ -95,8 +95,7 @@ struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
             if configuration.scripts.indices.contains(callIndex) {
                 let script = configuration.scripts[callIndex]
                 try await RepeatingReasoningModel.Executor.writeReasoning(script, into: channel)
-                if script.ending == .toolCall {
-                    await RepeatingReasoningModel.Executor.sendToolCall(into: channel)
+                if await RepeatingReasoningModel.Executor.sendToolCall(endingWith: script.ending, into: channel) {
                     return
                 }
             }

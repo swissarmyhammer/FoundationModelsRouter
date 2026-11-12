@@ -1,0 +1,1 @@
+{"id":"01M789AXBDKNF49FYYYE9RYR5S","timestamp":"2026-11-12T16:26:58.285223Z","op":"create","item_id":"01M789AXBA0WN31GRQ06DPSWRD","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: '5319e7'\n+tag_name: recovery\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: '5319e7'\n-tag_name: recovery\n","transaction_id":null}

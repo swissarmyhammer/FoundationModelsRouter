@@ -15,6 +15,11 @@ enum RepeatingReasoningEnding: Sendable, Hashable {
     /// The call asks for one ``CountingRunCodeTool`` call. The next call,
     /// whose transcript holds the tool output, answers.
     case toolCall
+
+    /// The call asks for one ``CountingRunCodeTool`` call that runs the
+    /// code given, so two scripts can make two distinct calls (task
+    /// ^0jbps9v). The code holds no quote and no backslash.
+    case runCode(String)
 }
 
 /// What one call of a ``RepeatingReasoningModel`` does after its last
@@ -285,8 +290,7 @@ struct RepeatingReasoningModel: LanguageModel {
             configuration.log.record(reasoningLevel: request.contextOptions.reasoningLevel)
             if playsScript(request.transcript) {
                 try await Self.writeReasoning(configuration.script, into: channel)
-                if configuration.script.ending == .toolCall {
-                    await Self.sendToolCall(into: channel)
+                if await Self.sendToolCall(endingWith: configuration.script.ending, into: channel) {
                     return
                 }
             }
@@ -304,11 +308,12 @@ struct RepeatingReasoningModel: LanguageModel {
             RoutedSessionActor.finalPassPrompt,
         ]
 
-        /// The arguments of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.
-        private static let toolCallArguments = #"{"code": "print(value)"}"#
+        /// The code of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.
+        private static let toolCallCode = "print(value)"
 
-        /// The id of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.
-        private static let toolCallId = "reasoning-run-code-call"
+        /// The start of the id of each tool call. Each call adds a UUID, so
+        /// two calls in one transcript never share an id.
+        private static let toolCallIdPrefix = "reasoning-run-code-call-"
 
         /// Whether a call over `transcript` plays ``Configuration/script``: the
         /// transcript holds no tool output, and the call is not a continuation
@@ -325,15 +330,41 @@ struct RepeatingReasoningModel: LanguageModel {
             return !holdsToolOutput && (!isContinuation || configuration.repeatsAfterStop)
         }
 
-        /// Sends one ``CountingRunCodeTool`` call with ``toolCallArguments``.
+        /// Sends one ``CountingRunCodeTool`` call whose arguments are the
+        /// JSON object `{"code": "<code>"}`.
         ///
-        /// - Parameter channel: The generation channel this call emits into.
-        static func sendToolCall(into channel: LanguageModelExecutorGenerationChannel) async {
+        /// - Parameters:
+        ///   - code: The code of the call. It holds no quote and no backslash.
+        ///   - channel: The generation channel this call emits into.
+        static func sendToolCall(
+            running code: String = toolCallCode, into channel: LanguageModelExecutorGenerationChannel
+        ) async {
             await channel.send(
                 .toolCalls(
                     action: .toolCall(
-                        id: toolCallId, name: CountingRunCodeTool.toolName,
-                        action: .appendArguments(toolCallArguments, tokenCount: emittedTokenCount))))
+                        id: toolCallIdPrefix + UUID().uuidString, name: CountingRunCodeTool.toolName,
+                        action: .appendArguments(#"{"code": "\#(code)"}"#, tokenCount: emittedTokenCount))))
+        }
+
+        /// Writes the tool call that `ending` asks for, or nothing for an
+        /// ending that answers.
+        ///
+        /// - Parameters:
+        ///   - ending: The ending of the script.
+        ///   - channel: The generation channel this call emits into.
+        /// - Returns: `true` when the call wrote a tool call.
+        static func sendToolCall(
+            endingWith ending: RepeatingReasoningEnding, into channel: LanguageModelExecutorGenerationChannel
+        ) async -> Bool {
+            switch ending {
+            case .answer:
+                return false
+            case .toolCall:
+                await sendToolCall(into: channel)
+            case .runCode(let code):
+                await sendToolCall(running: code, into: channel)
+            }
+            return true
         }
 
         /// Writes the reasoning lines of `script` one by one, then does what
