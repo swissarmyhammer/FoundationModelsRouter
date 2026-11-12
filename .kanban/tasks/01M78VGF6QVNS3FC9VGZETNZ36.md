@@ -68,8 +68,24 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorModelCallStop.swift (new), NoOpToolCallStop.swift, RoutedSessionActorCompactionYield.swift, RoutedSessionActorDelegationHint.swift, RoutedSessionActorRepetitionWatch.swift, RoutedSessionActorRunMailStop.swift, Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift. All 4 findings of the 2026-11-12 16:25 section checked. Root `swift test`: 2648 tests/308 suites + 41/23 + 19/3 passed, 0 failures, no compiler warnings. IntegrationTests not run (its one known failure is ^5hjddsq). Committed as "refactor(session): one stop protocol, guard and attempt record for model-call stops (^zetnz36)", not pushed.
     - next: /review
   timestamp: 2026-11-12T22:37:02.878511+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m78zpnyy8spgzqmv6j54cy7h
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (e225c877): 0 findings, 0 confirmed, 1 refuted, 7 files reviewed. All 4 findings from the 2026-11-12 16:25 review are checked and fixed in e225c877 (stopModelCallAtCompleteRound, modelCallMayStop/noStopOutstanding, recordAttemptStoppedAtRound, NoOpToolCallSessionFixture.isNoOp). Behavior is unchanged: each old guard has the same conjuncts as the new one, and the argument evaluation that moved (answerTakesJoiningMail, endReasons) is a pure read. `swift build` passes. `swift test --filter` over the NoOp/RunMail/Delegat/Repetition/Compaction/ConsecutiveRecoveryBudget suites: 257 tests in 61 suites passed.
+    - next: none, task moved to done.
+  timestamp: 2026-11-12T22:57:52.606236+00:00
+- actor: claude-code
+  id: 01m78zq4p4adja9efzp7yrqyhw
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 7 files (dedup for 4 findings)
+    - test: green — swift test 2648+41+19
+    - commit: e225c877
+    - review: clean — 0 findings, prior 4/4 checked
+  timestamp: 2026-11-12T22:58:07.684806+00:00
+position_column: done
+position_ordinal: ffffffffff8a80
 title: A no-op tool call with nothing pending ends the answer instead of running forever
 ---
 Reported by FoundationModelsACPAgent (checked24, django-14608, session 01M78T63VRWDNBWFV1EB541M5V, a double-check child).
