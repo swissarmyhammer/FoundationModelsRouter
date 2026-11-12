@@ -36,8 +36,24 @@ comments:
     - evidence: 1 file — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedRealProfile.swift. `--filter CrossRouterPoolIntegrationTests`: 4 tests in 1 suite passed. `--filter 'DecisionSlotIntegrationTests|GGUFProfileIntegrationTests'`: 7 tests in 2 suites passed. `--filter 'FoundationModelsRouterIntegrationTests\.IntegrationTests/'` (milestone 7, the other user of the gated profile; found by grep): 2 tests in 1 suite passed. Root `swift test` once: 2638 tests in 305 suites, 41 in 23, 19 in 3, all passed. Only warning: the existing build-system "missing creator for mutated node" for mlx-swift_Cmlx.bundle.
     - next: /review
   timestamp: 2026-11-12T00:43:58.352712+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m76khtdyfh7ymm916s5vpnym
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (f8a36e05). 0 findings, 0 confirmed, 0 refuted. 7 review pairs attempted, 0 failed. 1 file reviewed. 4 `.kanban/` files are excluded by `.reviewignore`.
+    - next: none. The task is in `done`.
+  timestamp: 2026-11-12T00:47:01.566845+00:00
+- actor: claude-code
+  id: 01m76kj62eqgnshy00rpynr7f9
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — IntegrationTests/.../Support/GatedRealProfile.swift (decision: []); cause: the default decider-4b loaded as a 4th model and left router 2 too little memory for its flash session; router gap filed as ^0f5h2a2
+    - test: green — root swift test 2638 + 41 + 19 passed; IntegrationTests CrossRouterPool + DecisionSlot 7 passed
+    - commit: f8a36e05
+    - review: clean — 0 findings
+  timestamp: 2026-11-12T00:47:13.486193+00:00
+position_column: done
+position_ordinal: ffffffffff8780
 title: Fix CrossRouterPoolIntegrationTests after the decision slot (CI run 43122216651)
 ---
 ## What
