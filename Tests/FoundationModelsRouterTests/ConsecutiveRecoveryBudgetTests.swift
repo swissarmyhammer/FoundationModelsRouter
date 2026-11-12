@@ -33,22 +33,6 @@ struct ConsecutiveRecoveryBudgetTests {
     /// The code of the fourth distinct tool call.
     private static let fourthCode = "edit(query, line: 42)"
 
-    /// The code of a call that the host check of
-    /// ``isNoOp(toolName:arguments:)`` marks as a no-op (task ^zetnz36).
-    private static let noOpCode = "return waiting-1"
-
-    /// The host check of the no-op test: a `runCode` call whose snippet is
-    /// ``noOpCode`` is a no-op.
-    ///
-    /// - Parameters:
-    ///   - toolName: The name of the called tool.
-    ///   - arguments: The arguments of the call.
-    /// - Returns: `true` for a no-op call.
-    private static func isNoOp(toolName: String, arguments: GeneratedContent) -> Bool {
-        let code = try? arguments.value(String.self, forProperty: "code")
-        return toolName == CountingRunCodeTool.toolName && code == noOpCode
-    }
-
     /// A script whose reasoning reaches the default reasoning limit with new
     /// lines only, and that then waits until the session stops it
     /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``, whose hold
@@ -123,10 +107,11 @@ struct ConsecutiveRecoveryBudgetTests {
             scripts: [
                 Self.toolCallScript(running: Self.firstCode), Self.reasoningStopScript,
                 RepeatingReasoningScript(
-                    reasoningLines: [], hold: .noHold, ending: .runCodes([Self.firstCode, Self.noOpCode])),
+                    reasoningLines: [], hold: .noHold,
+                    ending: .runCodes([Self.firstCode, NoOpToolCallSessionFixture.noOpCode])),
                 Self.reasoningStopScript,
             ],
-            isNoOpToolCall: Self.isNoOp(toolName:arguments:))
+            isNoOpToolCall: NoOpToolCallSessionFixture.isNoOp(toolName:arguments:))
         defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1, 2])

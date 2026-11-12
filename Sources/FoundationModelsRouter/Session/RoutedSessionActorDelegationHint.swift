@@ -57,43 +57,21 @@ extension RoutedSessionActor {
     /// Stops the model call in flight to give the hint, when the hint is due.
     ///
     /// The session's ``ToolResultAppendBoundary`` calls it after
-    /// ``noteToolResult(_:)`` for each tool result. Nothing happens for a
-    /// result outside the session's own open model call, before the last
-    /// result of the round, while another stop is set, or when the advisor
-    /// gives no hint.
+    /// ``noteToolResult(_:)`` for each tool result. Nothing happens when the
+    /// session has no advisor, or when the advisor gives no hint. The stop
+    /// follows ``stopModelCallAtCompleteRound(finding:losing:stop:category:message:)``:
+    /// a hint that another stop won over goes back to the advisor.
     func noteDelegationHintDue() async {
-        guard let advisor = delegationAdvisorSlot.withLock({ $0 }),
-            SessionCallMark.current?.isOpenCall(of: id) == true, mayStopForDelegationHint,
-            roundIsComplete
-        else { return }
-        guard let hint = await advisor.takeHint() else { return }
-        // The take suspends: another stop of the call can land meanwhile.
-        guard mayStopForDelegationHint else {
-            advisor.releaseHint()
-            return
-        }
-        delegationHintStop = DelegationHintStop(
-            hint: hint, liveEntries: backend.transcriptEntries(), results: noOpToolCallRound.results)
-        sessionLogger(.delegationHint).notice(
-            "a code change by hand ends the model call, and the next prompt gives the delegate hint",
-            metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)"])
-        inFlightModelCall?.cancel()
-    }
-
-    /// Whether every call of the round in flight gave its result. The
-    /// boundary sees each result, so the last result of the round stops the
-    /// call, and no call of the round loses its result. The run mail stop
-    /// (``noteRunMailDue()``) reads it too.
-    var roundIsComplete: Bool {
-        noOpToolCallRound.results.count >= (currentRoundCalls()?.count ?? 1)
-    }
-
-    /// Whether the hint may stop the model call in flight: a model call is in
-    /// flight, no stop is outstanding against the answer, and no other stop
-    /// of the call is set.
-    private var mayStopForDelegationHint: Bool {
-        inFlightModelCall != nil && !isWorkCancelled && toolResultWatch.yield == nil && noOpToolCallStop == nil
-            && repetitionWatch.stop == nil && delegationHintStop == nil && runMailStop == nil
+        guard let advisor = delegationAdvisorSlot.withLock({ $0 }) else { return }
+        await stopModelCallAtCompleteRound(
+            finding: { await advisor.takeHint() },
+            losing: { _ in advisor.releaseHint() },
+            stop: { hint in
+                delegationHintStop = DelegationHintStop(
+                    hint: hint, liveEntries: backend.transcriptEntries(), results: noOpToolCallRound.results)
+            },
+            category: .delegationHint,
+            message: "a code change by hand ends the model call, and the next prompt gives the delegate hint")
     }
 
     /// Takes the hint marker of the attempt that just failed.

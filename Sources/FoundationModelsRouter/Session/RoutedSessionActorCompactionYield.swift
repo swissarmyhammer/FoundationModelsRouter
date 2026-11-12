@@ -54,8 +54,8 @@ extension RoutedSessionActor {
         noteRealToolResult(result)
         noteToolCallProgress(result)
         settleTranscriptAtToolResult()
-        guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall,
-            !isWorkCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil, noOpToolCallStop == nil
+        guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall, modelCallMayStop,
+            !compactionYieldsStopped
         else { return }
         toolResultWatch.append(result, tokens: tokenCounter.count(result.text))
         let snapshot = backend.inFlightResponse()

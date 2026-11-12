@@ -241,7 +241,7 @@ extension RoutedSessionActor {
         let operationPending = await hasPendingOperation()
         // The read suspends: another no-op call or another stop can land
         // meanwhile.
-        guard noOpToolCallStop == nil, mayStopForNoOpToolCall else { return }
+        guard modelCallMayStop, repetitionWatch.stop == nil else { return }
         stopModelCall(forNoOpToolCallOf: toolName, operationPending: operationPending)
     }
 
@@ -280,13 +280,6 @@ extension RoutedSessionActor {
         noOpToolCallRound.enter(callsEntryId: currentRoundCalls()?.id)
         noOpToolCallRound.append(result)
         noOpRoundChanges.signal()
-    }
-
-    /// Whether the end of a round with a no-op call may stop the model call
-    /// in flight: a model call is in flight, no stop is outstanding against
-    /// the answer, and no tool result or watch already stopped the call.
-    private var mayStopForNoOpToolCall: Bool {
-        inFlightModelCall != nil && !isWorkCancelled && toolResultWatch.yield == nil && repetitionWatch.stop == nil
     }
 
     /// Logs the stop, sets the marker, wakes each no-op call of the round
@@ -363,11 +356,9 @@ extension RoutedSessionActor {
             await recordAttemptWithNoNoOpCall(stop, attempt: attempt)
             return ""
         }
-        let rebuilt = InFlightTranscript.rebuilt(
-            settledEntries: backend.transcriptEntries(), sources: [stop.liveEntries],
-            results: endReasons(answeringTheNoOpCallsOf: stop.liveEntries, attempt: attempt),
-            entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
-        await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
+        let rebuilt = await recordAttemptStoppedAtRound(
+            liveEntries: stop.liveEntries,
+            results: endReasons(answeringTheNoOpCallsOf: stop.liveEntries, attempt: attempt), attempt: attempt)
         return Self.lastResponseText(of: rebuilt, entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt)
     }
 
@@ -379,12 +370,9 @@ extension RoutedSessionActor {
     ///   - stop: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
     private func recordAttemptWithNoNoOpCall(_ stop: NoOpToolCallStop, attempt: StoppedAttempt) async {
-        let ids = attempt.entryIdsBeforeAttempt
-        let rebuilt = InFlightTranscript.rebuilt(
-            settledEntries: removingUnansweredNoOpCalls(from: backend.transcriptEntries(), entryIdsBeforeAttempt: ids),
-            sources: [removingUnansweredNoOpCalls(from: stop.liveEntries, entryIdsBeforeAttempt: ids)],
-            results: stop.results, entryIdsBeforeAttempt: ids, composedPrompt: attempt.composedPrompt)
-        await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
+        await recordAttemptStoppedAtRound(liveEntries: stop.liveEntries, results: stop.results, attempt: attempt) {
+            removingUnansweredNoOpCalls(from: $0, entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt)
+        }
     }
 
     /// One result with ``noOpToolCallEndReason`` for each unanswered no-op

@@ -50,32 +50,33 @@ extension RoutedSessionActor {
     /// when such mail waits.
     ///
     /// The session's ``ToolResultAppendBoundary`` calls it after
-    /// ``noteDelegationHintDue()`` for each tool result. Nothing happens for
-    /// a result outside the session's own open model call, before the last
-    /// result of the round, while another stop is set, when the answer takes
-    /// no joining mail, or when no new run mail starts a submission.
+    /// ``noteDelegationHintDue()`` for each tool result. Nothing happens when
+    /// the answer takes no joining mail, or when no new run mail starts a
+    /// submission. The stop follows
+    /// ``stopModelCallAtCompleteRound(finding:losing:stop:category:message:)``.
     func noteRunMailDue() async {
-        guard SessionCallMark.current?.isOpenCall(of: id) == true, mayStopForRunMail, roundIsComplete,
-            answerTakesJoiningMail
-        else { return }
-        let runTokens = await readBackgroundRunTokens()
-        let mail = await outbox.pending().events.filter { !runMailStoppedIds.contains($0.id) }
-        // The reads suspend: another stop of the call can land meanwhile.
-        guard mayStopForRunMail, SessionOutbox.canStartASubmission(mail, runTokens: runTokens) else { return }
-        runMailStoppedIds.formUnion(mail.map(\.id))
-        runMailStop = RunMailStop(liveEntries: backend.transcriptEntries(), results: noOpToolCallRound.results)
-        sessionLogger(.runMailStop).notice(
-            "run mail arrived while the model called tools; the model call ends, and the answer delivers the mail",
-            metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)"])
-        inFlightModelCall?.cancel()
+        guard answerTakesJoiningMail else { return }
+        await stopModelCallAtCompleteRound(
+            finding: { await newRunMailStartingASubmission() },
+            stop: { mail in
+                runMailStoppedIds.formUnion(mail.map(\.id))
+                runMailStop = RunMailStop(liveEntries: backend.transcriptEntries(), results: noOpToolCallRound.results)
+            },
+            category: .runMailStop,
+            message: """
+                run mail arrived while the model called tools; \
+                the model call ends, and the answer delivers the mail
+                """)
     }
 
-    /// Whether the run mail may stop the model call in flight: a model call
-    /// is in flight, no stop is outstanding against the answer, and no other
-    /// stop of the call is set.
-    private var mayStopForRunMail: Bool {
-        inFlightModelCall != nil && !isWorkCancelled && toolResultWatch.yield == nil && noOpToolCallStop == nil
-            && repetitionWatch.stop == nil && delegationHintStop == nil && runMailStop == nil
+    /// The queued mail that no earlier run mail stop took, when it starts a
+    /// submission by itself (``SessionOutbox/canStartASubmission(_:runTokens:)``).
+    ///
+    /// - Returns: The mail, or `nil` when it starts no submission.
+    private func newRunMailStartingASubmission() async -> [SessionOutbox.PendingEvent]? {
+        let runTokens = await readBackgroundRunTokens()
+        let mail = await outbox.pending().events.filter { !runMailStoppedIds.contains($0.id) }
+        return SessionOutbox.canStartASubmission(mail, runTokens: runTokens) ? mail : nil
     }
 
     /// Takes the run mail marker of the attempt that just failed.
@@ -130,10 +131,7 @@ extension RoutedSessionActor {
         prompt: String,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        let rebuilt = InFlightTranscript.rebuilt(
-            settledEntries: backend.transcriptEntries(), sources: [liveEntries], results: results,
-            entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
-        await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
+        await recordAttemptStoppedAtRound(liveEntries: liveEntries, results: results, attempt: attempt)
         return try await runContinuation(after: attempt, prompt: prompt, body: body)
     }
 }

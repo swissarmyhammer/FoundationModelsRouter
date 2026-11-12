@@ -35,7 +35,40 @@ comments:
   id: 01m78xxq29cxjr6rsx654xmjbh
   text: 'Eval integration target (`swift test --package-path IntegrationTests --filter FoundationModelsRouterEvalIntegrationTests`): 1 test in 1 suite passed (69 s). The only open integration failure is ^5hjddsq, the pinned-date test, which does not touch the session code.'
   timestamp: 2026-11-12T22:26:45.961530+00:00
-position_column: review
+- actor: claude-code
+  id: 01m78y2vwpt0h5pndstna2scb7
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (d87d9598, which is defa27ec amended with .kanban changes only): 4 findings, 4 confirmed, 5 refuted. Sources/FoundationModelsRouter/Session/RoutedSessionActorRunMailStop.swift:57, Sources/FoundationModelsRouter/Session/RoutedSessionActorRunMailStop.swift:76, Sources/FoundationModelsRouter/Session/RoutedSessionActorRunMailStop.swift:133, Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:47
+    - next: implement the 4 findings in the 2026-11-12 16:25 Review Findings section, then re-review
+  timestamp: 2026-11-12T22:29:34.742648+00:00
+- actor: claude-code
+  id: 01m78y3a1mhan1mec2fvh6d99t
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 23 files
+    - test: green — swift test 2648+41+19; IntegrationTests 60 with 1 unrelated failure (^5hjddsq); eval 1/1
+    - commit: d87d9598
+    - review: findings — RoutedSessionActorRunMailStop.swift:57, :76, :133; ConsecutiveRecoveryBudgetTests.swift:47
+  timestamp: 2026-11-12T22:29:49.236444+00:00
+- actor: claude-code
+  id: 01m78yf6fhf9cn58qm31q2eaec
+  text: |-
+    Findings pass (refactor, no behavior change):
+    - New Session/RoutedSessionActorModelCallStop.swift holds the shared stop rules: `modelCallMayStop` (model call in flight, not cancelled, no compaction yield, no no-op stop), `noStopOutstanding` (that plus no repetition, delegation-hint or run-mail stop), `roundIsComplete` (moved from the hint file), `stopModelCallAtCompleteRound(finding:losing:stop:category:message:)` (the open-call/round guard, the suspending read, the re-check, the marker, the log and the cancel), and `recordAttemptStoppedAtRound(liveEntries:results:attempt:keeping:)` (the rebuild + recordAttemptStoppedAtToolCall; `keeping` carries the no-op filtering from the call site).
+    - Finding 1: noteDelegationHintDue and noteRunMailDue now supply only the candidate (advisor.takeHint / newRunMailStartingASubmission), the marker and the log text; the hint passes releaseHint as `losing`.
+    - Finding 2: mayStopForDelegationHint and mayStopForRunMail are gone (noStopOutstanding). The same base conjunction also sat in mayStopForNoOpToolCall (removed: `modelCallMayStop, repetitionWatch.stop == nil`), watchMayStopModelCall (repetition) and the noteToolResult guard of the compaction yield; all read modelCallMayStop now. Each guard keeps exactly the markers it read before, so no stop changed which other stop it yields to. Post-attempt guards (reasoningEndStop, compactsAfterCeilingStop) are not in-flight stop guards and were left alone.
+    - Finding 3: continueAfterCompleteRound, recordAttemptWithNoNoOpCall (filter via `keeping`) and the nothing-pending branch of continueAfterNoOpToolCallStop (uses the returned rebuilt transcript) all call recordAttemptStoppedAtRound.
+    - Finding 4: ConsecutiveRecoveryBudgetTests uses NoOpToolCallSessionFixture.isNoOp / .noOpCode, both already internal; no widening needed.
+  timestamp: 2026-11-12T22:36:18.801353+00:00
+- actor: claude-code
+  id: 01m78yghgyb8kant55ex4y87fv
+  text: |-
+    ### implement — changed
+    - evidence: 7 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorModelCallStop.swift (new), NoOpToolCallStop.swift, RoutedSessionActorCompactionYield.swift, RoutedSessionActorDelegationHint.swift, RoutedSessionActorRepetitionWatch.swift, RoutedSessionActorRunMailStop.swift, Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift. All 4 findings of the 2026-11-12 16:25 section checked. Root `swift test`: 2648 tests/308 suites + 41/23 + 19/3 passed, 0 failures, no compiler warnings. IntegrationTests not run (its one known failure is ^5hjddsq). Committed as "refactor(session): one stop protocol, guard and attempt record for model-call stops (^zetnz36)", not pushed.
+    - next: /review
+  timestamp: 2026-11-12T22:37:02.878511+00:00
+position_column: doing
 position_ordinal: '80'
 title: A no-op tool call with nothing pending ends the answer instead of running forever
 ---
@@ -59,3 +92,18 @@ The model thought 01M78V87PK35W56WDS05TB7JYY was still pending after its complet
 - [x] Coordinator addition: with nothing pending, each no-op call of a round of only no-op calls gets `RoutedSessionActor.noOpToolCallEndReason` (tool-neutral) as its output; edge-case test with a computing snippet.
 - [x] Investigate how a mid-answer run completion is delivered, and fix it with a test if it is only delivered after the answer.
 - [x] Full suite green. #recovery
+
+## Review Findings (2026-11-12 16:25)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 18 file(s) reviewed, 5 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRunMailStop.swift:57` `reuse/reuse` — noteRunMailDue is a parallel copy of noteDelegationHintDue. Both check the same open-call and round guards, read a queue, re-check the stop flag after the suspension, set a marker, log, and cancel inFlightModelCall. The new run-mail stop was written next to the hint stop instead of extending it, so the stop protocol now exists twice and a change to one will be missed in the other. Generalize the shared body into one helper that takes the candidate mail or hint as a closure and a marker factory, for example stopModelCallForRound(where:makeStop:logMessage:). Then noteDelegationHintDue and noteRunMailDue each become a few lines that supply only what differs, which is the source of the mail and the marker type.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRunMailStop.swift:76` `duplication/duplication` — `mayStopForRunMail` repeats the same guard as `mayStopForDelegationHint`: the same five conditions (model call in flight, not cancelled, no yield, no no-op stop, no repetition stop) plus the other stop markers. The two copies differ only in which stop marker they add. A later change to the stop rules has to be made in both places, and they can drift apart. Extract one private predicate, for example `mayStopForAnyOtherStop` or `noStopOutstanding`, that holds the shared conditions: model call in flight, not cancelled, no yield, no no-op stop, no repetition stop, no delegation-hint stop, no run-mail stop. Both `mayStopForDelegationHint` and `mayStopForRunMail` then reduce to the shared predicate. Declare it in one file and reference it from the other.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRunMailStop.swift:133` `duplication/duplication` — `continueAfterCompleteRound` repeats the transcript-rebuild step of `continueAfterNoOpToolCallStop`: the same `InFlightTranscript.rebuilt` call with `settledEntries: backend.transcriptEntries()`, one live source, the round's results, and the attempt's ids and composed prompt, followed by `recordAttemptStoppedAtToolCall`. The two copies can drift, and a fix to the rebuild in one place will be missed in the other. Extract one helper on `RoutedSessionActor`, for example `recordStoppedAttempt(liveEntries:results:attempt:)`, that performs the rebuild and the record. Call it from `continueAfterCompleteRound` and from the round-with-real-calls branch of `continueAfterNoOpToolCallStop`. Keep the no-op-call filtering at the call sites that need it.
+- [x] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:47` `reuse/reuse` — `isNoOp(toolName:arguments:)` reimplements the host check that `NoOpToolCallSessionFixture.isNoOp` already provides. Both match a `runCode` call whose code is `"return waiting-1"`, so the test suite carries a second copy of the same no-op contract. Delete the private `isNoOp` and `noOpCode` here and pass `NoOpToolCallSessionFixture.isNoOp(toolName:arguments:)` and `NoOpToolCallSessionFixture.noOpCode` to `runStagedAnswer`. If the access level blocks that, widen the shared helper to `internal` in the Helpers file instead of copying it.
