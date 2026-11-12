@@ -14,25 +14,40 @@ import FoundationModelsRouterRealModelSupport
 /// One definition for the whole target. ``IntegrationTests`` resolves it end to
 /// end, and ``CrossRouterPoolIntegrationTests`` resolves it from two routers
 /// over one pool. A second copy would drift from the first.
+///
+/// The decision slot names no candidate, so it always uses the flash model.
+/// These suites test the trio. `DecisionSlotIntegrationTests` tests the
+/// decision slot with a profile of its own. The default decision candidate
+/// (``ProfileDefinition/defaultDecisionCandidates``) is a fourth container
+/// when it fits in the memory that the trio leaves, and it does not fit on
+/// each runner. Thus with the default, the count of resident containers
+/// changes with the memory of the runner. Also, on the runner `mini-01`, the
+/// default decision model of the first router of
+/// ``CrossRouterPoolIntegrationTests`` took the memory that the second
+/// router needs for one more session of the flash model (CI run 43122216651).
 let gatedRealProfile = ProfileDefinition(
     name: "integration-real",
     description: "Real mlx-community models for the gated integration suite.",
     standard: [RealModels.standard],
     flash: [RealModels.flash],
     embedding: [RealModels.embedding],
+    decision: [],
     context: RealModels.context
 )
 
 /// How many resident containers ``gatedRealProfile`` asks a fresh pool to load,
 /// and so how many `load` spans one resolve opens on an empty pool.
 ///
-/// Read off the resolve path, not off a measured run. `Router.acquireModel`
+/// Read off the resolve path, not off a measured run. `Router.acquire`
 /// asks the pool before it reaches the loader, and the pool runs the loader one
 /// time for each distinct residency key, not one time for each slot. A
 /// generation key is the chosen reference alone, so two
 /// generation slots that name one repository build one key and load one
 /// container. An embedding key carries a different role, so it never merges
 /// with a generation key, whatever the references are named.
+///
+/// The decision slot adds no container: its list is empty, so it uses the
+/// flash model, and the hold of the flash slot serves its key.
 var gatedRealProfileResidentContainerCount: Int {
     let generationRefs = Set([RealModels.standard, RealModels.flash])
     let embeddingRefs = Set([RealModels.embedding])

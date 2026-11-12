@@ -1,0 +1,26 @@
+---
+assignees:
+- claude-code
+position_column: todo
+position_ordinal: '8180'
+title: A decision model of one resolve can make the trio of a later resolve on the same pool not fit
+---
+## What
+Found in task ^epw68dv (CI run 43122216651, runner `mini-01`).
+
+Two routers share one `ModelPool` and resolve the same profile. Router 1 loads the trio and then the default decision model `Mapika/decider-4b-GGUF/decider-4b-v3-Q4_K_M.gguf` in the memory that its trio left (R4, `JointFit.resolveDecision`). Router 2 then gets the budget `hostBudget() - admission.footprint.totalBytes` (`Router.runAdmission`). That budget is 1155104301 bytes, and the flash slot of router 2 needs one more session KV of the resident `Qwen3-4B-4bit` (1207959552 bytes). Thus router 2 throws `ResolutionFailure`. With `decision: []`, router 1 leaves about 3.7 GB more free, and router 2 resolves.
+
+Within one resolve, R4 holds: the decision pass never changes the trio. Across resolves on one pool, the decision model of one owner takes memory that the trio of a later owner needs. The prompt cache budget of router 1's own loader (`PromptCacheSizing`) also gets smaller by the bytes of the decision model.
+
+The router cannot give that memory back now:
+- `ModelPool` (FoundationModelsExtras) has no API to evict a model that a hold keeps.
+- The decision hold is in `residencyHolds` of every handle of the profile, and in its `PooledDecisionModel`.
+
+## Options (the user decides scope)
+1. A revocable decision hold: a later admission can release the decision models of other owners when its trio needs the memory. The decision container of that owner then uses its flash model. This needs an Extras API and a router feature (the `RoutedDecider` model changes after the resolve; the recording of the decision model changes).
+2. Keep the current behavior and document it: the decision model is a resident model of its owner, and a later resolve sees it as used memory.
+3. A fit that counts decision memory as free is NOT an option: it loads over the budget.
+
+## Acceptance Criteria
+- [ ] The user selects an option.
+- [ ] The selected option is implemented with unit tests over stub loaders, or documented in the DocC article of the decision slot. #decision
