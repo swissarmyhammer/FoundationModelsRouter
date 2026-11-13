@@ -34,7 +34,10 @@ struct RepetitionWatchState {
     /// The tool calls of the running answer that gave a result
     /// (task ^0jbps9v). A result of a call in this set is a repeat, not
     /// progress, so a loop of identical tool calls still uses up the
-    /// recoveries. The pump empties it for each new answer.
+    /// recoveries. The calls compare by ``ToolCallIdentity``, whose
+    /// arguments ignore key order and whitespace (task ^z9fsh1t), so the same
+    /// arguments in another key order are a repeat too. The pump empties it
+    /// for each new answer.
     var toolCallsThisAnswer: Set<ToolCallIdentity> = []
 
     /// Whether the running answer ran its final pass: the one continuation
@@ -332,7 +335,8 @@ extension RoutedSessionActor {
     /// (task ^0jbps9v).
     ///
     /// A result of a call that is not identical to an earlier call of the
-    /// answer, in tool name and arguments (``ToolCallIdentity``), is
+    /// answer, in tool name and canonical arguments (``ToolCallIdentity``,
+    /// which ignores key order and whitespace, task ^z9fsh1t), is
     /// progress: the count of the recoveries since the last progress goes to
     /// zero, so the next stop gets a recovery again. A repeat is no progress,
     /// so a loop of identical tool calls still ends the answer after

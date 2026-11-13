@@ -33,6 +33,13 @@ struct ConsecutiveRecoveryBudgetTests {
     /// The code of the fourth distinct tool call.
     private static let fourthCode = "edit(query, line: 42)"
 
+    /// The arguments of one call with their keys in one order (task ^z9fsh1t).
+    private static let keysInOneOrder = #"{"code": "\#(firstCode)", "options": {"limit": 8, "follow": true}}"#
+
+    /// The same arguments with their keys in the other order at each depth,
+    /// and with no whitespace.
+    private static let keysInOtherOrder = #"{"options":{"follow":true,"limit":8},"code":"\#(firstCode)"}"#
+
     /// A script whose reasoning reaches the default reasoning limit with new
     /// lines only, and that then waits until the session stops it
     /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``, whose hold
@@ -51,21 +58,23 @@ struct ConsecutiveRecoveryBudgetTests {
     }
 
     /// Runs one streamed answer to ``prompt`` with
-    /// ``StagedReasoningSessionFixture/answer(to:scripts:detection:tools:tempDirPrefix:)``,
-    /// the default ``RepetitionDetection`` and one ``CountingRunCodeTool``.
-    /// The caller ends the fixture.
+    /// ``StagedReasoningSessionFixture/answer(to:scripts:detection:tools:tempDirPrefix:)``
+    /// and the default ``RepetitionDetection``. The caller ends the fixture.
     ///
     /// - Parameters:
     ///   - scripts: The script of each call, in call order.
+    ///   - runCodeTool: The `runCode` tool of the session: a
+    ///     ``CountingRunCodeTool`` by default.
     ///   - isNoOpToolCall: The host check of the no-op tool calls.
     /// - Returns: The fixture and the events of the answer, in order.
     private static func runStagedAnswer(
         scripts: [RepeatingReasoningScript],
+        runCodeTool: any Tool = CountingRunCodeTool(runs: RunCount()),
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         try await StagedReasoningSessionFixture.answer(
             to: prompt, scripts: scripts, detection: RepetitionDetection(),
-            tools: [CountingRunCodeTool(runs: RunCount())], isNoOpToolCall: isNoOpToolCall,
+            tools: [runCodeTool], isNoOpToolCall: isNoOpToolCall,
             tempDirPrefix: tempDirPrefix)
     }
 
@@ -96,6 +105,25 @@ struct ConsecutiveRecoveryBudgetTests {
                 Self.reasoningStopScript, Self.toolCallScript(running: Self.firstCode),
                 Self.reasoningStopScript,
             ])
+        defer { await fixture.end() }
+
+        #expect(events.reasoningStops.map(\.recovery) == [1, 1, 2])
+    }
+
+    @Test(
+        "a recovery followed by a call that repeats an earlier one in another key order does not start the count again")
+    func keyReorderedRepeatIsNoProgress() async throws {
+        let (fixture, events) = try await Self.runStagedAnswer(
+            scripts: [
+                Self.reasoningStopScript,
+                RepeatingReasoningScript(
+                    reasoningLines: [], hold: .noHold, ending: .runCodeArguments(Self.keysInOneOrder)),
+                Self.reasoningStopScript,
+                RepeatingReasoningScript(
+                    reasoningLines: [], hold: .noHold, ending: .runCodeArguments(Self.keysInOtherOrder)),
+                Self.reasoningStopScript,
+            ],
+            runCodeTool: CountingContentRunCodeTool(runs: RunCount()))
         defer { await fixture.end() }
 
         #expect(events.reasoningStops.map(\.recovery) == [1, 1, 2])

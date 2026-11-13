@@ -40,6 +40,33 @@ struct CountingRunCodeTool: Tool {
     }
 }
 
+/// A `runCode` tool whose arguments are the generated content as the model
+/// wrote it, and that counts its runs (task ^z9fsh1t).
+///
+/// The JSON text of generable arguments such as ``RunCodeArguments`` lists
+/// the properties in the order the type declares them, whatever order the
+/// model wrote. The JSON text of these arguments keeps the key order of the
+/// model, as the arguments of a tool with a dynamic schema do.
+struct CountingContentRunCodeTool: Tool {
+    /// The name the scripted model calls.
+    let name = CountingRunCodeTool.toolName
+
+    /// The description the model reads.
+    let description = "Runs one snippet of code."
+
+    /// The count of the runs of this tool.
+    let runs: RunCount
+
+    /// Counts one run and gives ``CountingRunCodeTool/output``.
+    ///
+    /// - Parameter arguments: The arguments as the model wrote them. Unread.
+    /// - Returns: ``CountingRunCodeTool/output``.
+    func call(arguments: GeneratedContent) async throws -> String {
+        runs.increment()
+        return CountingRunCodeTool.output
+    }
+}
+
 /// A count that a tool body writes and a test reads.
 final class RunCount: Sendable {
     /// The count so far.
@@ -241,20 +268,23 @@ struct RepeatingToolCallSessionFixture {
             detection: RepetitionDetection(), tempDirPrefix: tempDirPrefix)
     }
 
-    /// Builds a router and vends a session over `model`, with one
-    /// ``CountingRunCodeTool`` mounted and `detection` in force.
+    /// Builds a router and vends a session over `model`, with one `runCode`
+    /// tool mounted and `detection` in force.
     ///
     /// - Parameters:
     ///   - model: The scripted model of the session.
     ///   - log: The log that `model` writes.
     ///   - detection: The repetition detection of the session.
+    ///   - runCodeTool: Makes the `runCode` tool of the session from the count
+    ///     of its runs: a ``CountingRunCodeTool`` by default.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws. When this helper throws,
     ///   it removes the temp directory first.
     static func make(
-        model: some LanguageModel, log: RenderProbeLog, detection: RepetitionDetection, tempDirPrefix: String
+        model: some LanguageModel, log: RenderProbeLog, detection: RepetitionDetection,
+        runCodeTool: (RunCount) -> any Tool = CountingRunCodeTool.init(runs:), tempDirPrefix: String
     ) async throws -> RepeatingToolCallSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let runs = RunCount()
@@ -267,7 +297,7 @@ struct RepeatingToolCallSessionFixture {
         }
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(
-                tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: detection))
+                tools: [runCodeTool(runs)], repetitionDetection: detection))
         return RepeatingToolCallSessionFixture(session: session, log: log, runs: runs, directory: directory)
     }
 }

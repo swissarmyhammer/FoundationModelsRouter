@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import FoundationModelsExtras
 
@@ -31,27 +32,55 @@ public struct RepeatedToolCall: Sendable, Equatable, Codable {
 /// it (task ^8eq31j0): two calls are identical when they have the same tool
 /// name and the same arguments. The recovery budget compares the calls of an
 /// answer the same way (task ^0jbps9v).
+///
+/// The arguments compare in their canonical JSON form (task ^z9fsh1t): the
+/// keys of each object sorted, at every depth, and no insignificant
+/// whitespace. So the same arguments written in another key order, which a
+/// model often does, are the same call. Values, the type of each value and
+/// the order of each array still count: `1`, `true` and `"1"` are three
+/// arguments.
 struct ToolCallIdentity: Sendable, Hashable {
     /// The name of the tool.
     let toolName: String
 
-    /// The JSON text of the arguments of the call.
+    /// The canonical JSON text of the arguments of the call
+    /// (``canonicalJSON(_:)``).
     let argumentsJSON: String
 
     /// Creates the identity of one call.
     ///
     /// - Parameters:
     ///   - toolName: The name of the tool.
-    ///   - argumentsJSON: The JSON text of the arguments of the call.
+    ///   - argumentsJSON: The JSON text of the arguments of the call, in any
+    ///     key order and with any whitespace.
     init(toolName: String, argumentsJSON: String) {
         self.toolName = toolName
-        self.argumentsJSON = argumentsJSON
+        self.argumentsJSON = Self.canonicalJSON(argumentsJSON)
+    }
+
+    /// The canonical form of the JSON text `text`: the keys of each object
+    /// sorted at every depth, and no insignificant whitespace.
+    ///
+    /// Foundation's `JSONSerialization` parses the text and writes it again
+    /// with sorted keys. It keeps a Boolean apart from a number, so `true`
+    /// and `1` stay two values. A text that does not parse as JSON is its
+    /// own canonical form: it compares as it stands.
+    ///
+    /// - Parameter text: The JSON text of the arguments of a call.
+    /// - Returns: The canonical JSON text, or `text` when it does not parse.
+    static func canonicalJSON(_ text: String) -> String {
+        guard
+            let value = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed),
+            let canonical = try? JSONSerialization.data(
+                withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
+        else { return text }
+        return String(decoding: canonical, as: UTF8.self)
     }
 
     /// Creates the identity of a call from the arguments that the tool body
     /// gets, or `nil` when the arguments do not give their generated content.
     ///
-    /// The JSON text of the generated content of the arguments
+    /// The canonical JSON text of the generated content of the arguments
     /// (``ToolArgumentsContent``) compares the arguments.
     ///
     /// - Parameters:
@@ -66,8 +95,8 @@ struct ToolCallIdentity: Sendable, Hashable {
     /// the arguments of the call do not give their generated content
     /// (task ^0jbps9v).
     ///
-    /// The JSON text of the generated content of the arguments compares the
-    /// arguments, as for the arguments that the tool body gets.
+    /// The canonical JSON text of the generated content of the arguments
+    /// compares the arguments, as for the arguments that the tool body gets.
     ///
     /// - Parameter result: The tool result that the model reads next.
     init?(result: ToolResultAppend) {

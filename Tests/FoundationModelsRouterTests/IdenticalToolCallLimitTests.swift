@@ -29,22 +29,33 @@ struct IdenticalToolCallLimitTests {
     /// The code of the call that makes the change in the final pass.
     private static let changeCode = "edit(related, line: 1050)"
 
+    /// The arguments of the repeated call with their keys in one order
+    /// (task ^z9fsh1t).
+    private static let keysInOneOrder = #"{"code": "\#(repeatedCode)", "options": {"limit": 8, "follow": true}}"#
+
+    /// The same arguments with their keys in the other order at each depth,
+    /// and with no whitespace.
+    private static let keysInOtherOrder = #"{"options":{"follow":true,"limit":8},"code":"\#(repeatedCode)"}"#
+
     /// Runs one streamed answer over a fresh fixture.
     ///
     /// - Parameters:
     ///   - script: The tool calls the model makes.
     ///   - detection: The repetition detection of the session.
+    ///   - runCodeTool: Makes the `runCode` tool of the session from the count
+    ///     of its runs: a ``CountingRunCodeTool`` by default.
     /// - Returns: The fixture and the events of the answer, in order. The
     ///   session of the fixture is open: the caller closes it.
     /// - Throws: What the answer throws. The helper then closes the session
     ///   and removes the directory of the fixture first (rule T1).
     private static func runAnswer(
-        script: IdenticalToolCallScript, detection: RepetitionDetection = RepetitionDetection()
+        script: IdenticalToolCallScript, detection: RepetitionDetection = RepetitionDetection(),
+        runCodeTool: (RunCount) -> any Tool = CountingRunCodeTool.init(runs:)
     ) async throws -> (fixture: RepeatingToolCallSessionFixture, events: [SessionEvent]) {
         let log = RenderProbeLog()
         let fixture = try await RepeatingToolCallSessionFixture.make(
             model: IdenticalToolCallModel(log: log, script: script), log: log, detection: detection,
-            tempDirPrefix: tempDirPrefix)
+            runCodeTool: runCodeTool, tempDirPrefix: tempDirPrefix)
         let events = try await RouterTestFixtures.removingDirectoryOnThrow(
             fixture.directory, alsoOnThrow: { await fixture.session.close() }
         ) {
@@ -75,6 +86,23 @@ struct IdenticalToolCallLimitTests {
         let recoveryPrompt = try #require(fixture.log.renders.last?.promptTexts.last)
         #expect(recoveryPrompt.contains("`\(CountingRunCodeTool.toolName)`"))
         #expect(recoveryPrompt.contains("\(RepetitionDetection.defaultIdenticalToolCallLimit) times"))
+    }
+
+    @Test(
+        "identical calls whose arguments differ only in key order and whitespace stop at the limit",
+        .timeLimit(.minutes(1)))
+    func keyReorderedCallsStopAtTheLimit() async throws {
+        let arguments = [Self.keysInOneOrder, Self.keysInOtherOrder, Self.keysInOneOrder]
+        let (fixture, events) = try await Self.runAnswer(
+            script: IdenticalToolCallScript(callArguments: arguments),
+            runCodeTool: CountingContentRunCodeTool.init(runs:))
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
+
+        #expect(
+            events.repetitionStops.first?.repeatedToolCall
+                == RepeatedToolCall(
+                    toolName: CountingRunCodeTool.toolName, count: RepetitionDetection.defaultIdenticalToolCallLimit))
     }
 
     @Test("a different call between identical calls starts the count again")
@@ -261,6 +289,38 @@ struct IdenticalToolCallRunTests {
 
         #expect(run.count == 0)
         #expect(run.repeatedToolCall == nil)
+    }
+
+    @Test(
+        "arguments that differ only in key order, at any depth, and in whitespace give one identity",
+        arguments: [
+            (#"{"path": "a.py", "limit": 8}"#, #"{"limit":8,"path":"a.py"}"#),
+            (
+                #"{"op": "check agent", "filter": {"id": "X", "depth": [1, {"b": true, "a": null}]}}"#,
+                #"{"filter":{"depth":[1,{"a":null,"b":true}],"id":"X"},"op":"check agent"}"#
+            ),
+            ("not json {", "not json {"),
+        ])
+    func keyOrderAndWhitespaceDoNotChangeTheIdentity(arguments: (first: String, second: String)) {
+        #expect(
+            ToolCallIdentity(toolName: "files", argumentsJSON: arguments.first)
+                == ToolCallIdentity(toolName: "files", argumentsJSON: arguments.second))
+    }
+
+    @Test(
+        "arguments that differ in a value, a value type or an array order give two identities",
+        arguments: [
+            (#"{"limit": 1}"#, #"{"limit": true}"#),
+            (#"{"limit": 0}"#, #"{"limit": false}"#),
+            (#"{"limit": 1}"#, #"{"limit": "1"}"#),
+            (#"{"paths": ["a.py", "b.py"]}"#, #"{"paths": ["b.py", "a.py"]}"#),
+            (#"{"filter": {"id": "X"}}"#, #"{"filter": {"id": "Y"}}"#),
+            ("not json {", "not json  {"),
+        ])
+    func otherValuesChangeTheIdentity(arguments: (first: String, second: String)) {
+        #expect(
+            ToolCallIdentity(toolName: "files", argumentsJSON: arguments.first)
+                != ToolCallIdentity(toolName: "files", argumentsJSON: arguments.second))
     }
 
     @Test("the identity of generable arguments is their JSON text")

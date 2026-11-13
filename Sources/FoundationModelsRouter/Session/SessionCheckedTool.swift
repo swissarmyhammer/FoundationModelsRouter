@@ -37,7 +37,9 @@ struct SessionCheckedTool<Wrapped: Tool>: Tool, SubmissionBoundaryTool, ToolDeco
     ///
     /// The no-op check gets the name of the tool and the generated content
     /// of `arguments`. The repetition check gets the identity of this call:
-    /// the name of the tool and the JSON text of `arguments` (task ^8eq31j0).
+    /// the name of the tool and the canonical JSON text of `arguments`, in
+    /// which key order and whitespace do not count (tasks ^8eq31j0 and
+    /// ^z9fsh1t).
     ///
     /// - Parameter arguments: The arguments of the call, passed through.
     /// - Returns: What the wrapped tool returns.

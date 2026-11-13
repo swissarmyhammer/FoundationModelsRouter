@@ -25,6 +25,11 @@ enum RepeatingReasoningEnding: Sendable, Hashable {
     /// given, in order, all in one round (task ^zetnz36). Each code holds no
     /// quote and no backslash.
     case runCodes([String])
+
+    /// The call asks for one `runCode` call whose arguments are the JSON
+    /// text given, as it stands, so two scripts can give the same arguments
+    /// in two key orders (task ^z9fsh1t).
+    case runCodeArguments(String)
 }
 
 /// What one call of a ``RepeatingReasoningModel`` does after its last
@@ -379,11 +384,23 @@ struct RepeatingReasoningModel: LanguageModel {
         static func sendToolCall(
             running code: String = toolCallCode, into channel: LanguageModelExecutorGenerationChannel
         ) async {
+            await sendToolCall(writing: #"{"code": "\#(code)"}"#, into: channel)
+        }
+
+        /// Sends one `runCode` call whose arguments are `arguments`, as it
+        /// stands (task ^z9fsh1t).
+        ///
+        /// - Parameters:
+        ///   - arguments: The JSON text of the arguments of the call.
+        ///   - channel: The generation channel this call emits into.
+        static func sendToolCall(
+            writing arguments: String, into channel: LanguageModelExecutorGenerationChannel
+        ) async {
             await channel.send(
                 .toolCalls(
                     action: .toolCall(
                         id: toolCallIdPrefix + UUID().uuidString, name: CountingRunCodeTool.toolName,
-                        action: .appendArguments(#"{"code": "\#(code)"}"#, tokenCount: emittedTokenCount))))
+                        action: .appendArguments(arguments, tokenCount: emittedTokenCount))))
         }
 
         /// Writes the tool call that `ending` asks for, or nothing for an
@@ -407,6 +424,8 @@ struct RepeatingReasoningModel: LanguageModel {
                 for code in codes {
                     await sendToolCall(running: code, into: channel)
                 }
+            case .runCodeArguments(let arguments):
+                await sendToolCall(writing: arguments, into: channel)
             }
             return true
         }

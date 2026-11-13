@@ -6,13 +6,46 @@ import FoundationModelsRouterTestSupport
 
 /// The tool calls that an ``IdenticalToolCallModel`` makes (task ^8eq31j0).
 struct IdenticalToolCallScript: Sendable, Hashable {
-    /// The code of each `runCode` call of the first submission, in order. The
-    /// model makes one call for each generation pass.
-    let codes: [String]
+    /// The JSON text of the arguments of each `runCode` call of the first
+    /// submission, in order. The model makes one call for each generation
+    /// pass, and writes the text as it stands here.
+    let callArguments: [String]
 
     /// The code of the one `runCode` call of the final pass, or `nil` when
     /// the final pass gives only text.
     let finalPassCode: String?
+
+    /// Creates a script whose calls each run one code.
+    ///
+    /// - Parameters:
+    ///   - codes: The code of each `runCode` call of the first submission, in
+    ///     order. Each call's arguments are ``arguments(code:)``.
+    ///   - finalPassCode: The code of the one `runCode` call of the final
+    ///     pass, or `nil` when the final pass gives only text.
+    init(codes: [String], finalPassCode: String?) {
+        self.callArguments = codes.map(Self.arguments(code:))
+        self.finalPassCode = finalPassCode
+    }
+
+    /// Creates a script whose calls write the JSON text given as their
+    /// arguments, so two calls can give the same arguments in two key orders
+    /// (task ^z9fsh1t). The final pass gives only text.
+    ///
+    /// - Parameter callArguments: The JSON text of the arguments of each
+    ///   `runCode` call of the first submission, in order.
+    init(callArguments: [String]) {
+        self.callArguments = callArguments
+        self.finalPassCode = nil
+    }
+
+    /// The arguments of one `runCode` call with `code`.
+    ///
+    /// - Parameter code: The code of the call. It holds no quote, no
+    ///   backslash and no line feed.
+    /// - Returns: The JSON object of the arguments.
+    static func arguments(code: String) -> String {
+        #"{"code": "\#(code)"}"#
+    }
 }
 
 /// A deterministic `LanguageModel` that makes a script of short `runCode`
@@ -21,7 +54,7 @@ struct IdenticalToolCallScript: Sendable, Hashable {
 /// Each executor call records the transcript it receives in ``log``, then:
 ///
 /// - in the first submission (one prompt in the transcript), the pass makes
-///   the call of ``IdenticalToolCallScript/codes`` whose index is the count of
+///   the call of ``IdenticalToolCallScript/callArguments`` whose index is the count of
 ///   the tool outputs so far, and answers with ``Executor/answerText`` when
 ///   the script has no call left;
 /// - in the final pass (the last prompt ends with
@@ -31,8 +64,9 @@ struct IdenticalToolCallScript: Sendable, Hashable {
 /// - each other pass, a recovery for example, answers with
 ///   ``Executor/answerText``.
 ///
-/// The arguments of each call are the JSON object `{"code": "<code>"}`. A
-/// code has no line feed, so the line window of the watch never fills.
+/// The arguments of a call that runs a code are the JSON object
+/// `{"code": "<code>"}`. No argument text has a line feed, so the line
+/// window of the watch never fills.
 struct IdenticalToolCallModel: LanguageModel {
     /// The log that records the transcript of each call.
     let log: RenderProbeLog
@@ -129,7 +163,7 @@ struct IdenticalToolCallModel: LanguageModel {
                 .toolCalls(
                     action: .toolCall(
                         id: call.id, name: CountingRunCodeTool.toolName,
-                        action: .appendArguments(Self.argumentsJSON(code: call.code), tokenCount: Self.emittedTokenCount)))
+                        action: .appendArguments(call.arguments, tokenCount: Self.emittedTokenCount)))
             )
         }
 
@@ -139,18 +173,19 @@ struct IdenticalToolCallModel: LanguageModel {
         /// - Parameters:
         ///   - transcript: The transcript of the pass.
         ///   - script: The tool calls the model makes.
-        /// - Returns: The id and the code of the call, or `nil`.
+        /// - Returns: The id and the JSON text of the arguments of the call,
+        ///   or `nil`.
         private static func nextCall(
             in transcript: Transcript, script: IdenticalToolCallScript
-        ) -> (id: String, code: String)? {
+        ) -> (id: String, arguments: String)? {
             let prompts = transcript.promptTexts
             let outputs = toolOutputCountAfterLastPrompt(in: transcript)
             if prompts.count == firstSubmissionPromptCount {
-                return outputs < script.codes.count ? ("call-\(outputs)", script.codes[outputs]) : nil
+                return outputs < script.callArguments.count ? ("call-\(outputs)", script.callArguments[outputs]) : nil
             }
             let isFinalPass = prompts.last?.hasSuffix(RoutedSessionActor.finalPassPrompt) == true
             guard isFinalPass, outputs == 0, let code = script.finalPassCode else { return nil }
-            return (finalPassCallId, code)
+            return (finalPassCallId, IdenticalToolCallScript.arguments(code: code))
         }
 
         /// The count of the `.toolOutput` entries of `transcript` after its
@@ -169,15 +204,6 @@ struct IdenticalToolCallModel: LanguageModel {
                     break
                 }
             }
-        }
-
-        /// The arguments of one `runCode` call with `code`.
-        ///
-        /// - Parameter code: The code of the call. It holds no quote, no
-        ///   backslash and no line feed.
-        /// - Returns: The JSON object of the arguments.
-        private static func argumentsJSON(code: String) -> String {
-            #"{"code": "\#(code)"}"#
         }
     }
 }
