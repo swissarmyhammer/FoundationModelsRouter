@@ -270,6 +270,31 @@ private enum DecisionSlotProbe {
         }
     }
 
+    /// Asks each item of ``deciderReferenceItems`` in a new session of
+    /// `decider`, and checks that each answer has one probability for each
+    /// option and the top answer of the reference.
+    ///
+    /// - Parameters:
+    ///   - decider: The decision slot.
+    ///   - check: The checks of the caller on each answer: the item, the
+    ///     answer probabilities in option order, and the time of the decision.
+    /// - Throws: The error of a session, or ``DecisionSlotTestError`` when an
+    ///   answer is not of the kind of its question.
+    static func askEachReferenceItem(
+        on decider: RoutedDecider,
+        check: (DeciderReferenceItem, [Double], Duration) -> Void
+    ) async throws {
+        for item in deciderReferenceItems {
+            let started = ContinuousClock.now
+            let answer = try await ask(item, on: decider)
+            let elapsed = ContinuousClock.now - started
+            let probabilities = try probabilities(of: answer, for: item)
+            try #require(probabilities.count == item.probabilities.count, "\(item.id): \(probabilities)")
+            #expect(topAnswerIndex(of: probabilities) == item.topIndex, "\(item.id): \(probabilities)")
+            check(item, probabilities, elapsed)
+        }
+    }
+
     /// The probability of "yes" of a yes/no answer.
     ///
     /// - Parameters:
@@ -391,11 +416,7 @@ struct DecisionSlotIntegrationTests {
         try await fixture.withResolved(deciderProfile) { profile in
             #expect(profile.decision.chosen == deciderModel)
             #expect(try DecisionSlotProbe.format(of: profile) is DeciderPromptFormat)
-            for item in deciderReferenceItems {
-                let answer = try await DecisionSlotProbe.ask(item, on: profile.decision)
-                let probabilities = try DecisionSlotProbe.probabilities(of: answer, for: item)
-                try #require(probabilities.count == item.probabilities.count, "\(item.id): \(probabilities)")
-                #expect(topAnswerIndex(of: probabilities) == item.topIndex, "\(item.id): \(probabilities)")
+            try await DecisionSlotProbe.askEachReferenceItem(on: profile.decision) { item, probabilities, _ in
                 let largestDifference = zip(probabilities, item.probabilities).map { abs($0 - $1) }.max() ?? 0
                 #expect(largestDifference <= referenceProbabilityTolerance, "\(item.id): \(probabilities)")
             }
@@ -409,17 +430,11 @@ struct DecisionSlotIntegrationTests {
         try await fixture.withResolved(nativeDeciderProfile) { profile in
             #expect(profile.decision.chosen == nativeDeciderModel)
             #expect(profile.decision.container.decisionModel is PooledNativeDecisionModel)
-            for item in deciderReferenceItems {
-                let started = ContinuousClock.now
-                let answer = try await DecisionSlotProbe.ask(item, on: profile.decision)
-                let elapsed = ContinuousClock.now - started
-                let probabilities = try DecisionSlotProbe.probabilities(of: answer, for: item)
+            try await DecisionSlotProbe.askEachReferenceItem(on: profile.decision) { item, probabilities, elapsed in
                 // swiftlint:disable:next no_direct_standard_out_logs  the run records the answers of the native model for task ^c9rmgec
                 print("[nativeDecider] item=\(item.id) probabilities=\(probabilities) elapsed=\(elapsed)")
-                try #require(probabilities.count == item.probabilities.count, "\(item.id): \(probabilities)")
                 #expect(probabilities.allSatisfy { (0...1).contains($0) }, "\(item.id): \(probabilities)")
                 #expect(abs(probabilities.reduce(0, +) - 1) <= probabilitySumTolerance, "\(item.id): \(probabilities)")
-                #expect(topAnswerIndex(of: probabilities) == item.topIndex, "\(item.id): \(probabilities)")
             }
         }
     }
