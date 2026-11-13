@@ -33,13 +33,6 @@ struct ConsecutiveRecoveryBudgetTests {
     /// The code of the fourth distinct tool call.
     private static let fourthCode = "edit(query, line: 42)"
 
-    /// The arguments of one call with their keys in one order (task ^z9fsh1t).
-    private static let keysInOneOrder = #"{"code": "\#(firstCode)", "options": {"limit": 8, "follow": true}}"#
-
-    /// The same arguments with their keys in the other order at each depth,
-    /// and with no whitespace.
-    private static let keysInOtherOrder = #"{"options":{"follow":true,"limit":8},"code":"\#(firstCode)"}"#
-
     /// A script whose reasoning reaches the default reasoning limit with new
     /// lines only, and that then waits until the session stops it
     /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``, whose hold
@@ -117,10 +110,12 @@ struct ConsecutiveRecoveryBudgetTests {
             scripts: [
                 Self.reasoningStopScript,
                 RepeatingReasoningScript(
-                    reasoningLines: [], hold: .noHold, ending: .runCodeArguments(Self.keysInOneOrder)),
+                    reasoningLines: [], hold: .noHold,
+                    ending: .runCodeArguments(RunCodeArgumentsJSON.keysInOneOrder(running: Self.firstCode))),
                 Self.reasoningStopScript,
                 RepeatingReasoningScript(
-                    reasoningLines: [], hold: .noHold, ending: .runCodeArguments(Self.keysInOtherOrder)),
+                    reasoningLines: [], hold: .noHold,
+                    ending: .runCodeArguments(RunCodeArgumentsJSON.keysInOtherOrder(running: Self.firstCode))),
                 Self.reasoningStopScript,
             ],
             runCodeTool: CountingContentRunCodeTool(runs: RunCount()))

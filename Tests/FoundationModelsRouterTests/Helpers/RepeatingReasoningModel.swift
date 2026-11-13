@@ -375,8 +375,8 @@ struct RepeatingReasoningModel: LanguageModel {
             return !holdsToolOutput && (!isContinuation || configuration.repeatsAfterStop)
         }
 
-        /// Sends one ``CountingRunCodeTool`` call whose arguments are the
-        /// JSON object `{"code": "<code>"}`.
+        /// Sends one ``CountingRunCodeTool`` call whose arguments are
+        /// ``RunCodeArgumentsJSON/running(_:)``.
         ///
         /// - Parameters:
         ///   - code: The code of the call. It holds no quote and no backslash.
@@ -384,7 +384,7 @@ struct RepeatingReasoningModel: LanguageModel {
         static func sendToolCall(
             running code: String = toolCallCode, into channel: LanguageModelExecutorGenerationChannel
         ) async {
-            await sendToolCall(writing: #"{"code": "\#(code)"}"#, into: channel)
+            await sendToolCall(writing: RunCodeArgumentsJSON.running(code), into: channel)
         }
 
         /// Sends one `runCode` call whose arguments are `arguments`, as it

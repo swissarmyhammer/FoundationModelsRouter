@@ -29,14 +29,6 @@ struct IdenticalToolCallLimitTests {
     /// The code of the call that makes the change in the final pass.
     private static let changeCode = "edit(related, line: 1050)"
 
-    /// The arguments of the repeated call with their keys in one order
-    /// (task ^z9fsh1t).
-    private static let keysInOneOrder = #"{"code": "\#(repeatedCode)", "options": {"limit": 8, "follow": true}}"#
-
-    /// The same arguments with their keys in the other order at each depth,
-    /// and with no whitespace.
-    private static let keysInOtherOrder = #"{"options":{"follow":true,"limit":8},"code":"\#(repeatedCode)"}"#
-
     /// Runs one streamed answer over a fresh fixture.
     ///
     /// - Parameters:
@@ -92,7 +84,11 @@ struct IdenticalToolCallLimitTests {
         "identical calls whose arguments differ only in key order and whitespace stop at the limit",
         .timeLimit(.minutes(1)))
     func keyReorderedCallsStopAtTheLimit() async throws {
-        let arguments = [Self.keysInOneOrder, Self.keysInOtherOrder, Self.keysInOneOrder]
+        let arguments = [
+            RunCodeArgumentsJSON.keysInOneOrder(running: Self.repeatedCode),
+            RunCodeArgumentsJSON.keysInOtherOrder(running: Self.repeatedCode),
+            RunCodeArgumentsJSON.keysInOneOrder(running: Self.repeatedCode),
+        ]
         let (fixture, events) = try await Self.runAnswer(
             script: IdenticalToolCallScript(callArguments: arguments),
             runCodeTool: CountingContentRunCodeTool.init(runs:))

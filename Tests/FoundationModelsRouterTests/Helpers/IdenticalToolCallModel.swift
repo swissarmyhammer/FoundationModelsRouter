@@ -19,11 +19,11 @@ struct IdenticalToolCallScript: Sendable, Hashable {
     ///
     /// - Parameters:
     ///   - codes: The code of each `runCode` call of the first submission, in
-    ///     order. Each call's arguments are ``arguments(code:)``.
+    ///     order. Each call's arguments are ``RunCodeArgumentsJSON/running(_:)``.
     ///   - finalPassCode: The code of the one `runCode` call of the final
     ///     pass, or `nil` when the final pass gives only text.
     init(codes: [String], finalPassCode: String?) {
-        self.callArguments = codes.map(Self.arguments(code:))
+        self.callArguments = codes.map(RunCodeArgumentsJSON.running)
         self.finalPassCode = finalPassCode
     }
 
@@ -36,15 +36,6 @@ struct IdenticalToolCallScript: Sendable, Hashable {
     init(callArguments: [String]) {
         self.callArguments = callArguments
         self.finalPassCode = nil
-    }
-
-    /// The arguments of one `runCode` call with `code`.
-    ///
-    /// - Parameter code: The code of the call. It holds no quote, no
-    ///   backslash and no line feed.
-    /// - Returns: The JSON object of the arguments.
-    static func arguments(code: String) -> String {
-        #"{"code": "\#(code)"}"#
     }
 }
 
@@ -64,9 +55,9 @@ struct IdenticalToolCallScript: Sendable, Hashable {
 /// - each other pass, a recovery for example, answers with
 ///   ``Executor/answerText``.
 ///
-/// The arguments of a call that runs a code are the JSON object
-/// `{"code": "<code>"}`. No argument text has a line feed, so the line
-/// window of the watch never fills.
+/// The arguments of a call that runs a code are
+/// ``RunCodeArgumentsJSON/running(_:)``. No argument text has a line feed,
+/// so the line window of the watch never fills.
 struct IdenticalToolCallModel: LanguageModel {
     /// The log that records the transcript of each call.
     let log: RenderProbeLog
@@ -185,7 +176,7 @@ struct IdenticalToolCallModel: LanguageModel {
             }
             let isFinalPass = prompts.last?.hasSuffix(RoutedSessionActor.finalPassPrompt) == true
             guard isFinalPass, outputs == 0, let code = script.finalPassCode else { return nil }
-            return (finalPassCallId, IdenticalToolCallScript.arguments(code: code))
+            return (finalPassCallId, RunCodeArgumentsJSON.running(code))
         }
 
         /// The count of the `.toolOutput` entries of `transcript` after its

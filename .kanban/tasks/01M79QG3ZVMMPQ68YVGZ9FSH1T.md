@@ -29,7 +29,16 @@ comments:
     - commit: e47249a7
     - review: findings — ConsecutiveRecoveryBudgetTests.swift:41, Helpers/RepeatingReasoningModel.swift:387, IdenticalToolCallLimitTests.swift:38
   timestamp: 2026-11-13T06:05:53.667603+00:00
-position_column: review
+- actor: claude-code
+  id: 01m79rc6z3e6x6pm7t98gx9vzp
+  text: |-
+    Review findings fixed. New shared test helper `Tests/FoundationModelsRouterTests/Helpers/RunCodeArgumentsJSON.swift` (enum `RunCodeArgumentsJSON`) owns all three runCode argument shapes: `running(_:)` (`{"code": ...}`, moved from `IdenticalToolCallScript.arguments(code:)`, which is removed), `keysInOneOrder(running:)` and `keysInOtherOrder(running:)`. Both suites dropped their private fixture copies and call the shared builders; `RepeatingReasoningModel.sendToolCall(running:)` and `IdenticalToolCallModel` call `running(_:)`. Dead end: the first name, `RunCodeArguments`, collides with the existing @Generable `struct RunCodeArguments` in Helpers/RepeatingToolCallModel.swift (invalid redeclaration), so the enum is named `RunCodeArgumentsJSON`. Not touched: `NoOpToolCallModel.runCodeArguments(code:)` builds the same shape too, but that copy was there before this change.
+
+    ### implement — changed
+    - evidence: 6 files — Tests/FoundationModelsRouterTests/Helpers/RunCodeArgumentsJSON.swift (new), Helpers/IdenticalToolCallModel.swift, Helpers/RepeatingReasoningModel.swift, IdenticalToolCallLimitTests.swift, ConsecutiveRecoveryBudgetTests.swift, .kanban task (3 findings checked). Full root `swift test`: 2652 + 41 + 19 tests passed, 0 failures. The only warning is the SwiftPM build-system note "missing creator for mutated node ... mlx-swift_Cmlx.bundle", which was there before this change.
+    - next: /review
+  timestamp: 2026-11-13T06:09:03.971661+00:00
+position_column: doing
 position_ordinal: '80'
 title: Tool-call identity ignores the key order of the arguments
 ---
@@ -59,6 +68,6 @@ There is no guard specific to check agent; this is the generic comparison.
 > 2 file(s) not reviewed — excluded by an ignore rule:
 > - `.kanban/ (from .reviewignore)` — 2 file(s)
 
-- [ ] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:41` `reuse/reuse` — `keysInOtherOrder` is a second copy of the reordered-key fixture in `IdenticalToolCallLimitTests`, so the key-order case is defined twice. Define the reordered-key fixture once in a shared helper and reference it from both suites.
-- [ ] `Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:387` `reuse/reuse` — `sendToolCall(running:)` rebuilds the `{"code": "<code>"}` arguments inline, but `IdenticalToolCallScript.arguments(code:)` already builds the same JSON object for the same purpose. Two helpers now own the same argument shape, so a change to the shape would need to be made in both. Call `IdenticalToolCallScript.arguments(code:)` from `sendToolCall(running:)`, or move the helper to a shared location both models can call.
-- [ ] `Tests/FoundationModelsRouterTests/IdenticalToolCallLimitTests.swift:38` `reuse/reuse` — `keysInOtherOrder` duplicates the reordered-key JSON fixture that `ConsecutiveRecoveryBudgetTests` already defines, so the same key-order case lives in two files. Move the reordered-key fixture next to `keysInOneOrder` in one shared location and reference it from both suites, as with `keysInOneOrder`.
+- [x] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:41` `reuse/reuse` — `keysInOtherOrder` is a second copy of the reordered-key fixture in `IdenticalToolCallLimitTests`, so the key-order case is defined twice. Define the reordered-key fixture once in a shared helper and reference it from both suites.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:387` `reuse/reuse` — `sendToolCall(running:)` rebuilds the `{"code": "<code>"}` arguments inline, but `IdenticalToolCallScript.arguments(code:)` already builds the same JSON object for the same purpose. Two helpers now own the same argument shape, so a change to the shape would need to be made in both. Call `IdenticalToolCallScript.arguments(code:)` from `sendToolCall(running:)`, or move the helper to a shared location both models can call.
+- [x] `Tests/FoundationModelsRouterTests/IdenticalToolCallLimitTests.swift:38` `reuse/reuse` — `keysInOtherOrder` duplicates the reordered-key JSON fixture that `ConsecutiveRecoveryBudgetTests` already defines, so the same key-order case lives in two files. Move the reordered-key fixture next to `keysInOneOrder` in one shared location and reference it from both suites, as with `keysInOneOrder`.
