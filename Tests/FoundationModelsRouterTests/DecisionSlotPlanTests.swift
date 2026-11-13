@@ -47,9 +47,6 @@ struct DecisionSlotPlanTests {
     /// The size of the weights of the decider repository.
     private static let weightBytes: Int64 = 1_000
 
-    /// A decision type that llama.cpp decides natively.
-    private static let supportedDecisionType = "h2o-lightning"
-
     /// A decision type that llama.cpp knows, but that its `decide` does not
     /// support: the type reads an image.
     private static let imageDecisionType = "openbmb-minicpm-ocr-jev"
@@ -130,13 +127,23 @@ struct DecisionSlotPlanTests {
     /// - Returns: The metadata of ``deciderRef``, by its ref.
     /// - Throws: The error of the parse.
     private static func deciderMetadata() throws -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
-        let tree = HubTreeListing.json([
-            .file("model.safetensors", size: weightBytes),
-            .file(configurationFileName, size: Int64(deciderConfigJSON.count)),
-        ])
-        let metadata = try RepoMetadata(
-            raw: RawRepoMetadata(configJSON: modelConfigJSON, treeJSON: tree), repo: deciderRef.repo)
-        return [deciderRef: .success(metadata)]
+        [deciderRef: .success(try mlxMetadata(hasDeciderConfiguration: true))]
+    }
+
+    /// The metadata of an MLX decision model, as the parse of its tree gives it.
+    ///
+    /// - Parameter hasDeciderConfiguration: Whether the repository has a
+    ///   `decider_config.json` file of the size of ``deciderConfigJSON``.
+    /// - Returns: The metadata.
+    /// - Throws: The error of the parse.
+    private static func mlxMetadata(hasDeciderConfiguration: Bool) throws -> RepoMetadata {
+        var entries: [HubTreeListing.Entry] = [.file("model.safetensors", size: weightBytes)]
+        if hasDeciderConfiguration {
+            entries.append(.file(configurationFileName, size: Int64(deciderConfigJSON.count)))
+        }
+        return try RepoMetadata(
+            raw: RawRepoMetadata(configJSON: modelConfigJSON, treeJSON: HubTreeListing.json(entries)),
+            repo: deciderRef.repo)
     }
 
     /// The metadata of a GGUF decision model, as the sizing step records it.
@@ -153,17 +160,6 @@ struct DecisionSlotPlanTests {
             numKeyValueHeads: nil, headDim: nil, hiddenSize: nil, nativeMaxContext: ggufContext,
             deciderConfigurationByteCount: hasDeciderConfiguration ? Int64(deciderConfigJSON.count) : nil,
             ggufDecisionType: decisionType)
-    }
-
-    /// The metadata of an MLX decision model with no `decider_config.json`
-    /// file.
-    ///
-    /// - Returns: The metadata.
-    /// - Throws: The error of the parse.
-    private static func plainMLXMetadata() throws -> RepoMetadata {
-        let tree = HubTreeListing.json([.file("model.safetensors", size: weightBytes)])
-        return try RepoMetadata(
-            raw: RawRepoMetadata(configJSON: modelConfigJSON, treeJSON: tree), repo: deciderRef.repo)
     }
 
     /// Makes the plan of `resolution` over a source that holds `files`.
@@ -233,7 +229,7 @@ struct DecisionSlotPlanTests {
     func flashFallbackWithDecisionTypeTakesTheNativePath() async {
         let (plan, _) = await Self.plan(
             of: Self.fallbackResolution,
-            metadataByRef: [Self.flashRef: .success(Self.ggufMetadata(decisionType: Self.supportedDecisionType))])
+            metadataByRef: [Self.flashRef: .success(Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType))])
 
         #expect(plan.path.isNative)
     }
@@ -257,7 +253,7 @@ struct DecisionSlotPlanTests {
 
     @Test("a GGUF decision model with a supported decision type takes the native path")
     func supportedDecisionTypeTakesTheNativePath() async {
-        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: Self.supportedDecisionType))
+        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType))
 
         #expect(plan.path.isNative)
     }
@@ -265,7 +261,7 @@ struct DecisionSlotPlanTests {
     @Test("a supported decision type takes the native path also when the repository has decider_config.json")
     func supportedDecisionTypeWinsOverDeciderConfiguration() async {
         let (plan, _) = await Self.deciderPlan(
-            metadata: Self.ggufMetadata(decisionType: Self.supportedDecisionType, hasDeciderConfiguration: true))
+            metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType, hasDeciderConfiguration: true))
 
         #expect(plan.path.isNative)
     }
@@ -273,7 +269,7 @@ struct DecisionSlotPlanTests {
     @Test("the native path reads no decider_config.json file")
     func nativePathReadsNoFile() async {
         let (_, source) = await Self.deciderPlan(
-            metadata: Self.ggufMetadata(decisionType: Self.supportedDecisionType, hasDeciderConfiguration: true))
+            metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType, hasDeciderConfiguration: true))
 
         #expect(await source.fetches.isEmpty)
     }
@@ -302,7 +298,7 @@ struct DecisionSlotPlanTests {
 
     @Test("an MLX decision model with no decider_config.json gets the generic format")
     func mlxWithNoDeciderConfigurationGetsTheGenericFormat() async throws {
-        let (plan, _) = await Self.deciderPlan(metadata: try Self.plainMLXMetadata())
+        let (plan, _) = await Self.deciderPlan(metadata: try Self.mlxMetadata(hasDeciderConfiguration: false))
 
         #expect(plan.path.promptFormat is GenericPromptFormat)
     }

@@ -21,10 +21,6 @@ struct DecisionSlotFitTests {
     /// of another slot.
     private static let deciderRef: ModelRef = "org/decider-fits"
 
-    /// The decision type of the GGUF decision candidate: a type that
-    /// llama.cpp decides natively.
-    private static let decisionType = "h2o-lightning"
-
     /// The path of the model file of the GGUF decision candidate.
     private static let ggufFileName = "model.gguf"
 
@@ -48,7 +44,7 @@ struct DecisionSlotFitTests {
         return FileServingMetadataSource(
             rawByRepo: [deciderRef.repo: RawRepoMetadata(configJSON: nil, treeJSON: tree)],
             defaultRaw: RouterTestFixtures.rawMetadata,
-            files: ["\(deciderRef.repo)/\(ggufFileName)": GGUFHeaderFixtures.decisionBytes(decisionType: decisionType)])
+            files: ["\(deciderRef.repo)/\(ggufFileName)": GGUFHeaderFixtures.decisionBytes(decisionType: GGUFHeaderFixtures.supportedDecisionType)])
     }
 
     @Test("a decision candidate that fits is the chosen ref of the decision handle")
@@ -73,7 +69,7 @@ struct DecisionSlotFitTests {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: cacheDir) }
         let container = LiveLLMContainer(
-            model: DecisionsStubLanguageModel(type: Self.decisionType), ref: Self.deciderRef,
+            model: DecisionsStubLanguageModel(type: GGUFHeaderFixtures.supportedDecisionType), ref: Self.deciderRef,
             contextWindow: Self.liveContextWindow, tokenCounter: CharacterTokenCounter())
         let router = Router(
             cacheDir: cacheDir, probe: RouterTestFixtures.stubProbe, metadataSource: Self.ggufDeciderSource,

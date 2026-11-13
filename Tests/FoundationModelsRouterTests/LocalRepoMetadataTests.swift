@@ -253,21 +253,17 @@ struct LocalRepoMetadataTests {
         #expect(metadata.nativeMaxContext == header.trainingContextSize)
     }
 
-    /// The decision type of the local decision model: a type that llama.cpp
-    /// decides natively.
-    private static let decisionType = "h2o-lightning"
-
     @Test("a local .gguf file records the decision type of its header")
     func localGGUFFileDecisionType() async throws {
         let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-gguf-file")
         let (reader, cache, _) = try Self.makeReader()
         defer { folder.remove(); cache.remove() }
         try Self.writeGGUFModel(
-            "model.gguf", in: folder, header: GGUFHeaderFixtures.decisionBytes(decisionType: Self.decisionType))
+            "model.gguf", in: folder, header: GGUFHeaderFixtures.decisionBytes(decisionType: GGUFHeaderFixtures.supportedDecisionType))
 
         let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.appending(path: "model.gguf").path))
 
-        #expect(metadata.ggufDecisionType == Self.decisionType)
+        #expect(metadata.ggufDecisionType == GGUFHeaderFixtures.supportedDecisionType)
     }
 
     @Test("a local GGUF folder is sized by its model and its projector")

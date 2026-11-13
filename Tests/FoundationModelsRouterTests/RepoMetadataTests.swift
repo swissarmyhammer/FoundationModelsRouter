@@ -772,7 +772,7 @@ struct RepoMetadataTests {
         let ref = ModelRef(repo: "org/model", revision: Self.commitHash)
         let metadata = RepoMetadata(
             weightBytes: 1, numHiddenLayers: 1, numAttentionHeads: 1, numKeyValueHeads: 1, headDim: 1,
-            hiddenSize: 1, nativeMaxContext: 1, ggufDecisionType: "h2o-lightning")
+            hiddenSize: 1, nativeMaxContext: 1, ggufDecisionType: GGUFHeaderFixtures.supportedDecisionType)
         try cache.save(metadata, for: ref)
         let current = cache.fileURL(for: ref)
 

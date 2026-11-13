@@ -374,15 +374,11 @@ struct GGUFRepoMetadataTests {
         #expect(metadata.deciderConfigurationByteCount == Self.deciderConfigurationBytes)
     }
 
-    /// The decision type of the decision model of the tests: a type that
-    /// llama.cpp decides natively.
-    private static let decisionType = "h2o-lightning"
-
     @Test("a GGUF model records the decision type of its header")
     func decisionTypeIsRecorded() async throws {
-        let header = GGUFHeaderFixtures.decisionBytes(decisionType: Self.decisionType)
+        let header = GGUFHeaderFixtures.decisionBytes(decisionType: GGUFHeaderFixtures.supportedDecisionType)
 
-        #expect(try await Self.singleFileMetadata(header: header).ggufDecisionType == Self.decisionType)
+        #expect(try await Self.singleFileMetadata(header: header).ggufDecisionType == GGUFHeaderFixtures.supportedDecisionType)
     }
 
     @Test("a GGUF model with no decision type in its header records none")
@@ -392,7 +388,7 @@ struct GGUFRepoMetadataTests {
 
     @Test("a decision type under the key of another architecture is not recorded")
     func decisionTypeOfAnotherArchitectureIsNotRecorded() async throws {
-        let header = GGUFHeaderFixtures.decisionBytes(decisionType: Self.decisionType, keyArchitecture: "qwen35")
+        let header = GGUFHeaderFixtures.decisionBytes(decisionType: GGUFHeaderFixtures.supportedDecisionType, keyArchitecture: "qwen35")
 
         #expect(try await Self.singleFileMetadata(header: header).ggufDecisionType == nil)
     }

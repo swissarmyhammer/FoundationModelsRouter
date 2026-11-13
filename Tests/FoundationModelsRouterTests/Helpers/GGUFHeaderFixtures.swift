@@ -307,12 +307,17 @@ enum GGUFHeaderFixtures {
     /// a decision model: `<arch>.decision.type`.
     private static let decisionTypeKey = "decision.type"
 
+    /// A decision type that the `decide` of llama.cpp supports: the type of
+    /// h2o-lightning. The suites that need a supported type use this one
+    /// value.
+    static let supportedDecisionType = "h2o-lightning"
+
     /// A dense model with a `STRING` decision type after its values, as a
     /// decision GGUF of llama.cpp has.
     ///
     /// - Parameters:
     ///   - decisionType: The text of the decision type, for example
-    ///     `"h2o-lightning"`.
+    ///     ``supportedDecisionType``.
     ///   - keyArchitecture: The architecture of the prefix of the key. The
     ///     default is ``denseArchitecture``, the architecture of the model.
     /// - Returns: The bytes.
@@ -320,9 +325,7 @@ enum GGUFHeaderFixtures {
         var typedValue = Data()
         append(textType, to: &typedValue)
         append(text: decisionType, to: &typedValue)
-        return bytes(
-            architecture: denseArchitecture, values: denseValues,
-            trailing: [("\(keyArchitecture).\(decisionTypeKey)", typedValue)])
+        return decisionBytes(typedValue: typedValue, keyArchitecture: keyArchitecture)
     }
 
     /// The `UINT32` value of the decision type of
@@ -335,10 +338,20 @@ enum GGUFHeaderFixtures {
         var typedValue = Data()
         append(integerType, to: &typedValue)
         append(integerDecisionType, to: &typedValue)
-        return bytes(
-            architecture: denseArchitecture, values: denseValues,
-            trailing: [("\(denseArchitecture).\(decisionTypeKey)", typedValue)])
+        return decisionBytes(typedValue: typedValue, keyArchitecture: denseArchitecture)
     }()
+
+    /// A dense model with a decision type after its values.
+    ///
+    /// - Parameters:
+    ///   - typedValue: The value of the decision type, after its `gguf_type`.
+    ///   - keyArchitecture: The architecture of the prefix of the key.
+    /// - Returns: The bytes.
+    private static func decisionBytes(typedValue: Data, keyArchitecture: String) -> Data {
+        bytes(
+            architecture: denseArchitecture, values: denseValues,
+            trailing: [("\(keyArchitecture).\(decisionTypeKey)", typedValue)])
+    }
 
     /// Builds a `STRING` value of filler characters, with its `gguf_type`.
     ///

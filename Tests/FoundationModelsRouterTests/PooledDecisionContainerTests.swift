@@ -78,10 +78,6 @@ struct PooledDecisionContainerTests {
     /// The state of the decision forwarding tests.
     private static let pooledState = PooledDecisionState.text(stateText)
 
-    /// The decision type of the stub decision model: a type that llama.cpp
-    /// decides natively.
-    private static let decisionType = "h2o-lightning"
-
     /// The noul question of the decision forwarding tests.
     private static let noulQuestion = PooledDecisionQuestion(
         id: "urgent", type: .noul, instructions: question,
@@ -181,7 +177,7 @@ struct PooledDecisionContainerTests {
     /// The native path asks the decision code of the model.
     @Test("the native path gives a pooled native decision model")
     func nativePathGivesAPooledNativeDecisionModel() async throws {
-        let model = DecisionsStubLanguageModel(type: Self.decisionType)
+        let model = DecisionsStubLanguageModel(type: GGUFHeaderFixtures.supportedDecisionType)
         let hold = try await FixedContainerLoader.llmHold(over: Self.liveContainer(over: model), ref: Self.ref)
         let container = try PooledDecisionContainer(hold: hold, path: .native)
         #expect(container.decisionModel is PooledNativeDecisionModel)
@@ -190,7 +186,7 @@ struct PooledDecisionContainerTests {
     /// A decision on the native path gives the answer of the model.
     @Test("a decision on the native path gives the probability of the model")
     func nativePathDecisionGivesTheProbabilityOfTheModel() async throws {
-        let session = try await Self.makeNativeSession(over: DecisionsStubLanguageModel(type: Self.decisionType))
+        let session = try await Self.makeNativeSession(over: DecisionsStubLanguageModel(type: GGUFHeaderFixtures.supportedDecisionType))
         #expect(try await session.probability(of: Self.question) == DecisionsStubLanguageModel.trueProbability)
     }
 
@@ -361,14 +357,14 @@ struct PooledDecisionContainerTests {
     /// The live container gives the decision type of a decisions model.
     @Test("the live container forwards decisionType to a decisions model")
     func liveContainerForwardsDecisionType() async throws {
-        let container = Self.liveContainer(over: DecisionsStubLanguageModel(type: Self.decisionType))
-        #expect(try await container.decisionType() == Self.decisionType)
+        let container = Self.liveContainer(over: DecisionsStubLanguageModel(type: GGUFHeaderFixtures.supportedDecisionType))
+        #expect(try await container.decisionType() == GGUFHeaderFixtures.supportedDecisionType)
     }
 
     /// The live container gives the answers of a decisions model.
     @Test("the live container forwards decide to a decisions model")
     func liveContainerForwardsDecide() async throws {
-        let model = DecisionsStubLanguageModel(type: Self.decisionType)
+        let model = DecisionsStubLanguageModel(type: GGUFHeaderFixtures.supportedDecisionType)
         let container = Self.liveContainer(over: model)
         let answers = try await container.decide(state: Self.pooledState, questions: [Self.noulQuestion])
         #expect(answers == (try await model.decide(state: Self.pooledState, questions: [Self.noulQuestion])))
