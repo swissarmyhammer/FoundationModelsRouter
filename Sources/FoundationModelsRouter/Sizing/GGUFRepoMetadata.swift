@@ -11,18 +11,20 @@ extension RepoMetadata {
     ///
     /// The KV cache and the recurrent state come from the header
     /// (``GGUFCacheSizing``), and so does the native context: the training
-    /// context of the model. The architecture fields that an MLX model reads
+    /// context of the model. So does the decision type of a decision model
+    /// (``ggufDecisionType``). The architecture fields that an MLX model reads
     /// from `config.json` are filled from the header for the record; the
     /// footprint of a GGUF model does not read them.
     ///
     /// - Parameters:
-    ///   - header: The parsed GGUF header of the model, or of the first shard
-    ///     of its split set.
+    ///   - modelHeader: The parsed GGUF header of the model, or of the first
+    ///     shard of its split set.
     ///   - weightBytes: The bytes of the shards of the model and of its projector.
     ///   - name: The name the errors give: a reference or a file path.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the
     ///   header has no positive training context (`<arch>.context_length`).
-    init(ggufHeader header: GGUFHeader, weightBytes: Int64, name: String) throws {
+    init(ggufHeader modelHeader: GGUFModelHeader, weightBytes: Int64, name: String) throws {
+        let header = modelHeader.header
         guard let context = header.trainingContextSize, context > 0 else {
             throw RepoMetadataError.metadataUnavailable(
                 "the GGUF header of \(name) has no positive \(header.architecture).context_length")
@@ -36,8 +38,18 @@ extension RepoMetadata {
             hiddenSize: header.embeddingLength,
             numFullAttentionLayers: header.fullAttentionBlockCount,
             nativeMaxContext: context,
-            gguf: GGUFCacheSizing(header: header)
+            gguf: GGUFCacheSizing(header: header),
+            ggufDecisionType: modelHeader.decisionType
         )
+    }
+
+    /// Whether llama.cpp answers decision questions for the decision type of
+    /// the model (``ggufDecisionType``): the native decision path.
+    ///
+    /// FoundationModelsLlamaCpp alone tells which types it supports, thus the
+    /// router keeps no list of types.
+    var hasNativeDecisionType: Bool {
+        ggufDecisionType.flatMap(LlamaDecisionType.init(rawValue:))?.isSupportedByDecide ?? false
     }
 
     /// The bytes a drafter adds beside its weights at the context of its
@@ -139,6 +151,33 @@ extension RepoMetadata {
     }
 }
 
+/// The parsed GGUF header of a model, and the decision type of its metadata,
+/// which `GGUFHeader` does not keep.
+struct GGUFModelHeader: Sendable {
+    /// The key after the prefix of the architecture of the decision type of
+    /// a decision model: `<arch>.decision.type`.
+    private static let decisionTypeKey = "decision.type"
+
+    /// The parsed header.
+    let header: GGUFHeader
+
+    /// The `STRING` value of `<arch>.decision.type`, or `nil` when the
+    /// metadata has no such `STRING` value.
+    let decisionType: String?
+
+    /// Parses the header of a prefix of a GGUF file.
+    ///
+    /// - Parameter prefix: The first bytes of a GGUF file.
+    /// - Throws: The error of `GGUFHeader.parse(prefix:)`, unchanged, for
+    ///   example `GGUFHeaderError.needsMoreBytes(atLeast:)` when the prefix
+    ///   ends before the metadata section ends.
+    init(prefix: Data) throws {
+        header = try GGUFHeader.parse(prefix: prefix)
+        decisionType = GGUFMetadataScan.stringValue(
+            of: "\(header.architecture).\(Self.decisionTypeKey)", in: prefix)
+    }
+}
+
 /// Reads a GGUF header from the start of a file, a range at a time, so a
 /// model on the Hub is sized with no download of its weights.
 ///
@@ -162,15 +201,15 @@ enum GGUFHeaderPrefix {
     ///   - name: The name of the file, for the errors.
     ///   - fetch: Reads a range of the bytes of the file. It gives fewer bytes
     ///     than asked at the end of the file.
-    /// - Returns: The parsed header.
+    /// - Returns: The parsed header, with the decision type of its metadata.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the
     ///   header does not parse, or when the file ends before its metadata
     ///   section ends; or the error of `fetch`.
-    static func read(name: String, fetch: (Range<Int>) async throws -> Data) async throws -> GGUFHeader {
+    static func read(name: String, fetch: (Range<Int>) async throws -> Data) async throws -> GGUFModelHeader {
         var prefix = try await fetch(0..<initialByteCount)
         while true {
             do {
-                return try GGUFHeader.parse(prefix: prefix)
+                return try GGUFModelHeader(prefix: prefix)
             } catch GGUFHeaderError.needsMoreBytes(let atLeast) {
                 let wanted = max(atLeast, nextReadEnd(after: prefix))
                 let more = try await fetch(prefix.count..<wanted)

@@ -87,17 +87,19 @@ struct GGUFRepoMetadataTests {
             && (metadataEnd...(metadataEnd + metadataEnd / overreadDivisor)).contains(ranges[1].upperBound)
     }
 
-    /// Sizes the one dense model file of a repo.
+    /// Sizes the one model file of a repo.
     ///
+    /// - Parameter header: The bytes of the header of the file. The default
+    ///   is the dense model.
     /// - Returns: The metadata.
     /// - Throws: The error of the read.
-    private static func singleFileMetadata() async throws -> RepoMetadata {
+    private static func singleFileMetadata(header: Data = GGUFHeaderFixtures.denseBytes) async throws -> RepoMetadata {
         let (reader, cache, _) = try makeReader(
             treeJSON: HubTreeListing.json([
                 .lfsFile("model-Q4_K_M.gguf", size: modelBytes),
                 .lfsFile("README.md", size: 10),
             ]),
-            files: ["model-Q4_K_M.gguf": GGUFHeaderFixtures.denseBytes])
+            files: ["model-Q4_K_M.gguf": header])
         defer { cache.remove() }
         return try await reader.metadata(for: ModelRef(repo: repo))
     }
@@ -191,7 +193,7 @@ struct GGUFRepoMetadataTests {
     func largeVocabularySizesAsTheWholeFile() async throws {
         let bytes = GGUFHeaderFixtures.largeVocabularyBytes
         let expected = try RepoMetadata(
-            ggufHeader: GGUFHeader.parse(prefix: bytes), weightBytes: Int64(bytes.count), name: Self.repo)
+            ggufHeader: GGUFModelHeader(prefix: bytes), weightBytes: Int64(bytes.count), name: Self.repo)
         let (reader, cache, _) = try Self.makeReader(
             treeJSON: HubTreeListing.json([.lfsFile("model.gguf", size: Int64(bytes.count))]),
             files: ["model.gguf": bytes])
@@ -370,5 +372,35 @@ struct GGUFRepoMetadataTests {
         let metadata = try await reader.metadata(for: ModelRef(repo: Self.repo))
 
         #expect(metadata.deciderConfigurationByteCount == Self.deciderConfigurationBytes)
+    }
+
+    /// The decision type of the decision model of the tests: a type that
+    /// llama.cpp decides natively.
+    private static let decisionType = "h2o-lightning"
+
+    @Test("a GGUF model records the decision type of its header")
+    func decisionTypeIsRecorded() async throws {
+        let header = GGUFHeaderFixtures.decisionBytes(decisionType: Self.decisionType)
+
+        #expect(try await Self.singleFileMetadata(header: header).ggufDecisionType == Self.decisionType)
+    }
+
+    @Test("a GGUF model with no decision type in its header records none")
+    func noDecisionTypeIsRecorded() async throws {
+        #expect(try await Self.singleFileMetadata().ggufDecisionType == nil)
+    }
+
+    @Test("a decision type under the key of another architecture is not recorded")
+    func decisionTypeOfAnotherArchitectureIsNotRecorded() async throws {
+        let header = GGUFHeaderFixtures.decisionBytes(decisionType: Self.decisionType, keyArchitecture: "qwen35")
+
+        #expect(try await Self.singleFileMetadata(header: header).ggufDecisionType == nil)
+    }
+
+    @Test("a decision type that is not a string is not recorded")
+    func integerDecisionTypeIsNotRecorded() async throws {
+        let header = GGUFHeaderFixtures.integerDecisionTypeBytes
+
+        #expect(try await Self.singleFileMetadata(header: header).ggufDecisionType == nil)
     }
 }

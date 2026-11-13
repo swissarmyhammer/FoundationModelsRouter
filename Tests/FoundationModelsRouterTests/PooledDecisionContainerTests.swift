@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsDecision
+import FoundationModelsDecisionPooled
 import FoundationModelsExtras
 import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
@@ -9,8 +10,8 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Tests of ``PooledDecisionContainer`` over a hold of a stub pool, and of
-/// the ``PooledLogits`` conformance of ``LiveLLMContainer``. No test
-/// downloads or loads a model.
+/// the ``PooledLogits`` and ``PooledDecisions`` conformances of
+/// ``LiveLLMContainer``. No test downloads or loads a model.
 @Suite("The decision container and the logits of the live container")
 struct PooledDecisionContainerTests {
     // MARK: - Fixed values
@@ -68,8 +69,23 @@ struct PooledDecisionContainerTests {
     /// The yes-or-no question of the decision tests.
     private static let question = "Is the state urgent?"
 
+    /// The text of the state of the decision tests.
+    private static let stateText = "The server is down."
+
     /// The state of the decision tests.
-    private static let state: DecisionState = "The server is down."
+    private static let state = DecisionState.text(stateText)
+
+    /// The state of the decision forwarding tests.
+    private static let pooledState = PooledDecisionState.text(stateText)
+
+    /// The decision type of the stub decision model: a type that llama.cpp
+    /// decides natively.
+    private static let decisionType = "h2o-lightning"
+
+    /// The noul question of the decision forwarding tests.
+    private static let noulQuestion = PooledDecisionQuestion(
+        id: "urgent", type: .noul, instructions: question,
+        options: [PooledDecisionOption(key: "true"), PooledDecisionOption(key: "false")])
 
     // MARK: - Helpers
 
@@ -110,7 +126,19 @@ struct PooledDecisionContainerTests {
         over logits: StubLogits, format: any DecisionPromptFormat = GenericPromptFormat()
     ) async throws -> DecisionSession {
         let hold = try await FixedContainerLoader.llmHold(over: logits, ref: ref)
-        let container = try PooledDecisionContainer(hold: hold, format: format)
+        let container = try PooledDecisionContainer(hold: hold, path: .promptFormat(format))
+        return DecisionSession(model: container.decisionModel, state: state)
+    }
+
+    /// Makes a decision session on the native path over a hold whose
+    /// container is a live container over `model`.
+    ///
+    /// - Parameter model: The model of the live container.
+    /// - Returns: The session.
+    /// - Throws: The error of the acquire or of the container.
+    private static func makeNativeSession(over model: any FoundationModels.LanguageModel) async throws -> DecisionSession {
+        let hold = try await FixedContainerLoader.llmHold(over: liveContainer(over: model), ref: ref)
+        let container = try PooledDecisionContainer(hold: hold, path: .native)
         return DecisionSession(model: container.decisionModel, state: state)
     }
 
@@ -135,7 +163,7 @@ struct PooledDecisionContainerTests {
     @Test("the decision model of the container has the ref of the hold as its model ID")
     func decisionModelHasTheRefOfTheHold() async throws {
         let hold = try await FixedContainerLoader.llmHold(over: Self.makeLogits(), ref: Self.ref)
-        let container = try PooledDecisionContainer(hold: hold, format: GenericPromptFormat())
+        let container = try PooledDecisionContainer(hold: hold, path: .promptFormat(GenericPromptFormat()))
         #expect(container.decisionModel.modelID == Self.ref.stringValue)
     }
 
@@ -144,7 +172,45 @@ struct PooledDecisionContainerTests {
     func holdWithoutLogitsThrows() async throws {
         let hold = try await FixedContainerLoader.llmHold(over: PlainStubLanguageModel(), ref: Self.ref)
         #expect(throws: PooledLogitsModelError.notLogitsCapable(Self.ref)) {
-            try PooledDecisionContainer(hold: hold, format: GenericPromptFormat())
+            try PooledDecisionContainer(hold: hold, path: .promptFormat(GenericPromptFormat()))
+        }
+    }
+
+    // MARK: - The native path
+
+    /// The native path asks the decision code of the model.
+    @Test("the native path gives a pooled native decision model")
+    func nativePathGivesAPooledNativeDecisionModel() async throws {
+        let model = DecisionsStubLanguageModel(type: Self.decisionType)
+        let hold = try await FixedContainerLoader.llmHold(over: Self.liveContainer(over: model), ref: Self.ref)
+        let container = try PooledDecisionContainer(hold: hold, path: .native)
+        #expect(container.decisionModel is PooledNativeDecisionModel)
+    }
+
+    /// A decision on the native path gives the answer of the model.
+    @Test("a decision on the native path gives the probability of the model")
+    func nativePathDecisionGivesTheProbabilityOfTheModel() async throws {
+        let session = try await Self.makeNativeSession(over: DecisionsStubLanguageModel(type: Self.decisionType))
+        #expect(try await session.probability(of: Self.question) == DecisionsStubLanguageModel.trueProbability)
+    }
+
+    /// A hold whose container cannot answer decision questions makes no
+    /// container on the native path.
+    @Test("the native path over a hold whose container is not PooledDecisions throws notDecisionCapable")
+    func nativePathWithoutDecisionsThrows() async throws {
+        let hold = try await FixedContainerLoader.llmHold(over: PlainStubLanguageModel(), ref: Self.ref)
+        #expect(throws: PooledDecisionsModelError.notDecisionCapable(Self.ref)) {
+            try PooledDecisionContainer(hold: hold, path: .native)
+        }
+    }
+
+    /// A model with no decision type makes the first decision on the native
+    /// path throw.
+    @Test("a decision on the native path over a model with no decision type throws notDecisionCapable")
+    func nativePathWithoutDecisionTypeThrowsAtTheFirstDecision() async throws {
+        let session = try await Self.makeNativeSession(over: PlainStubLanguageModel())
+        await #expect(throws: PooledDecisionsModelError.notDecisionCapable(Self.ref)) {
+            try await session.probability(of: Self.question)
         }
     }
 
@@ -288,5 +354,41 @@ struct PooledDecisionContainerTests {
     func liveContainerHasNoPromptLimitForPlainModel() {
         let container = Self.liveContainer(over: PlainStubLanguageModel())
         #expect(container.maximumPromptTokens == nil)
+    }
+
+    // MARK: - The decisions of the live container
+
+    /// The live container gives the decision type of a decisions model.
+    @Test("the live container forwards decisionType to a decisions model")
+    func liveContainerForwardsDecisionType() async throws {
+        let container = Self.liveContainer(over: DecisionsStubLanguageModel(type: Self.decisionType))
+        #expect(try await container.decisionType() == Self.decisionType)
+    }
+
+    /// The live container gives the answers of a decisions model.
+    @Test("the live container forwards decide to a decisions model")
+    func liveContainerForwardsDecide() async throws {
+        let model = DecisionsStubLanguageModel(type: Self.decisionType)
+        let container = Self.liveContainer(over: model)
+        let answers = try await container.decide(state: Self.pooledState, questions: [Self.noulQuestion])
+        #expect(answers == (try await model.decide(state: Self.pooledState, questions: [Self.noulQuestion])))
+    }
+
+    /// The live container gives no decision type for a model that cannot
+    /// answer decision questions.
+    @Test("the live container gives no decision type for a plain model")
+    func liveContainerHasNoDecisionTypeForPlainModel() async throws {
+        let container = Self.liveContainer(over: PlainStubLanguageModel())
+        #expect(try await container.decisionType() == nil)
+    }
+
+    /// The live container cannot answer decision questions with a model that
+    /// cannot answer them.
+    @Test("the live container throws notDecisionCapable from decide for a plain model")
+    func liveContainerDecideThrowsForPlainModel() async {
+        let container = Self.liveContainer(over: PlainStubLanguageModel())
+        await #expect(throws: PooledDecisionsModelError.notDecisionCapable(Self.ref)) {
+            try await container.decide(state: Self.pooledState, questions: [Self.noulQuestion])
+        }
     }
 }

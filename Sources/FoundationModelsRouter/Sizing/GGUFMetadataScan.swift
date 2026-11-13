@@ -1,7 +1,9 @@
 import Foundation
 
 /// Walks the metadata section of a prefix of a GGUF file as far as the prefix
-/// goes, and tells where the next read of the header should end.
+/// goes, and tells where the next read of the header should end. The walk
+/// also reads the `STRING` value of one key (``stringValue(of:in:)``), which
+/// `GGUFHeader` does not keep.
 ///
 /// `GGUFHeader.parse(prefix:)` stops at the end of a prefix with
 /// `GGUFHeaderError.needsMoreBytes(atLeast:)`, whose byte count reaches only
@@ -98,16 +100,58 @@ struct GGUFMetadataScan {
     ///   when it holds the whole metadata section, or when its bytes are not
     ///   a GGUF metadata section that the scan reads.
     init?(prefix: Data) {
+        let open = Self.firstResult(in: prefix) { key, type, cursor in
+            try Self.skipValue(of: type, key: key, cursor: &cursor)
+        }
+        guard let open else { return nil }
+        openArray = open
+    }
+
+    /// Reads the `STRING` value of one metadata key from a prefix of a GGUF
+    /// file.
+    ///
+    /// - Parameters:
+    ///   - key: The full metadata key, for example `"qwen35.decision.type"`.
+    ///   - prefix: The first bytes of a GGUF file.
+    /// - Returns: The value, or `nil` when the metadata has no such key
+    ///   inside the prefix, when its value is not a `STRING` value, or when
+    ///   the bytes are not a metadata section that the scan reads.
+    static func stringValue(of key: String, in prefix: Data) -> String? {
+        firstResult(in: prefix) { valueKey, type, cursor in
+            guard valueKey == key else {
+                // An array that runs past the prefix ends the walk: the
+                // prefix does not hold the values after it.
+                guard try skipValue(of: type, key: valueKey, cursor: &cursor) == nil else { throw Cursor.PrefixEnd() }
+                return nil
+            }
+            guard type == .string else { throw Cursor.Unreadable() }
+            return try cursor.string()
+        }
+    }
+
+    /// Walks the metadata values of a prefix of a GGUF file, in order, and
+    /// gives the first result of `visit`.
+    ///
+    /// - Parameters:
+    ///   - prefix: The first bytes of a GGUF file.
+    ///   - visit: Gets the key and the type of each value, with the cursor at
+    ///     the value. It reads the value and gives a result, or it moves the
+    ///     cursor past the value and gives `nil` to go to the next value. An
+    ///     error stops the walk.
+    /// - Returns: The first result of `visit`, or `nil` when `visit` gives
+    ///   none for each value, or when the walk stops at an error.
+    private static func firstResult<Result>(
+        in prefix: Data, _ visit: (String, ValueType, inout Cursor) throws -> Result?
+    ) -> Result? {
         var cursor = Cursor(data: prefix)
         do {
-            try cursor.skip(Self.leadByteCount)
+            try cursor.skip(leadByteCount)
             let valueCount = try cursor.count()
             for _ in 0..<valueCount {
                 let key = try cursor.string()
                 let type = try cursor.valueType()
-                if let open = try Self.skipValue(of: type, key: key, cursor: &cursor) {
-                    openArray = open
-                    return
+                if let result = try visit(key, type, &cursor) {
+                    return result
                 }
             }
         } catch {

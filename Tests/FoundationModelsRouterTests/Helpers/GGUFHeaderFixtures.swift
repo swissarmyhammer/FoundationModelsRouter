@@ -30,6 +30,9 @@ enum GGUFHeaderFixtures {
     /// The metadata key of the architecture.
     private static let architectureKey = "general.architecture"
 
+    /// The architecture of each dense model.
+    private static let denseArchitecture = "llama"
+
     /// The metadata key of the target layers of a DFlash drafter.
     private static let dflashTargetLayersKey = "dflash.target_layers"
 
@@ -138,12 +141,12 @@ enum GGUFHeaderFixtures {
 
     /// A dense model: four attention blocks of two K and V heads of 32
     /// elements each, with a training context of 8192 tokens.
-    static let denseBytes = bytes(architecture: "llama", values: denseValues)
+    static let denseBytes = bytes(architecture: denseArchitecture, values: denseValues)
 
     /// A second dense model with a different training context, as a second
     /// quantization of a repository can carry.
     static let otherDenseBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: [
             "block_count": otherDenseBlocks,
             "context_length": otherDenseContext,
@@ -228,7 +231,7 @@ enum GGUFHeaderFixtures {
     /// order and the counts of the Qwen3.5 GGUF files. Its metadata section
     /// ends near 11 MB, as the one of `Qwen3.5-0.8B-Q8_0.gguf` does.
     static let largeVocabularyBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: denseValues,
         trailing: [
             (
@@ -257,7 +260,7 @@ enum GGUFHeaderFixtures {
     /// values: a metadata section that runs past the first read in a string,
     /// not in an array.
     static let longChatTemplateBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: denseValues,
         trailing: [("tokenizer.chat_template", typedString(length: longChatTemplateLength))])
 
@@ -267,7 +270,7 @@ enum GGUFHeaderFixtures {
     /// A dense model with 65,536 `UINT32` values after its values, about
     /// 2.2 MB of keys and values with no array.
     static let manyValuesBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: denseValues,
         trailing: (0..<manyValuesCount).map { index in
             var typedValue = Data()
@@ -279,14 +282,14 @@ enum GGUFHeaderFixtures {
     /// A dense model with an array of four megabytes of `INT32` elements
     /// after its values, and no token array.
     static let largeIntegerArrayBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: denseValues,
         trailing: [("tokenizer.ggml.token_type", signedIntegerArray(count: largeArrayCount))])
 
     /// A dense model with an array of about twelve megabytes of short
     /// strings after its values, and no token array.
     static let largeStringArrayBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: denseValues,
         trailing: [
             (
@@ -297,8 +300,45 @@ enum GGUFHeaderFixtures {
 
     /// A dense model with no training context (`context_length`).
     static let noContextBytes = bytes(
-        architecture: "llama",
+        architecture: denseArchitecture,
         values: ["block_count": denseBlocks, "attention.head_count": denseAttentionHeads])
+
+    /// The key after the prefix of the architecture of the decision type of
+    /// a decision model: `<arch>.decision.type`.
+    private static let decisionTypeKey = "decision.type"
+
+    /// A dense model with a `STRING` decision type after its values, as a
+    /// decision GGUF of llama.cpp has.
+    ///
+    /// - Parameters:
+    ///   - decisionType: The text of the decision type, for example
+    ///     `"h2o-lightning"`.
+    ///   - keyArchitecture: The architecture of the prefix of the key. The
+    ///     default is ``denseArchitecture``, the architecture of the model.
+    /// - Returns: The bytes.
+    static func decisionBytes(decisionType: String, keyArchitecture: String = denseArchitecture) -> Data {
+        var typedValue = Data()
+        append(textType, to: &typedValue)
+        append(text: decisionType, to: &typedValue)
+        return bytes(
+            architecture: denseArchitecture, values: denseValues,
+            trailing: [("\(keyArchitecture).\(decisionTypeKey)", typedValue)])
+    }
+
+    /// The `UINT32` value of the decision type of
+    /// ``integerDecisionTypeBytes``.
+    private static let integerDecisionType: UInt32 = 12
+
+    /// A dense model whose decision type is a `UINT32` value, not a
+    /// `STRING` value.
+    static let integerDecisionTypeBytes: Data = {
+        var typedValue = Data()
+        append(integerType, to: &typedValue)
+        append(integerDecisionType, to: &typedValue)
+        return bytes(
+            architecture: denseArchitecture, values: denseValues,
+            trailing: [("\(denseArchitecture).\(decisionTypeKey)", typedValue)])
+    }()
 
     /// Builds a `STRING` value of filler characters, with its `gguf_type`.
     ///

@@ -134,6 +134,16 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// Whether the root of the repository has a `decider_config.json` file.
     var hasDeciderConfiguration: Bool { deciderConfigurationByteCount != nil }
 
+    /// The decision type of a GGUF decision model: the `<arch>.decision.type`
+    /// text of its GGUF header, for example `"h2o-lightning"`. The value is
+    /// `nil` when the header has no such `STRING` value, and for an MLX or a
+    /// Core ML repo, which has no GGUF header.
+    ///
+    /// The value is the text of the header, unchanged. Only
+    /// FoundationModelsLlamaCpp tells whether llama.cpp answers decision
+    /// questions for the type: see ``hasNativeDecisionType``.
+    let ggufDecisionType: String?
+
     /// The name of the file that gives the prompt format of a decision model.
     static let deciderConfigurationFileName = "decider_config.json"
 
@@ -153,7 +163,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// has no default; every caller passes the figure it read, or `nil` for a
     /// Core ML repo. `gguf` defaults to `nil`: the repo is not GGUF.
     /// `deciderConfigurationByteCount` defaults to `nil`: the repo has no
-    /// `decider_config.json` file.
+    /// `decider_config.json` file. `ggufDecisionType` defaults to `nil`: the
+    /// repo has no GGUF header with a decision type.
     init(
         weightBytes: Int64,
         numHiddenLayers: Int,
@@ -164,7 +175,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         numFullAttentionLayers: Int? = nil,
         nativeMaxContext: Int?,
         gguf: GGUFCacheSizing? = nil,
-        deciderConfigurationByteCount: Int64? = nil
+        deciderConfigurationByteCount: Int64? = nil,
+        ggufDecisionType: String? = nil
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -176,6 +188,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         self.nativeMaxContext = nativeMaxContext
         self.gguf = gguf
         self.deciderConfigurationByteCount = deciderConfigurationByteCount
+        self.ggufDecisionType = ggufDecisionType
     }
 
     /// Parses sizing metadata from raw fetched artifacts.
@@ -226,7 +239,8 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             gguf: gguf,
             deciderConfigurationByteCount: entries.first {
                 $0.isFile && $0.path == Self.deciderConfigurationFileName
-            }?.byteCount
+            }?.byteCount,
+            ggufDecisionType: ggufDecisionType
         )
     }
 
@@ -806,14 +820,29 @@ struct RepoMetadataCache: Sendable {
         try data.write(to: url, options: .atomic)
     }
 
+    /// The version of the fields of a cache entry. It is a part of the name of
+    /// each cache file.
+    ///
+    /// Increase it when a new field of ``RepoMetadata`` can change a result
+    /// and an entry without that field still decodes. An optional field
+    /// decodes as `nil` from an old entry, so the old entry would give a wrong
+    /// answer, not a decode failure. Version 2 adds
+    /// ``RepoMetadata/ggufDecisionType``: an entry of version 1 has no
+    /// decision type, and a GGUF decision model would then not get the native
+    /// decision path. A new version gives new file names, so the reader never
+    /// reads an entry of an earlier version and fetches the metadata again.
+    static let schemaVersion = 2
+
     /// The file URL for the `(repo, path, revision)` key of a reference. The
-    /// key is hashed into a filesystem-safe name.
+    /// key is hashed into a filesystem-safe name, after the
+    /// ``schemaVersion``.
     ///
     /// - Parameter ref: The reference.
     /// - Returns: The URL of its cache file.
     func fileURL(for ref: ModelRef) -> URL {
         let key = "\(ref.repo)\u{0}\(ref.path ?? "")\u{0}\(ref.revision ?? "")"
-        return cacheDir.appendingPathComponent("repo-metadata-\(SHA256Hex.text(of: key)).json", isDirectory: false)
+        return cacheDir.appendingPathComponent(
+            "repo-metadata-v\(Self.schemaVersion)-\(SHA256Hex.text(of: key)).json", isDirectory: false)
     }
 }
 

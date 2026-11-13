@@ -451,7 +451,7 @@ public actor Router {
     }
 
     /// The admission job of one resolve: measures the budget, runs the joint
-    /// fit, gets the prompt format of the decision slot
+    /// fit, gets the decision path of the decision slot
     /// (``DecisionSlotPlan``), and acquires the four slots. The job is the
     /// one job that runs in the admission queue of the pool, so no other load
     /// and no eviction occurs between the measurement and the acquires.
@@ -518,7 +518,7 @@ public actor Router {
     ///
     /// - Parameters:
     ///   - admission: The pool inside the admission job of this resolve.
-    ///   - plan: The joint fit this resolve applies, and the prompt format
+    ///   - plan: The joint fit this resolve applies, and the decision path
     ///     of its decision slot.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
     ///   - progress: The progress to drive through acquisition.
@@ -567,26 +567,28 @@ public actor Router {
             standard: try await standard.hold.generationContainer(),
             flash: try await flash.hold.generationContainer(),
             embedding: try PooledEmbeddingContainer(hold: embedding.hold),
-            decision: Self.decisionContainer(hold: decision.hold, format: plan.format)
+            decision: Self.decisionContainer(hold: decision.hold, path: plan.path)
         )
     }
 
     /// The decision container of the hold of the decision slot.
     ///
-    /// A hold whose container gives no log probabilities does not stop the
+    /// A hold whose container cannot answer on the path does not stop the
     /// resolve: the decision slot never blocks a profile. Its container then
-    /// throws the error, usually ``PooledLogitsModelError/notLogitsCapable(_:)``,
-    /// at the first decision (``UnavailableDecisionContainer``).
+    /// throws the error at the first decision (``UnavailableDecisionContainer``):
+    /// usually ``PooledLogitsModelError/notLogitsCapable(_:)`` for a prompt
+    /// format, or `PooledDecisionsModelError.notDecisionCapable(_:)` for the
+    /// native path.
     ///
     /// - Parameters:
     ///   - hold: The hold of the decision slot.
-    ///   - format: The prompt format of the model of the hold.
+    ///   - path: The decision path of the model of the hold.
     /// - Returns: The decision container.
     private static func decisionContainer(
-        hold: ModelHold, format: any DecisionPromptFormat
+        hold: ModelHold, path: DecisionPath
     ) -> any LoadedDecisionContainer {
         do {
-            return try PooledDecisionContainer(hold: hold, format: format)
+            return try PooledDecisionContainer(hold: hold, path: path)
         } catch {
             return UnavailableDecisionContainer(ref: hold.key.ref, error: error)
         }

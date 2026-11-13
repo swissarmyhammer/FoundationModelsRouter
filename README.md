@@ -95,7 +95,7 @@ dependencies: [
 
 - [Installation details](docs/installation.md): the macOS floor, the model cache folder, the Hugging Face token.
 - [Models, residency and tools](docs/residency.md): why `standard` and `flash` are two different models, the process-wide model pool, tool hosting.
-- [Decisions](docs/decision.md): the `decision` slot, its default model, the prompt format, the memory rule and the flash fallback.
+- [Decisions](docs/decision.md): the `decision` slot, its default model, the decision path (native GGUF, `decider_config.json` or generic), the memory rule and the flash fallback.
 - [ANE embedding models](docs/ane-embedding.md): the default CoreML embedding model, how the router detects it, and models in a local folder.
 - [Tests](docs/testing.md): hermetic and real-model tests, and where the worked examples are.
 - [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration): a runnable demo with two models.

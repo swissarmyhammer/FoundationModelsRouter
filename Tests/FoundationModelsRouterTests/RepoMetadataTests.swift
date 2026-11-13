@@ -764,6 +764,28 @@ struct RepoMetadataTests {
         #expect(try cache.load(for: ModelRef(repo: "org/model", revision: "abc123")) == nil)
     }
 
+    @Test("RepoMetadataCache.load does not read an entry that a cache of an earlier schema version wrote")
+    func loadIgnoresAnEntryOfAnEarlierSchemaVersion() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = RepoMetadataCache(cacheDir: dir)
+        let ref = ModelRef(repo: "org/model", revision: Self.commitHash)
+        let metadata = RepoMetadata(
+            weightBytes: 1, numHiddenLayers: 1, numAttentionHeads: 1, numKeyValueHeads: 1, headDim: 1,
+            hiddenSize: 1, nativeMaxContext: 1, ggufDecisionType: "h2o-lightning")
+        try cache.save(metadata, for: ref)
+        let current = cache.fileURL(for: ref)
+
+        // The name that version 1 gave the same key: no version in the name.
+        let key = "\(ref.repo)\u{0}\u{0}\(Self.commitHash)"
+        let earlier = dir.appendingPathComponent("repo-metadata-\(SHA256Hex.text(of: key)).json")
+        try FileManager.default.moveItem(at: current, to: earlier)
+
+        #expect(RepoMetadataCache.schemaVersion == 2)
+        #expect(current.lastPathComponent.hasPrefix("repo-metadata-v2-"))
+        #expect(try cache.load(for: ref) == nil)
+    }
+
     @Test("RepoMetadataReader.metadata(for:) re-fetches and re-caches when the cached entry has the stale pre-fix schema")
     func metadataReFetchesOnStaleSchemaCacheEntry() async throws {
         let (reader, dir, source) = Self.makeReader(
@@ -1092,6 +1114,17 @@ struct RepoMetadataTests {
         let metadata = try await reader.metadata(for: "org/model")
 
         #expect(!metadata.hasDeciderConfiguration)
+    }
+
+    @Test("an MLX repo records no GGUF decision type")
+    func mlxRepoRecordsNoDecisionType() async throws {
+        let tree = Self.mlxTreeJSON(with: [])
+        let (reader, dir, _) = Self.makeReader(raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: tree))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "org/model")
+
+        #expect(metadata.ggufDecisionType == nil)
     }
 
     @Test("a decider_config.json below the root of the repository is not recorded")

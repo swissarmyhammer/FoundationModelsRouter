@@ -60,10 +60,16 @@ struct LocalRepoMetadataTests {
     /// The size of the projector of a local GGUF folder.
     private static let ggufProjectorBytes = 3_000
 
-    /// Writes a GGUF model file that holds the dense header of
+    /// Writes a GGUF model file that holds a header of
     /// ``GGUFHeaderFixtures`` and zero bytes up to ``ggufModelBytes``.
-    private static func writeGGUFModel(_ path: String, in folder: TempModelFolder) throws {
-        let header = GGUFHeaderFixtures.denseBytes
+    ///
+    /// - Parameters:
+    ///   - path: The path of the file in the folder.
+    ///   - folder: The folder.
+    ///   - header: The bytes of the header. The default is the dense model.
+    private static func writeGGUFModel(
+        _ path: String, in folder: TempModelFolder, header: Data = GGUFHeaderFixtures.denseBytes
+    ) throws {
         try folder.write(path, data: header + Data(count: ggufModelBytes - header.count))
     }
 
@@ -245,6 +251,23 @@ struct LocalRepoMetadataTests {
         let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.appending(path: "model.gguf").path))
 
         #expect(metadata.nativeMaxContext == header.trainingContextSize)
+    }
+
+    /// The decision type of the local decision model: a type that llama.cpp
+    /// decides natively.
+    private static let decisionType = "h2o-lightning"
+
+    @Test("a local .gguf file records the decision type of its header")
+    func localGGUFFileDecisionType() async throws {
+        let folder = try TempModelFolder(prefix: "LocalRepoMetadataTests-gguf-file")
+        let (reader, cache, _) = try Self.makeReader()
+        defer { folder.remove(); cache.remove() }
+        try Self.writeGGUFModel(
+            "model.gguf", in: folder, header: GGUFHeaderFixtures.decisionBytes(decisionType: Self.decisionType))
+
+        let metadata = try await reader.metadata(for: ModelRef(repo: folder.url.appending(path: "model.gguf").path))
+
+        #expect(metadata.ggufDecisionType == Self.decisionType)
     }
 
     @Test("a local GGUF folder is sized by its model and its projector")

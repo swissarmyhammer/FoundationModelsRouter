@@ -11,6 +11,9 @@ import FoundationModelsExtras
 /// file is there (``RepoMetadata/deciderConfigurationByteCount``), so a
 /// repository with no such file costs no read. ``DecisionFormatSelection``
 /// then turns the bytes of the file into the format.
+///
+/// ``DecisionSlotPlan`` calls this type only for a model that does not take
+/// the native decision path (``RepoMetadata/hasNativeDecisionType``).
 enum DecisionFormatLoader {
     /// Gives the prompt format of a decision model.
     ///

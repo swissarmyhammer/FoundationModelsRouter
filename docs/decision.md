@@ -2,16 +2,17 @@
 
 A resolved profile has four slots: `standard`, `flash`, `embedding` and
 `decision`. The `decision` slot answers questions about a state with
-probabilities. It reads the probabilities from the model. It generates no text.
+probabilities. It gets the probabilities from the model. It generates no text.
 
 ## The slot
 
 - The slot is `ModelSlot.decision`. Its wire form is `"decision"`.
 - The handle is `profile.decision`, of type `RoutedDecider`
   (`RoutedModel<any LoadedDecisionContainer>`).
-- The pool role of the slot is `ModelRole.llm`. A decision model is an LLM, and
-  its log probabilities give the answers. Thus a decision model and a
-  generation model of the same pool key are one resident model.
+- The pool role of the slot is `ModelRole.llm`. A decision model is an LLM.
+  Its log probabilities, or the decision code of llama.cpp, give the answers.
+  Thus a decision model and a generation model of the same pool key are one
+  resident model.
 - The decision types (`DecisionState`, `DecisionSession`, `Question`) come from
   the `FoundationModelsDecision` package. Import it next to
   `FoundationModelsRouter`.
@@ -44,20 +45,42 @@ Mapika/decider-4b-GGUF/decider-4b-v3-Q4_K_M.gguf
 This is the `decider-4b` model, quantized to `Q4_K_M`, in GGUF format. An empty
 list is also valid. The slot then always uses the `flash` model.
 
-## The prompt format
+## The decision path
 
-The router selects the prompt format from the repository of the chosen model:
+The router selects the decision path of the chosen model in this order:
 
-| The repository root | The prompt format |
+| The model | The decision path |
 |---|---|
-| has a `decider_config.json` file | `DeciderPromptFormat`, with the configuration of that file |
-| has no `decider_config.json` file | `GenericPromptFormat`, which works with any instruct model |
+| 1. A GGUF model whose `<arch>.decision.type` llama.cpp supports | The native path: the decision code of llama.cpp makes the prompt and reads the answer. The router uses `PooledNativeDecisionModel`. |
+| 2. Else, the repository root has a `decider_config.json` file | `DeciderPromptFormat`, with the configuration of that file |
+| 3. Else | `GenericPromptFormat`, which works with any instruct model |
+
+Thus you can add a decision model with only the reference of a GGUF file, the
+same as an LLM. The model needs no Swift prompt format.
+
+The sizing step reads `<arch>.decision.type` from the GGUF header, in the same
+read as the other sizing values (for example `qwen35.decision.type =
+"h2o-lightning"` for `h2o-lightning-4b`). Only `FoundationModelsLlamaCpp` tells
+which decision types llama.cpp supports (`LlamaDecisionType` and its
+`isSupportedByDecide`). The router keeps no list of types. A type that
+llama.cpp does not know, or a type that reads an image, goes to step 2.
+
+An MLX model has no GGUF header, thus it uses only steps 2 and 3.
+
+On the native path, the router asks the model with no checks of its own. An
+error of the decision code of llama.cpp comes to the caller unchanged, for
+example `LlamaError.decisionRequestNotValid(reason:)` for a question with more
+options than the model accepts.
 
 The router reads `decider_config.json` through the metadata source of the
 sizing step, at the revision of the model reference. A local folder records the
 file at its top, as a Hub repository does.
 
-The flash fallback always uses `GenericPromptFormat`, and it reads no file.
+The flash fallback reads no file. It takes the native path when the `flash`
+model is a GGUF model with a supported decision type. Else it uses
+`GenericPromptFormat`. The decision type comes from the sizing step, thus this
+costs no read and cannot fail. The path of a model is the same in the fallback
+as in the decision slot.
 
 `GenericPromptFormat` turns reasoning off in the chat template. Some chat
 templates ignore this request and leave a thinking block open (`<think>` or
@@ -121,11 +144,15 @@ this package and in its test targets reads it from
 `ResolutionProgress.slots[.decision]?.chosen` gives the model of the slot
 during the resolve, with the fallback applied.
 
-### A model that gives no log probabilities
+### A model that cannot answer on its path
 
-If the model of the slot gives no log probabilities, the resolve does not fail.
-The first decision of a session throws
-`PooledLogitsModelError.notLogitsCapable`.
+If the model of the slot cannot answer on its decision path, the resolve does
+not fail. The first decision of a session throws the error:
+
+- `PooledLogitsModelError.notLogitsCapable` for a prompt format, when the
+  model gives no log probabilities.
+- `PooledDecisionsModelError.notDecisionCapable` for the native path, when the
+  model cannot answer decision questions natively.
 
 ## No transcript entry
 

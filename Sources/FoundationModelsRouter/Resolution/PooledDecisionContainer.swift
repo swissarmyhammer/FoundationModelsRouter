@@ -7,8 +7,10 @@ import FoundationModelsExtras
 ///
 /// The first loader of a key gives the container of all holds of that key, so
 /// the container of the hold can come from a loader that is not the router's.
-/// The pooled decision model therefore uses it through ``PooledLogits`` only.
-/// For a router load, that container is ``LiveLLMContainer``.
+/// The pooled decision model therefore uses it through ``PooledLogits`` on a
+/// prompt-format path, and through ``PooledDecisions`` on the native path
+/// (``DecisionPath``). For a router load, that container is
+/// ``LiveLLMContainer``, which forwards both to its model.
 ///
 /// The container gives the format to the pooled decision model unchanged.
 /// A thinking block before the answer gives incorrect probabilities, thus
@@ -23,13 +25,25 @@ package struct PooledDecisionContainer: LoadedDecisionContainer {
 
     /// Makes the container of a decision hold.
     ///
+    /// The native path gives a `PooledNativeDecisionModel`: the decision code
+    /// of the model makes the prompt and reads the answer. A prompt-format
+    /// path gives a `PooledDecisionModel` with the format.
+    ///
     /// - Parameters:
     ///   - hold: A hold of an LLM.
-    ///   - format: The prompt format of the model.
-    /// - Throws: ``PooledLogitsModelError/notLogitsCapable(_:)`` when the
+    ///   - path: The decision path of the model.
+    /// - Throws: On the native path,
+    ///   `PooledDecisionsModelError.notDecisionCapable(_:)` when the container
+    ///   of `hold` does not conform to ``PooledDecisions``. On a prompt-format
+    ///   path, ``PooledLogitsModelError/notLogitsCapable(_:)`` when the
     ///   container of `hold` does not conform to ``PooledLogits``.
-    init(hold: ModelHold, format: any DecisionPromptFormat) throws {
-        decisionModel = try PooledDecisionModel(hold: hold, format: format)
+    init(hold: ModelHold, path: DecisionPath) throws {
+        switch path {
+        case .native:
+            decisionModel = try PooledNativeDecisionModel(hold: hold)
+        case .promptFormat(let format):
+            decisionModel = try PooledDecisionModel(hold: hold, format: format)
+        }
     }
 
     /// Makes the container of a decision model that `pool` loads at the
@@ -50,14 +64,15 @@ package struct PooledDecisionContainer: LoadedDecisionContainer {
     }
 }
 
-/// The decision container of a decision hold whose container gives no log
-/// probabilities, for example a stub LLM container of a test, or a container
-/// of a loader that is not the router's.
+/// The decision container of a decision hold whose container cannot answer
+/// on its decision path, for example a stub LLM container of a test, or a
+/// container of a loader that is not the router's.
 ///
 /// The resolve does not fail for such a hold: the decision slot never stops a
 /// profile. Instead, each decision of the container throws the error that
-/// ``PooledDecisionContainer/init(hold:format:)`` threw, usually
-/// ``PooledLogitsModelError/notLogitsCapable(_:)``.
+/// ``PooledDecisionContainer/init(hold:path:)`` threw, usually
+/// ``PooledLogitsModelError/notLogitsCapable(_:)`` or
+/// `PooledDecisionsModelError.notDecisionCapable(_:)`.
 struct UnavailableDecisionContainer: LoadedDecisionContainer {
     /// The model whose each decision throws the error.
     let decisionModel: any DecisionModel

@@ -6,12 +6,14 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Tests of ``DecisionSlotPlan``: the prompt format of the decision slot of a
-/// resolve. The flash fallback uses the generic format and reads no file. A
-/// decision model that is not the fallback gets its format from its
-/// repository. When that read fails, the decision slot changes to the flash
-/// fallback. No network: a stub source answers each read.
-@Suite("The prompt format of the decision slot of a resolve")
+/// Tests of ``DecisionSlotPlan``: the decision path of the decision slot of a
+/// resolve. A GGUF model with a decision type that llama.cpp supports takes
+/// the native path. Else a model with `decider_config.json` gets the decider
+/// format, and any other model gets the generic format. The flash fallback
+/// takes the native path or the generic format, and reads no file. When the
+/// read of the format fails, the decision slot changes to the flash fallback.
+/// No network: a stub source answers each read.
+@Suite("The decision path of the decision slot of a resolve")
 struct DecisionSlotPlanTests {
     // MARK: - Fixed values
 
@@ -44,6 +46,25 @@ struct DecisionSlotPlanTests {
 
     /// The size of the weights of the decider repository.
     private static let weightBytes: Int64 = 1_000
+
+    /// A decision type that llama.cpp decides natively.
+    private static let supportedDecisionType = "h2o-lightning"
+
+    /// A decision type that llama.cpp knows, but that its `decide` does not
+    /// support: the type reads an image.
+    private static let imageDecisionType = "openbmb-minicpm-ocr-jev"
+
+    /// A decision type that llama.cpp does not know.
+    private static let unknownDecisionType = "a-later-decision-type"
+
+    /// The layers of the GGUF decision model.
+    private static let ggufLayers = 2
+
+    /// The attention heads of the GGUF decision model.
+    private static let ggufAttentionHeads = 8
+
+    /// The training context of the GGUF decision model.
+    private static let ggufContext = 4_096
 
     // MARK: - Helpers
 
@@ -118,6 +139,33 @@ struct DecisionSlotPlanTests {
         return [deciderRef: .success(metadata)]
     }
 
+    /// The metadata of a GGUF decision model, as the sizing step records it.
+    ///
+    /// - Parameters:
+    ///   - decisionType: The decision type of the GGUF header, or `nil` for
+    ///     a header with no decision type.
+    ///   - hasDeciderConfiguration: Whether the repository has a
+    ///     `decider_config.json` file of the size of ``deciderConfigJSON``.
+    /// - Returns: The metadata.
+    private static func ggufMetadata(decisionType: String?, hasDeciderConfiguration: Bool = false) -> RepoMetadata {
+        RepoMetadata(
+            weightBytes: weightBytes, numHiddenLayers: ggufLayers, numAttentionHeads: ggufAttentionHeads,
+            numKeyValueHeads: nil, headDim: nil, hiddenSize: nil, nativeMaxContext: ggufContext,
+            deciderConfigurationByteCount: hasDeciderConfiguration ? Int64(deciderConfigJSON.count) : nil,
+            ggufDecisionType: decisionType)
+    }
+
+    /// The metadata of an MLX decision model with no `decider_config.json`
+    /// file.
+    ///
+    /// - Returns: The metadata.
+    /// - Throws: The error of the parse.
+    private static func plainMLXMetadata() throws -> RepoMetadata {
+        let tree = HubTreeListing.json([.file("model.safetensors", size: weightBytes)])
+        return try RepoMetadata(
+            raw: RawRepoMetadata(configJSON: modelConfigJSON, treeJSON: tree), repo: deciderRef.repo)
+    }
+
     /// Makes the plan of `resolution` over a source that holds `files`.
     ///
     /// - Parameters:
@@ -128,11 +176,39 @@ struct DecisionSlotPlanTests {
     private static func plan(
         of resolution: JointResolution, files: [String: Data]
     ) async throws -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
+        try await plan(of: resolution, metadataByRef: deciderMetadata(), files: files)
+    }
+
+    /// Makes the plan of `resolution` with `metadataByRef`, over a source
+    /// that holds `files`.
+    ///
+    /// - Parameters:
+    ///   - resolution: The joint resolution.
+    ///   - metadataByRef: The sizing metadata of each candidate.
+    ///   - files: The bytes of each file of the source, by its path.
+    /// - Returns: The plan, and the source.
+    private static func plan(
+        of resolution: JointResolution, metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        files: [String: Data] = [:]
+    ) async -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
         let source = DecisionFormatLoaderTests.RecordingFileSource(files: files)
         let plan = await DecisionSlotPlan.make(
-            for: resolution, metadataByRef: try deciderMetadata(), source: source,
+            for: resolution, metadataByRef: metadataByRef, source: source,
             logger: RouterTelemetry.makeLogger(.repoMetadataReader))
         return (plan, source)
+    }
+
+    /// Makes the plan of ``deciderResolution`` when the decision model has
+    /// `metadata`, over a source that holds `decider_config.json`.
+    ///
+    /// - Parameter metadata: The metadata of ``deciderRef``.
+    /// - Returns: The plan, and the source.
+    private static func deciderPlan(
+        metadata: RepoMetadata
+    ) async -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
+        await plan(
+            of: deciderResolution, metadataByRef: [deciderRef: .success(metadata)],
+            files: [configurationFileName: deciderConfigJSON])
     }
 
     /// The resolution of the decision slot of `resolution`.
@@ -150,7 +226,16 @@ struct DecisionSlotPlanTests {
     func flashFallbackUsesTheGenericFormat() async throws {
         let (plan, _) = try await Self.plan(of: Self.fallbackResolution, files: [:])
 
-        #expect(plan.format is GenericPromptFormat)
+        #expect(plan.path.promptFormat is GenericPromptFormat)
+    }
+
+    @Test("the flash fallback takes the native path when the flash model has a supported decision type")
+    func flashFallbackWithDecisionTypeTakesTheNativePath() async {
+        let (plan, _) = await Self.plan(
+            of: Self.fallbackResolution,
+            metadataByRef: [Self.flashRef: .success(Self.ggufMetadata(decisionType: Self.supportedDecisionType))])
+
+        #expect(plan.path.isNative)
     }
 
     @Test("the flash fallback reads no file")
@@ -167,7 +252,59 @@ struct DecisionSlotPlanTests {
         let (plan, _) = try await Self.plan(
             of: Self.deciderResolution, files: [Self.configurationFileName: Self.deciderConfigJSON])
 
-        #expect(plan.format is DeciderPromptFormat)
+        #expect(plan.path.promptFormat is DeciderPromptFormat)
+    }
+
+    @Test("a GGUF decision model with a supported decision type takes the native path")
+    func supportedDecisionTypeTakesTheNativePath() async {
+        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: Self.supportedDecisionType))
+
+        #expect(plan.path.isNative)
+    }
+
+    @Test("a supported decision type takes the native path also when the repository has decider_config.json")
+    func supportedDecisionTypeWinsOverDeciderConfiguration() async {
+        let (plan, _) = await Self.deciderPlan(
+            metadata: Self.ggufMetadata(decisionType: Self.supportedDecisionType, hasDeciderConfiguration: true))
+
+        #expect(plan.path.isNative)
+    }
+
+    @Test("the native path reads no decider_config.json file")
+    func nativePathReadsNoFile() async {
+        let (_, source) = await Self.deciderPlan(
+            metadata: Self.ggufMetadata(decisionType: Self.supportedDecisionType, hasDeciderConfiguration: true))
+
+        #expect(await source.fetches.isEmpty)
+    }
+
+    @Test("a decision type that decide does not support uses decider_config.json")
+    func unsupportedDecisionTypeGetsTheDeciderFormat() async {
+        let (plan, _) = await Self.deciderPlan(
+            metadata: Self.ggufMetadata(decisionType: Self.imageDecisionType, hasDeciderConfiguration: true))
+
+        #expect(plan.path.promptFormat is DeciderPromptFormat)
+    }
+
+    @Test("a decision type that llama.cpp does not know, with no decider_config.json, gets the generic format")
+    func unknownDecisionTypeGetsTheGenericFormat() async {
+        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: Self.unknownDecisionType))
+
+        #expect(plan.path.promptFormat is GenericPromptFormat)
+    }
+
+    @Test("a GGUF decision model with no decision type and no decider_config.json gets the generic format")
+    func ggufWithNoDecisionTypeGetsTheGenericFormat() async {
+        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: nil))
+
+        #expect(plan.path.promptFormat is GenericPromptFormat)
+    }
+
+    @Test("an MLX decision model with no decider_config.json gets the generic format")
+    func mlxWithNoDeciderConfigurationGetsTheGenericFormat() async throws {
+        let (plan, _) = await Self.deciderPlan(metadata: try Self.plainMLXMetadata())
+
+        #expect(plan.path.promptFormat is GenericPromptFormat)
     }
 
     @Test("a decision model whose format loads keeps its resolution")
@@ -209,7 +346,7 @@ struct DecisionSlotPlanTests {
     func failedFormatLoadUsesTheGenericFormat() async throws {
         let (plan, _) = try await Self.plan(of: Self.deciderResolution, files: [:])
 
-        #expect(plan.format is GenericPromptFormat)
+        #expect(plan.path.promptFormat is GenericPromptFormat)
     }
 
     @Test("a failed format load writes a warning")
@@ -220,5 +357,19 @@ struct DecisionSlotPlanTests {
                 containing: DecisionSlotPlan.formatUnavailableReason,
                 metadata: [RouterTelemetry.LogMetadataKey.modelRef: Self.deciderRef.stringValue])
         }
+    }
+}
+
+extension DecisionPath {
+    /// The prompt format of the path, or `nil` for the native path.
+    fileprivate var promptFormat: (any DecisionPromptFormat)? {
+        guard case .promptFormat(let format) = self else { return nil }
+        return format
+    }
+
+    /// Whether the path is the native path.
+    fileprivate var isNative: Bool {
+        guard case .native = self else { return false }
+        return true
     }
 }

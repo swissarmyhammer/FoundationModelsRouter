@@ -122,7 +122,7 @@ struct GGUFResolveTests {
     /// - Returns: The metadata.
     /// - Throws: The error of the parse.
     private static func ggufMetadata(_ bytes: Data, weightBytes: Int64) throws -> RepoMetadata {
-        try RepoMetadata(ggufHeader: GGUFHeader.parse(prefix: bytes), weightBytes: weightBytes, name: "fixture")
+        try RepoMetadata(ggufHeader: GGUFModelHeader(prefix: bytes), weightBytes: weightBytes, name: "fixture")
     }
 
     @Test("a GGUF candidate with a GGUF drafter is charged the weights and the context of the drafter")
