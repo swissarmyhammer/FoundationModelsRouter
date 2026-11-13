@@ -145,6 +145,41 @@ struct PinnedChatTemplateDateIntegrationTests {
         return formatter.string(from: Date())
     }
 
+    /// The shapes in which the model can write a date in its answer: the shape
+    /// of ``pinnedDate`` and the shape of ``clockDateFormat``.
+    private static let answerDateFormats = ["d MMM yyyy", clockDateFormat]
+
+    /// The calendar day that `text` names, in the shape of
+    /// ``clockDateFormat``.
+    ///
+    /// The model reads the pinned date from its system header, but it can
+    /// write that date in a different shape. On 2026-09-01 it wrote
+    /// `26 Jul 2024`, and on 2026-11-12 it wrote `2024-07-26` (task ^5hjddsq).
+    /// Both are the pinned day. Thus the test compares calendar days, not
+    /// strings.
+    ///
+    /// - Parameter text: A date in one of ``answerDateFormats``, with or
+    ///   without a full stop at the end.
+    /// - Returns: The day in the shape of ``clockDateFormat``, or `nil` when
+    ///   `text` is in no known shape.
+    private static func calendarDay(of text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: CharacterSet(charactersIn: ".").union(.whitespacesAndNewlines))
+        let output = DateFormatter()
+        output.locale = Locale(identifier: "en_US_POSIX")
+        output.timeZone = TimeZone(identifier: "UTC")
+        output.dateFormat = clockDateFormat
+        for format in answerDateFormats {
+            let input = DateFormatter()
+            input.locale = output.locale
+            input.timeZone = output.timeZone
+            input.dateFormat = format
+            if let date = input.date(from: trimmed) {
+                return output.string(from: date)
+            }
+        }
+        return nil
+    }
+
     @Test("the render of the real template carries the pinned date, and not the clock's")
     func pinnedDateReachesTheRealTemplate() async throws {
         let loaded = try await Self.makeContainer()
@@ -195,9 +230,11 @@ struct PinnedChatTemplateDateIntegrationTests {
         print("[\(Self.phaseLabel)] reply=\(answer)")
 
         // The model reads the date out of the system header the template wrote,
-        // so the answer IS the pinned value. A date that moved would move this
-        // answer with it, which is what makes the assertion a measurement of
-        // the pin rather than of the model.
-        #expect(answer == pinnedDate)
+        // so the answer names the pinned day, in one shape or the other. A date
+        // that moved would move this answer with it, which is what makes the
+        // assertion a measurement of the pin rather than of the model.
+        let answeredDay = try #require(Self.calendarDay(of: answer), "reply: \(answer)")
+        #expect(answeredDay == Self.calendarDay(of: pinnedDate))
+        #expect(answeredDay != Self.clockDate())
     }
 }
