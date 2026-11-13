@@ -13,7 +13,23 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Session/IdenticalToolCallRun.swift (ToolCallIdentity.canonicalJSON via JSONSerialization .sortedKeys/.fragmentsAllowed, raw-text fallback), Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift and SessionCheckedTool.swift (docs), Tests/.../IdenticalToolCallLimitTests.swift (stop test + parametrized identity equal/unequal unit tests incl. nested, 1/true/"1", array order, unparseable), Tests/.../ConsecutiveRecoveryBudgetTests.swift (key-reordered repeat is no progress), Tests/.../Helpers/{IdenticalToolCallModel,RepeatingToolCallModel,RepeatingReasoningModel}.swift (raw-arguments scripts, CountingContentRunCodeTool with GeneratedContent args). RED observed for all three new behaviours, then GREEN. Full root `swift test`: 2652 + 41 + 19 tests passed, 0 failures (only the SwiftPM build-system note "missing creator for mutated node ... mlx-swift_Cmlx.bundle", which predates this change). IntegrationTests not run (known unrelated ^5hjddsq).
     - next: /review
   timestamp: 2026-11-13T06:03:07.554765+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m79r60anzge40wmsn9fq15xw
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (e47249a7) — 3 findings (3 confirmed, 2 refuted): Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:41, Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:387, Tests/FoundationModelsRouterTests/IdenticalToolCallLimitTests.swift:38
+    - next: implement the three reuse/reuse findings (share the reordered-key fixture between the two suites; reuse IdenticalToolCallScript.arguments(code:) in sendToolCall(running:)), then re-review
+  timestamp: 2026-11-13T06:05:40.565591+00:00
+- actor: claude-code
+  id: 01m79r6d43r2qxxd8fcw96py3q
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 8 files
+    - test: green — swift test 2652+41+19
+    - commit: e47249a7
+    - review: findings — ConsecutiveRecoveryBudgetTests.swift:41, Helpers/RepeatingReasoningModel.swift:387, IdenticalToolCallLimitTests.swift:38
+  timestamp: 2026-11-13T06:05:53.667603+00:00
+position_column: review
 position_ordinal: '80'
 title: Tool-call identity ignores the key order of the arguments
 ---
@@ -35,3 +51,14 @@ There is no guard specific to check agent; this is the generic comparison.
 - [x] RED test: a call that repeats an earlier one in a different key order does not reset `recoveriesSinceProgress`.
 - [x] Canonicalize in `ToolCallIdentity`, nested objects included.
 - [x] Full suite green. #recovery
+
+## Review Findings (2026-11-13 00:03)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [ ] `Tests/FoundationModelsRouterTests/ConsecutiveRecoveryBudgetTests.swift:41` `reuse/reuse` — `keysInOtherOrder` is a second copy of the reordered-key fixture in `IdenticalToolCallLimitTests`, so the key-order case is defined twice. Define the reordered-key fixture once in a shared helper and reference it from both suites.
+- [ ] `Tests/FoundationModelsRouterTests/Helpers/RepeatingReasoningModel.swift:387` `reuse/reuse` — `sendToolCall(running:)` rebuilds the `{"code": "<code>"}` arguments inline, but `IdenticalToolCallScript.arguments(code:)` already builds the same JSON object for the same purpose. Two helpers now own the same argument shape, so a change to the shape would need to be made in both. Call `IdenticalToolCallScript.arguments(code:)` from `sendToolCall(running:)`, or move the helper to a shared location both models can call.
+- [ ] `Tests/FoundationModelsRouterTests/IdenticalToolCallLimitTests.swift:38` `reuse/reuse` — `keysInOtherOrder` duplicates the reordered-key JSON fixture that `ConsecutiveRecoveryBudgetTests` already defines, so the same key-order case lives in two files. Move the reordered-key fixture next to `keysInOneOrder` in one shared location and reference it from both suites, as with `keysInOneOrder`.
