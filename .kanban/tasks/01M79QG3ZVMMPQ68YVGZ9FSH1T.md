@@ -38,8 +38,25 @@ comments:
     - evidence: 6 files — Tests/FoundationModelsRouterTests/Helpers/RunCodeArgumentsJSON.swift (new), Helpers/IdenticalToolCallModel.swift, Helpers/RepeatingReasoningModel.swift, IdenticalToolCallLimitTests.swift, ConsecutiveRecoveryBudgetTests.swift, .kanban task (3 findings checked). Full root `swift test`: 2652 + 41 + 19 tests passed, 0 failures. The only warning is the SwiftPM build-system note "missing creator for mutated node ... mlx-swift_Cmlx.bundle", which was there before this change.
     - next: /review
   timestamp: 2026-11-13T06:09:03.971661+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m79rf9e4mbmh4n47mh2xjra3
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (6a7b27d5): 5 files reviewed, findings 0 / confirmed 0 / refuted 0, 7 rules attempted. All 3 prior `## Review Findings (2026-11-13 00:03)` items are checked: ConsecutiveRecoveryBudgetTests.swift:41, Helpers/RepeatingReasoningModel.swift:387, IdenticalToolCallLimitTests.swift:38.
+    - note: tool rule `code-hygiene/dead-code-swift` judged nothing. Its package build failed in Sources/FoundationModelsRouter/Resolution/LiveLLMContainerDecisions.swift:18 (cannot find type `PooledDecisions`) and Sources/FoundationModelsRouter/Resolution/PooledDecisionContainer.swift:43 (cannot find `PooledNativeDecisionModel`). The definitions of these types are not under Sources/ or .build/checkouts. Commit 6a7b27d5 changes only test files and does not touch these sources. A tester was building at the same time, so the shared `.build` may have caused this.
+    - next: task moved to done. If the tester's run hits the same build error, it needs its own investigation.
+  timestamp: 2026-11-13T06:10:44.804439+00:00
+- actor: claude-code
+  id: 01m79rjek1s1gqs0xy449xm66s
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 6 files (test fixture dedup)
+    - test: green — swift test 2676+41+19 on main rebased onto origin 490b8202, after swift package update (Decision b5700c3, Extras e25cc7d)
+    - commit: 6a7b27d5
+    - review: clean — 0 findings, prior 3/3 checked
+  timestamp: 2026-11-13T06:12:28.385722+00:00
+position_column: done
+position_ordinal: ffffffffff8e80
 title: Tool-call identity ignores the key order of the arguments
 ---
 Reported by FoundationModelsACPAgent from hint24 django-13925 (root session 01M79M4CY92C4FVT7CW8YW5JT3).
