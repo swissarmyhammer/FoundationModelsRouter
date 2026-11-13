@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import TelemetryTestSupport
 import Testing
 

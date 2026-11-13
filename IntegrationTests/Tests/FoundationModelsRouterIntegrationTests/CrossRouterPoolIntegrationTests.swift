@@ -130,7 +130,7 @@ private struct PooledRouter {
 
     /// The `load` spans this router opened so far.
     var loadSpans: [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == RouterTelemetry.SpanName.load }
+        tracer.finishedSpans(named: RouterTelemetry.SpanName.load)
     }
 }
 

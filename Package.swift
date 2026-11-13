@@ -13,8 +13,8 @@ let packageName = "FoundationModelsRouter"
 // library calls `withSpan` through `InstrumentationSystem.tracer`, which is a
 // no-op until a host application bootstraps a backend (swift-otel, for
 // example), so an application that does not trace pays nothing and takes on no
-// exporter dependency. The test target links the package's `InMemoryTracing`
-// product to read the finished spans back.
+// exporter dependency. The TestSupport target and the unit test target link
+// the package's `InMemoryTracing` product to read the finished spans back.
 let tracingPackage = "swift-distributed-tracing"
 
 // Apple's Swift community logging API (the OpenTelemetry design of
@@ -103,6 +103,9 @@ let ulidProduct: Target.Dependency = .product(name: "ULID", package: ulidPackage
 
 // The tracing abstraction the library target calls `withSpan` through, and the
 // in-memory tracer the unit test target reads the finished spans back from.
+// The TestSupport target links the in-memory tracer too: it carries the span
+// filter `InMemoryTracer.finishedSpans(named:)` that the unit tests and the
+// integration tests share.
 let tracingProduct: Target.Dependency = .product(name: "Tracing", package: tracingPackage)
 let inMemoryTracingProduct: Target.Dependency = .product(
     name: "InMemoryTracing", package: tracingPackage)
@@ -312,10 +315,13 @@ let package = Package(
         // so the unit test target depends on it too. It carries
         // `StubDecisionContainer` too, the decision container of a profile
         // that a test builds by hand, which the public-surface target also
-        // reads; thus it links the core decision product.
+        // reads; thus it links the core decision product. It carries the
+        // span filter `InMemoryTracer.finishedSpans(named:)` too, which the
+        // unit tests and the integration tests share; thus it links the
+        // in-memory tracer.
         .target(
             name: "\(packageName)TestSupport",
-            dependencies: [.target(name: packageName), decisionCoreProduct],
+            dependencies: [.target(name: packageName), decisionCoreProduct, inMemoryTracingProduct],
             path: "Tests/\(packageName)TestSupport"
         ),
         // Test-only support for the suites that drive a REAL model (task

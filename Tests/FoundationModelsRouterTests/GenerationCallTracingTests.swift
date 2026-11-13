@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import InMemoryTracing
 import Testing
 import Tracing

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import InMemoryTracing
 import Logging
 import TelemetryTestSupport
