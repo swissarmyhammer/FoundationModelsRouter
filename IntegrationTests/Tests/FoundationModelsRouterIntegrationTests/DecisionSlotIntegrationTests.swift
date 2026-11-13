@@ -24,6 +24,23 @@ private let deciderModel = ModelRef(
     revision: "0df001b8fe4e5298c5dd45d875d3795fcdaea0ab"
 )
 
+/// The native decision model of this suite: h2o-lightning 4B in the
+/// `Q4_K_M` GGUF conversion, 2.71 GB (task ^c9rmgec).
+///
+/// Its GGUF header has `qwen35.decision.type = "h2o-lightning"`, a type that
+/// the `decide` of llama.cpp supports. Thus the router gives it the native
+/// decision path: llama.cpp makes the prompt and reads the answer, and the
+/// repository needs no `decider_config.json` file.
+private let nativeDeciderModel = ModelRef(
+    repo: "h2oai/h2o-lightning-4b-gguf",
+    path: "h2o-lightning-4b-Q4_K_M.gguf",
+    revision: "61f8d8b7a8c2d84426d0d143ca187f65d235934b"
+)
+
+/// The largest permitted difference between 1 and the sum of the answer
+/// probabilities of one answer of the native path.
+private let probabilitySumTolerance = 1e-6
+
 /// The `standard` candidate of each profile of this suite: the small MLX
 /// instruct model of `GGUFProfileIntegrationTests`, 680 MB. No test of this
 /// suite generates on it.
@@ -194,6 +211,9 @@ private func decisionProfile(decision: [ModelRef]) -> ProfileDefinition {
 /// The profile whose decision slot names ``deciderModel``.
 private let deciderProfile = decisionProfile(decision: [deciderModel])
 
+/// The profile whose decision slot names ``nativeDeciderModel``.
+private let nativeDeciderProfile = decisionProfile(decision: [nativeDeciderModel])
+
 /// The profile whose decision slot names no candidate, so the decision slot
 /// uses the flash model.
 private let flashFallbackProfile = decisionProfile(decision: [])
@@ -333,12 +353,20 @@ extension SessionEvent {
 /// 3. In that fallback, a decision while a generation runs on the same
 ///    llama.cpp model finishes, and the generation finishes too: the lock of
 ///    the llama.cpp model serializes the two.
+/// 4. A profile whose decision slot names ``nativeDeciderModel``, a GGUF file
+///    with a supported decision type and no `decider_config.json`, resolves
+///    with that model on the native path (`PooledNativeDecisionModel`). Each
+///    item of ``deciderReferenceItems`` gets an answer of its kind, with
+///    probabilities in 0...1 that sum to 1, and the top answer of the
+///    reference. These items have clear answers, so the top answer does not
+///    depend on the model.
 ///
 /// ## What each resolve loads
 ///
 /// `Router.resolve(profile:reporting:)` fills all four slots, so each resolve
-/// loads ``standardModel``, ``flashModel`` and ``RealModels/embedding``, and
-/// the first test also loads ``deciderModel``. All four models are small.
+/// loads ``standardModel``, ``flashModel`` and ``RealModels/embedding``. The
+/// first test also loads ``deciderModel``, and the native test loads
+/// ``nativeDeciderModel``.
 ///
 /// ## Teardown
 ///
@@ -370,6 +398,28 @@ struct DecisionSlotIntegrationTests {
                 #expect(topAnswerIndex(of: probabilities) == item.topIndex, "\(item.id): \(probabilities)")
                 let largestDifference = zip(probabilities, item.probabilities).map { abs($0 - $1) }.max() ?? 0
                 #expect(largestDifference <= referenceProbabilityTolerance, "\(item.id): \(probabilities)")
+            }
+        }
+    }
+
+    @Test("a GGUF decision model with a supported decision type takes the native path and answers each kind")
+    func nativeDeciderAnswersEachKind() async throws {
+        defer { fixture.removeRoot() }
+
+        try await fixture.withResolved(nativeDeciderProfile) { profile in
+            #expect(profile.decision.chosen == nativeDeciderModel)
+            #expect(profile.decision.container.decisionModel is PooledNativeDecisionModel)
+            for item in deciderReferenceItems {
+                let started = ContinuousClock.now
+                let answer = try await DecisionSlotProbe.ask(item, on: profile.decision)
+                let elapsed = ContinuousClock.now - started
+                let probabilities = try DecisionSlotProbe.probabilities(of: answer, for: item)
+                // swiftlint:disable:next no_direct_standard_out_logs  the run records the answers of the native model for task ^c9rmgec
+                print("[nativeDecider] item=\(item.id) probabilities=\(probabilities) elapsed=\(elapsed)")
+                try #require(probabilities.count == item.probabilities.count, "\(item.id): \(probabilities)")
+                #expect(probabilities.allSatisfy { (0...1).contains($0) }, "\(item.id): \(probabilities)")
+                #expect(abs(probabilities.reduce(0, +) - 1) <= probabilitySumTolerance, "\(item.id): \(probabilities)")
+                #expect(topAnswerIndex(of: probabilities) == item.topIndex, "\(item.id): \(probabilities)")
             }
         }
     }
