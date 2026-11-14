@@ -28,6 +28,20 @@ package, so a root `swift test` cannot see them, and a run of the nested
 package executes every suite in it — no command can silently match nothing.
 CI runs the same two commands.
 
+The suites that drive a standard model (tool answers, the recovery after a
+reasoning stop, and the three compaction cases) run each test once for every
+model of `StandardModels` in `IntegrationTests/.../Support/StandardModels.swift`:
+Qwen 3.8 27B and Flint. Add a model there and every one of those suites runs it.
+
+The generation benchmark lives in a second nested package,
+[`Benchmarks/`](../Benchmarks/RouterBenchmark/README.md), which CI does not
+build. It times the prefill, the time to first token and the decode rate of
+any model:
+
+```sh
+swift run -c release --package-path Benchmarks RouterBenchmark --model mlx-community/Qwen2.5-14B-Instruct-4bit
+```
+
 Every public API has a worked example in
 [`Tests/FoundationModelsRouterTests/ExamplesTests.swift`](../Tests/FoundationModelsRouterTests/ExamplesTests.swift):
 resolution, sessions, streaming, guided (grammar-constrained) generation,
