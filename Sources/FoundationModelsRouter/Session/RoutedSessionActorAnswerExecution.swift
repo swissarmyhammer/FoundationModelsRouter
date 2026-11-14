@@ -498,6 +498,10 @@ extension RoutedSessionActor {
                 if hintStop != nil { releaseDelegationHint() }
                 return try await continueAfterWatchStop(watchStop, attempt: attempt, body: body)
             }
+            if let strayCloseStop = takeStrayReasoningCloseStop() {
+                if hintStop != nil { releaseDelegationHint() }
+                return await endTurnAtStrayReasoningClose(strayCloseStop, attempt: attempt)
+            }
             if let hintStop {
                 return try await continueAfterDelegationHint(hintStop, attempt: attempt, body: body)
             }

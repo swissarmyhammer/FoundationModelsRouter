@@ -18,6 +18,18 @@ struct RepetitionWatchState {
     /// The stop that the watch of the attempt in flight found, or `nil`.
     var stop: WatchStopMarker?
 
+    /// The stray `</think>` at which the watch of the attempt in flight
+    /// stopped it, or `nil` (task ^07vtf4a). This stop ends the turn and runs
+    /// no recovery, so it is not a ``WatchStopMarker``.
+    var strayReasoningClose: StrayReasoningCloseStop?
+
+    /// Whether the watch of the attempt in flight stopped it: a stop with a
+    /// recovery (``stop``) or a stop at a stray `</think>`
+    /// (``strayReasoningClose``).
+    var hasStop: Bool {
+        stop != nil || strayReasoningClose != nil
+    }
+
     /// How many recoveries the running answer ran since its last progress,
     /// after repetition stops and reasoning stops together (task ^0jbps9v).
     ///
@@ -188,6 +200,11 @@ struct WatchStopMarker: Sendable {
 /// the final pass reasons under ``ReasoningControl/thinkingAllowance`` in
 /// place of ``RepetitionDetection/reasoningTokenLimit`` (``RecoveryFirstPass``,
 /// task ^qmewzw0).
+///
+/// The watch of a model that always reasons also stops a call at a stray
+/// `</think>` in its response text (``StrayReasoningClose``, task ^07vtf4a).
+/// That stop runs no recovery: the turn ends there, as if the model had
+/// ended it.
 extension RoutedSessionActor {
     /// The end of each prompt of a recovery after a repetition stop: it tells
     /// the model to act.
@@ -251,6 +268,11 @@ extension RoutedSessionActor {
     /// transcript update, the call runs as it does with no watch. A stop that
     /// the watch finds after the call ended by itself does not count.
     ///
+    /// The watch of a model that always reasons (``ReasoningControl/alwaysOn``)
+    /// also stops the call at a stray `</think>` in its response text
+    /// (``StrayReasoningClose``, task ^07vtf4a). The control is read before
+    /// the call, and only when the detection is enabled.
+    ///
     /// - Parameters:
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
     ///   - firstPassReasoningTokenLimit: The reasoning token limit of the
@@ -259,22 +281,35 @@ extension RoutedSessionActor {
     ///     for the limit of the session (task ^qmewzw0).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
-    /// - Throws: What ``runCancellableModelCall(composedPrompt:_:)`` throws,
-    ///   `CancellationError` included when the watch stopped the call.
+    /// - Throws: What the read of the reasoning control of ``backend``
+    ///   throws, or what ``runCancellableModelCall(composedPrompt:_:)``
+    ///   throws, `CancellationError` included when the watch stopped the call.
     func runWatchedModelCall(
         composedPrompt: String,
         firstPassReasoningTokenLimit: Int? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        repetitionWatch.stop = nil
-        let watch = startRepetitionWatch(firstPassReasoningTokenLimit: firstPassReasoningTokenLimit)
+        let watchesStrayReasoningClose =
+            repetitionDetection.isEnabled ? try await backend.reasoningControl() == .alwaysOn : false
+        clearWatchStops()
+        let watch = startRepetitionWatch(
+            firstPassReasoningTokenLimit: firstPassReasoningTokenLimit,
+            watchesStrayReasoningClose: watchesStrayReasoningClose)
         defer {
             watch?.cancel()
             repetitionWatch.activeWatchId = nil
         }
         let response = try await runCancellableModelCall(composedPrompt: composedPrompt, body)
-        repetitionWatch.stop = nil
+        clearWatchStops()
         return response
+    }
+
+    /// Clears each stop of the watch: the stop with a recovery and the stop
+    /// at a stray `</think>` (task ^07vtf4a). A model call clears both before
+    /// it starts, and after it ends by itself, so a late stop does not count.
+    private func clearWatchStops() {
+        repetitionWatch.stop = nil
+        repetitionWatch.strayReasoningClose = nil
     }
 
     /// Starts the watch over the model call about to start, or does nothing
@@ -284,7 +319,11 @@ extension RoutedSessionActor {
     /// task of its own, feeds the text of the attempt's entries to a
     /// ``RepetitionDetector``, and reports the first finding to
     /// ``noteRepetition(_:liveEntries:watchId:)`` or
-    /// ``noteReasoningLimit(_:liveEntries:watchId:)``. After each read that
+    /// ``noteReasoningLimit(_:liveEntries:watchId:)``. When
+    /// `watchesStrayReasoningClose` is `true`, each read first looks for a
+    /// stray `</think>` in the response text, and reports it to
+    /// ``noteStrayReasoningClose(_:liveEntries:watchId:)`` (task ^07vtf4a).
+    /// After each read that
     /// finds no stop, it stores the texts of the read in
     /// ``lastRepetitionWatchRead`` and signals ``repetitionWatchReads``, so
     /// that a test knows what the watch read. The watch reads only the values
@@ -293,11 +332,16 @@ extension RoutedSessionActor {
     /// The task is a helper task (``helperTasks``): the caller cancels it and
     /// does not wait, and the drain of ``close()`` waits until it ended.
     ///
-    /// - Parameter firstPassReasoningTokenLimit: The reasoning token limit of
-    ///   the first pass of the call, or `nil` for the limit of the session
-    ///   (task ^qmewzw0).
+    /// - Parameters:
+    ///   - firstPassReasoningTokenLimit: The reasoning token limit of the
+    ///     first pass of the call, or `nil` for the limit of the session
+    ///     (task ^qmewzw0).
+    ///   - watchesStrayReasoningClose: Whether the watch stops the call at a
+    ///     stray `</think>` in its response text: the model always reasons.
     /// - Returns: The task of the watch, which the caller cancels, or `nil`.
-    private func startRepetitionWatch(firstPassReasoningTokenLimit: Int?) -> Task<Void, Never>? {
+    private func startRepetitionWatch(
+        firstPassReasoningTokenLimit: Int?, watchesStrayReasoningClose: Bool
+    ) -> Task<Void, Never>? {
         guard repetitionDetection.isEnabled else { return nil }
         repetitionWatch.lastWatchId += 1
         let watchId = repetitionWatch.lastWatchId
@@ -312,6 +356,10 @@ extension RoutedSessionActor {
                 firstPassReasoningTokenLimit: firstPassReasoningTokenLimit)
             for await entries in updates {
                 let texts = WatchedText.attemptTexts(in: entries, excluding: entryIdsBeforeAttempt)
+                if watchesStrayReasoningClose, let close = StrayReasoningClose.first(in: texts) {
+                    await self?.noteStrayReasoningClose(close, liveEntries: entries, watchId: watchId)
+                    return
+                }
                 if let finding = detector.observe(texts) {
                     await self?.noteRepetition(finding, liveEntries: entries, watchId: watchId)
                     return
@@ -471,10 +519,9 @@ extension RoutedSessionActor {
         guard repetitionDetection.isEnabled, let watchId = repetitionWatch.activeWatchId,
             SessionCallMark.current?.isOpenCall(of: id) == true
         else { return }
-        if repetitionWatch.stop == nil {
-            repetitionWatch.toolCallRun.add(call)
-            noteToolCallRepetition(watchId: watchId)
-        }
+        guard !repetitionWatch.hasStop else { throw CancellationError() }
+        repetitionWatch.toolCallRun.add(call)
+        noteToolCallRepetition(watchId: watchId)
         guard repetitionWatch.stop == nil else { throw CancellationError() }
     }
 
@@ -575,12 +622,9 @@ extension RoutedSessionActor {
             of: rebuilt, keptUTF8Lengths: marker.keptUTF8Lengths, keptUTF8Ranges: marker.keptUTF8Ranges,
             closureText: Self.reasoningClosureText)
         let measure = measureWatchStop(marker, rebuilt: rebuilt, render: render.entries)
-        let usage = usageOfAttempt.map {
-            (input: $0.input + measure.addedUsage.input, output: $0.output + measure.addedUsage.output)
-        }
         await replaceBackendAndRecord(
-            with: rebuilt, attempt: attempt, usageOfAttempt: usage, stopReason: marker.report.finishReason,
-            measure: measure)
+            with: rebuilt, attempt: attempt, usageOfAttempt: measure.addingStoppedCall(to: usageOfAttempt),
+            stopReason: marker.report.finishReason, measure: measure)
         return render
     }
 

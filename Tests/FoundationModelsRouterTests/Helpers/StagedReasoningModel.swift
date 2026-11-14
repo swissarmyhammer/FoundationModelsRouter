@@ -9,7 +9,8 @@ import FoundationModelsRouterTestSupport
 ///
 /// Call `i` writes the reasoning of `scripts[i]` and does what its hold names,
 /// as a ``RepeatingReasoningModel`` call does, then the leading text of the
-/// script when it has one (``RepeatingReasoningScript/leadingText``), then
+/// script when it has one (``RepeatingReasoningScript/leadingText``) and the
+/// hold after it (``RepeatingReasoningScript/leadingTextHold``), then
 /// the ending of the script: the answer, or ``CountingRunCodeTool`` calls in
 /// one round. A call whose
 /// hold is ``RepeatingReasoningHold/untilStopped`` writes no ending: the
@@ -85,7 +86,8 @@ struct StagedReasoningModel: LanguageModel, ReasoningControlReporting {
             self.configuration = configuration
         }
 
-        /// Plays the script of this call, then writes its ending.
+        /// Plays the script of this call, then its leading text and the hold
+        /// after it, then writes its ending.
         ///
         /// - Parameters:
         ///   - request: The generation request of the call.
@@ -106,6 +108,7 @@ struct StagedReasoningModel: LanguageModel, ReasoningControlReporting {
                     script, callIndex: callIndex, into: channel)
                 if let text = script.leadingText {
                     await Self.sendResponse(text, into: channel)
+                    try await RepeatingReasoningModel.Executor.hold(script.leadingTextHold, callIndex: callIndex)
                 }
                 if await RepeatingReasoningModel.Executor.sendToolCall(endingWith: script.ending, into: channel) {
                     return

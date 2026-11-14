@@ -241,7 +241,7 @@ extension RoutedSessionActor {
         let operationPending = await hasPendingOperation()
         // The read suspends: another no-op call or another stop can land
         // meanwhile.
-        guard modelCallMayStop, repetitionWatch.stop == nil else { return }
+        guard modelCallMayStop, !repetitionWatch.hasStop else { return }
         stopModelCall(forNoOpToolCallOf: toolName, operationPending: operationPending)
     }
 

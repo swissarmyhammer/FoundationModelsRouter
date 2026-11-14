@@ -110,10 +110,35 @@ final class ReasoningHoldGate: Sendable, Hashable {
     /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
     ///   watch read the whole reasoning.
     func open(afterWatchOf session: RoutedSessionActor, reads reasoning: String) async throws {
+        try await open(afterWatchOf: session) { $0.isReasoning && $0.text == reasoning }
+    }
+
+    /// Opens the gate after the repetition watch of `session` read the
+    /// response text `response` whole and found no stop (task ^07vtf4a).
+    ///
+    /// - Parameters:
+    ///   - session: The session whose watch reads the call.
+    ///   - response: The whole text of the response entry of the call.
+    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before the
+    ///   watch read the whole response text.
+    func open(afterWatchOf session: RoutedSessionActor, readsResponse response: String) async throws {
+        try await open(afterWatchOf: session) { !$0.isReasoning && !$0.isToolCalls && $0.text == response }
+    }
+
+    /// Opens the gate after a read of the repetition watch of `session` that
+    /// found no stop held a text that `isRead` accepts.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose watch reads the call.
+    ///   - isRead: Whether one watched text of a read is the text the call
+    ///     waits on.
+    /// - Throws: ``ConditionNeverHeld`` when the task is cancelled before such
+    ///   a read.
+    private func open(
+        afterWatchOf session: RoutedSessionActor, until isRead: @escaping @Sendable (WatchedText) -> Bool
+    ) async throws {
         try await session.repetitionWatchReads.wait(until: {
-            session.lastRepetitionWatchRead.withLock { texts in
-                texts.contains { $0.isReasoning && $0.text == reasoning }
-            }
+            session.lastRepetitionWatchRead.withLock { texts in texts.contains(where: isRead) }
         })
         opened.signal()
     }
@@ -153,6 +178,12 @@ struct RepeatingReasoningScript: Sendable, Hashable {
     /// hold and before the tool calls of its ending, or `nil` for none (task
     /// ^zetnz36).
     var leadingText: String?
+
+    /// What a ``StagedReasoningModel`` call does after its
+    /// ``leadingText``, before the ending (task ^07vtf4a). A call that writes
+    /// a stray `</think>` in its response text holds here until the session
+    /// stops it, so the call cannot end before the stop.
+    var leadingTextHold: RepeatingReasoningHold = .noHold
 
     /// The token count that each reasoning line reports to the session. The
     /// usage of a call sums these counts. Zero gives a call whose usage does
@@ -462,7 +493,7 @@ struct RepeatingReasoningModel: LanguageModel {
         /// - Throws: `CancellationError` when the session stops the call, and
         ///   ``StopHoldExpired`` when a ``RepeatingReasoningHold/untilStopped``
         ///   hold ends with no stop.
-        private static func hold(_ hold: RepeatingReasoningHold, callIndex: Int) async throws {
+        static func hold(_ hold: RepeatingReasoningHold, callIndex: Int) async throws {
             switch hold {
             case .noHold:
                 return

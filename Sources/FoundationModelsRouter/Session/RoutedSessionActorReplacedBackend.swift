@@ -31,6 +31,16 @@ struct ReplacedBackendMeasure {
     /// no added tokens, and no render size.
     static let unmeasured = ReplacedBackendMeasure(
         stoppedCall: nil, addedUsage: (input: 0, output: 0), renderTokens: nil)
+
+    /// `usage` with ``addedUsage`` added: the usage of the stopped attempt
+    /// that the finish records.
+    ///
+    /// - Parameter usage: The usage of the attempt that the backend
+    ///   reported, or `nil` when the backend reports no usage.
+    /// - Returns: The usage with the added tokens, or `nil` for `nil`.
+    func addingStoppedCall(to usage: (input: Int, output: Int)?) -> (input: Int, output: Int)? {
+        usage.map { (input: $0.input + addedUsage.input, output: $0.output + addedUsage.output) }
+    }
 }
 
 /// ``RoutedSessionActor``'s record of a stopped attempt on a replaced

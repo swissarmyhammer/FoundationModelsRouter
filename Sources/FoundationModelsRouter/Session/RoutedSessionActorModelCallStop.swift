@@ -24,10 +24,10 @@ extension RoutedSessionActor {
     }
 
     /// Whether no stop of the model call in flight is set: a stop may end
-    /// the call (``modelCallMayStop``), and no repetition, delegate hint or
-    /// run mail stop is set.
+    /// the call (``modelCallMayStop``), and no stop of the watch (task
+    /// ^07vtf4a), delegate hint or run mail stop is set.
     var noStopOutstanding: Bool {
-        modelCallMayStop && repetitionWatch.stop == nil && delegationHintStop == nil && runMailStop == nil
+        modelCallMayStop && !repetitionWatch.hasStop && delegationHintStop == nil && runMailStop == nil
     }
 
     /// Whether every call of the round in flight gave its result. The

@@ -58,7 +58,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     public static let defaultIdenticalToolCallLimit = 3
 
     /// Whether the session watches the calls of its submissions. When `false`, no
-    /// call stops for repetition.
+    /// call stops for repetition, and no call of a model that always reasons
+    /// stops at a stray `</think>` in its response text (task ^07vtf4a).
     public var isEnabled: Bool
 
     /// The window, in generated tokens, that must hold at least one new
