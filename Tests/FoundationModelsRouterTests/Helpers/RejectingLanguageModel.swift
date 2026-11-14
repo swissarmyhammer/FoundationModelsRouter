@@ -86,6 +86,10 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
     /// or `nil` for no such call.
     var leadingToolName: String? = nil
 
+    /// The arguments of the leading tool call, as JSON, or `nil` for
+    /// ``Executor/leadingArgumentsJSON``.
+    var leadingArguments: String? = nil
+
     /// Declares tool calling, the one capability a tool-calling model needs.
     var capabilities: LanguageModelCapabilities {
         LanguageModelCapabilities([.toolCalling])
@@ -93,7 +97,9 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
 
     /// Builds the executor cache key from the rejection count and the log.
     var executorConfiguration: Executor.Configuration {
-        Executor.Configuration(rejectionCount: rejectionCount, log: log, leadingToolName: leadingToolName)
+        Executor.Configuration(
+            rejectionCount: rejectionCount, log: log, leadingToolName: leadingToolName,
+            leadingArguments: leadingArguments ?? Executor.leadingArgumentsJSON)
     }
 
     /// The executor that records the transcript and rejects or answers.
@@ -108,6 +114,9 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
 
             /// The tool the first call calls before any rejection, or `nil`.
             let leadingToolName: String?
+
+            /// The arguments of the leading tool call, as JSON.
+            let leadingArguments: String
         }
 
         /// The `LanguageModel` this executor conforms for.
@@ -150,6 +159,10 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
         /// The argument value of the leading tool call.
         static let leadingArgumentValue = "LEADING-ARGUMENT"
 
+        /// The default arguments of the leading tool call: arguments that
+        /// decode.
+        static let leadingArgumentsJSON = #"{"value":"\#(leadingArgumentValue)"}"#
+
         /// The answer text a call sends when it does not reject.
         static let answerText = "The answer after the retry."
 
@@ -189,7 +202,7 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
                             action: .toolCall(
                                 id: Self.leadingCallID, name: leadingToolName,
                                 action: .appendArguments(
-                                    #"{"value":"\#(Self.leadingArgumentValue)"}"#,
+                                    configuration.leadingArguments,
                                     tokenCount: Self.emittedTokenCount))))
                     return
                 }

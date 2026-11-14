@@ -17,6 +17,15 @@ import MLXLMCommon
 /// never copies `RejectedToolCall.rawTextPreview`, which can hold sensitive
 /// argument values. The prompt and the log line thus never hold the raw text
 /// of the rejected call.
+///
+/// A call that the parser accepts can still fail before its tool runs: the
+/// SDK decodes its arguments into the arguments of the tool, and throws
+/// `LanguageModelSession.ToolCallError` over a `GeneratedContent.ParsingError`
+/// when they do not fit. Recursive Flint called `runCode` with `{}` on flint5
+/// (2026-11-14), and that error ended the agent run. Such a call goes back to
+/// the model in the same way (task ^7z88rnx). Its detail names the missing
+/// property, the one part of the parse error that comes from the schema of
+/// the tool and not from the model output.
 struct RejectedToolCallRetry {
     /// The reason the parser gave, in its wire spelling (for example
     /// `invalid_arguments`).
@@ -42,12 +51,42 @@ struct RejectedToolCallRetry {
     ///     The tool error names them only for a call to an undeclared tool.
     /// - Returns: `nil` when `error` is not a `RejectedToolCallError`.
     init?(error: any Error, declaredToolNames: [String]) {
+        if let failed = error as? LanguageModelSession.ToolCallError,
+            let parsing = failed.underlyingError as? GeneratedContent.ParsingError
+        {
+            reason = RejectedToolCall.Reason.invalidArguments.rawValue
+            toolName = failed.tool.name
+            detail = Self.argumentsDetail(of: parsing)
+            self.declaredToolNames = []
+            return
+        }
         guard let rejected = error as? RejectedToolCallError else { return nil }
         let rejection = rejected.rejection
         reason = rejection.reason.rawValue
         toolName = rejection.toolName
         detail = rejection.detail
         self.declaredToolNames = rejection.reason == .undeclaredTool ? declaredToolNames : []
+    }
+
+    /// The words of a parse error before the name of a missing property.
+    private static let missingPropertyLead = "does not contain a property '"
+
+    /// The detail of arguments that did not decode: the missing property when
+    /// the parse error names one, else a general text. The detail holds no
+    /// text of the arguments: those come from the model, and the prompt and
+    /// the record keep no raw text of a rejected call.
+    ///
+    /// - Parameter parsing: The parse error of the arguments.
+    /// - Returns: The detail.
+    private static func argumentsDetail(of parsing: GeneratedContent.ParsingError) -> String {
+        let text = parsing.debugDescription
+        if let lead = text.range(of: missingPropertyLead),
+            let end = text[lead.upperBound...].firstIndex(of: "'")
+        {
+            let property = text[lead.upperBound..<end]
+            return "The arguments have no \"\(property)\" property, and the tool needs it."
+        }
+        return "The arguments do not match the parameters of the tool."
     }
 
     /// The text that separates the prompt of the failed attempt from the tool

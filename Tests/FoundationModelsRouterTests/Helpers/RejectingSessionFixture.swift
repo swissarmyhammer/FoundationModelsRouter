@@ -30,6 +30,8 @@ struct RejectingSessionFixture: SessionDirectoryFixture {
     ///   - rejectionCount: How many calls end with a rejected tool call.
     ///   - leadingTool: A tool the session mounts and the first call calls
     ///     before any rejection, or `nil` (the default) for none.
+    ///   - leadingArguments: The arguments of the leading tool call, as JSON,
+    ///     or `nil` (the default) for arguments that decode.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
@@ -41,13 +43,15 @@ struct RejectingSessionFixture: SessionDirectoryFixture {
     static func make(
         rejectionCount: Int,
         leadingTool: (any Tool)? = nil,
+        leadingArguments: String? = nil,
         tempDirPrefix: String,
         tracer: (any Tracer)? = nil
     ) async throws -> RejectingSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = RejectingModelLog()
         let container = LiveBackendContainer(
-            model: RejectingLanguageModel(rejectionCount: rejectionCount, log: log, leadingToolName: leadingTool?.name)
+            model: RejectingLanguageModel(rejectionCount: rejectionCount, log: log, leadingToolName: leadingTool?.name,
+                leadingArguments: leadingArguments)
         )
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,

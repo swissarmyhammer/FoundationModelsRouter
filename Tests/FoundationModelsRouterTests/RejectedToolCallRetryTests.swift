@@ -105,4 +105,23 @@ struct RejectedToolCallRetryTests {
         #expect(retried.components(separatedBy: Self.prompt).count - 1 == 1)
         #expect(!retried.contains(RejectingLanguageModel.Executor.rejectedRawText))
     }
+
+    @Test("a tool call whose arguments do not decode goes back to the model as a tool error, and the answer ends with the reply")
+    func undecodableArgumentsGoBackToTheModel() async throws {
+        let fixture = try await RejectingSessionFixture.make(
+            rejectionCount: 0, leadingTool: MountFixtures.FastTool(), leadingArguments: "{}",
+            tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
+
+        let answer = try await fixture.session.respond(to: Self.prompt)
+
+        #expect(answer == RejectingLanguageModel.Executor.answerText)
+        let transcripts = fixture.log.transcriptTexts
+        #expect(transcripts.count == Self.attemptsWithOneRetry)
+        let retried = try #require(transcripts.last).joined(separator: "\n")
+        #expect(retried.contains(#"Your call to the tool "fast_tool" was rejected"#))
+        #expect(retried.contains("no tool ran"))
+        #expect(retried.contains(#"The arguments have no "value" property"#))
+    }
 }
