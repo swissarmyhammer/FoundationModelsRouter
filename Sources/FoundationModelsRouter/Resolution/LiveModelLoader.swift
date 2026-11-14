@@ -1060,16 +1060,23 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     `HubModelLoader` gives to the Hub client of each of its loaders. The default `.environment`
     ///     reads `HF_TOKEN` and `~/.cache/huggingface/token`. `.none` sends no
     ///     token.
+    ///   - speculativeDecoding: Whether a GGUF model decodes speculatively
+    ///     when it can: with the MTP layers of its file, or with the drafter
+    ///     of its ``ModelRef``. `true` by default. With `false`, a GGUF model
+    ///     loads no MTP layers and no drafter. An MLX model is not affected: it
+    ///     speculates only when its ``ModelRef`` names a drafter.
     public init(
         reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil,
-        tokenProvider: TokenProvider = .environment
+        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true
     ) {
         self.init(
             reporting: reporting,
             modelLoader: HubModelLoader(
                 cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
                 drafterRegistration: Self.drafterRegistration,
-                gguf: LlamaCppModelLoader(cacheDirectory: cacheDirectory, tokenProvider: tokenProvider)))
+                gguf: LlamaCppModelLoader(
+                    cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
+                    options: LlamaLanguageModel.Options(speculativeDecoding: speculativeDecoding))))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test

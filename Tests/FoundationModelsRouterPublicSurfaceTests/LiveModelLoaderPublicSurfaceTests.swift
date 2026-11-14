@@ -26,4 +26,9 @@ struct LiveModelLoaderPublicSurfaceTests {
 
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
     }
+
+    @Test("a host makes a live loader whose GGUF models decode with no speculation")
+    func hostTurnsSpeculativeDecodingOff() {
+        _ = LiveModelLoader(speculativeDecoding: false)
+    }
 }
