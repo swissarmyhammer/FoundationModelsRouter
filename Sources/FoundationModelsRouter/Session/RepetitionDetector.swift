@@ -20,6 +20,12 @@ struct WatchedText: Sendable, Equatable {
     /// the attempt (task ^qmewzw0).
     let isToolCalls: Bool
 
+    /// Whether the entry is a `.response` entry: the text of the answer, and
+    /// neither reasoning nor tool-call arguments.
+    var isResponse: Bool {
+        !isReasoning && !isToolCalls
+    }
+
     /// Creates one watched entry.
     ///
     /// - Parameters:
@@ -112,6 +118,11 @@ struct RepetitionFinding: Sendable, Equatable {
     /// new line between its repeats, so the text up to the last new line can
     /// hold many repeats; the render keeps only these ranges.
     let keptUTF8Ranges: [String: [KeptUTF8Range]]
+
+    /// The number of long lines of the block whose cycle in a `.response`
+    /// entry filled ``RepetitionDetection/responseCycleRepeatLimit``, or
+    /// `nil` when the line window filled or nothing stopped (task ^bsz6wn6).
+    let repeatedCycleLines: Int?
 }
 
 /// What the detector found when the reasoning entry that the call writes now
@@ -140,6 +151,14 @@ struct ReasoningLimitFinding: Sendable, Equatable {
 /// call. After that, each occurrence of the shape counts as a repeat. The
 /// tokens of each counted line that repeats fill the window, and a new line
 /// empties it.
+///
+/// In a `.response` entry, the detector also stops at a cycle (task
+/// ^bsz6wn6): the last long lines of the entry are one block of one to
+/// ``RepetitionDetection/responseCycleMaximumLines`` lines, written
+/// ``RepetitionDetection/responseCycleRepeatLimit`` times in a row with the
+/// same text. A model that falls into a cycle of a few sentences, with a few
+/// near-identical variants before it that each count as new, thus stops
+/// within a few hundred tokens, and not only after one whole window.
 ///
 /// The detector reads each entry from where it stopped the last time, so a
 /// text that grows costs only its new part.
@@ -184,6 +203,12 @@ struct RepetitionDetector {
 
     /// For each watched `.reasoning` entry, the tokens of its complete lines.
     private var reasoningTokens: [String: Int] = [:]
+
+    /// For each watched `.response` entry, the text of its last long lines,
+    /// without the white space at their two ends: as many as the longest
+    /// cycle that ``RepetitionDetection/responseCycleRepeatLimit`` reads
+    /// (task ^bsz6wn6).
+    private var responseLongLines: [String: [String]] = [:]
 
     /// For each watched entry, the UTF-8 ranges of the lines read so far
     /// that are not repeats, with each two ranges that touch merged into one
@@ -274,7 +299,8 @@ struct RepetitionDetector {
     func findingThatKeepsAll() -> RepetitionFinding {
         RepetitionFinding(
             generatedTokens: generatedTokens, countedLines: countedLines, newLines: newLines,
-            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: [:], keptUTF8Ranges: [:])
+            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: [:], keptUTF8Ranges: [:],
+            repeatedCycleLines: nil)
     }
 
     /// Reads the complete lines of `watched` from its first unread line.
@@ -294,6 +320,7 @@ struct RepetitionDetector {
             start = 0
             reasoningTokens[watched.entryId] = nil
             keptRanges[watched.entryId] = nil
+            responseLongLines[watched.entryId] = nil
         }
         var lineStart = utf8.index(utf8.startIndex, offsetBy: start)
         while let lineEnd = utf8[lineStart...].firstIndex(of: Self.lineFeed) {
@@ -306,7 +333,7 @@ struct RepetitionDetector {
             if watched.isReasoning {
                 reasoningTokens[watched.entryId, default: 0] += lineTokens
             }
-            if let finding = read(line: line, lineTokens: lineTokens, range: range, of: watched.entryId) {
+            if let finding = read(line: line, lineTokens: lineTokens, range: range, of: watched) {
                 return finding
             }
         }
@@ -332,32 +359,85 @@ struct RepetitionDetector {
 
     /// Reads one complete line.
     ///
+    /// A long line of a `.response` entry also goes into the cycle of the
+    /// entry (``cycleLines(afterResponseLine:of:)``). A line that closes a
+    /// cycle repeats the line one block before it, so it is always a repeat.
+    ///
     /// - Parameters:
     ///   - line: The line, without its line feed.
     ///   - lineTokens: The tokens of the line, with its line feed.
     ///   - range: The UTF-8 range of the line, with its line feed, in the
     ///     text of its entry.
-    ///   - entryId: The id of the entry of the line.
-    /// - Returns: The finding when this line filled the window, else `nil`.
+    ///   - watched: The entry of the line.
+    /// - Returns: The finding when this line filled the window or closed a
+    ///   cycle, else `nil`.
     private mutating func read(
-        line: String, lineTokens: Int, range: KeptUTF8Range, of entryId: String
+        line: String, lineTokens: Int, range: KeptUTF8Range, of watched: WatchedText
     ) -> RepetitionFinding? {
         generatedTokens += lineTokens
-        switch kind(ofShape: detection.shape(of: line)) {
+        let shape = detection.shape(of: line)
+        let cycle = watched.isResponse && isLong(shape) ? cycleLines(afterResponseLine: line, of: watched.entryId) : nil
+        switch kind(ofShape: shape) {
         case .uncounted:
-            keep(range, of: entryId)
+            keep(range, of: watched.entryId)
             return nil
         case .new:
             countedLines += 1
             newLines += 1
             tokensWithoutNewLine = 0
             lineStartsAtNewLine = lineStarts
-            keep(range, of: entryId)
+            keep(range, of: watched.entryId)
             return nil
         case .repeated:
             countedLines += 1
             tokensWithoutNewLine += lineTokens
-            return tokensWithoutNewLine >= detection.windowTokens ? finding() : nil
+            guard tokensWithoutNewLine < detection.windowTokens else { return finding(repeatedCycleLines: nil) }
+            return cycle.map { finding(repeatedCycleLines: $0) }
+        }
+    }
+
+    /// Whether a line with `shape` is long: it always counts.
+    ///
+    /// - Parameter shape: The shape of the line.
+    /// - Returns: `true` when the shape is at least
+    ///   ``RepetitionDetection/minimumLineLength`` long.
+    private func isLong(_ shape: String) -> Bool {
+        shape.count >= detection.minimumLineLength
+    }
+
+    /// Adds the long `line` of the `.response` entry `entryId` to the last
+    /// long lines of the entry, and gives the cycle that it closes (task
+    /// ^bsz6wn6).
+    ///
+    /// - Parameters:
+    ///   - line: A long line of the response entry, without its line feed.
+    ///   - entryId: The id of the response entry.
+    /// - Returns: The number of lines of the block that the last long lines
+    ///   of the entry hold ``RepetitionDetection/responseCycleRepeatLimit``
+    ///   times in a row, or `nil` when they hold no such cycle or no limit
+    ///   is in force.
+    private mutating func cycleLines(afterResponseLine line: String, of entryId: String) -> Int? {
+        guard let repeats = detection.responseCycleRepeatLimitInForce else { return nil }
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let longestCycle = RepetitionDetection.responseCycleMaximumLines * repeats
+        let lines = Array((responseLongLines[entryId, default: []] + [text]).suffix(longestCycle))
+        responseLongLines[entryId] = lines
+        return Self.blockLines(endingCycleOf: lines, repeats: repeats)
+    }
+
+    /// The number of lines of the shortest block that ends `lines` and
+    /// occurs `repeats` times in a row there, with the same text each time.
+    ///
+    /// - Parameters:
+    ///   - lines: The last long lines of one response entry, in order.
+    ///   - repeats: How many times in a row the block must occur.
+    /// - Returns: The number of lines of the block, from 1 to
+    ///   ``RepetitionDetection/responseCycleMaximumLines``, or `nil` when no
+    ///   block ends `lines` that often.
+    private static func blockLines(endingCycleOf lines: [String], repeats: Int) -> Int? {
+        (1...RepetitionDetection.responseCycleMaximumLines).first { blockSize in
+            let cycle = lines.suffix(blockSize * repeats)
+            return cycle.count == blockSize * repeats && zip(cycle, cycle.dropFirst(blockSize)).allSatisfy(==)
         }
     }
 
@@ -370,7 +450,7 @@ struct RepetitionDetector {
     /// - Parameter shape: The shape of the line.
     /// - Returns: The kind of the line.
     private mutating func kind(ofShape shape: String) -> LineKind {
-        guard shape.count >= detection.minimumLineLength else {
+        guard isLong(shape) else {
             let occurrences = shortShapeOccurrences[shape, default: 0] + 1
             shortShapeOccurrences[shape] = occurrences
             return occurrences > detection.shortLineRepeatThreshold ? .repeated : .uncounted
@@ -394,11 +474,16 @@ struct RepetitionDetector {
         keptRanges[entryId] = ranges
     }
 
-    /// The finding of the moment the window filled.
+    /// The finding of the moment the window filled or a response cycle
+    /// closed.
     ///
     /// The kept ranges of each entry end at the end of its last new line:
     /// the lines after it are the repeated part.
-    private func finding() -> RepetitionFinding {
+    ///
+    /// - Parameter repeatedCycleLines: The number of lines of the block whose
+    ///   cycle closed, or `nil` when the window filled.
+    /// - Returns: The finding.
+    private func finding(repeatedCycleLines: Int?) -> RepetitionFinding {
         let kept = Dictionary(
             uniqueKeysWithValues: watchedEntryIds.map { ($0, lineStartsAtNewLine[$0] ?? 0) })
         let keptRangesUpToNewLine = Dictionary(
@@ -407,7 +492,8 @@ struct RepetitionDetector {
             })
         return RepetitionFinding(
             generatedTokens: generatedTokens, countedLines: countedLines, newLines: newLines,
-            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: kept, keptUTF8Ranges: keptRangesUpToNewLine)
+            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: kept, keptUTF8Ranges: keptRangesUpToNewLine,
+            repeatedCycleLines: repeatedCycleLines)
     }
 
     /// The parts of `ranges` before `bound`.

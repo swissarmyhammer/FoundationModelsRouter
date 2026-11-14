@@ -38,7 +38,7 @@ struct StrayReasoningClose: Sendable, Equatable {
     /// - Returns: The stray close, or `nil` when no response text holds the
     ///   tag.
     static func first(in texts: [WatchedText]) -> StrayReasoningClose? {
-        texts.lazy.filter { !$0.isReasoning && !$0.isToolCalls }.compactMap { watched in
+        texts.lazy.filter(\.isResponse).compactMap { watched in
             watched.text.range(of: tag).map { range in
                 StrayReasoningClose(
                     entryId: watched.entryId, keptUTF8Length: watched.text.utf8.distance(

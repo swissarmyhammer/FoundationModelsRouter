@@ -430,7 +430,9 @@ extension RoutedSessionActor {
     /// (``watchMayStopModelCall(watchId:)``). Otherwise the session logs the
     /// stop, sets the stop marker, and cancels ``inFlightModelCall``. The
     /// report names the tool call that the answer repeated up to the stop,
-    /// when there is one (``RepetitionWatchState/toolCallRun``, task ^8eq31j0).
+    /// when there is one (``RepetitionWatchState/toolCallRun``, task ^8eq31j0),
+    /// and the block of the response cycle that stopped it, when a cycle did
+    /// (task ^bsz6wn6).
     ///
     /// - Parameters:
     ///   - finding: What the detector found.
@@ -442,7 +444,8 @@ extension RoutedSessionActor {
             generatedTokens: finding.generatedTokens, countedLines: finding.countedLines,
             newLines: finding.newLines, tokensWithoutNewLine: finding.tokensWithoutNewLine,
             detection: repetitionDetection, recovery: nextRecovery,
-            repeatedToolCall: repetitionWatch.toolCallRun.repeatedToolCall)
+            repeatedToolCall: repetitionWatch.toolCallRun.repeatedToolCall,
+            repeatedCycleLines: finding.repeatedCycleLines)
         stopModelCall(
             WatchStopMarker(
                 report: .repetition(report), keptUTF8Lengths: finding.keptUTF8Lengths,

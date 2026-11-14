@@ -1,8 +1,40 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+comments:
+- actor: claude-code
+  id: 01m7ds5vh3cdnym05aw1vzme4r
+  text: |-
+    Research — why the watch missed the seq 707 loop (two causes):
+
+    1. PRIMARY: the response text never reached the watch while the call ran. mlx-swift-lm (stable e7e3ed8, the checkout of the run) buffers the response text of an allowed tool turn: `runAllowedToolGeneration` (Libraries/MLXFoundationModels/MLXLanguageModelGeneration.swift) adds every `.response(text)` event to `result.responseText` and streams only reasoning (`emitReasoning`) during the decode; `runAllowedToolTurn` calls `emitResponse(result.responseText, …)` once, after generation ended. Every Router session has tools, so every pass takes this path. The live `LanguageModelSession.transcript` that `transcriptUpdates()` relays therefore holds no response text until the pass already hit its 16,384-token ceiling. Candidate 1 of the card ("the response text is not watched") is correct, at the executor layer, not in `WatchedText.attemptTexts` (which does read `.response`). No Router seam sees it: the only per-text hook in MLX (`generationObserver`) is task-local, test-only, and is also called only from `emitText`. Consequence: the stray-`</think>` stop of ^07vtf4a reads the same response text, so it also cannot fire live on this path (its hermetic tests stream the response through a scripted executor).
+    2. SECONDARY (detector, reproduced hermetically on the fixture): even with the text visible, `RepetitionDetector` stops only when one window of 2,048 tokens holds no new line. The near-identical variants before the stable cycle ("I am truly stopping now" / "I am stopping now", "I need to stop" / "I need to stop this") are new exact shapes, so each one empties the window; the last one ends at char 2,627. The stable 2-line cycle then needs 2,048 tokens of repeats (~8,600 chars with a real tokenizer; 4,707 chars under the CharacterTokenCounter in the RED test) — far beyond "a few hundred tokens". The detector has no notion of a period, so a 2-3 line cycle is no different from scattered repeats.
+
+    Measured on seq 707 / 1140 with a rule "the last 4 periods of 1-3 long lines of one response entry are exact repeats": stops at char 3,107 / 2,939, i.e. ~900 / ~1,190 chars (~225 / ~300 tokens) after the first repeated line. Exact text (trimmed), not shape, so numbered lists that differ only in digits do not cycle.
+
+    Plan: add the response-cycle rule to RepetitionDetector (response entries only, so code in tool-call arguments and reasoning keep the window rule), a `responseCycleRepeatLimit` setting (default 4, nil/0 off), and the cycle size in the finding and stop report. The executor-side streaming gets its own task (it is the precondition for any response-text watch to work live).
+  timestamp: 2026-11-14T19:40:01.955470+00:00
+- actor: claude-code
+  id: 01m7dsksdqdqg18dchpgkqd16r
+  text: |-
+    ### implement — stuck
+    - evidence: 6 files changed. `swift build --build-tests` has 0 warnings in code (the only warning is SwiftPM's existing "missing creator for mutated node" for the mlx bundle). `swift test` passes 2722 + 42 + 19 tests, 14 of them new.
+      - Sources/FoundationModelsRouter/Session/RepetitionDetector.swift: a response-cycle rule. `WatchedText.isResponse`, `RepetitionFinding.repeatedCycleLines`, `cycleLines(afterResponseLine:of:)`, `blockLines(endingCycleOf:repeats:)`, `isLong(_:)`.
+      - Sources/FoundationModelsRouter/Session/RepetitionDetection.swift: `responseCycleRepeatLimit` (default 4, nil or 0 = off; coded, logged) and `responseCycleMaximumLines = 3`. `RepetitionStop.repeatedCycleLines` and its description clause.
+      - Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift: passes the cycle into the stop report.
+      - Sources/FoundationModelsRouter/Session/StrayReasoningClose.swift: uses `isResponse`.
+      - Tests/FoundationModelsRouterTests/ResponseCycleDetectorTests.swift (new): 12 detector tests and 2 session tests.
+      - Tests/FoundationModelsRouterTests/Fixtures/ApologyLoopResponse/response.txt (new): the first 16,000 chars of seq 707.
+    - RED: "the apology loop of the evidence stops within a few hundred tokens of its first repeat" failed. The old detector stopped at char 4,707; the bound is 3,394 (the first repeat ends at char 2,194, plus a budget of 1,200 chars).
+    - GREEN: the cycle rule stops seq 707 at char 3,107, about 900 chars (~225 tokens) after the first repeat. Seq 1140 stops ~1,190 chars (~300 tokens) after it. The stop is an ordinary repetition stop: recovery 1 runs (session test), and the render keeps the text up to the last new line, so one copy of each cycle line stays.
+    - Guards: a numbered list of 30 similar lines does not stop. A block written limit-1 times does not stop. A cycle in reasoning is left to the window. Every existing detector test stays green.
+    - why stuck: the card asks that the watch stop this loop before the ceiling. On the live MLX path it cannot yet: mlx-swift-lm buffers the response text of an allowed tool turn until the pass ends (see the research comment). New task ^vz48htj covers the executor change. It is in another package and needs the breaking-push warning, so a human decides. The Router side is complete.
+    - next: decide and schedule ^vz48htj. Then /review this card.
+  timestamp: 2026-11-14T19:47:38.551691+00:00
+depends_on:
+- 01M7DSDQEM12GPCTB7ZVZ48HTJ
+position_column: doing
+position_ordinal: '80'
 title: Detect a repetition loop in the response text before the token ceiling
 ---
 ## Problem
