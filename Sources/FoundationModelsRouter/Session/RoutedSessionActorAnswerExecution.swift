@@ -272,7 +272,7 @@ extension RoutedSessionActor {
     /// stopped at its output token ceiling over the trigger
     /// (``compactsAfterCeilingStop(_:)``) goes on in
     /// ``continueAfterCeilingStop(attempt:body:)``. A model call that the
-    /// repetition watch stopped (``runWatchedModelCall(composedPrompt:_:)``)
+    /// repetition watch stopped (``runWatchedModelCall(composedPrompt:firstPassReasoningTokenLimit:_:)``)
     /// goes on in ``continueAfterWatchStop(_:attempt:body:)``. An attempt
     /// that ended inside its reasoning with no tool call and no text
     /// (``reasoningEndStop(finishReason:attempt:)``) goes on in
@@ -303,7 +303,9 @@ extension RoutedSessionActor {
     ///     attempt runs with the reasoning of the model off
     ///     (``ReasoningOffRequest``, tasks ^0dcsd3t and ^bhdj5v9). Only that
     ///     pass does: a later pass of its tool loop reasons, and a later
-    ///     submission of the answer gets `body` as it is.
+    ///     submission of the answer gets `body` as it is. A model that always
+    ///     reasons gets a thinking budget in that pass instead
+    ///     (``RecoveryFirstPass``, task ^qmewzw0).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
@@ -468,8 +470,7 @@ extension RoutedSessionActor {
                 throw ContextBudgetError.hardCeilingExceeded(
                     fill: budget.fill(measuredTokens: measuredTokens), ceiling: hardCeiling)
             }
-            response = try await runWatchedModelCall(
-                composedPrompt: composedPrompt, reasoningOff ? ReasoningOffRequest.requested(around: body) : body)
+            response = try await runAttemptModelCall(composedPrompt: composedPrompt, reasoningOff: reasoningOff, body)
             // A submission can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
@@ -533,6 +534,43 @@ extension RoutedSessionActor {
         return try await continueAfterCeilingStop(attempt: attempt, body: body)
     }
 
+    /// Runs the model call of one attempt under the repetition watch, and
+    /// states how its first pass reasons.
+    ///
+    /// An attempt that does not ask for the reasoning off runs `body` as it
+    /// is. An attempt that asks for it (a recovery after a reasoning stop or a
+    /// repetition stop, and the final pass) reads the reasoning control of
+    /// the model of ``backend``, and runs its first pass as
+    /// ``RecoveryFirstPass`` states (task ^qmewzw0): with the reasoning off
+    /// (``ReasoningOffRequest``, tasks ^0dcsd3t and ^bhdj5v9), or, on a model
+    /// that always reasons, with the reasoning on under the thinking allowance
+    /// in place of ``RepetitionDetection/reasoningTokenLimit``.
+    ///
+    /// - Parameters:
+    ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
+    ///   - reasoningOff: Whether the attempt asks for the reasoning off in
+    ///     the first pass of its model call.
+    ///   - body: The model work to run.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: What the read of the reasoning control throws, or what
+    ///   ``runWatchedModelCall(composedPrompt:firstPassReasoningTokenLimit:_:)``
+    ///   throws.
+    private func runAttemptModelCall(
+        composedPrompt: String,
+        reasoningOff: Bool,
+        _ body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        guard reasoningOff else { return try await runWatchedModelCall(composedPrompt: composedPrompt, body) }
+        switch RecoveryFirstPass(control: try await backend.reasoningControl()) {
+        case .reasoningOff:
+            return try await runWatchedModelCall(
+                composedPrompt: composedPrompt, ReasoningOffRequest.requested(around: body))
+        case .thinkingBudget(let reasoningTokenLimit):
+            return try await runWatchedModelCall(
+                composedPrompt: composedPrompt, firstPassReasoningTokenLimit: reasoningTokenLimit, body)
+        }
+    }
+
     /// Runs one continuation submission of the answer after `attempt`
     /// stopped: a compaction yield, a ceiling stop, or a repetition stop.
     ///
@@ -548,7 +586,9 @@ extension RoutedSessionActor {
     ///   - reasoningOff: Whether the first pass of the model call of the
     ///     continuation runs with the reasoning of the model off: `true` for
     ///     a recovery after a reasoning stop or a repetition stop, and for
-    ///     the final pass (tasks ^0dcsd3t and ^bhdj5v9).
+    ///     the final pass (tasks ^0dcsd3t and ^bhdj5v9). A model that always
+    ///     reasons gets a thinking budget in that pass instead
+    ///     (``RecoveryFirstPass``, task ^qmewzw0).
     ///   - body: The model work to run.
     /// - Returns: The response text of the continuation.
     /// - Throws: What the continuation throws.

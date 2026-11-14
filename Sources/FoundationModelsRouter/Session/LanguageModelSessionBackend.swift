@@ -94,6 +94,21 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// overrides it.
     func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String
 
+    /// How the model of this backend turns its reasoning on and off (task
+    /// ^qmewzw0).
+    ///
+    /// The session reads it where it asks for the reasoning off: the
+    /// summarizer call of a compaction gives an always-reasoning model a
+    /// thinking allowance on top of the summary size, and the first pass of a
+    /// recovery gives it a thinking budget in place of the request. There is
+    /// a default implementation: it gives ``ReasoningControl/none``. A backend
+    /// whose model reports its control overrides it, and a backend that wraps
+    /// another forwards it.
+    ///
+    /// - Returns: The reasoning control of the model.
+    /// - Throws: What the read of the model configuration throws.
+    func reasoningControl() async throws -> ReasoningControl
+
     /// Streams a text response to `prompt` as it is produced.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
@@ -254,6 +269,12 @@ extension LanguageModelSessionBackend {
     /// control of reasoning calls ``respond(to:maxTokens:)``.
     public func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
         try await respond(to: prompt, maxTokens: maxTokens)
+    }
+
+    /// Default ``reasoningControl()``: ``ReasoningControl/none``, because a
+    /// backend that does not override it reports no control of reasoning.
+    public func reasoningControl() async throws -> ReasoningControl {
+        .none
     }
 
     /// Default ``streamResponseFragments(to:maxTokens:)``: every chunk of

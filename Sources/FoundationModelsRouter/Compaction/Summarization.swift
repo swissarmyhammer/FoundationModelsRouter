@@ -31,8 +31,9 @@ enum SummarizationError: Error, Equatable, LocalizedError {
 /// snapshot from the summary.
 ///
 /// The stage has no settings. The budget's target sets the size of the
-/// summary. That size is also the ceiling of the call, and the summarizer's
-/// window caps the ceiling.
+/// summary. That size is also the ceiling of the call, with a thinking
+/// allowance on top for a summarizer that always reasons (task ^qmewzw0), and
+/// the summarizer's window caps the ceiling.
 public struct Summarization: Sendable, Equatable, Codable {
     /// This stage's name, as recorded in ``CompactionResult/stagesApplied``.
     public static let stageName = "Summarization"
@@ -309,26 +310,50 @@ struct CompactionCall {
     /// run the call.
     ///
     /// The ceiling is the allowed summary size, the size the prompt states.
-    /// The room the window leaves after the input caps it. A reasoning model
-    /// fits its thinking inside the same ceiling. A summarizer that does not
-    /// keep to the stated size thus stops at that size, and the summary can
-    /// still shrink the live context.
+    /// The room the window leaves after the input caps it. A model that turns
+    /// its reasoning off writes no reasoning in the call. A summarizer that
+    /// does not keep to the stated size thus stops at that size, and the
+    /// summary can still shrink the live context.
     ///
-    /// The flash tier runs only when the room holds the allowed summary size.
-    /// The own model runs when any room is left: its window holds the live
-    /// context by construction, and only a live context at the window leaves
-    /// none.
+    /// A model that always reasons cannot turn its reasoning off
+    /// (``ReasoningControl/alwaysOn``, task ^qmewzw0). Recursive Flint spent a
+    /// ceiling of the summary size on its thinking and wrote no summary. Its
+    /// ceiling is the allowed summary size plus
+    /// ``ReasoningControl/thinkingAllowance``, and the room the window leaves
+    /// still caps it. The summary is the response text of the call alone,
+    /// never its reasoning.
+    ///
+    /// The flash tier runs only when the room holds the allowed summary size,
+    /// for each reasoning control. The own model runs when any room is left:
+    /// its window holds the live context by construction, and only a live
+    /// context at the window leaves none.
     ///
     /// - Parameter slot: The summarizer slot.
     /// - Returns: The ceiling, in tokens, or `nil`.
     func outputCeiling(for slot: CompactionSummarizerSlot) -> Int? {
         let room = slot.windowTokens - inputTokens
-        let ceiling = min(allowedSummaryTokens, room)
+        let ceiling = min(allowedSummaryTokens + Self.thinkingAllowance(for: slot.reasoningControl), room)
         switch slot.tier {
         case .flash:
             return room >= allowedSummaryTokens ? ceiling : nil
         case .ownModel:
             return ceiling > 0 ? ceiling : nil
+        }
+    }
+
+    /// The tokens a summarizer with `control` may think on top of the
+    /// allowed summary size: ``ReasoningControl/thinkingAllowance`` for a
+    /// model that always reasons, and none for a model that turns its
+    /// reasoning off or has no reasoning (task ^qmewzw0).
+    ///
+    /// - Parameter control: The reasoning control of the summarizer.
+    /// - Returns: The thinking allowance, in tokens.
+    private static func thinkingAllowance(for control: ReasoningControl) -> Int {
+        switch control {
+        case .alwaysOn:
+            return ReasoningControl.thinkingAllowance
+        case .switchable, .none:
+            return 0
         }
     }
 

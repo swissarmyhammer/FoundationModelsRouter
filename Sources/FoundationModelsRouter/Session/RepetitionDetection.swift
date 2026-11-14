@@ -133,9 +133,12 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// session stops the call, keeps the reasoning so far, and runs a
     /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``,
     /// whose first model pass runs with the reasoning of the model off, which
-    /// tells the model to act. The recovery counts against
-    /// ``recoveriesPerAnswer``, with the other stops since the last progress.
-    /// A detection that is not enabled sets no limit.
+    /// tells the model to act. A model that always reasons cannot turn its
+    /// reasoning off: that first model pass reasons under
+    /// ``ReasoningControl/thinkingAllowance`` in place of this limit (task
+    /// ^qmewzw0). The
+    /// recovery counts against ``recoveriesPerAnswer``, with the other stops
+    /// since the last progress. A detection that is not enabled sets no limit.
     public var reasoningTokenLimit: Int?
 
     /// The most identical consecutive tool calls of one answer (task

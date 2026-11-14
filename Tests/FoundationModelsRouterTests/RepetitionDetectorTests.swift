@@ -301,7 +301,7 @@ struct ToolCallArgumentsTextTests {
         let entry = Transcript.Entry.toolCalls(calls)
 
         let texts = WatchedText.attemptTexts(in: [entry], excluding: [])
-        #expect(texts == [WatchedText(entryId: entry.id, text: "first line\nsecond line\n")])
+        #expect(texts == [WatchedText(entryId: entry.id, text: "first line\nsecond line\n", isToolCalls: true)])
         #expect(WatchedText.attemptTexts(in: [entry], excluding: [entry.id]).isEmpty)
     }
 

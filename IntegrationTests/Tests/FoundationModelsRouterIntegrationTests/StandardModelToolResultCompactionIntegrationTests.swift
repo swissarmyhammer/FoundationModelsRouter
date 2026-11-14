@@ -31,16 +31,21 @@ extension StandardModelCompactionIntegrationTests {
     /// result is over it.
     private static let toolResultTriggerShare = 0.25
 
-    /// The budget of the tool-result test: its limit is the small window.
-    /// The target is the trigger's own share. The instructions carry the tool
-    /// definition, and a smaller target left no room for a summary after them
-    /// (run of 2026-09-23: shortfall `targetLeavesNoRoomForSummary` at a
-    /// target of 0.1).
-    private static let toolResultBudget = TokenBudget(
-        limit: toolResultWindow, trigger: toolResultTriggerShare, target: toolResultTriggerShare)
+    /// The window and the budget of the tool-result test on `model`: the
+    /// limit is the small window, grown for an always-reasoning model
+    /// (``CompactionTestWindow``). The target is the trigger's own share. The
+    /// instructions carry the tool definition, and a smaller target left no
+    /// room for a summary after them (run of 2026-09-23: shortfall
+    /// `targetLeavesNoRoomForSummary` at a target of 0.1).
+    private static func toolResultWindow(for model: RealModelContainer) async throws -> CompactionTestWindow {
+        try await CompactionTestWindow(
+            model: model, baseWindow: toolResultWindow, triggerShare: toolResultTriggerShare)
+    }
 
-    /// The share of the window the tool result fills: the trigger's own
-    /// share, so the result alone reaches the trigger.
+    /// The share of the stated window the tool result fills: the trigger's own
+    /// share, so the result alone reaches the trigger. It is a share of
+    /// ``toolResultWindow``, so the result counts the same tokens on every
+    /// model.
     private static let resultShare = toolResultTriggerShare
 
     /// The key the tool result holds.
@@ -86,18 +91,19 @@ extension StandardModelCompactionIntegrationTests {
             Self.lines(
                 { "Record line \($0): inventory batch checked, status nominal, no action needed." },
                 filling: Self.resultShare, counter: counter) + "Record key: \(Self.recordKey)."
-        let harness = try StandardModelSessionHarness(model: model, container: loaded, window: Self.toolResultWindow)
+        let window = try await Self.toolResultWindow(for: loaded)
+        let harness = try StandardModelSessionHarness(model: model, container: loaded, window: window.tokens)
         defer { harness.removeDirectory() }
         let tool = RecordTool(listing: listing)
         let session = harness.profile.standard.makeSession(
-            instructions: Self.instructions, tools: [tool], budget: Self.toolResultBudget)
+            instructions: Self.instructions, tools: [tool], budget: window.budget)
 
         let record = try await StandardModelAnswerRecord.drive(session, prompt: Self.toolResultRequest)
         record.report(
             label: standardModelCompactionLabel,
             detail: """
                 \(model.stringValue) case 2 toolCalls=\(tool.calls) resultTokens=\(counter.count(listing)) \
-                trigger=\(Self.toolResultBudget.triggerTokens)
+                window=\(window.tokens) trigger=\(window.budget.triggerTokens)
                 """)
 
         #expect(tool.calls >= 1, "the model did not call the tool")

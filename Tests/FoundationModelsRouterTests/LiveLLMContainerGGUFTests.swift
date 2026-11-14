@@ -107,22 +107,24 @@ struct LiveLLMContainerGGUFTests {
             chatTemplate: String(contentsOf: LlamaCppTestFixtures.templateURL(named: thinkingTemplateName), encoding: .utf8))
     }
 
-    /// Whether `model` can turn its reasoning off, read as the live backend
-    /// reads it: a cast of the raw model to ``ReasoningSwitchable``. A model
-    /// that does not conform cannot.
-    private static func canTurnReasoningOff(_ model: any FoundationModels.LanguageModel) async throws -> Bool {
-        guard let switchable = model as? any ReasoningSwitchable else { return false }
-        return try await switchable.canTurnReasoningOff()
+    /// The reasoning control of `model`, read as the live backend reads it: a
+    /// cast of the raw model to ``ReasoningControlReporting``. A model that
+    /// does not conform reports ``ReasoningControl/none``.
+    private static func reasoningControl(of model: any FoundationModels.LanguageModel) async throws
+        -> ReasoningControl
+    {
+        guard let reporting = model as? any ReasoningControlReporting else { return .none }
+        return try await reporting.reasoningControl()
     }
 
-    @Test("a GGUF model whose chat template supports thinking can turn its reasoning off")
-    func thinkingGGUFModelCanTurnItsReasoningOff() async throws {
-        #expect(try await Self.canTurnReasoningOff(Self.makeThinkingModel()))
+    @Test("a GGUF model whose chat template supports thinking is switchable")
+    func thinkingGGUFModelIsSwitchable() async throws {
+        #expect(try await Self.reasoningControl(of: Self.makeThinkingModel()) == .switchable)
     }
 
-    @Test("a GGUF model with no thinking in its chat template cannot turn its reasoning off")
-    func plainGGUFModelCannotTurnItsReasoningOff() async throws {
-        #expect(try await !Self.canTurnReasoningOff(Self.makeModel()))
+    @Test("a GGUF model with no thinking in its chat template has no reasoning control")
+    func plainGGUFModelHasNoReasoningControl() async throws {
+        #expect(try await Self.reasoningControl(of: Self.makeModel()) == .none)
     }
 
     @Test("the first pass of a reasoning-off call on a thinking GGUF container states the no_think level")

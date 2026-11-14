@@ -501,12 +501,12 @@ struct RepeatingReasoningModel: LanguageModel {
 /// model with a chat template flag does (task ^0dcsd3t). The backend then
 /// states ``ReasoningOffRequest/reasoningLevel`` on a call that asks for it,
 /// and the log records the level.
-extension RepeatingReasoningModel: ReasoningSwitchable {
-    /// Always `true`.
+extension RepeatingReasoningModel: ReasoningControlReporting {
+    /// Always ``ReasoningControl/switchable``.
     ///
-    /// - Returns: `true`.
-    func canTurnReasoningOff() async throws -> Bool {
-        true
+    /// - Returns: ``ReasoningControl/switchable``.
+    func reasoningControl() async throws -> ReasoningControl {
+        .switchable
     }
 }
 

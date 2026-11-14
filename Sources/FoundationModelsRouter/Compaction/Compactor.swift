@@ -184,6 +184,11 @@ package struct CompactionSummarizerSlot: Sendable {
     /// name it. It is written to ``CompactionResult/summarizerModel``.
     let model: String?
 
+    /// How the model turns its reasoning on and off (task ^qmewzw0). An
+    /// always-reasoning model gets a thinking allowance on top of the summary
+    /// size (``CompactionCall/outputCeiling(for:)``).
+    let reasoningControl: ReasoningControl
+
     /// Creates a summarizer slot.
     ///
     /// - Parameters:
@@ -191,13 +196,18 @@ package struct CompactionSummarizerSlot: Sendable {
     ///   - summarizer: The model the call goes to.
     ///   - windowTokens: The model's context window, in tokens.
     ///   - model: The ``ModelRef`` string of the model, or `nil`.
+    ///   - reasoningControl: How the model turns its reasoning on and off.
+    ///     Defaults to ``ReasoningControl/none``: a summarizer that states no
+    ///     control gets no thinking allowance.
     package init(
-        tier: CompactionSummarizerTier, summarizer: any CompactionSummarizer, windowTokens: Int, model: String?
+        tier: CompactionSummarizerTier, summarizer: any CompactionSummarizer, windowTokens: Int, model: String?,
+        reasoningControl: ReasoningControl = .none
     ) {
         self.tier = tier
         self.summarizer = summarizer
         self.windowTokens = windowTokens
         self.model = model
+        self.reasoningControl = reasoningControl
     }
 }
 

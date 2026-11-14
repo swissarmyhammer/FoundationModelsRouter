@@ -23,7 +23,9 @@ import Logging
 /// (``LanguageModelSessionBackend/respondWithoutReasoning(to:maxTokens:)``).
 /// Task ^dvyt1dx measured Qwen3.8-27B with its reasoning on: in all four
 /// continuity tasks the model spent the whole ceiling of the call on its
-/// reasoning and wrote no summary. The ceiling stays as it is.
+/// reasoning and wrote no summary. The ceiling stays as it is. A model that
+/// always reasons cannot turn its reasoning off, so its ceiling holds a
+/// thinking allowance (``CompactionCall/outputCeiling(for:)``, task ^qmewzw0).
 ///
 /// The blank-slate backend keeps no prompt cache (task ^ptev9yy). Its passes
 /// bind the `.uncached` scope, so the call takes no cache and leaves none: a
@@ -88,6 +90,10 @@ private struct BackendSummarizerTier {
     /// The model of ``backend``.
     let model: ModelRef
 
+    /// How the model of ``backend`` turns its reasoning on and off (task
+    /// ^qmewzw0).
+    let reasoningControl: ReasoningControl
+
     /// The slot of this tier, whose summarizer runs each call as a
     /// summarizer call of `session` over ``backend``.
     ///
@@ -98,7 +104,7 @@ private struct BackendSummarizerTier {
             tier: tier,
             summarizer: SessionCompactionSummarizer(
                 base: BackendCompactionSummarizer(backend: backend), session: session),
-            windowTokens: windowTokens, model: model.stringValue)
+            windowTokens: windowTokens, model: model.stringValue, reasoningControl: reasoningControl)
     }
 }
 
@@ -412,19 +418,31 @@ extension RoutedSessionActor {
     /// When the flash slot fails or its window is too small, the own model
     /// runs. The flash slot must hold a model that can summarize; the
     /// compaction applies no quality check on the summary text.
-    private func summarizerTiers() -> [BackendSummarizerTier] {
+    ///
+    /// Each tier carries the reasoning control of its model
+    /// (``LanguageModelSessionBackend/reasoningControl()``, task ^qmewzw0).
+    ///
+    /// - Returns: The tiers, in the order of preference.
+    /// - Throws: What the read of the reasoning control of a model throws.
+    private func summarizerTiers() async throws -> [BackendSummarizerTier] {
         var tiers: [BackendSummarizerTier] = []
         if slot != .flash {
+            let flashBackend = profile.flash.container.makeSession(
+                instructions: nil, samplingMode: profile.flash.samplingMode)
             tiers.append(
                 BackendSummarizerTier(
                     tier: .flash,
-                    backend: profile.flash.container.makeSession(
-                        instructions: nil, samplingMode: profile.flash.samplingMode),
+                    backend: flashBackend,
                     windowTokens: profile.flash.contextTokens,
-                    model: profile.flash.chosen
+                    model: profile.flash.chosen,
+                    reasoningControl: try await flashBackend.reasoningControl()
                 ))
         }
-        tiers.append(BackendSummarizerTier(tier: .ownModel, backend: backend, windowTokens: contextTokens, model: model))
+        let ownBackend = backend
+        tiers.append(
+            BackendSummarizerTier(
+                tier: .ownModel, backend: ownBackend, windowTokens: contextTokens, model: model,
+                reasoningControl: try await ownBackend.reasoningControl()))
         return tiers
     }
 
@@ -567,7 +585,8 @@ extension RoutedSessionActor {
     ///   - budget: The token budget to compact against, or `nil` for this
     ///     session's resolved working context.
     /// - Returns: What the compaction did.
-    /// - Throws: What the last tier throws, ``CompactionApplyError``, or
+    /// - Throws: What the last tier throws, what the read of the reasoning
+    ///   control of a summarizer throws, ``CompactionApplyError``, or
     ///   `CancellationError`. A compaction that throws leaves this session
     ///   unchanged.
     private func compactTranscript(id: SignalID, prompt: CompactionPrompt, budget: TokenBudget?) async throws
@@ -599,7 +618,7 @@ extension RoutedSessionActor {
             // Wrapped, never handed over bare: each summarizer call runs as a
             // summarizer call of this session (see
             // ``SessionCompactionSummarizer``).
-            summarizers: summarizerTiers().map { $0.slot(for: self) },
+            summarizers: try await summarizerTiers().map { $0.slot(for: self) },
             pendingRuns: pendingRuns,
             // The host rule this session was vended or restored with,
             // so no compaction removes a protected tool output.

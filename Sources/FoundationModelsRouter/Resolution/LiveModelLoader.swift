@@ -149,38 +149,72 @@ package struct LiveLLMContainer: LoadedLLMContainer, Sendable {
     }
 }
 
-/// An `MLXLanguageModel` turns its reasoning off for one call when its
-/// loaded configuration turns the reasoning on and off with a chat template
-/// flag (task ^0dcsd3t). The engine refuses "reasoning off" for any other
-/// strategy: a model that always reasons, and a model with no control of its
-/// reasoning.
-extension MLXLanguageModel: ReasoningSwitchable {
-    /// Whether the loaded configuration of this model turns the reasoning on
-    /// and off with a chat template flag.
+extension ReasoningControl {
+    /// The reasoning control of an MLX model whose loaded configuration
+    /// states `promptStrategy` (task ^qmewzw0).
     ///
-    /// - Returns: `true` for a template-flag reasoning strategy, else `false`.
-    /// - Throws: What loading the container of the model throws.
-    func canTurnReasoningOff() async throws -> Bool {
-        let configuration = await (try await loadContainer()).configuration
-        guard case .templateFlag = configuration.reasoningConfig?.promptStrategy else { return false }
-        return true
+    /// A chat template flag turns the reasoning on and off. An always-on
+    /// strategy reasons in each call. A strategy with no control, and a model
+    /// with no reasoning configuration, report none.
+    ///
+    /// - Parameter promptStrategy: The prompt strategy of the reasoning
+    ///   configuration of the model, or `nil` when the model has none.
+    init(promptStrategy: ReasoningPromptStrategy?) {
+        switch promptStrategy {
+        case .templateFlag:
+            self = .switchable
+        case .alwaysOn:
+            self = .alwaysOn
+        case .none?, nil:
+            self = .none
+        }
+    }
+
+    /// The reasoning control of a llama.cpp model (task ^qmewzw0).
+    ///
+    /// A chat template that supports thinking turns the reasoning on and off
+    /// with `enable_thinking`. Any other template reports none.
+    ///
+    /// - Parameter templateSupportsThinking: Whether the chat template of the
+    ///   model supports thinking.
+    init(templateSupportsThinking: Bool) {
+        self = templateSupportsThinking ? .switchable : .none
     }
 }
 
-/// A `LlamaLanguageModel` turns its reasoning off for one call when its chat
-/// template supports thinking (task ^r0dx34s). FoundationModelsLlamaCpp then
-/// reads ``ReasoningOffRequest/reasoningLevel`` as the MLX engine does, and
-/// renders the template with `enable_thinking = false`. A template with no
-/// thinking ignores each reasoning level.
-extension LlamaLanguageModel: ReasoningSwitchable {
-    /// Whether the chat template of this model supports thinking.
+/// An `MLXLanguageModel` reports the reasoning control of its loaded
+/// configuration (tasks ^0dcsd3t and ^qmewzw0). It turns its reasoning off for
+/// one call when that configuration turns the reasoning on and off with a
+/// chat template flag. The engine refuses "reasoning off" for any other
+/// strategy: a model that always reasons, and a model with no control of its
+/// reasoning.
+extension MLXLanguageModel: ReasoningControlReporting {
+    /// The reasoning control of the prompt strategy of the loaded
+    /// configuration of this model.
     ///
-    /// - Returns: `true` when the chat template supports thinking, else
-    ///   `false`.
-    /// - Throws: Never. `throws` comes from the ``ReasoningSwitchable``
+    /// - Returns: The reasoning control of the model.
+    /// - Throws: What loading the container of the model throws.
+    func reasoningControl() async throws -> ReasoningControl {
+        let configuration = await (try await loadContainer()).configuration
+        return ReasoningControl(promptStrategy: configuration.reasoningConfig?.promptStrategy)
+    }
+}
+
+/// A `LlamaLanguageModel` reports a switchable reasoning when its chat
+/// template supports thinking (tasks ^r0dx34s and ^qmewzw0).
+/// FoundationModelsLlamaCpp then reads ``ReasoningOffRequest/reasoningLevel``
+/// as the MLX engine does, and renders the template with
+/// `enable_thinking = false`. A template with no thinking ignores each
+/// reasoning level.
+extension LlamaLanguageModel: ReasoningControlReporting {
+    /// The reasoning control of the chat template of this model.
+    ///
+    /// - Returns: ``ReasoningControl/switchable`` when the chat template
+    ///   supports thinking, else ``ReasoningControl/none``.
+    /// - Throws: Never. `throws` comes from the ``ReasoningControlReporting``
     ///   requirement.
-    func canTurnReasoningOff() async throws -> Bool {
-        canTurnReasoningOff
+    func reasoningControl() async throws -> ReasoningControl {
+        ReasoningControl(templateSupportsThinking: canTurnReasoningOff)
     }
 }
 
@@ -371,7 +405,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
 
     /// Generates a complete text response through ``liveSession`` with
     /// thinking off, when ``model`` can turn its reasoning off. Any other
-    /// model generates as ``respond(to:maxTokens:)`` does.
+    /// model generates as ``respond(to:maxTokens:)`` does: a model that always
+    /// reasons reasons, and the text is its response alone, never its
+    /// reasoning (task ^qmewzw0).
     ///
     /// The call is ``respond(to:maxTokens:)`` under a
     /// ``ReasoningOffRequest``, so the reasoning level comes from the one
@@ -395,10 +431,24 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     // periphery:ignore
     var mlxLanguageModel: MLXLanguageModel? { model as? MLXLanguageModel }
 
+    /// How the raw ``model`` turns its reasoning on and off
+    /// (``ReasoningControlReporting``, task ^qmewzw0). A model that does not
+    /// report it has ``ReasoningControl/none``.
+    ///
+    /// It reads the raw model, never the per-session wrapper of the session,
+    /// so the cast finds the MLX or llama.cpp model behind the queue.
+    ///
+    /// - Returns: The reasoning control of ``model``.
+    /// - Throws: What the read of the model configuration throws.
+    func reasoningControl() async throws -> ReasoningControl {
+        guard let reporting = model as? any ReasoningControlReporting else { return .none }
+        return try await reporting.reasoningControl()
+    }
+
     /// Whether the first pass of the call that starts now runs with the
     /// reasoning of ``model`` off: the task asks for it
     /// (``ReasoningOffRequest/isRequested``), and the raw model can turn its
-    /// reasoning off (``ReasoningSwitchable``).
+    /// reasoning off (``ReasoningControl/switchable``).
     ///
     /// The engine refuses "reasoning off" for a model that always reasons and
     /// for a model with no control of its reasoning. Thus a call asks for it
@@ -407,10 +457,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// - Returns: `true` when the first pass states ``ReasoningOffRequest/reasoningLevel``.
     /// - Throws: What the read of the model configuration throws.
     private func callTurnsReasoningOff() async throws -> Bool {
-        guard ReasoningOffRequest.isRequested, let switchable = model as? any ReasoningSwitchable else {
-            return false
-        }
-        return try await switchable.canTurnReasoningOff()
+        guard ReasoningOffRequest.isRequested else { return false }
+        return try await reasoningControl() == .switchable
     }
 
     /// Prepares the call that starts now: states the reasoning level of its

@@ -166,8 +166,9 @@ public enum TranscriptCompaction {
     ///   - label: The tag every printed line of this run carries, so a suite
     ///     that compacts twice can tell its two runs apart in the output.
     /// - Returns: Everything the run measured.
-    /// - Throws: Whatever the compaction throws, or what the container's
-    ///   counter throws.
+    /// - Throws: Whatever the compaction throws, what the container's
+    ///   counter throws, or what the read of the reasoning control of the
+    ///   model throws.
     // Only the suites in the IntegrationTests package call this.
     // Periphery reads only this package's index, thus it finds no caller.
     // periphery:ignore
@@ -179,13 +180,20 @@ public enum TranscriptCompaction {
     ) async throws -> TranscriptCompactionOutcome {
         let counter = container.container.tokenCounter
         let summarizer = CountingBlankSlateSummarizer(container: container)
+        // The reasoning control of the model, read as the session reads it for
+        // its own tier: an always-reasoning model gets a thinking allowance
+        // in the ceiling (task ^qmewzw0).
+        let reasoningControl = try await container.container
+            .makeSession(transcript: Transcript(entries: []), samplingMode: container.samplingMode)
+            .reasoningControl()
         let (_, result) = try await Compactor.compact(
             transcript,
             budget: try Self.budget(of: transcript, counter: counter),
             counter: counter,
             summarizers: [
                 CompactionSummarizerSlot(
-                    tier: .ownModel, summarizer: summarizer, windowTokens: windowTokens, model: nil)
+                    tier: .ownModel, summarizer: summarizer, windowTokens: windowTokens, model: nil,
+                    reasoningControl: reasoningControl)
             ],
             id: SignalID()
         )

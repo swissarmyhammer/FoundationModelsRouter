@@ -188,6 +188,11 @@ final class HookLayeredSessionBackend: LanguageModelSessionBackend {
         try await wrapped.respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
     }
 
+    /// The reasoning control of the model of the wrapped backend.
+    func reasoningControl() async throws -> ReasoningControl {
+        try await wrapped.reasoningControl()
+    }
+
     /// Streams a text response through the wrapped backend.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         wrapped.streamResponse(to: prompt, maxTokens: maxTokens)

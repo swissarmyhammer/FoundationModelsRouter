@@ -825,6 +825,10 @@ private final class ReadProbingBackend: LanguageModelSessionBackend {
         try await wrapped.respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
     }
 
+    func reasoningControl() async throws -> ReasoningControl {
+        try await wrapped.reasoningControl()
+    }
+
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         wrapped.streamResponse(to: prompt, maxTokens: maxTokens)
     }

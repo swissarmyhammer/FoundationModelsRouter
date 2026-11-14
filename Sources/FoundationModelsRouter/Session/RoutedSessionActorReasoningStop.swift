@@ -103,8 +103,11 @@ enum ReasoningOnlyOutput {
 /// recovery runs with the reasoning of the model off, and after the last one
 /// a final pass, whose first model pass also runs with the reasoning off,
 /// asks for the final answer
-/// (``recover(after:attempt:compacts:body:)``, task ^0dcsd3t). A detection
-/// that is not enabled stops nothing.
+/// (``recover(after:attempt:compacts:body:)``, task ^0dcsd3t). A model that
+/// always reasons cannot turn its reasoning off: that first model pass
+/// reasons under ``ReasoningControl/thinkingAllowance`` in place of
+/// ``RepetitionDetection/reasoningTokenLimit`` (``RecoveryFirstPass``, task
+/// ^qmewzw0). A detection that is not enabled stops nothing.
 extension RoutedSessionActor {
     /// The prompt of the attempt that goes on after a reasoning stop.
     ///

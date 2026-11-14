@@ -692,7 +692,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The repetition watch of this session: the watch of the model call in
     /// flight, its stop marker, and the recoveries of the running answer
     /// since its last progress.
-    /// See ``runWatchedModelCall(composedPrompt:_:)``.
+    /// See ``runWatchedModelCall(composedPrompt:firstPassReasoningTokenLimit:_:)``.
     var repetitionWatch = RepetitionWatchState()
 
     /// The settings of the repetition watch this session was vended or

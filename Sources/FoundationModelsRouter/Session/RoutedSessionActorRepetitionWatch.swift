@@ -7,7 +7,7 @@ import Logging
 /// flight, the stop it found, and the recoveries of the answer in flight
 /// since its last progress.
 struct RepetitionWatchState {
-    /// The last watch id that ``RoutedSessionActor/runWatchedModelCall(composedPrompt:_:)``
+    /// The last watch id that ``RoutedSessionActor/runWatchedModelCall(composedPrompt:firstPassReasoningTokenLimit:_:)``
     /// handed out. Monotonic.
     var lastWatchId: UInt64 = 0
 
@@ -183,7 +183,11 @@ struct WatchStopMarker: Sendable {
 /// that pass calls a tool, the next passes of the tool loop run with the
 /// reasoning on (task ^bhdj5v9). After the last recovery, one final pass asks
 /// for the final answer, with the same rule for the reasoning, and the answer
-/// never ends with an empty reply (task ^0dcsd3t).
+/// never ends with an empty reply (task ^0dcsd3t). A model that always
+/// reasons cannot turn its reasoning off: the first pass of a recovery and of
+/// the final pass reasons under ``ReasoningControl/thinkingAllowance`` in
+/// place of ``RepetitionDetection/reasoningTokenLimit`` (``RecoveryFirstPass``,
+/// task ^qmewzw0).
 extension RoutedSessionActor {
     /// The end of each prompt of a recovery after a repetition stop: it tells
     /// the model to act.
@@ -249,16 +253,21 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
+    ///   - firstPassReasoningTokenLimit: The reasoning token limit of the
+    ///     first pass of the call in place of
+    ///     ``RepetitionDetection/reasoningTokenLimit``, or `nil` (the default)
+    ///     for the limit of the session (task ^qmewzw0).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: What ``runCancellableModelCall(composedPrompt:_:)`` throws,
     ///   `CancellationError` included when the watch stopped the call.
     func runWatchedModelCall(
         composedPrompt: String,
+        firstPassReasoningTokenLimit: Int? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         repetitionWatch.stop = nil
-        let watch = startRepetitionWatch()
+        let watch = startRepetitionWatch(firstPassReasoningTokenLimit: firstPassReasoningTokenLimit)
         defer {
             watch?.cancel()
             repetitionWatch.activeWatchId = nil
@@ -284,8 +293,11 @@ extension RoutedSessionActor {
     /// The task is a helper task (``helperTasks``): the caller cancels it and
     /// does not wait, and the drain of ``close()`` waits until it ended.
     ///
+    /// - Parameter firstPassReasoningTokenLimit: The reasoning token limit of
+    ///   the first pass of the call, or `nil` for the limit of the session
+    ///   (task ^qmewzw0).
     /// - Returns: The task of the watch, which the caller cancels, or `nil`.
-    private func startRepetitionWatch() -> Task<Void, Never>? {
+    private func startRepetitionWatch(firstPassReasoningTokenLimit: Int?) -> Task<Void, Never>? {
         guard repetitionDetection.isEnabled else { return nil }
         repetitionWatch.lastWatchId += 1
         let watchId = repetitionWatch.lastWatchId
@@ -295,7 +307,9 @@ extension RoutedSessionActor {
         let detection = repetitionDetection
         let tokenCounter = tokenCounter
         return helperTasks.start { [weak self] in
-            var detector = RepetitionDetector(detection: detection, tokenCounter: tokenCounter)
+            var detector = RepetitionDetector(
+                detection: detection, tokenCounter: tokenCounter,
+                firstPassReasoningTokenLimit: firstPassReasoningTokenLimit)
             for await entries in updates {
                 let texts = WatchedText.attemptTexts(in: entries, excluding: entryIdsBeforeAttempt)
                 if let finding = detector.observe(texts) {
@@ -623,7 +637,9 @@ extension RoutedSessionActor {
     ///
     /// With a recovery left, the next attempt sends the continuation prompt
     /// of the stop, and its first model pass runs with the reasoning of the
-    /// model off (tasks ^0dcsd3t and ^bhdj5v9). When `compacts` is `true`,
+    /// model off (tasks ^0dcsd3t and ^bhdj5v9), or under a thinking budget on
+    /// a model that always reasons (``RecoveryFirstPass``, task ^qmewzw0).
+    /// When `compacts` is `true`,
     /// the answer compacts first, as after any ceiling stop. With no recovery
     /// left, the answer runs its final pass
     /// (``runFinalPass(after:attempt:body:)``).

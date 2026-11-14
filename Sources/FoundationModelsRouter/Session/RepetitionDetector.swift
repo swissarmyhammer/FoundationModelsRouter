@@ -16,16 +16,22 @@ struct WatchedText: Sendable, Equatable {
     /// ``RepetitionDetection/reasoningTokenLimit`` (task ^hm9trt5).
     let isReasoning: Bool
 
+    /// Whether the entry is a `.toolCalls` entry, which ends the first pass of
+    /// the attempt (task ^qmewzw0).
+    let isToolCalls: Bool
+
     /// Creates one watched entry.
     ///
     /// - Parameters:
     ///   - entryId: The `Transcript.Entry.id` of the entry.
     ///   - text: The text of the entry so far.
     ///   - isReasoning: Whether the entry is a `.reasoning` entry.
-    init(entryId: String, text: String, isReasoning: Bool = false) {
+    ///   - isToolCalls: Whether the entry is a `.toolCalls` entry.
+    init(entryId: String, text: String, isReasoning: Bool = false, isToolCalls: Bool = false) {
         self.entryId = entryId
         self.text = text
         self.isReasoning = isReasoning
+        self.isToolCalls = isToolCalls
     }
 
     /// The joined text of the `.text` segments of `segments`. The detector
@@ -69,7 +75,7 @@ struct WatchedText: Sendable, Equatable {
             case .response(let response):
                 return WatchedText(entryId: entry.id, text: text(of: response.segments))
             case .toolCalls(let calls):
-                return WatchedText(entryId: entry.id, text: ToolCallArgumentsText.text(of: calls))
+                return WatchedText(entryId: entry.id, text: ToolCallArgumentsText.text(of: calls), isToolCalls: true)
             case .instructions, .prompt, .toolOutput, .data:
                 return nil
             @unknown default:
@@ -114,7 +120,9 @@ struct ReasoningLimitFinding: Sendable, Equatable {
     /// The tokens of the complete lines of the reasoning entry.
     let reasoningTokens: Int
 
-    /// The limit in force, ``RepetitionDetection/reasoningTokenLimitInForce``.
+    /// The limit in force: ``RepetitionDetection/reasoningTokenLimitInForce``,
+    /// or the first-pass limit of a recovery of an always-reasoning model
+    /// (task ^qmewzw0).
     let limit: Int
 }
 
@@ -186,17 +194,31 @@ struct RepetitionDetector {
     /// entry that the call writes now, or `nil` before any text.
     private var entryInFlight: WatchedText?
 
+    /// Whether the first pass of the call ended: the call wrote a tool call,
+    /// and each later entry is the output of a later pass of its tool loop
+    /// (task ^qmewzw0).
+    private var firstPassEnded = false
+
     /// The byte that ends a line.
     private static let lineFeed = UInt8(ascii: "\n")
+
+    /// The reasoning token limit of the first pass of the call, in place of
+    /// ``RepetitionDetection/reasoningTokenLimitInForce``, or `nil` when the
+    /// first pass keeps the limit of the session (task ^qmewzw0).
+    private let firstPassReasoningTokenLimit: Int?
 
     /// Creates a detector for one call.
     ///
     /// - Parameters:
     ///   - detection: The settings in force.
     ///   - tokenCounter: The counter of the session.
-    init(detection: RepetitionDetection, tokenCounter: any TokenCounter) {
+    ///   - firstPassReasoningTokenLimit: The reasoning token limit of the
+    ///     first pass of the call, or `nil` (the default) for the limit of
+    ///     the session.
+    init(detection: RepetitionDetection, tokenCounter: any TokenCounter, firstPassReasoningTokenLimit: Int? = nil) {
         self.detection = detection
         self.tokenCounter = tokenCounter
+        self.firstPassReasoningTokenLimit = firstPassReasoningTokenLimit
     }
 
     /// Reads the complete lines that `texts` added since the last call.
@@ -205,6 +227,7 @@ struct RepetitionDetector {
     /// - Returns: The finding when one window of repeated lines filled, else `nil`.
     mutating func observe(_ texts: [WatchedText]) -> RepetitionFinding? {
         entryInFlight = texts.last { !$0.text.isEmpty }
+        firstPassEnded = firstPassEnded || texts.contains(where: \.isToolCalls)
         for watched in texts {
             if let finding = readCompleteLines(of: watched) {
                 return finding
@@ -215,6 +238,8 @@ struct RepetitionDetector {
 
     /// The finding of the reasoning limit: the entry that the call writes now
     /// is a `.reasoning` entry, and the tokens of its complete lines reached
+    /// its limit (``reasoningTokenLimitOfEntryInFlight``): the first-pass
+    /// limit of the call in its first pass, else
     /// ``RepetitionDetection/reasoningTokenLimitInForce``.
     ///
     /// When a `.response` or `.toolCalls` entry with text follows the
@@ -224,10 +249,19 @@ struct RepetitionDetector {
     /// - Returns: The finding, or `nil` when no limit is in force or the
     ///   entry in flight is not a reasoning entry at the limit.
     func reasoningLimitFinding() -> ReasoningLimitFinding? {
-        guard let limit = detection.reasoningTokenLimitInForce, let entryInFlight, entryInFlight.isReasoning,
+        guard let limit = reasoningTokenLimitOfEntryInFlight, let entryInFlight, entryInFlight.isReasoning,
             let tokens = reasoningTokens[entryInFlight.entryId], tokens >= limit
         else { return nil }
         return ReasoningLimitFinding(reasoningTokens: tokens, limit: limit)
+    }
+
+    /// The reasoning token limit of the entry that the call writes now:
+    /// ``firstPassReasoningTokenLimit`` while the first pass of the call runs,
+    /// and ``RepetitionDetection/reasoningTokenLimitInForce`` after it, or when
+    /// the call has no limit of its first pass (task ^qmewzw0).
+    private var reasoningTokenLimitOfEntryInFlight: Int? {
+        guard let firstPassReasoningTokenLimit, !firstPassEnded else { return detection.reasoningTokenLimitInForce }
+        return firstPassReasoningTokenLimit
     }
 
     /// The counts of the lines read so far, as a finding that cuts nothing

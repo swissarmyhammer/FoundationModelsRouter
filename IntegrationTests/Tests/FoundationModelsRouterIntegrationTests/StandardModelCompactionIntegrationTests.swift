@@ -107,10 +107,12 @@ struct StandardModelCompactionIntegrationTests {
     /// the trigger at the start of the answer.
     private static let answerStartTriggerShare = 0.1
 
-    /// The budget of the answer-start test. The target is the trigger's own
-    /// share.
-    private static let answerStartBudget = TokenBudget(
-        limit: answerStartWindow, trigger: answerStartTriggerShare, target: answerStartTriggerShare)
+    /// The window and the budget of the answer-start test on `model`. The
+    /// target is the trigger's own share.
+    private static func answerStartWindow(for model: RealModelContainer) async throws -> CompactionTestWindow {
+        try await CompactionTestWindow(
+            model: model, baseWindow: answerStartWindow, triggerShare: answerStartTriggerShare)
+    }
 
     /// The prompt of the one answer of the answer-start test. It ends with the
     /// Qwen 3 switch that turns reasoning off for this message, so the answer
@@ -149,14 +151,15 @@ struct StandardModelCompactionIntegrationTests {
         let counter = loaded.container.tokenCounter
         let transcript = try Self.builtLiveContext()
         let seededTokens = try counter.count(transcript)
+        let window = try await Self.answerStartWindow(for: loaded)
         try #require(
-            seededTokens >= Self.answerStartBudget.triggerTokens,
-            "the seeded context counts \(seededTokens) tokens, under the trigger of \(Self.answerStartBudget.triggerTokens)")
+            seededTokens >= window.budget.triggerTokens,
+            "the seeded context counts \(seededTokens) tokens, under the trigger of \(window.budget.triggerTokens)")
 
-        let harness = try StandardModelSessionHarness(model: model, container: loaded, window: Self.answerStartWindow)
+        let harness = try StandardModelSessionHarness(model: model, container: loaded, window: window.tokens)
         defer { harness.removeDirectory() }
         let session = harness.profile.standard.makeSession(
-            instructions: Self.instructions, budget: Self.answerStartBudget)
+            instructions: Self.instructions, budget: window.budget)
         let actor = try #require(session as? RoutedSessionActor)
         await actor.seed(liveContext: transcript, measuredTokens: seededTokens)
 
@@ -202,6 +205,45 @@ struct StandardModelCompactionIntegrationTests {
         #expect(
             result.tokensAfter < result.tokensBefore,
             "the snapshot counts \(result.tokensAfter) tokens against \(result.tokensBefore) before")
+    }
+}
+
+// MARK: - The window of a compaction test
+
+/// The session window and the budget of one compaction test on one model.
+///
+/// Each compaction test states a small window and a trigger share of it, and
+/// the window is a test number. An always-reasoning model (Flint) reasons in
+/// its summarizer call, under ``ReasoningControl/thinkingAllowance`` on top of
+/// the summary (task ^qmewzw0), and a small window has no room for that. So
+/// for such a model the window grows by the allowance, and the trigger and
+/// target shares shrink so that they keep their token counts: the test
+/// compacts at the same context size on every model. Each other model keeps
+/// the stated window and share.
+struct CompactionTestWindow {
+    /// The session window, in tokens.
+    let tokens: Int
+
+    /// The budget of the session: its limit is ``tokens``, and its target is
+    /// its trigger.
+    let budget: TokenBudget
+
+    /// The window and the budget of a test that states `baseWindow` and
+    /// `triggerShare`, on `model`.
+    ///
+    /// - Parameters:
+    ///   - model: The loaded model.
+    ///   - baseWindow: The window the test states, in tokens.
+    ///   - triggerShare: The share of `baseWindow` at which the test compacts.
+    /// - Throws: What the read of the reasoning control of the model throws.
+    init(model: RealModelContainer, baseWindow: Int, triggerShare: Double) async throws {
+        let control = try await model.container
+            .makeSession(transcript: Transcript(entries: []), samplingMode: model.samplingMode)
+            .reasoningControl()
+        let allowance = control == .alwaysOn ? ReasoningControl.thinkingAllowance : 0
+        tokens = baseWindow + allowance
+        let share = triggerShare * Double(baseWindow) / Double(tokens)
+        budget = TokenBudget(limit: tokens, trigger: share, target: share)
     }
 }
 

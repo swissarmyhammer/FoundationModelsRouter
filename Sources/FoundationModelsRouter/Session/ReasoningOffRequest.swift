@@ -1,22 +1,5 @@
 import FoundationModels
 
-/// A `LanguageModel` that can turn its reasoning off for one pass
-/// (tasks ^0dcsd3t and ^bhdj5v9).
-///
-/// A backend asks for the reasoning off
-/// (``ReasoningOffRequest/reasoningLevel``) only when its model conforms and
-/// ``canTurnReasoningOff()`` gives `true`. The MLX engine refuses "reasoning
-/// off" for a model that always reasons, and for a model with no control of
-/// its reasoning. Such a model keeps its usual behavior. `MLXLanguageModel`
-/// and `LlamaLanguageModel` conform (task ^r0dx34s).
-protocol ReasoningSwitchable {
-    /// Whether a call can ask this model to turn its reasoning off.
-    ///
-    /// - Returns: `true` when the model turns its reasoning on and off.
-    /// - Throws: What the read of the model configuration throws.
-    func canTurnReasoningOff() async throws -> Bool
-}
-
 /// The request that the first pass of the model call on this task runs with
 /// the reasoning of its model off (tasks ^0dcsd3t and ^bhdj5v9).
 ///

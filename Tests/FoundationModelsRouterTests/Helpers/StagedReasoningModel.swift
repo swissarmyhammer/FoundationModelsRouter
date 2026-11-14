@@ -18,13 +18,19 @@ import FoundationModelsRouterTestSupport
 /// last script answers with ``RepeatingReasoningModel/Executor/answerText``
 /// at once. So a test can make the first call repeat itself and the next
 /// calls reason past the limit, or make a recovery call a tool. Each call
-/// records its transcript and its reasoning level in ``log``.
-struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
+/// records its transcript and its reasoning level in ``log``. The model
+/// reports ``reasoningControl`` (task ^qmewzw0), so a test can play a model
+/// that turns its reasoning off, or one that always reasons.
+struct StagedReasoningModel: LanguageModel, ReasoningControlReporting {
     /// The log that records the transcript and the reasoning level of each call.
     let log: RenderProbeLog
 
     /// The script of each call, in call order.
     let scripts: [RepeatingReasoningScript]
+
+    /// How the model turns its reasoning on and off. A switchable model turns
+    /// it off for one call, as a model with a chat template flag does.
+    let control: ReasoningControl
 
     /// Declares reasoning, because each call writes a reasoning entry, and
     /// tool calling, as the model of a session with tools must.
@@ -35,12 +41,11 @@ struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
         Executor.Configuration(log: log, scripts: scripts)
     }
 
-    /// Always `true`: the model turns its reasoning off for one call, as a
-    /// model with a chat template flag does.
+    /// The reasoning control the test gave the model.
     ///
-    /// - Returns: `true`.
-    func canTurnReasoningOff() async throws -> Bool {
-        true
+    /// - Returns: ``control``.
+    func reasoningControl() async throws -> ReasoningControl {
+        control
     }
 
     /// The executor that plays out each call.
@@ -151,6 +156,8 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
     ///   - tools: The tools the session mounts.
     ///   - isNoOpToolCall: The host check of the no-op tool calls of the
     ///     session (task ^zetnz36).
+    ///   - reasoningControl: How the model turns its reasoning on and off
+    ///     (task ^qmewzw0).
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
@@ -159,6 +166,7 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
     static func make(
         scripts: [RepeatingReasoningScript], detection: RepetitionDetection, tools: [any Tool] = [],
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
+        reasoningControl: ReasoningControl = .switchable,
         tempDirPrefix: String
     ) async throws -> StagedReasoningSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -168,7 +176,8 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
             cacheDir: directory,
             recorder: recorder,
             loader: StubModelLoader(
-                container: LiveBackendContainer(model: StagedReasoningModel(log: log, scripts: scripts)),
+                container: LiveBackendContainer(
+                    model: StagedReasoningModel(log: log, scripts: scripts, control: reasoningControl)),
                 dimension: RouterTestFixtures.stubDimension))
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
@@ -193,6 +202,8 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
     ///   - tools: The tools the session mounts.
     ///   - isNoOpToolCall: The host check of the no-op tool calls of the
     ///     session (task ^zetnz36).
+    ///   - reasoningControl: How the model turns its reasoning on and off
+    ///     (task ^qmewzw0).
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture and the events of the answer, in order.
@@ -201,11 +212,12 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
         to prompt: String, scripts: [RepeatingReasoningScript], detection: RepetitionDetection,
         tools: [any Tool] = [],
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
+        reasoningControl: ReasoningControl = .switchable,
         tempDirPrefix: String
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await make(
             scripts: scripts, detection: detection, tools: tools, isNoOpToolCall: isNoOpToolCall,
-            tempDirPrefix: tempDirPrefix)
+            reasoningControl: reasoningControl, tempDirPrefix: tempDirPrefix)
         let events = try await fixture.endingOnThrow {
             try await collect(fixture.session.streamEvents(to: prompt))
         }
@@ -216,11 +228,11 @@ struct StagedReasoningSessionFixture: SessionDirectoryFixture {
 /// A ``CeilingProbeLanguageModel`` turns its reasoning off for one call, as a
 /// model with a chat template flag does (task ^0dcsd3t), so the log records
 /// the level of a recovery call.
-extension CeilingProbeLanguageModel: ReasoningSwitchable {
-    /// Always `true`.
+extension CeilingProbeLanguageModel: ReasoningControlReporting {
+    /// Always ``ReasoningControl/switchable``.
     ///
-    /// - Returns: `true`.
-    func canTurnReasoningOff() async throws -> Bool {
-        true
+    /// - Returns: ``ReasoningControl/switchable``.
+    func reasoningControl() async throws -> ReasoningControl {
+        .switchable
     }
 }
