@@ -59,7 +59,7 @@ let package = Package(
         .package(path: ".."),
         .package(
             url: "https://github.com/swissarmyhammer/\(mlxPackage)",
-            branch: "flint"
+            branch: "stable"
         ),
         .package(
             url: "https://github.com/apple/\(tracingPackage).git",
@@ -70,11 +70,11 @@ let package = Package(
         // router does.
         .package(
             url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
-            branch: "flint"
+            branch: "main"
         ),
         .package(
             url: "git@github.com:swissarmyhammer/\(decisionPackage).git",
-            branch: "flint"
+            branch: "main"
         ),
     ],
     targets: [

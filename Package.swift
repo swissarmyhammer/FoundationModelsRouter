@@ -75,7 +75,7 @@ let decisionProducts: [Target.Dependency] = [
 ]
 
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
-// The fork is referenced by URL on its `flint` branch (see the `dependencies`
+// The fork is referenced by URL on its `stable` branch (see the `dependencies`
 // list), so every checkout of the router — this machine, another machine, CI —
 // builds against the same published fork rather than whatever working copy
 // happens to sit beside it.
@@ -161,7 +161,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/swissarmyhammer/\(mlxPackage)",
-            branch: "flint"
+            branch: "stable"
         ),
         .package(
             url: "https://github.com/yaslab/\(ulidPackage).git",
@@ -199,7 +199,7 @@ let package = Package(
         // this module.
         .package(
             url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
-            branch: "flint"
+            branch: "main"
         ),
         // The hook vocabulary of the family: the events, `HookSession`,
         // `HookVisitor` and `HookDispatcher`. The router holds one optional
@@ -208,7 +208,7 @@ let package = Package(
         // this edge makes no cycle.
         .package(
             url: "git@github.com:swissarmyhammer/\(hooksPackage).git",
-            branch: "flint"
+            branch: "main"
         ),
         // The decision models of the family: the decision types, the
         // `DecisionSession` and the `PooledDecisionModel`, which reads the
@@ -219,7 +219,7 @@ let package = Package(
         // cycle.
         .package(
             url: "git@github.com:swissarmyhammer/\(decisionPackage).git",
-            branch: "flint"
+            branch: "main"
         ),
         // The llama.cpp backend of a GGUF model. The Extras GGUF loader makes
         // its `LlamaLanguageModel`; the router wraps that model in a live
