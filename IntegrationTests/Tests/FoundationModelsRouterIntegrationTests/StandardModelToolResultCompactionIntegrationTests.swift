@@ -7,10 +7,10 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// Case 2 of the compaction suite: one tool call on Qwen 3.8 27B whose result
-/// crosses the compaction trigger (tasks ^9ddjkjm and ^yyjvyga).
+/// Case 2 of the compaction suite: one tool call on each standard model whose
+/// result crosses the compaction trigger (tasks ^9ddjkjm and ^yyjvyga).
 ///
-/// The test is an extension of `Qwen38CompactionIntegrationTests`, so it
+/// The test is an extension of `StandardModelCompactionIntegrationTests`, so it
 /// shares the one load of the model with the other two cases.
 ///
 /// The session window is a small test number. The prompt is one short
@@ -22,7 +22,7 @@ import Testing
 ///
 /// The test sizes the tool result with the model's own tokenizer, as a share
 /// of the window.
-extension Qwen38CompactionIntegrationTests {
+extension StandardModelCompactionIntegrationTests {
     /// The small session window of the tool-result test, in tokens.
     private static let toolResultWindow = 2048
 
@@ -76,25 +76,27 @@ extension Qwen38CompactionIntegrationTests {
         return text
     }
 
-    @Test("a tool call triggers a compaction: one compaction inside the answer, a smaller snapshot, and a reply")
-    func toolResultTriggersCompaction() async throws {
-        let loaded = try await Qwen38ResidentModel.shared.container()
+    @Test(
+        "a tool call triggers a compaction: one compaction inside the answer, a smaller snapshot, and a reply",
+        arguments: StandardModels.all)
+    func toolResultTriggersCompaction(model: ModelRef) async throws {
+        let loaded = try await ResidentStandardModel.shared.container(for: model)
         let counter = loaded.container.tokenCounter
         let listing =
             Self.lines(
                 { "Record line \($0): inventory batch checked, status nominal, no action needed." },
                 filling: Self.resultShare, counter: counter) + "Record key: \(Self.recordKey)."
-        let harness = try Qwen38SessionHarness(container: loaded, window: Self.toolResultWindow)
+        let harness = try StandardModelSessionHarness(model: model, container: loaded, window: Self.toolResultWindow)
         defer { harness.removeDirectory() }
         let tool = RecordTool(listing: listing)
         let session = harness.profile.standard.makeSession(
             instructions: Self.instructions, tools: [tool], budget: Self.toolResultBudget)
 
-        let record = try await Qwen38AnswerRecord.drive(session, prompt: Self.toolResultRequest)
+        let record = try await StandardModelAnswerRecord.drive(session, prompt: Self.toolResultRequest)
         record.report(
-            label: qwen38CompactionLabel,
+            label: standardModelCompactionLabel,
             detail: """
-                case 2 toolCalls=\(tool.calls) resultTokens=\(counter.count(listing)) \
+                \(model.stringValue) case 2 toolCalls=\(tool.calls) resultTokens=\(counter.count(listing)) \
                 trigger=\(Self.toolResultBudget.triggerTokens)
                 """)
 
@@ -112,7 +114,7 @@ struct RecordArguments {
 
 /// The one tool of the tool-result test: it returns its fixed record listing.
 final class RecordTool: FoundationModels.Tool, Sendable {
-    let name = Qwen38CompactionIntegrationTests.toolName
+    let name = StandardModelCompactionIntegrationTests.toolName
     let description = "Looks up an archive record and returns its full listing."
 
     /// The listing every call returns.

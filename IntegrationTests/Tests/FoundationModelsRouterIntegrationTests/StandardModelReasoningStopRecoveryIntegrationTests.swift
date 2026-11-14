@@ -8,16 +8,13 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The Qwen 3.8 generation model this suite drives, as the SWE-bench run of
-/// task ^0dcsd3t did.
-private let qwen38ReasoningStopModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
-
-/// Task ^0dcsd3t on a real model: after a reasoning stop, the recovery pass
-/// runs with the reasoning of the model off, and the model acts: it calls a
-/// tool.
+/// Task ^0dcsd3t on each model of ``StandardModels``: after a reasoning stop,
+/// the recovery pass runs with the reasoning of the model off, and the model
+/// acts: it calls a tool. Qwen 3.8 is the model of the SWE-bench run of that
+/// task.
 ///
-/// The session gets a small reasoning token limit, so the first pass of
-/// Qwen 3.8 surely reaches it before it acts. The limit is a setting of this
+/// The session gets a small reasoning token limit, so the first pass of a
+/// reasoning model surely reaches it before it acts. The limit is a setting of this
 /// test only: the default of the session does not change.
 ///
 /// The scenario tool always returns the same file text, so a greedy model
@@ -26,11 +23,11 @@ private let qwen38ReasoningStopModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp
 /// on identical calls does not remove the call that the recovery pass makes.
 /// The tests of that stop are in `IdenticalToolCallLimitTests`.
 @Suite(
-    "Gated real-model integration: Qwen 3.8 27B acts in the recovery after a reasoning stop",
+    "Gated real-model integration: each standard model acts in the recovery after a reasoning stop",
     .serialized,
     .exclusiveRealModel
 )
-struct Qwen38ReasoningStopRecoveryIntegrationTests {
+struct StandardModelReasoningStopRecoveryIntegrationTests {
     /// The argument schema of the scenario tool: one required string.
     @Generable
     struct FileArguments {
@@ -82,16 +79,17 @@ struct Qwen38ReasoningStopRecoveryIntegrationTests {
         return WatchedText.text(of: prompt.segments) == RoutedSessionActor.reasoningStopContinuationPrompt
     }
 
-    @Test("the recovery after a reasoning stop runs with the reasoning off and calls a tool")
-    func recoveryAfterReasoningStopCallsATool() async throws {
-        let container = try await RealModelContainer.load(
-            ref: qwen38ReasoningStopModel, samplingMode: Self.samplingMode)
+    @Test(
+        "the recovery after a reasoning stop runs with the reasoning off and calls a tool",
+        arguments: StandardModels.all)
+    func recoveryAfterReasoningStopCallsATool(model: ModelRef) async throws {
+        let container = try await RealModelContainer.load(ref: model, samplingMode: Self.samplingMode)
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Qwen38ReasoningStop-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("StandardModelReasoningStop-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let profile = RealModelHarness.make(
-            model: qwen38ReasoningStopModel, context: ScriptedSessionContext.tokens,
+            model: model, context: ScriptedSessionContext.tokens,
             container: container.container, samplingMode: container.samplingMode,
             cacheDir: directory, recordingsDir: directory)
         // The session's handle holds its owning profile weakly, so the profile

@@ -7,19 +7,15 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The Qwen 3.8 generation model this suite drives: a dense 27B model in the
-/// `mxfp4` quantization, with the `qwen3_5` architecture that MLX loads.
-///
-/// This is the largest model any tool-answer suite of this package drives. The
-/// sibling `RealToolAnswerComparisonTests` moved from the 30B to a 4B for cost,
-/// and this suite exists so that one tool-using answer on a model of this size
-/// is measured at all. It drives the `respond(to:)` surface only, one answer,
-/// one load, so its cost is the load plus one answer.
-private let qwen38ToolAnswerModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
-
 // MARK: - Suite
 
-/// One real tool-using answer on Qwen 3.8 27B mxfp4.
+/// One real tool-using answer on each model of ``StandardModels``.
+///
+/// These are the largest models any tool-answer suite of this package drives.
+/// The sibling `RealToolAnswerComparisonTests` moved from the 30B to a 4B for
+/// cost, and this suite exists so that one tool-using answer on a model of this
+/// size is measured at all. It drives the `respond(to:)` surface only, one
+/// answer, one load per model, so its cost is the loads plus one answer each.
 ///
 /// The scenario is the one `ScriptedToolAnswerComparisonTests` and
 /// `RealToolAnswerComparisonTests` share: two marker tools, one prompt that asks
@@ -37,11 +33,11 @@ private let qwen38ToolAnswerModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 /// marker. That is a model choice and not a Router defect, so it is recorded
 /// as a known issue rather than failed, as the sibling suite does.
 @Suite(
-    "Gated real-model integration: Qwen 3.8 27B mxfp4 calls its tools on the respond surface",
+    "Gated real-model integration: each standard model calls its tools on the respond surface",
     .serialized,
     .exclusiveRealModel
 )
-struct Qwen38ToolAnswerIntegrationTests {
+struct StandardModelToolAnswerIntegrationTests {
     // MARK: - Scenario tools
 
     /// The argument schema both scenario tools take: one required string.
@@ -103,20 +99,21 @@ struct Qwen38ToolAnswerIntegrationTests {
     /// Builds a `RoutedSession` over the loaded model with the scenario's two
     /// tools mounted.
     ///
-    /// - Parameter container: The loaded model container and the
-    ///   ``samplingMode`` its caller pinned, which every session it makes
-    ///   decodes with.
+    /// - Parameters:
+    ///   - model: The reference of the loaded model.
+    ///   - container: The loaded model container and the ``samplingMode`` its
+    ///     caller pinned, which every session it makes decodes with.
     /// - Returns: The vended session, the profile that must outlive it, and
     ///   the temp directory the caller removes.
     private func makeSession(
-        over container: RealModelContainer
+        model: ModelRef, over container: RealModelContainer
     ) -> (session: any RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Qwen38ToolAnswer-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("StandardModelToolAnswer-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let profile = RealModelHarness.make(
-            model: qwen38ToolAnswerModel,
+            model: model,
             context: ScriptedSessionContext.tokens,
             container: container.container,
             samplingMode: container.samplingMode,
@@ -190,17 +187,19 @@ struct Qwen38ToolAnswerIntegrationTests {
 
     // MARK: - Test
 
-    @Test("a tool-using answer on Qwen 3.8 records its tool calls and outputs, and carries the markers")
-    func toolAnswerRecordsCallsAndDeliversMarkers() async throws {
+    @Test(
+        "a tool-using answer records its tool calls and outputs, and carries the markers",
+        arguments: StandardModels.all)
+    func toolAnswerRecordsCallsAndDeliversMarkers(model: ModelRef) async throws {
         let loadStarted = ContinuousClock.now
         let container = try await RealModelContainer.load(
-            ref: qwen38ToolAnswerModel, samplingMode: Self.samplingMode)
+            ref: model, samplingMode: Self.samplingMode)
         // The weights go back also when the test throws before the eviction
         // below (rule T1). A second eviction does no harm.
         defer { await container.evict() }
         let loadDuration = ContinuousClock.now - loadStarted
 
-        let (session, profile, directory) = makeSession(over: container)
+        let (session, profile, directory) = makeSession(model: model, over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
         // has to stay referenced for the whole answer.
@@ -220,7 +219,7 @@ struct Qwen38ToolAnswerIntegrationTests {
         let usage = await usageDescription(of: session)
 
         // The answer is complete and every fact the assertions read is in
-        // `run`, so the 14 GB of weights go back before the assertions run
+        // `run`, so the weights (14 to 42 GB) go back before the assertions run
         // rather than after them. Every other gated suite of this target
         // evicts what it loads. The CI run of 2026-09-08 for commit 422023d
         // measured what a suite that does not evict costs the suites after it:
@@ -233,10 +232,10 @@ struct Qwen38ToolAnswerIntegrationTests {
         // splits into the load and the answer.
         print(
             """
-            QWEN38 load: \(loadDuration), respond answer: \(answerDuration), usage: \(usage)
-            QWEN38 transcript:
+            [\(model.stringValue)] load: \(loadDuration), respond answer: \(answerDuration), usage: \(usage)
+            [\(model.stringValue)] transcript:
             \(run.transcriptDescription)
-            QWEN38 answer: \(run.answer.debugDescription)
+            [\(model.stringValue)] answer: \(run.answer.debugDescription)
             """)
 
         // The answer really used its tools, proved by the tool outputs its own
