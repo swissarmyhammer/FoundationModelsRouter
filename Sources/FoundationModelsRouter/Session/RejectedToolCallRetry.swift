@@ -1,5 +1,6 @@
-import MLXLMCommon
+import FoundationModels
 import Logging
+import MLXLMCommon
 
 /// A rejected tool call that goes back to the model, so the answer can continue.
 ///
@@ -93,5 +94,58 @@ struct RejectedToolCallRetry {
             metadata[RouterTelemetry.LogMetadataKey.toolName] = "\(toolName)"
         }
         logger.warning("\(Self.retryLogMessage)", metadata: metadata)
+    }
+}
+
+/// ``RoutedSessionActor``'s resume of an attempt whose model call a rejected
+/// tool call ended after a tool result.
+///
+/// `LanguageModelSession` keeps no entry of a call that throws. A rejection
+/// in the first pass loses nothing: the retry sends the prompt again
+/// (``RejectedToolCallRetry/prompt(retrying:)``). A rejection in a later pass
+/// would lose each tool call and output of the earlier passes, and the model
+/// would start the task again with only its prompt. Recursive Flint did this
+/// on django-13447 (2026-11-14): a coder loaded its skills, ran a tool, then
+/// called an undeclared tool, and the retry started over and ended the
+/// answer with no change. So the attempt is rebuilt from the transcript read
+/// at its newest tool result (``ToolResultWatch/boundaryEntries``), and the
+/// answer goes on with only the tool error as its prompt.
+extension RoutedSessionActor {
+    /// Reads the backend transcript at a tool result of the session's own
+    /// open model call, where the SDK waits in the tool call and writes no
+    /// transcript. A tool body that outlived its model call reads nothing.
+    func noteToolResultBoundary() {
+        guard SessionCallMark.current?.isOpenCall(of: id) == true else { return }
+        toolResultWatch.boundaryEntries = backend.transcriptEntries()
+    }
+
+    /// Records the attempt that a rejected tool call ended, with each tool
+    /// call and output up to its newest tool result, and goes on with the
+    /// tool error.
+    ///
+    /// The rebuild (``recordAttemptStoppedAtRound(liveEntries:results:attempt:keeping:)``)
+    /// pairs the results of the newest round to its calls. The rejected call
+    /// has no entry, because the parser did not accept it.
+    ///
+    /// - Parameters:
+    ///   - retry: The rejection.
+    ///   - liveEntries: The backend transcript read at the newest tool result.
+    ///   - attempt: The attempt that the rejection ended.
+    ///   - body: The model work to run.
+    /// - Returns: The response text of the next attempt.
+    /// - Throws: What the next attempt throws.
+    func continueAfterRejectedCall(
+        _ retry: RejectedToolCallRetry,
+        liveEntries: [Transcript.Entry],
+        attempt: StoppedAttempt,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        let ordinal = attempt.rejectedCallRetries + 1
+        retry.logRetry(sessionID: id, ordinal: ordinal, to: sessionLogger(.rejectedToolCall))
+        await recordAttemptStoppedAtRound(liveEntries: liveEntries, results: noOpToolCallRound.results, attempt: attempt)
+        return try await runSubmission(
+            grammar: attempt.grammar, deliveredMail: [], ownPrompt: retry.prompt(retrying: nil),
+            responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
+            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: ordinal, isContinuation: true, body)
     }
 }

@@ -31,6 +31,16 @@ struct ToolResultWatch {
     /// trigger and the session stopped the model call, else `nil`.
     var yield: CompactionYield?
 
+    /// The backend transcript read at the newest tool result of the
+    /// session's own open model call, or `nil` before the attempt gave one.
+    ///
+    /// `LanguageModelSession` keeps no entry of a call that throws, so a
+    /// rejected tool call late in a tool loop would lose each tool call and
+    /// output of the attempt. The resume of a rejected call
+    /// (``RoutedSessionActor/continueAfterRejectedCall(_:liveEntries:attempt:body:)``)
+    /// rebuilds the attempt from these entries.
+    var boundaryEntries: [Transcript.Entry]?
+
     /// Starts a new round: a generation call ended.
     ///
     /// - Parameter callTokens: The input and output tokens of that call.

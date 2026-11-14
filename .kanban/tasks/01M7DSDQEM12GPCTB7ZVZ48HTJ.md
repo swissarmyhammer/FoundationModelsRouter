@@ -1,6 +1,16 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7e2f4mwc6ew9sbcj57zy42y
+  text: |-
+    ### Recurrence: flint3 (Router 487eeb65, mlx 71692319, Extras fee9093, Skills 1006b82)
+    - django-13447, root session 01M7E0Q9RS25HMZNNNNVAYC7K2, generationCall seq 67: fed 18058 (18038 cached), generated 16384, stopped at the token ceiling, left a tool call, callMs 167150 (~170 s). This was the pass right before the first planner start.
+    - The tool call that came out was a truncated `agents {"agent": "planner"}` with no `prompt`, and no reasoning entry was kept. So most of the 16k tokens were most likely inside the tool-call body (the `prompt` argument), where the GLM parser holds them. Neither the reasoning watch nor the response watch sees that text.
+    - Scope addition: streaming `.response` text alone does not cover this case. The fix also needs a stop for a tool-call body that runs away, decided in mlx (where the parser holds the body). For example, it could stream the tool-call text as it decodes so the router's cycle watch can read it, or put a cap/cycle check inside the tool-call parser. Test it with a hermetic executor that scripts a looping tool-call argument.
+    - Next: once the instance ends, read the transcript under FoundationModelsACPAgent/bench/preds.flint3.transcripts/django__django-13447/ to confirm where the tokens went.
+  timestamp: 2026-11-14T22:22:23.388392+00:00
 position_column: todo
 position_ordinal: '8180'
 title: Stream the response text of an allowed tool turn so the repetition watch can see it live

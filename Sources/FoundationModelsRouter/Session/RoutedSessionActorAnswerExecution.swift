@@ -508,6 +508,9 @@ extension RoutedSessionActor {
             if let runMailStop {
                 return try await continueAfterRunMailStop(runMailStop, attempt: attempt, body: body)
             }
+            if let retry = RejectedToolCallRetry(error: error), let liveEntries = toolResultWatch.boundaryEntries {
+                return try await continueAfterRejectedCall(retry, liveEntries: liveEntries, attempt: attempt, body: body)
+            }
             recordSubmissionError(error)
             // The retry delivers the user-type mail and the catalog-change
             // mail of this attempt again (neither goes back to the queue), and

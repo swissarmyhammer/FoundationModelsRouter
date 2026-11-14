@@ -80,4 +80,29 @@ struct RejectedToolCallRetryTests {
         #expect(lastRetry.components(separatedBy: reason).count - 1 == Self.rejectionsBeforeTheAnswer)
         #expect(!lastRetry.contains(RejectingLanguageModel.Executor.rejectedRawText))
     }
+
+    @Test("a rejection after a tool result keeps the work of the attempt: the retry sees the tool call and its output")
+    func rejectionAfterAToolResultKeepsTheWorkOfTheAttempt() async throws {
+        let fixture = try await RejectingSessionFixture.make(
+            rejectionCount: 1, leadingTool: MountFixtures.FastTool(), tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        defer { await fixture.session.close() }
+
+        let answer = try await fixture.session.respond(to: Self.prompt)
+
+        #expect(answer == RejectingLanguageModel.Executor.answerText)
+        // The leading call, the rejected pass, and the retry that answers.
+        let transcripts = fixture.log.transcriptTexts
+        #expect(transcripts.count == 3)
+        let retried = try #require(transcripts.last).joined(separator: "\n")
+        // The retry keeps the output of the tool that ran before the
+        // rejection (django-13447 on Flint lost it, and the coder started
+        // over).
+        #expect(retried.contains("fast: \(RejectingLanguageModel.Executor.leadingArgumentValue)"))
+        #expect(retried.contains(RejectedToolCall.Reason.invalidArguments.rawValue))
+        // The prompt is in the context one time: the retry does not send it
+        // again.
+        #expect(retried.components(separatedBy: Self.prompt).count - 1 == 1)
+        #expect(!retried.contains(RejectingLanguageModel.Executor.rejectedRawText))
+    }
 }

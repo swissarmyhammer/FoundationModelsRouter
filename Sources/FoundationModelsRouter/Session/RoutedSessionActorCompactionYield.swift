@@ -54,6 +54,7 @@ extension RoutedSessionActor {
         noteRealToolResult(result)
         noteToolCallProgress(result)
         settleTranscriptAtToolResult()
+        noteToolResultBoundary()
         guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall, modelCallMayStop,
             !compactionYieldsStopped
         else { return }

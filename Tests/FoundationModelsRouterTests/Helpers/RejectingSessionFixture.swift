@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Tracing
 
 @testable import FoundationModelsRouter
@@ -27,6 +28,8 @@ struct RejectingSessionFixture: SessionDirectoryFixture {
     ///
     /// - Parameters:
     ///   - rejectionCount: How many calls end with a rejected tool call.
+    ///   - leadingTool: A tool the session mounts and the first call calls
+    ///     before any rejection, or `nil` (the default) for none.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
@@ -37,13 +40,14 @@ struct RejectingSessionFixture: SessionDirectoryFixture {
     ///   removes the temp directory (rule T1).
     static func make(
         rejectionCount: Int,
+        leadingTool: (any Tool)? = nil,
         tempDirPrefix: String,
         tracer: (any Tracer)? = nil
     ) async throws -> RejectingSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = RejectingModelLog()
         let container = LiveBackendContainer(
-            model: RejectingLanguageModel(rejectionCount: rejectionCount, log: log)
+            model: RejectingLanguageModel(rejectionCount: rejectionCount, log: log, leadingToolName: leadingTool?.name)
         )
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
@@ -53,6 +57,6 @@ struct RejectingSessionFixture: SessionDirectoryFixture {
         let profile = try await RouterTestFixtures.removingDirectoryOnThrow(directory) {
             try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         }
-        return RejectingSessionFixture(session: profile.standard.makeSession(), log: log, directory: directory)
+        return RejectingSessionFixture(session: profile.standard.makeSession(tools: leadingTool.map { [$0] } ?? []), log: log, directory: directory)
     }
 }

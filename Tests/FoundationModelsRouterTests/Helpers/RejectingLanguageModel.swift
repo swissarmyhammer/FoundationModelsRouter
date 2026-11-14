@@ -66,6 +66,10 @@ final class RejectingModelLog: Sendable, Hashable {
 /// A deterministic `LanguageModel` that writes a tool call the parser rejects
 /// on its first ``rejectionCount`` generation calls, and then answers.
 ///
+/// With a ``leadingToolName``, the first generation call first calls that
+/// tool, a call the parser accepts, and the rejections come in the passes
+/// after its result: the shape of a rejection late in a tool loop.
+///
 /// A rejected call ends the generation call with `RejectedToolCallError`, as
 /// `MLXLanguageModel` does when it cannot parse the tool call the model wrote.
 /// Each call records the transcript it was handed, so a test can read what
@@ -78,6 +82,10 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
     /// The log each generation call writes its transcript into.
     let log: RejectingModelLog
 
+    /// The tool that the first generation call calls before any rejection,
+    /// or `nil` for no such call.
+    var leadingToolName: String? = nil
+
     /// Declares tool calling, the one capability a tool-calling model needs.
     var capabilities: LanguageModelCapabilities {
         LanguageModelCapabilities([.toolCalling])
@@ -85,7 +93,7 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
 
     /// Builds the executor cache key from the rejection count and the log.
     var executorConfiguration: Executor.Configuration {
-        Executor.Configuration(rejectionCount: rejectionCount, log: log)
+        Executor.Configuration(rejectionCount: rejectionCount, log: log, leadingToolName: leadingToolName)
     }
 
     /// The executor that records the transcript and rejects or answers.
@@ -97,6 +105,9 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
 
             /// The log to write each transcript into.
             let log: RejectingModelLog
+
+            /// The tool the first call calls before any rejection, or `nil`.
+            let leadingToolName: String?
         }
 
         /// The `LanguageModel` this executor conforms for.
@@ -133,6 +144,12 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
             detail: rejectionDetail
         )
 
+        /// The id of the leading tool call.
+        static let leadingCallID = "leading-call"
+
+        /// The argument value of the leading tool call.
+        static let leadingArgumentValue = "LEADING-ARGUMENT"
+
         /// The answer text a call sends when it does not reject.
         static let answerText = "The answer after the retry."
 
@@ -148,21 +165,37 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
             self.configuration = configuration
         }
 
-        /// Records the transcript, then rejects the call or answers.
+        /// Records the transcript, then calls the leading tool, rejects the
+        /// call, or answers.
         ///
         /// - Parameters:
         ///   - request: The generation request, carrying the transcript.
         ///   - model: The model this executor runs for. Unread.
         ///   - channel: The generation channel this call emits into.
         /// - Throws: `RejectedToolCallError` while the call is one of the
-        ///   first ``Configuration/rejectionCount`` calls.
+        ///   first ``Configuration/rejectionCount`` calls after the leading
+        ///   tool call.
         func respond(
             to request: LanguageModelExecutorGenerationRequest,
             model _: RejectingLanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let callIndex = configuration.log.record(transcript: request.transcript)
-            guard callIndex >= configuration.rejectionCount else {
+            if let leadingToolName = configuration.leadingToolName {
+                guard callIndex > 0 else {
+                    await channel.send(
+                        .toolCalls(
+                            entryID: "leading-round",
+                            action: .toolCall(
+                                id: Self.leadingCallID, name: leadingToolName,
+                                action: .appendArguments(
+                                    #"{"value":"\#(Self.leadingArgumentValue)"}"#,
+                                    tokenCount: Self.emittedTokenCount))))
+                    return
+                }
+            }
+            let leadingCalls = configuration.leadingToolName == nil ? 0 : 1
+            guard callIndex - leadingCalls >= configuration.rejectionCount else {
                 throw RejectedToolCallError(Self.rejection)
             }
             await channel.send(
