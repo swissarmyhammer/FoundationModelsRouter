@@ -26,7 +26,7 @@ let coding = ProfileDefinition(
     standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
     flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
     embedding: ["erjigit17/embeddinggemma-300m-ane-coreml"],
-    decision: ["Mapika/decider-4b-GGUF/decider-4b-v3-Q4_K_M.gguf"]
+    decision: ["h2oai/h2o-lightning-4b-gguf/h2o-lightning-4b-Q4_K_M.gguf"]
 )
 
 let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())

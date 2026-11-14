@@ -49,9 +49,15 @@ public struct ProfileDefinition: Sendable, Codable {
     public var decision: [ModelRef]
 
     /// The decision candidates that a profile gets when it names none: the
-    /// `decider-4b` model, quantized to `Q4_K_M`.
+    /// `h2o-lightning-4b` model, quantized to `Q4_K_M`, in GGUF format, at a
+    /// pinned revision.
+    ///
+    /// The GGUF file has the decision type `h2o-lightning`. llama.cpp
+    /// supports this type, thus the decision slot takes the native decision
+    /// path: the decision code of llama.cpp makes the prompt and reads the
+    /// answer.
     public static let defaultDecisionCandidates: [ModelRef] = [
-        "Mapika/decider-4b-GGUF/decider-4b-v3-Q4_K_M.gguf"
+        "h2oai/h2o-lightning-4b-gguf/h2o-lightning-4b-Q4_K_M.gguf@61f8d8b7a8c2d84426d0d143ca187f65d235934b"
     ]
 
     /// The working context size in tokens, or `nil` to derive it at resolve time from each candidate's native max context (``RepoMetadata/nativeMaxContext``) instead of a caller-supplied figure.

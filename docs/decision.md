@@ -39,11 +39,13 @@ order. When a profile gives no list, it gets
 `ProfileDefinition.defaultDecisionCandidates`:
 
 ```text
-Mapika/decider-4b-GGUF/decider-4b-v3-Q4_K_M.gguf
+h2oai/h2o-lightning-4b-gguf/h2o-lightning-4b-Q4_K_M.gguf@61f8d8b7a8c2d84426d0d143ca187f65d235934b
 ```
 
-This is the `decider-4b` model, quantized to `Q4_K_M`, in GGUF format. An empty
-list is also valid. The slot then always uses the `flash` model.
+This is the `h2o-lightning-4b` model, quantized to `Q4_K_M`, in GGUF format,
+at a pinned revision. The GGUF file has the decision type `h2o-lightning`, thus
+the decision slot takes the native decision path (see the next section). An
+empty list is also valid. The slot then always uses the `flash` model.
 
 ## The decision path
 
