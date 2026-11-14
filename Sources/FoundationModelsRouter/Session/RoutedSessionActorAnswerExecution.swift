@@ -508,7 +508,7 @@ extension RoutedSessionActor {
             if let runMailStop {
                 return try await continueAfterRunMailStop(runMailStop, attempt: attempt, body: body)
             }
-            if let retry = RejectedToolCallRetry(error: error), let liveEntries = toolResultWatch.boundaryEntries {
+            if let retry = RejectedToolCallRetry(error: error, declaredToolNames: declaredToolNames), let liveEntries = toolResultWatch.boundaryEntries {
                 return try await continueAfterRejectedCall(retry, liveEntries: liveEntries, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
@@ -654,7 +654,7 @@ extension RoutedSessionActor {
     private func plannedRecovery(
         after error: any Error, retryPrompt: String, settings: SubmissionAttemptState
     ) -> AttemptRecovery? {
-        if let retry = RejectedToolCallRetry(error: error) {
+        if let retry = RejectedToolCallRetry(error: error, declaredToolNames: declaredToolNames) {
             return .rejectedCall(retry)
         }
         guard settings.allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error)

@@ -30,16 +30,24 @@ struct RejectedToolCallRetry {
     /// The parser writes it with no raw model output in it.
     let detail: String?
 
+    /// The names of the tools that the model can call, when the rejected call
+    /// named a tool that the session does not declare, else empty.
+    let declaredToolNames: [String]
+
     /// Makes a retry from the error of a failed attempt.
     ///
-    /// - Parameter error: The error the failed attempt threw.
+    /// - Parameters:
+    ///   - error: The error the failed attempt threw.
+    ///   - declaredToolNames: The names of the tools that the model can call.
+    ///     The tool error names them only for a call to an undeclared tool.
     /// - Returns: `nil` when `error` is not a `RejectedToolCallError`.
-    init?(error: any Error) {
+    init?(error: any Error, declaredToolNames: [String]) {
         guard let rejected = error as? RejectedToolCallError else { return nil }
         let rejection = rejected.rejection
         reason = rejection.reason.rawValue
         toolName = rejection.toolName
         detail = rejection.detail
+        self.declaredToolNames = rejection.reason == .undeclaredTool ? declaredToolNames : []
     }
 
     /// The text that separates the prompt of the failed attempt from the tool
@@ -48,11 +56,21 @@ struct RejectedToolCallRetry {
 
     /// The tool error that tells the model which call was rejected, why, and
     /// that it must write the call again.
+    ///
+    /// A call to an undeclared tool gets the names of the declared tools in
+    /// place of the parser's detail, because that detail does not say what
+    /// to call instead (task ^eesq24a).
     private var note: String {
         let call = toolName.map { "Your call to the tool \"\($0)\"" } ?? "Your tool call"
-        let summary = detail.map { " \($0)" } ?? ""
-        return "Tool error: \(call) was rejected (\(reason)), and no tool ran.\(summary) "
-            + "Correct the call and write it again."
+        guard !declaredToolNames.isEmpty else {
+            let summary = detail.map { " \($0)" } ?? ""
+            return "Tool error: \(call) was rejected (\(reason)), and no tool ran.\(summary) "
+                + "Correct the call and write it again."
+        }
+        let missing = toolName.map { "There is no tool \"\($0)\"." } ?? "That tool does not exist."
+        let declared = declaredToolNames.map { "\"\($0)\"" }.joined(separator: ", ")
+        return "Tool error: \(call) was rejected (\(reason)), and no tool ran. \(missing) "
+            + "The tools you can call are \(declared). Do the work with one of them."
     }
 
     /// The prompt of the retry attempt: the prompt of the failed attempt,
@@ -111,6 +129,18 @@ struct RejectedToolCallRetry {
 /// at its newest tool result (``ToolResultWatch/boundaryEntries``), and the
 /// answer goes on with only the tool error as its prompt.
 extension RoutedSessionActor {
+    /// The names of the tools that the model can call: the tool definitions
+    /// of the leading instructions entry of ``backend``, which the model
+    /// reads, or the names of ``tools`` when that entry declares none.
+    var declaredToolNames: [String] {
+        if case .instructions(let instructions) = backend.transcriptEntries().first,
+            !instructions.toolDefinitions.isEmpty
+        {
+            return instructions.toolDefinitions.map(\.name)
+        }
+        return tools.map(\.name)
+    }
+
     /// Reads the backend transcript at a tool result of the session's own
     /// open model call, where the SDK waits in the tool call and writes no
     /// transcript. A tool body that outlived its model call reads nothing.
