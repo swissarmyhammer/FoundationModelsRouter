@@ -537,6 +537,9 @@ extension RoutedSessionActor {
         if let reasoningStop = reasoningEndStop(finishReason: finishReason, attempt: attempt) {
             return try await continueAfterReasoningEnd(reasoningStop, attempt: attempt, body: body)
         }
+        if finishReason == .completed, await staleWaitNudgeIsDue(response: response) {
+            return try await runContinuation(after: attempt, prompt: Self.staleWaitPrompt, body: body)
+        }
         guard compactsAfterCeilingStop(finishReason) else { return response }
         return try await continueAfterCeilingStop(attempt: attempt, body: body)
     }

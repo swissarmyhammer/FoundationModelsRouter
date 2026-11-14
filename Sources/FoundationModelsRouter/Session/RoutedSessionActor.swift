@@ -743,6 +743,11 @@ actor RoutedSessionActor: RoutedSession {
     /// answer twice. The pump empties it for each new answer.
     var runMailStoppedIds: Set<MailID> = []
 
+    /// Whether the running answer already got its nudge after a waiting
+    /// status with nothing pending (``staleWaitNudgeIsDue(response:)``). The
+    /// pump clears it for each new answer.
+    var staleWaitNudged = false
+
     /// The advisor of the hint to give a code change to an agent, or `nil`
     /// when the session gets no hint. The vending site binds it before it
     /// returns the session (``bind(delegationAdvisor:)``). See

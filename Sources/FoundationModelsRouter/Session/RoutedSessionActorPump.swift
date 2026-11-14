@@ -522,5 +522,6 @@ extension RoutedSessionActor: SessionMailObserver {
         repetitionWatch.finalPassRan = false
         repetitionWatch.toolCallRun = IdenticalToolCallRun()
         runMailStoppedIds = []
+        staleWaitNudged = false
     }
 }
