@@ -1,55 +1,37 @@
 import FoundationModelsRouter
 
-/// The real (non-tiny) `mlx-community` models the gated integration suite
-/// resolves against actual hardware, replacing the former `SmolLM-135M`
-/// placeholder that every file in that target used to share.
+/// The real `mlx-community` models the gated integration suite resolves
+/// against actual hardware.
 ///
-/// The `standard` slot names Muse Glimmer, the general substitute for the
-/// Qwen3.6 pair this suite used before. Qwen3.5/3.6 give their linear/GDN
-/// layers a `MambaCache`, which is not trimmable, and one non-trimmable
-/// entry stops prefix reuse for the whole cache list — so those models lost
-/// prompt caching. Muse Glimmer has no recurrent layers: every entry in its
-/// cache list (a `RotatingKVCache` for the sliding-attention layers, a
-/// `StandardKVCache` for the rest) is trimmable, and its ATEM tool protocol
-/// carries a purpose-built reuse rule for tool continuations.
+/// Both generation slots name dense Qwen3 models. Qwen3.5/3.6/3.8 give their
+/// linear/GDN layers a `MambaCache`, which is not trimmable, and one
+/// non-trimmable entry stops prefix reuse for the whole cache list, so those
+/// models lose prompt caching. Every cache entry of a dense Qwen3 is
+/// trimmable, so the prompt-cache suites can reuse a prefix.
 ///
-/// Muse Glimmer is registered in `VLMModelFactory`, so the router links
-/// `MLXVLM` to put that factory in the runtime registry (see `Package.swift`
-/// and `LiveModelLoader.swift`). It is a vision-language model, but the
-/// text-only path is deliberate, not accidental: its processor returns a
-/// pure-text input when no image is supplied.
+/// The slots named Muse-Glimmer-30B until 2026-11-15. The CI runner
+/// `mini-01` has 32 GB and decodes a 30B model at about 6 tokens a second,
+/// so the suites of this slot alone took more than ten minutes there. The
+/// suites test the router, not the model, and small models run them in a
+/// fraction of that time.
 public enum RealModels {
-    /// `.standard` slot: Muse Glimmer, a dense text-plus-vision model this
-    /// suite drives text-only, in the `mxfp4` quantization.
-    ///
-    /// `mxfp4` replaced the affine `4bit` repository on 2026-09-08. The two
-    /// hold the same weights at the same bit width; `mxfp4` stores a shared
-    /// floating-point scale for each block of 32, which MLX decodes through
-    /// its own `fp_quantized` kernels. The Qwen 3.8 tool-answer suite drives
-    /// the same quantization, so every large model this package loads reads
-    /// the same weight format.
-    public static let standard: ModelRef = "mlx-community/Muse-Glimmer-30B-mxfp4"
+    /// `.standard` slot: Qwen3 4B, dense, in 4 bits.
+    public static let standard: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
-    /// `.flash` slot: Qwen3 4B, a small model the gated suites already load
-    /// (see `PromptCacheBudgetIntegrationTests` and
-    /// `RealToolAnswerComparisonTests`).
+    /// `.flash` slot: Qwen3 1.7B, dense, in 4 bits.
     ///
     /// The flash slot names a different, smaller model than ``standard``, so
-    /// the gated suites run two generation models. The published Muse
-    /// Glimmer repositories differ only in quantization. Qwen3 4B has no
-    /// recurrent layers, so its whole cache list is trimmable, as
-    /// ``standard``'s is.
-    public static let flash: ModelRef = "mlx-community/Qwen3-4B-4bit"
+    /// the gated suites run two generation models.
+    public static let flash: ModelRef = "mlx-community/Qwen3-1.7B-4bit"
 
-    /// `.embedding` slot: unchanged. Muse Glimmer is not an embedder, and
-    /// this repository is small enough that co-residency alongside the
-    /// generation model above is never the constraint.
+    /// `.embedding` slot: small enough that co-residency alongside the
+    /// generation models above is never the constraint.
     public static let embedding: ModelRef = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
 
     /// The context budget every gated suite requests when loading
     /// `standard`/`flash`. The former tiny profile's `512`/`2048`
     /// budgets were too small even for the SmolLM suite's own cumulative
     /// prompts of many messages (a real run overflowed a 2048-token structural
-    /// cap); Muse Glimmer's own window is far larger than this.
+    /// cap); the window of each model of this enum is far larger than this.
     public static let context = 8192
 }

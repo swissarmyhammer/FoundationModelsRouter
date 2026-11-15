@@ -8,12 +8,12 @@ import Testing
 
 /// The model whose chat template this suite holds the pin against.
 ///
-/// `RealModels.standard` is `mlx-community/Muse-Glimmer-30B-mxfp4`. It is the
-/// model every other gated suite of this target loads for the `.standard`
-/// slot. The quantization does
-/// not change the chat template, so the pin this suite holds is the same one
-/// it held against the `4bit` repository.
-private let pinnedDateModel: ModelRef = RealModels.standard
+/// Llama 3.1 8B, whose template reads `date_string`. 4.5 GB.
+///
+/// Not a Llama 3.2: on 2026-11-15 the 1B and the 3B rendered the pinned date
+/// but did not answer it. The 1B answered `03 July 2024`, and the 3B answered
+/// that it did not know the date. The 8B answered `26 July 2024`.
+private let pinnedDateModel: ModelRef = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
 
 /// The decoding the container this suite loads is pinned to.
 ///
@@ -31,74 +31,51 @@ private let pinnedDateSamplingMode: GenerationOptions.SamplingMode = .greedy
 /// chosen because it made a run green.
 private let pinnedDate = RealModelContainer.chatTemplateFallbackDate
 
-/// What the Muse Glimmer template writes ahead of the date it stamps.
+/// What the Llama 3.1 template writes ahead of the date it stamps.
 ///
-/// The template writes `'\nCurrent date: ' + <date> + '.'`, so this prefix plus
-/// a date plus a full stop is the whole line a render carries.
-private let currentDateHeaderPrefix = "Current date: "
+/// The template writes `"Today Date: " + date_string + "\n\n"`, so this prefix
+/// plus a date plus a line break is the whole line a render carries.
+private let dateHeaderPrefix = "Today Date: "
 
-/// The shape Muse Glimmer's own clock fallback writes the date in.
+/// The shape the clock fallback of the Llama 3.1 template writes the date in.
 ///
-/// The template calls `strftime_now('%Y-%m-%d')` when nothing defines
-/// `current_date`, so this format spells the line the clock would have written.
-private let clockDateFormat = "yyyy-MM-dd"
+/// The template calls `strftime_now("%d %b %Y")` when nothing defines
+/// `date_string`, so this format spells the line the clock would have written.
+private let clockDateFormat = "dd MMM yyyy"
 
 // MARK: - Suite
 
 /// Gated real-model coverage for task ^g8rywv2: the pinned chat-template date
-/// reaches Muse Glimmer, whose template reads `current_date`.
+/// reaches the real template of Llama 3.1, which reads `date_string`.
 ///
-/// ## What was broken
-///
-/// ``FoundationModelsRouter/PinnedDateTokenizerLoader`` pinned one name,
-/// `date_string`. That is the Llama family's name. Muse Glimmer reads
-/// `current_date`, inside the branch it takes when the conversation carries NO
-/// system message:
+/// The template reads the clock when nothing defines `date_string`:
 ///
 /// ```
-/// {%- if current_date is defined and current_date -%}
-///     {{- '\nCurrent date: ' + current_date + '.' -}}
-/// {%- elif strftime_now is defined -%}
-///     {{- '\nCurrent date: ' + strftime_now('%Y-%m-%d') + '.' -}}
-/// {%- endif -%}
+/// {%- if not date_string is defined %}
+///     {%- if strftime_now is defined %}
+///         {%- set date_string = strftime_now("%d %b %Y") %}
 /// ```
 ///
-/// So a suite that drove this model with `instructions: nil` took the clock
-/// into its prompt however hard it pinned the date. The loader now states every
-/// name it knows, and this suite is what holds it to that against the real
-/// template and the real weights.
+/// ``FoundationModelsRouter/PinnedDateTokenizerLoader`` defines it, so a
+/// render carries the pinned date and not today's.
 ///
 /// ## Why the coverage is gated
 ///
-/// The defect lives in a template file that ships with the weights. A stub
-/// tokenizer cannot hold it: the hermetic suite
+/// The template is a file that ships with the weights. A stub tokenizer cannot
+/// hold it: the hermetic suite
 /// `Tests/FoundationModelsRouterTests/PinnedDateTokenizerLoaderTests.swift`
-/// proves the loader STATES both names, and only a real render of the real
+/// proves the loader STATES each name, and only a real render of the real
 /// template proves the model READS one of them.
 ///
-/// ## The measurement of 2026-09-01
+/// ## Until 2026-11-15
 ///
-/// One binary, only `TZ` changed. `Pacific/Midway` stood on 2026-09-01 and
-/// `Pacific/Kiritimati` on 2026-09-02 — two calendar dates, not two offsets of
-/// one date.
-///
-/// | the pin | 2026-09-01 | 2026-09-02 |
-/// |---|---|---|
-/// | both names | `26 Jul 2024` | `26 Jul 2024` |
-/// | `date_string` alone | `2026-09-01` | not measured |
-///
-/// The cells hold what the model answered when it was asked for the current
-/// date. The second row is the loader as it stood before this suite: the render
-/// carried `Current date: 2026-09-01.`, both assertions of the render test went
-/// red, and the model read the clock's date straight out of its own system
-/// header.
-///
-/// The submission measures 26.2 to 26.3 seconds and the load 3.2, so the suite ran
-/// at 28 percent of the two-minute budget of that time. The render test needs
-/// no generation and measures 3.5. The suite has no time limit now. A run ends
-/// when it ends, or when the caller stops it.
+/// The suite ran on Muse-Glimmer-30B, whose template reads `current_date`
+/// only when the conversation has no system message. Before task ^g8rywv2 the
+/// loader stated `date_string` alone, and Glimmer answered the clock's date.
+/// Muse Glimmer left the gated suites on 2026-11-15 (task ^467gchm). The
+/// hermetic suite still holds that the loader states `current_date`.
 @Suite(
-    "Gated real-model coverage: the pinned chat-template date reaches Muse Glimmer (task ^g8rywv2)",
+    "Gated real-model coverage: the pinned chat-template date reaches Llama 3.1 (task ^g8rywv2)",
     .serialized,
     .exclusiveRealModel
 )
@@ -126,10 +103,9 @@ struct PinnedChatTemplateDateIntegrationTests {
 
     /// The conversation a render is given, carrying no system message.
     ///
-    /// The date branch of the template fires only when nothing in the
-    /// conversation is a system message, which is what a session vended with
-    /// `instructions: nil` sends. So this conversation holds one user message and
-    /// nothing else.
+    /// The Llama 3.1 template writes its system header, and the date in it,
+    /// for every conversation. This one holds one user message and nothing
+    /// else, which is what a session vended with `instructions: nil` sends.
     private static let conversationWithNoSystemMessage: [[String: any Sendable]] = [
         ["role": "user", "content": "Say 'hi' briefly."]
     ]
@@ -146,14 +122,15 @@ struct PinnedChatTemplateDateIntegrationTests {
     }
 
     /// The shapes in which the model can write a date in its answer: the shape
-    /// of ``pinnedDate`` and the shape of ``clockDateFormat``.
-    private static let answerDateFormats = ["d MMM yyyy", clockDateFormat]
+    /// of ``pinnedDate`` and ``clockDateFormat``, the ISO shape, and the
+    /// spelled-out month.
+    private static let answerDateFormats = ["d MMM yyyy", "yyyy-MM-dd", "MMMM d, yyyy", "d MMMM yyyy"]
 
     /// The calendar day that `text` names, in the shape of
     /// ``clockDateFormat``.
     ///
     /// The model reads the pinned date from its system header, but it can
-    /// write that date in a different shape. On 2026-09-01 it wrote
+    /// write that date in a different shape. On 2026-09-01 Muse Glimmer wrote
     /// `26 Jul 2024`, and on 2026-11-12 it wrote `2024-07-26` (task ^5hjddsq).
     /// Both are the pinned day. Thus the test compares calendar days, not
     /// strings.
@@ -192,8 +169,8 @@ struct PinnedChatTemplateDateIntegrationTests {
             return context.tokenizer.decode(tokenIds: tokenIds)
         }
 
-        #expect(rendered.contains("\(currentDateHeaderPrefix)\(pinnedDate)."))
-        #expect(!rendered.contains("\(currentDateHeaderPrefix)\(Self.clockDate())."))
+        #expect(rendered.contains("\(dateHeaderPrefix)\(pinnedDate)\n"))
+        #expect(!rendered.contains("\(dateHeaderPrefix)\(Self.clockDate())\n"))
     }
 
     @Test("a submission with no instructions answers the pinned date rather than today's")

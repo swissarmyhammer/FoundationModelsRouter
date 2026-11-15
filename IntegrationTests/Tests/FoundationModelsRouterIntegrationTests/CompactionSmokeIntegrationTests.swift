@@ -11,10 +11,10 @@ import Testing
 /// The real `mlx-community` model this suite compacts against, and deliberately
 /// NOT ``RealModels/standard``.
 ///
-/// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its
-/// load alone cost more than the whole time budget this suite had when it was
-/// written, which is why this suite names a model of its own instead of the
-/// target's slot roster.
+/// When this suite was written, ``RealModels/standard`` was
+/// `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its load alone cost more than
+/// the whole time budget this suite had, which is why this suite names a
+/// model of its own instead of the target's slot roster.
 ///
 /// `Llama-3.2-1B-Instruct-4bit` is 680 MB on disk and is a real instruct model,
 /// not a toy: it follows the compaction prompt's own section structure and it
@@ -102,7 +102,8 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// Three budget decisions, and each one is a property this suite asserts or a
 /// constant that states its own reason:
 ///
-/// - ``compactionSmokeModel`` rather than the 18 GB ``RealModels/standard``.
+/// - ``compactionSmokeModel`` rather than the 18 GB model that
+///   ``RealModels/standard`` named then.
 /// - One fixture, not a dataset.
 /// - ONE generation: the one summarizer call of
 ///   ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)``,

@@ -30,11 +30,11 @@ private let ggufModel: ModelRef = "ggml-org/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q8_0.
 /// generates on it.
 private let flashModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
-/// The MLX candidate of the mixed slot: the 17 GB model of the gated
-/// profile. The resolve only sizes it, from the Hub metadata of the
-/// repository, and never downloads it, because it does not fit
+/// The MLX candidate of the mixed slot: Qwen 3.8 27B, the 14 GB standard
+/// model of the product. The resolve only sizes it, from the Hub metadata of
+/// the repository, and never downloads it, because it does not fit
 /// ``mixedSlotWorkingSetBytes``.
-private let largeMLXModel: ModelRef = RealModels.standard
+private let largeMLXModel: ModelRef = StandardModels.qwen38
 
 /// The working context of each profile of this suite, in tokens.
 ///
@@ -75,7 +75,7 @@ private let ggufPrompt = "Count from one to twenty in words, separated by commas
 
 /// The working set the mixed-slot router reports: 8 GiB.
 ///
-/// ``largeMLXModel`` needs about 17 GB, so it does not fit. ``ggufModel``,
+/// ``largeMLXModel`` needs about 14 GB, so it does not fit. ``ggufModel``,
 /// ``flashModel`` and ``RealModels/embedding`` together need less than 3 GB at
 /// ``ggufProfileContext``, so they fit with room to spare.
 private let mixedSlotWorkingSetBytes: Int64 = 8 << 30
