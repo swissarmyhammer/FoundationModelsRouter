@@ -13,8 +13,15 @@ comments:
     - evidence: RED: new RecoveryPromptToolsTests, 3 no-tools tests failed, 3 tools tests passed. GREEN: 6/6. `swift build --build-tests` clean (no warnings from repo sources); full `swift test`: 2722 tests in 321 suites passed, plus 42 and 19 in the other runners, 0 failures. `swift build --package-path IntegrationTests --build-tests`: Build complete (from a copy under a dir named FoundationModelsRouter; only dependency warnings, libgit2 C++ interop / cache lock). No real-model integration tests run. Files: Sources/FoundationModelsRouter/Session/{RoutedSessionActorRepetitionWatch,RoutedSessionActorReasoningStop,RepetitionDetection}.swift; Tests/FoundationModelsRouterTests/{RecoveryPromptToolsTests (new),IdenticalToolCallLimitTests,ReasoningStopRecoveryTests,ReasoningTokenLimitTests,RepetitionStopTests,Helpers/RepeatingReasoningModel,Helpers/CeilingStopCompactionModel}.swift
     - next: /review
   timestamp: 2026-11-15T11:56:39.859937+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7fh67dh6rdptq27cnphj2de
+  text: |-
+    ### commit — changed
+    - evidence: 4596ac10 fix(session): ask only for the answer when a session has no tools (^jw0yqvg), cherry-picked from 55836517 onto main. On main: swift test 2731 + 42 + 19 green, and the IntegrationTests build-tests pass.
+    - next: none
+  timestamp: 2026-11-15T11:58:54.385327+00:00
+position_column: done
+position_ordinal: ffffffffff9a80
 title: Recovery prompts name tool calls in sessions with no tools
 ---
 ## Problem
