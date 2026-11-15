@@ -1,6 +1,13 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7fhar1nwyrzaqg4dzqj0xge
+  text: |-
+    ### Decision (user, 2026-11-15): won't do
+    "having it happen one time isn't a reason". The one occurrence (flint3 django-13447) was a side effect of the rejected-call context loss fixed in ^7s1stvw. Reopen only if intent-only endings recur.
+  timestamp: 2026-11-15T12:01:22.485963+00:00
 position_column: todo
 position_ordinal: '8380'
 title: Nudge an answer that ends with only intent text ("I will …") and no tool call
