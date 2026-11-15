@@ -10,8 +10,8 @@ import Testing
 
 /// Task ^0dcsd3t on each model of ``StandardModels``: after a reasoning stop,
 /// the recovery pass runs with the reasoning of the model off, and the model
-/// acts: it calls a tool. Qwen 3.8 is the model of the SWE-bench run of that
-/// task.
+/// acts: it calls a tool or answers. Qwen 3.8 is the model of the SWE-bench
+/// run of that task.
 ///
 /// The session gets a small reasoning token limit, so the first pass of a
 /// reasoning model surely reaches it before it acts. The limit is a setting of this
@@ -80,9 +80,9 @@ struct StandardModelReasoningStopRecoveryIntegrationTests {
     }
 
     @Test(
-        "the recovery after a reasoning stop runs with the reasoning off and calls a tool",
+        "the recovery after a reasoning stop acts: it calls a tool or answers",
         arguments: StandardModels.all)
-    func recoveryAfterReasoningStopCallsATool(model: ModelRef) async throws {
+    func recoveryAfterReasoningStopActs(model: ModelRef) async throws {
         let container = try await RealModelContainer.load(ref: model, samplingMode: Self.samplingMode)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("StandardModelReasoningStop-\(UUID().uuidString)", isDirectory: true)
@@ -121,11 +121,29 @@ struct StandardModelReasoningStopRecoveryIntegrationTests {
         // and start a second recovery. Thus examine the entries after the first
         // recovery prompt: that recovery belongs to `stop`.
         let recoveryPrompt = try #require(entries.firstIndex(where: Self.isReasoningRecoveryPrompt))
-        let actedAfterRecovery = entries[recoveryPrompt...].contains { entry in
-            guard case .toolCalls = entry else { return false }
-            return true
-        }
-        #expect(actedAfterRecovery, "the recovery pass made no tool call")
+        // The recovery ends at the prompt of the next recovery, which a second
+        // reasoning stop starts.
+        let recoveryPass = entries[(recoveryPrompt + 1)...].prefix { !Self.isReasoningRecoveryPrompt($0) }
+        #expect(recoveryPass.contains(where: Self.isAct), "the recovery pass made no tool call and gave no answer")
         #expect(!answer.reply.isEmpty)
+    }
+
+    /// Whether `entry` is an act of the model: a tool call, or a response
+    /// with text.
+    ///
+    /// A model that read the file before the stop can answer in the recovery
+    /// pass with no tool call: Flint did on CI (2026-11-14), after its first
+    /// pass had read `calc.py`. Its answer is an act too. Only a recovery pass
+    /// that reasons into the next stop does not act.
+    ///
+    /// - Parameter entry: One transcript entry.
+    /// - Returns: `true` for an act.
+    private static func isAct(_ entry: Transcript.Entry) -> Bool {
+        switch entry {
+        case .toolCalls: return true
+        case .response(let response):
+            return !WatchedText.text(of: response.segments).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default: return false
+        }
     }
 }
