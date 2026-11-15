@@ -41,7 +41,7 @@ first file's.
 `Benchmarks/compare.sh` times Qwen3.8-27B at 4 bits with MLX, MLX + MTP,
 llama.cpp (the unsloth GGUF), llama.cpp + the MTP layer of that file,
 llama.cpp + DFlash 2, and llama.cpp with the Q4_0 file, with and without its
-MTP layer, then Flint (a 40B mixture of experts with ~2.5B active) at oQ8e on
+MTP layer, then Flint (a 40B mixture of experts with ~2.5B active) at oQ4e on
 MLX. Each setup runs in its own process, and then the script compares
 them. Extra options go to every run, and `CONFIGS` runs only some labels while
 the comparison still takes the JSON already in `$OUT`:
@@ -60,7 +60,7 @@ OUT=/tmp/bench CONFIGS="flint" Benchmarks/compare.sh
 | `gguf-dflash` | `unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf` | `z-lab/Qwen3.8-27B-DFlash2-GGUF/Qwen3.8-27B-DFlash2-Q4_K_M.gguf` |
 | `q4_0` | `unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_0.gguf`, `--no-speculation` | none |
 | `q4_0-mtp` | `unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_0.gguf` | the MTP layer in the file |
-| `flint` | `mlx-community/flint-oQ8e` | none |
+| `flint` | `mlx-community/flint-oQ4e` | none |
 
 The unsloth GGUF holds an MTP layer, and llama.cpp drafts with it by default,
 so the plain runs turn speculation off. UD-Q4_K_M mixes bit widths across

@@ -3,14 +3,14 @@ import FoundationModels
 /// A stray `</think>`: a close tag in the response text of an attempt, after
 /// the reasoning of its pass is already closed (task ^07vtf4a).
 ///
-/// Recursive Flint (`mlx-community/flint-oQ8e`) always reasons, and its
+/// Recursive Flint (`mlx-community/flint-oQ4e`) always reasons, and its
 /// `<think>` and `</think>` are plain text, not special tokens. On a status
 /// turn it wrote its status line, then a literal `</think>`, then a
 /// fabricated router message in the exact shape of the next feedback
 /// (`[agents] agents (<id>) running: …`), an invented agent verdict, and a
 /// loop, up to the 16,384-token ceiling (SWE-bench run of 2026-11-14 on
-/// django-13447: two runaways of about 3 minutes each). Qwen3.8 never did
-/// this on the same instance.
+/// django-13447, on the 8-bit `flint-oQ8e`: two runaways of about 3 minutes
+/// each). Qwen3.8 never did this on the same instance.
 ///
 /// The reasoning parser of the engine takes the first `</think>` of a pass
 /// as the close of the reasoning, and gives the text after it to the

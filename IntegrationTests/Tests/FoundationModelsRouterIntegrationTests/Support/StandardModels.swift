@@ -11,9 +11,9 @@ enum StandardModels {
     static let qwen38: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 
     /// Recursive Flint, a 40B mixture of experts with about 2.5B active per
-    /// token, at the 8-bit oQ8e quantization. It always reasons, and it calls
+    /// token, at the 4-bit oQ4e quantization. It always reasons, and it calls
     /// tools in the GLM format.
-    static let flint: ModelRef = "mlx-community/flint-oQ8e"
+    static let flint: ModelRef = "mlx-community/flint-oQ4e"
 
     /// Every model of the matrix, in the order the tests run them.
     static let all: [ModelRef] = [qwen38, flint]

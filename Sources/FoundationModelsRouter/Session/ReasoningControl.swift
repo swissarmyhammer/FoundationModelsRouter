@@ -4,7 +4,7 @@
 /// a compaction, and the first pass of a recovery after a reasoning stop or a
 /// repetition stop. A switchable model turns its reasoning off there. A model
 /// that always reasons cannot: it reasons in each pass, and a request to stop
-/// changes nothing. Recursive Flint (`mlx-community/flint-oQ8e`) is such a
+/// changes nothing. Recursive Flint (`mlx-community/flint-oQ4e`) is such a
 /// model, and it kept reasoning in plain text after a closed `<think></think>`
 /// prefill, so no prompt turns it off. The router then gives it a thinking
 /// budget (``thinkingAllowance``) in place of the request.

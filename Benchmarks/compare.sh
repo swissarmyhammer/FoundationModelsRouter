@@ -9,7 +9,7 @@
 #   gguf-dflash   llama.cpp, the unsloth GGUF, with the DFlash 2 drafter
 #   q4_0          llama.cpp, the unsloth Q4_0 GGUF, plain decode
 #   q4_0-mtp      llama.cpp, the unsloth Q4_0 GGUF, with the MTP layer of its file
-#   flint         MLX, Flint (40B MoE, ~2.5B active) at oQ8e, 8-bit affine
+#   flint         MLX, Flint (40B MoE, ~2.5B active) at oQ4e, 4-bit
 #
 # The unsloth GGUF is UD-Q4_K_M, which mixes bit widths across layers. Q4_0 is
 # uniform 4-bit groups with one scale each, the format closest to the MLX
@@ -44,7 +44,7 @@ mlx="mlx-community/Qwen3.8-27B-4bit"
 mtp="mlx-community/Qwen3.8-27B-MTP-4bit"
 gguf="unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
 q4_0="unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_0.gguf"
-flint="mlx-community/flint-oQ8e"
+flint="mlx-community/flint-oQ4e"
 dflash="z-lab/Qwen3.8-27B-DFlash2-GGUF/Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
 
 configs=(
