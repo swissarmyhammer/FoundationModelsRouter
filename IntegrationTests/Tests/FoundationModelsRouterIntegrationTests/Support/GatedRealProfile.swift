@@ -14,8 +14,8 @@ import FoundationModelsRouterRealModelSupport
 /// One definition for the whole target. ``IntegrationTests`` resolves it end to
 /// end on one router. A second copy would drift from the first.
 ///
-/// The decision slot names no candidate, so it always uses the flash model.
-/// This profile tests the trio on one router. `DecisionSlotIntegrationTests`
+/// The decision slot names the flash model, so it adds no container. This
+/// profile tests the trio on one router. `DecisionSlotIntegrationTests`
 /// tests the decision slot with a profile of its own. The default decision
 /// candidate (``ProfileDefinition/defaultDecisionCandidates``) is a fourth
 /// container when it fits in the memory that the trio leaves, and it does not
@@ -33,7 +33,7 @@ let gatedRealProfile = ProfileDefinition(
     standard: [RealModels.standard],
     flash: [RealModels.flash],
     embedding: [RealModels.embedding],
-    decision: [],
+    decision: [RealModels.flash],
     context: RealModels.context
 )
 
@@ -48,8 +48,8 @@ let gatedRealProfile = ProfileDefinition(
 /// container. An embedding key carries a different role, so it never merges
 /// with a generation key, whatever the references are named.
 ///
-/// The decision slot adds no container: its list is empty, so it uses the
-/// flash model, and the hold of the flash slot serves its key.
+/// The decision slot adds no container: its one candidate is the flash model,
+/// and the hold of the flash slot serves its key.
 var gatedRealProfileResidentContainerCount: Int {
     let generationRefs = Set([RealModels.standard, RealModels.flash])
     let embeddingRefs = Set([RealModels.embedding])

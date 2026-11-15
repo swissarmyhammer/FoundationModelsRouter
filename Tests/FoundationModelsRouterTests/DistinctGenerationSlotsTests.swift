@@ -68,6 +68,7 @@ struct DistinctGenerationSlotsTests {
             standard: standard,
             flash: flash,
             embedding: [embeddingModel],
+            decision: flash,
             context: context
         )
     }

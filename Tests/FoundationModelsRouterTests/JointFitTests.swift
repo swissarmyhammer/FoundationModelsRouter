@@ -40,12 +40,13 @@ struct JointFitTests {
     /// A footprint provider over an injected raw-byte table, surfacing
     /// `metadataUnavailable` for refs flagged unsizable or absent from the
     /// table. Every profile these fixtures back has an *explicit* context, so
-    /// the context argument is never consulted.
+    /// the context argument is never consulted. A candidate that an allocated
+    /// pool key serves costs 0 bytes, as the router prices it.
     private static func provider(
         _ table: [ModelRef: Int64] = raw,
         unavailable: [ModelRef: String] = [:]
     ) -> JointFit.FootprintProvider {
-        { ref, _, _ in
+        chargingAllocatedModelsNothing { ref, _, _ in
             if let reason = unavailable[ref] {
                 return .failure(.metadataUnavailable(reason))
             }
@@ -75,6 +76,7 @@ struct JointFitTests {
             standard: [std32b8, std32b4, std14b4],
             flash: [flash3b],
             embedding: [embBge],
+            decision: [flash3b],
             context: ScriptedSessionContext.tokens
         )
     }
@@ -168,6 +170,7 @@ struct JointFitTests {
             standard: [Self.std14b4],
             flash: [Self.flash3b],
             embedding: [Self.embBge],
+            decision: [Self.flash3b],
             context: ScriptedSessionContext.tokens
         )
         // The raw sum is exactly 11_500. At the exact sum it resolves.
@@ -205,11 +208,10 @@ struct JointFitTests {
         #expect(error.profileName == Self.coderProfileName)
         #expect(error.budgetBytes == 5_000)
 
-        // The failure carries the resolution of each slot of the trio, not just
-        // the unsatisfiable one. The decision slot never blocks a profile, thus
-        // the failure does not list it.
-        #expect(error.slots.count == 3)
-        #expect(!error.slots.contains { $0.slot == .decision })
+        // The failure carries the resolution of each slot, the decision slot
+        // included, not just the unsatisfiable one.
+        #expect(error.slots.count == 4)
+        #expect(error.slots.contains { $0.slot == .decision })
         #expect(error.slots.contains { $0.slot == .embedding })
         #expect(error.slots.contains { $0.slot == .flash })
 
@@ -246,6 +248,7 @@ struct JointFitTests {
             standard: [Self.unsizable, Self.std14b4],
             flash: [Self.flash3b],
             embedding: [Self.embBge],
+            decision: [Self.flash3b],
             context: ScriptedSessionContext.tokens
         )
         let result = try JointFit.resolve(
@@ -292,11 +295,12 @@ struct JointFitTests {
     /// A footprint provider backed by real ``Footprint`` fixtures, so the
     /// byte figure scales with the context argument the window search passes
     /// in — unlike ``provider(_:unavailable:)`` above, whose fixed tables
-    /// never needed to vary with context.
+    /// never needed to vary with context. A candidate that an allocated pool
+    /// key serves costs 0 bytes, as the router prices it.
     private static func sizedFootprint(
         _ table: [ModelRef: Footprint]
     ) -> JointFit.FootprintProvider {
-        { ref, context, _ in
+        chargingAllocatedModelsNothing { ref, context, _ in
             guard let footprint = table[ref] else {
                 return .failure(.metadataUnavailable("no footprint injected for \(ref.stringValue)"))
             }
@@ -334,6 +338,7 @@ struct JointFitTests {
             standard: standard,
             flash: [Self.windowFlash],
             embedding: [Self.windowEmb],
+            decision: [Self.windowFlash],
             context: context
         )
     }
@@ -562,6 +567,7 @@ struct JointFitTests {
             standard: [standard],
             flash: [flash],
             embedding: [generationEmbedding],
+            decision: [flash],
             context: generationContext
         )
     }
@@ -622,6 +628,7 @@ struct JointFitTests {
             standard: [crossRoleShared],
             flash: [crossRoleFlash],
             embedding: [crossRoleShared],
+            decision: [crossRoleFlash],
             context: generationContext
         )
     }
@@ -723,6 +730,7 @@ struct JointFitTests {
             standard: [multitoolGeneration],
             flash: [multitoolFlash],
             embedding: [multitoolEmbedding],
+            decision: [multitoolFlash],
             context: context
         )
     }
@@ -786,6 +794,7 @@ struct JointFitTests {
             standard: [generationModel],
             flash: [crossRoleFlash],
             embedding: [oversizedEmbedding],
+            decision: [crossRoleFlash],
             context: nil
         )
     }
@@ -857,7 +866,8 @@ struct JointFitTests {
             description: "names no context",
             standard: [Self.windowNativeFits],
             flash: [Self.windowFlash],
-            embedding: [Self.windowEmb]
+            embedding: [Self.windowEmb],
+            decision: [Self.windowFlash]
         )
         #expect(profile.context == nil)
 
@@ -987,7 +997,7 @@ struct JointFitTests {
         return try JointFit.resolve(
             profile: profile,
             budgetBytes: budgetBytes,
-            footprint: chargingAllocatedModelsNothing(provider(raw.merging(deciderBytes) { _, new in new })),
+            footprint: provider(raw.merging(deciderBytes) { _, new in new }),
             nativeMaxContext: neverCalledNativeMaxContext
         )
     }
@@ -1002,7 +1012,7 @@ struct JointFitTests {
         return try JointFit.resolve(
             profile: profile,
             budgetBytes: budgetBytes,
-            footprint: chargingAllocatedModelsNothing(sizedFootprint(windowDecisionFootprints)),
+            footprint: sizedFootprint(windowDecisionFootprints),
             nativeMaxContext: nativeMaxTable([windowNativeFits: decisionNative, windowBig: windowBigNative])
         )
     }
@@ -1063,9 +1073,9 @@ struct JointFitTests {
         }
 
         /// A decision candidate that does not fit after the trio of
-        /// ``resolveCrowded(_:)``. A decision slot in the trio search would
-        /// make the trio select a smaller standard model or a smaller window
-        /// to give it room.
+        /// ``resolveCrowded(_:)``. At a derived window it makes the window
+        /// smaller to get its room, and at a fixed context it fails the
+        /// resolve.
         var crowdingDecider: ModelRef {
             switch self {
             case .fixed: JointFitTests.deciderLarge
@@ -1131,33 +1141,14 @@ struct JointFitTests {
                 == [.tooLarge, .chosen, .skippedHigherPreferenceChosen])
     }
 
-    @Test("with room, the decision slot records no fallback")
-    func decisionWithRoomRecordsNoFallback() throws {
-        let result = try DecisionContext.fixed.resolveWithRoom([Self.deciderSmall])
-
-        #expect(Self.resolution(result, for: .decision).fallback == nil)
-    }
-
-    @Test("with no room, the decision slot uses the flash winner", arguments: DecisionContext.allCases)
-    func decisionWithNoRoomUsesTheFlashWinner(context: DecisionContext) throws {
-        let result = try context.resolveWithNoRoom([Self.deciderSmall])
-
-        #expect(result.decision == context.winner(of: .flash))
-    }
-
-    @Test("with no room, the decision slot records the flash fallback")
-    func decisionWithNoRoomRecordsTheFlashFallback() throws {
-        let result = try DecisionContext.fixed.resolveWithNoRoom([Self.deciderSmall])
-
-        #expect(Self.resolution(result, for: .decision).fallback == .flashModel)
-    }
-
-    @Test("with no room, each decision candidate records its rejection reason", arguments: DecisionContext.allCases)
-    func decisionWithNoRoomRecordsEachRejectionReason(context: DecisionContext) throws {
-        let result = try context.resolveWithNoRoom([Self.deciderSmall, Self.deciderUnsizable])
+    @Test("with no room at a fixed context, the resolve fails and records each decision candidate")
+    func decisionWithNoRoomFailsTheResolve() throws {
+        let failure = try #require(throws: ResolutionFailure.self) {
+            try DecisionContext.fixed.resolveWithNoRoom([Self.deciderSmall, Self.deciderUnsizable])
+        }
 
         #expect(
-            Self.resolution(result, for: .decision).considered.map(\.verdict)
+            failure.slots.first { $0.slot == .decision }?.considered.map(\.verdict)
                 == [.tooLarge, Self.unsizableDeciderVerdict])
     }
 
@@ -1173,32 +1164,29 @@ struct JointFitTests {
 
     @Test("a decision candidate equal to the embedding winner has another pool key, so it is charged")
     func decisionEqualToTheEmbeddingWinnerIsCharged() throws {
-        let result = try DecisionContext.fixed.resolveWithNoRoom([Self.embBge])
+        let failure = try #require(throws: ResolutionFailure.self) {
+            try DecisionContext.fixed.resolveWithNoRoom([Self.embBge])
+        }
 
-        #expect(Self.resolution(result, for: .decision).considered.map(\.verdict) == [.tooLarge])
+        #expect(failure.slots.first { $0.slot == .decision }?.considered.map(\.verdict) == [.tooLarge])
     }
 
-    @Test(
-        "a decision candidate with no room does not change the trio winners or the window",
-        arguments: DecisionContext.allCases)
-    func crowdingDecisionCandidateKeepsTheTrioAndTheWindow(context: DecisionContext) throws {
+    @Test("at a derived window, a decision candidate with no room after the trio makes the window smaller")
+    func crowdingDecisionCandidateShrinksTheWindow() throws {
+        let context = DecisionContext.derived
         let withDecision = try context.resolveCrowded([context.crowdingDecider])
-        let withoutDecision = try context.resolveCrowded([])
+        let withFreeDecision = try context.resolveCrowded([context.winner(of: .flash)])
 
-        #expect(TrioChoice(withDecision) == TrioChoice(withoutDecision))
+        #expect(withDecision.decision == context.crowdingDecider)
+        #expect(TrioChoice(withDecision).contextTokens < TrioChoice(withFreeDecision).contextTokens)
     }
 
-    @Test("an empty decision list gives the flash winner", arguments: DecisionContext.allCases)
-    func emptyDecisionListGivesTheFlashWinner(context: DecisionContext) throws {
-        let result = try context.resolveWithRoom([])
+    @Test("at a fixed context, a decision candidate with no room after the trio fails the resolve")
+    func crowdingDecisionCandidateFailsAFixedContext() throws {
+        let context = DecisionContext.fixed
 
-        #expect(Self.resolution(result, for: .decision).chosen == context.winner(of: .flash))
-    }
-
-    @Test("an empty decision list records the flash fallback", arguments: DecisionContext.allCases)
-    func emptyDecisionListRecordsTheFlashFallback(context: DecisionContext) throws {
-        let result = try context.resolveWithRoom([])
-
-        #expect(Self.resolution(result, for: .decision).fallback == .flashModel)
+        #expect(throws: ResolutionFailure.self) {
+            try context.resolveCrowded([context.crowdingDecider])
+        }
     }
 }

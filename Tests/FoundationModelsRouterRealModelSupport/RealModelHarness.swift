@@ -130,7 +130,7 @@ public enum RealModelHarness {
     /// The `.standard` and the `.flash` slots both wrap `container`, so a compaction
     /// that prefers the flash tier generates over the same resident model. Both
     /// slots thus share the one generation queue that `container` owns, as they
-    /// would from a pool entry. The `.decision` slot uses the flash fallback: a
+    /// would from a pool entry. The `.decision` slot uses the same model: a
     /// real pooled decision container whose pool gives `container`, with the
     /// generic prompt format. A decision on a container that gives no log
     /// probabilities throws `notLogitsCapable`.
@@ -201,7 +201,7 @@ public enum RealModelHarness {
             recorder: recorder,
             durableRecording: durableRecording
         )
-        // The decision slot uses the flash fallback: a real pooled decision
+        // The decision slot uses the same model: a real pooled decision
         // model over `container`, with the generic format. The pool of the
         // decision model gives `container` for its one LLM key, so the
         // decision model reads the logits of the flash model, and loads no

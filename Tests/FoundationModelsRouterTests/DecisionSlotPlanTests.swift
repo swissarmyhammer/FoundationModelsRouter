@@ -1,7 +1,6 @@
 import Foundation
 import FoundationModelsDecision
 import FoundationModelsRouterTestSupport
-import TelemetryTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -9,9 +8,8 @@ import Testing
 /// Tests of ``DecisionSlotPlan``: the decision path of the decision slot of a
 /// resolve. A GGUF model with a decision type that llama.cpp supports takes
 /// the native path. Else a model with `decider_config.json` gets the decider
-/// format, and any other model gets the generic format. The flash fallback
-/// takes the native path or the generic format, and reads no file. When the
-/// read of the format fails, the decision slot changes to the flash fallback.
+/// format, and any other model gets the generic format. When the read of the
+/// format fails, the plan throws ``DecisionFormatFailure`` (task ^ybx7vvn).
 /// No network: a stub source answers each read.
 @Suite("The decision path of the decision slot of a resolve")
 struct DecisionSlotPlanTests {
@@ -29,7 +27,7 @@ struct DecisionSlotPlanTests {
     /// The embedding model of each resolution.
     private static let embeddingRef: ModelRef = "org/embedding"
 
-    /// The decision model of a resolution that is not the flash fallback.
+    /// The decision model of each resolution.
     private static let deciderRef: ModelRef = "org/decider"
 
     /// The raw footprint of the decision model.
@@ -91,20 +89,6 @@ struct DecisionSlotPlanTests {
                 trioSlot(.embedding, chose: embeddingRef), trioSlot(.standard, chose: standardRef),
                 trioSlot(.flash, chose: flashRef), decision,
             ])
-    }
-
-    /// A joint resolution whose decision slot uses the flash fallback.
-    private static var fallbackResolution: JointResolution {
-        resolution(
-            decisionRef: flashRef,
-            decision: SlotResolution(
-                slot: .decision, remainingBudgetBytes: 0, chosen: flashRef,
-                considered: [
-                    CandidateReport(
-                        ref: deciderRef, estimatedFootprintBytes: deciderFootprintBytes,
-                        chargedBytes: deciderFootprintBytes, verdict: .tooLarge)
-                ],
-                contextTokens: ScriptedSessionContext.tokens, fallback: .flashModel))
     }
 
     /// A joint resolution whose decision slot chose ``deciderRef``.
@@ -183,14 +167,13 @@ struct DecisionSlotPlanTests {
     ///   - metadataByRef: The sizing metadata of each candidate.
     ///   - files: The bytes of each file of the source, by its path.
     /// - Returns: The plan, and the source.
+    /// - Throws: ``DecisionFormatFailure`` when the format cannot be read.
     private static func plan(
         of resolution: JointResolution, metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         files: [String: Data] = [:]
-    ) async -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
+    ) async throws -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
         let source = DecisionFormatLoaderTests.RecordingFileSource(files: files)
-        let plan = await DecisionSlotPlan.make(
-            for: resolution, metadataByRef: metadataByRef, source: source,
-            logger: RouterTelemetry.makeLogger(.repoMetadataReader))
+        let plan = try await DecisionSlotPlan.make(for: resolution, metadataByRef: metadataByRef, source: source)
         return (plan, source)
     }
 
@@ -199,46 +182,13 @@ struct DecisionSlotPlanTests {
     ///
     /// - Parameter metadata: The metadata of ``deciderRef``.
     /// - Returns: The plan, and the source.
+    /// - Throws: ``DecisionFormatFailure`` when the format cannot be read.
     private static func deciderPlan(
         metadata: RepoMetadata
-    ) async -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
-        await plan(
+    ) async throws -> (plan: DecisionSlotPlan, source: DecisionFormatLoaderTests.RecordingFileSource) {
+        try await plan(
             of: deciderResolution, metadataByRef: [deciderRef: .success(metadata)],
             files: [configurationFileName: deciderConfigJSON])
-    }
-
-    /// The resolution of the decision slot of `resolution`.
-    ///
-    /// - Parameter resolution: The joint resolution.
-    /// - Returns: The decision slot.
-    /// - Throws: When `resolution` has no decision slot.
-    private static func decisionSlot(of resolution: JointResolution) throws -> SlotResolution {
-        try #require(resolution.slots.first { $0.slot == .decision })
-    }
-
-    // MARK: - The flash fallback
-
-    @Test("the flash fallback uses the generic format")
-    func flashFallbackUsesTheGenericFormat() async throws {
-        let (plan, _) = try await Self.plan(of: Self.fallbackResolution, files: [:])
-
-        #expect(plan.path.promptFormat is GenericPromptFormat)
-    }
-
-    @Test("the flash fallback takes the native path when the flash model has a supported decision type")
-    func flashFallbackWithDecisionTypeTakesTheNativePath() async {
-        let (plan, _) = await Self.plan(
-            of: Self.fallbackResolution,
-            metadataByRef: [Self.flashRef: .success(Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType))])
-
-        #expect(plan.path.isNative)
-    }
-
-    @Test("the flash fallback reads no file")
-    func flashFallbackReadsNoFile() async throws {
-        let (_, source) = try await Self.plan(of: Self.fallbackResolution, files: [:])
-
-        #expect(await source.fetches.isEmpty)
     }
 
     // MARK: - A decision model
@@ -252,53 +202,53 @@ struct DecisionSlotPlanTests {
     }
 
     @Test("a GGUF decision model with a supported decision type takes the native path")
-    func supportedDecisionTypeTakesTheNativePath() async {
-        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType))
+    func supportedDecisionTypeTakesTheNativePath() async throws {
+        let (plan, _) = try await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType))
 
         #expect(plan.path.isNative)
     }
 
     @Test("a supported decision type takes the native path also when the repository has decider_config.json")
-    func supportedDecisionTypeWinsOverDeciderConfiguration() async {
-        let (plan, _) = await Self.deciderPlan(
+    func supportedDecisionTypeWinsOverDeciderConfiguration() async throws {
+        let (plan, _) = try await Self.deciderPlan(
             metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType, hasDeciderConfiguration: true))
 
         #expect(plan.path.isNative)
     }
 
     @Test("the native path reads no decider_config.json file")
-    func nativePathReadsNoFile() async {
-        let (_, source) = await Self.deciderPlan(
+    func nativePathReadsNoFile() async throws {
+        let (_, source) = try await Self.deciderPlan(
             metadata: Self.ggufMetadata(decisionType: GGUFHeaderFixtures.supportedDecisionType, hasDeciderConfiguration: true))
 
         #expect(await source.fetches.isEmpty)
     }
 
     @Test("a decision type that decide does not support uses decider_config.json")
-    func unsupportedDecisionTypeGetsTheDeciderFormat() async {
-        let (plan, _) = await Self.deciderPlan(
+    func unsupportedDecisionTypeGetsTheDeciderFormat() async throws {
+        let (plan, _) = try await Self.deciderPlan(
             metadata: Self.ggufMetadata(decisionType: Self.imageDecisionType, hasDeciderConfiguration: true))
 
         #expect(plan.path.promptFormat is DeciderPromptFormat)
     }
 
     @Test("a decision type that llama.cpp does not know, with no decider_config.json, gets the generic format")
-    func unknownDecisionTypeGetsTheGenericFormat() async {
-        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: Self.unknownDecisionType))
+    func unknownDecisionTypeGetsTheGenericFormat() async throws {
+        let (plan, _) = try await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: Self.unknownDecisionType))
 
         #expect(plan.path.promptFormat is GenericPromptFormat)
     }
 
     @Test("a GGUF decision model with no decision type and no decider_config.json gets the generic format")
-    func ggufWithNoDecisionTypeGetsTheGenericFormat() async {
-        let (plan, _) = await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: nil))
+    func ggufWithNoDecisionTypeGetsTheGenericFormat() async throws {
+        let (plan, _) = try await Self.deciderPlan(metadata: Self.ggufMetadata(decisionType: nil))
 
         #expect(plan.path.promptFormat is GenericPromptFormat)
     }
 
     @Test("an MLX decision model with no decider_config.json gets the generic format")
     func mlxWithNoDeciderConfigurationGetsTheGenericFormat() async throws {
-        let (plan, _) = await Self.deciderPlan(metadata: try Self.mlxMetadata(hasDeciderConfiguration: false))
+        let (plan, _) = try await Self.deciderPlan(metadata: try Self.mlxMetadata(hasDeciderConfiguration: false))
 
         #expect(plan.path.promptFormat is GenericPromptFormat)
     }
@@ -313,46 +263,23 @@ struct DecisionSlotPlanTests {
 
     // MARK: - A failed format load
 
-    @Test("a failed format load changes the decision model to the flash winner")
-    func failedFormatLoadUsesTheFlashWinner() async throws {
-        let (plan, _) = try await Self.plan(of: Self.deciderResolution, files: [:])
-
-        #expect(plan.resolution.decision == Self.flashRef)
-    }
-
-    @Test("a failed format load records the flash fallback in the decision slot")
-    func failedFormatLoadRecordsTheFlashFallback() async throws {
-        let (plan, _) = try await Self.plan(of: Self.deciderResolution, files: [:])
-        let slot = try Self.decisionSlot(of: plan.resolution)
-
-        #expect(slot.chosen == Self.flashRef)
-        #expect(slot.fallback == .flashModel)
-    }
-
-    @Test("a failed format load records why the decision model was not used")
-    func failedFormatLoadRecordsTheReason() async throws {
-        let (plan, _) = try await Self.plan(of: Self.deciderResolution, files: [:])
-        let candidate = try #require(try Self.decisionSlot(of: plan.resolution).considered.first)
-
-        #expect(candidate.ref == Self.deciderRef)
-        #expect(candidate.verdict == .metadataUnavailable(DecisionSlotPlan.formatUnavailableReason))
-    }
-
-    @Test("a failed format load uses the generic format")
-    func failedFormatLoadUsesTheGenericFormat() async throws {
-        let (plan, _) = try await Self.plan(of: Self.deciderResolution, files: [:])
-
-        #expect(plan.path.promptFormat is GenericPromptFormat)
-    }
-
-    @Test("a failed format load writes a warning")
-    func failedFormatLoadWritesAWarning() async throws {
-        try await TelemetryCapture.run(forbidding: []) { context in
+    @Test("a failed format load fails the plan, and the failure names the decision model")
+    func failedFormatLoadFailsThePlan() async throws {
+        let failure = try await #require(throws: DecisionFormatFailure.self) {
             _ = try await Self.plan(of: Self.deciderResolution, files: [:])
-            context.expectLogged(
-                containing: DecisionSlotPlan.formatUnavailableReason,
-                metadata: [RouterTelemetry.LogMetadataKey.modelRef: Self.deciderRef.stringValue])
         }
+
+        #expect(failure.model == Self.deciderRef)
+        #expect(failure.description.contains(Self.deciderRef.stringValue))
+    }
+
+    @Test("a decision model with no sizing metadata fails the plan")
+    func unsizedDecisionModelFailsThePlan() async throws {
+        let failure = try await #require(throws: DecisionFormatFailure.self) {
+            _ = try await Self.plan(of: Self.deciderResolution, metadataByRef: [:])
+        }
+
+        #expect(failure.model == Self.deciderRef)
     }
 }
 

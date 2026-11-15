@@ -44,6 +44,7 @@ struct ModelSwitchRestoreTests {
         standard: ["org/std-b"],
         flash: ["org/flash-a"],
         embedding: ["org/emb-a"],
+        decision: ["org/flash-a"],
         context: ScriptedSessionContext.tokens
     )
 

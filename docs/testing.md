@@ -17,7 +17,7 @@ swift test --package-path IntegrationTests
 swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
 
 # The decision slot alone — decider-2b against its Metal reference, and the
-# flash fallback. Downloads about 1.3 GB on the first run. Seconds after that.
+# decision slot of a profile. Downloads about 1.3 GB on the first run. Seconds after that.
 swift test --package-path IntegrationTests --filter DecisionSlotIntegrationTests
 ```
 

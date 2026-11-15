@@ -50,8 +50,8 @@ private let standardModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 /// `GGUFProfileIntegrationTests`, Qwen3.5 0.8B in the ggml-org Q8_0
 /// conversion, 834 MB.
 ///
-/// The flash model is a GGUF model, so the flash fallback of the decision slot
-/// reads its decisions through llama.cpp. A decision and a generation on the
+/// The flash model is a GGUF model, so a decision slot that names it reads
+/// its decisions through llama.cpp. A decision and a generation on the
 /// same llama.cpp model then share the lock of that model.
 private let flashModel: ModelRef = "ggml-org/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q8_0.gguf"
 
@@ -141,7 +141,7 @@ private struct DeciderReferenceItem: Sendable {
 }
 
 /// The yes/no item `binary-invoice-paid` of the reference. Its answer is clear,
-/// so the flash fallback must also answer "yes".
+/// so the flash model must also answer "yes".
 private let invoicePaidItem = DeciderReferenceItem(
     id: "binary-invoice-paid",
     state: .text("The invoice was paid in full on March 3."),
@@ -214,9 +214,8 @@ private let deciderProfile = decisionProfile(decision: [deciderModel])
 /// The profile whose decision slot names ``nativeDeciderModel``.
 private let nativeDeciderProfile = decisionProfile(decision: [nativeDeciderModel])
 
-/// The profile whose decision slot names no candidate, so the decision slot
-/// uses the flash model.
-private let flashFallbackProfile = decisionProfile(decision: [])
+/// The profile whose decision slot names the flash model.
+private let flashDecisionProfile = decisionProfile(decision: [flashModel])
 
 // MARK: - Fixture
 
@@ -372,10 +371,10 @@ extension SessionEvent {
 ///    the `decider_config.json` file that the metadata source read. One item
 ///    of each kind of question gives the top answer of the reference, with
 ///    each probability near the reference.
-/// 2. A profile whose decision slot names no candidate uses the flash model
-///    with `GenericPromptFormat`, and a clear yes/no question gets the
-///    correct answer.
-/// 3. In that fallback, a decision while a generation runs on the same
+/// 2. A profile whose decision slot names the flash model uses it with
+///    `GenericPromptFormat`, and a clear yes/no question gets the correct
+///    answer.
+/// 3. On that model, a decision while a generation runs on the same
 ///    llama.cpp model finishes, and the generation finishes too: the lock of
 ///    the llama.cpp model serializes the two.
 /// 4. A profile whose decision slot names ``nativeDeciderModel``, a GGUF file
@@ -439,11 +438,11 @@ struct DecisionSlotIntegrationTests {
         }
     }
 
-    @Test("a profile with no decision candidate decides on its flash model")
-    func flashFallbackDecides() async throws {
+    @Test("a profile whose decision candidate is its flash model decides on that model")
+    func flashDecisionModelDecides() async throws {
         defer { fixture.removeRoot() }
 
-        try await fixture.withResolved(flashFallbackProfile) { profile in
+        try await fixture.withResolved(flashDecisionProfile) { profile in
             #expect(profile.decision.chosen == profile.flash.chosen)
             #expect(try DecisionSlotProbe.format(of: profile) is GenericPromptFormat)
             let answer = try await DecisionSlotProbe.ask(invoicePaidItem, on: profile.decision)
@@ -451,11 +450,11 @@ struct DecisionSlotIntegrationTests {
         }
     }
 
-    @Test("a fallback decision while a flash generation runs finishes, and the generation finishes")
-    func fallbackDecisionDuringGenerationFinishes() async throws {
+    @Test("a decision on the flash model while a flash generation runs finishes, and the generation finishes")
+    func flashDecisionDuringGenerationFinishes() async throws {
         defer { fixture.removeRoot() }
 
-        let (answer, laterEvents) = try await fixture.withResolved(flashFallbackProfile) { profile in
+        let (answer, laterEvents) = try await fixture.withResolved(flashDecisionProfile) { profile in
             try await DecisionSlotProbe.decideDuringGeneration(invoicePaidItem, on: profile)
         }
 

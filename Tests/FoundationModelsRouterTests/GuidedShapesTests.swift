@@ -115,7 +115,8 @@
             description: "test profile",
             standard: ["org/std-a"],
             flash: ["org/flash-a"],
-            embedding: ["org/emb-a"]
+            embedding: ["org/emb-a"],
+            decision: ["org/flash-a"]
         )
 
         /// Canned constrained JSON the stub returns — a valid ``Person`` instance.

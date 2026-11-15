@@ -57,8 +57,8 @@ package struct PooledDecisionContainer: LoadedDecisionContainer {
     /// - Parameters:
     ///   - ref: The model of the decision slot.
     ///   - pool: The pool that loads `ref` as an LLM.
-    ///   - format: The prompt format of the model. The default is the format
-    ///     of the flash fallback, `GenericPromptFormat`.
+    ///   - format: The prompt format of the model. The default is
+    ///     `GenericPromptFormat`, which works with any instruct model.
     package init(model ref: ModelRef, pool: ModelPool, format: any DecisionPromptFormat = GenericPromptFormat()) {
         decisionModel = PooledDecisionModel(ref: ref, pool: pool, format: format)
     }

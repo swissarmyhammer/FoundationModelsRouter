@@ -218,7 +218,8 @@ struct ExamplesTests {
                 "mlx-community/Qwen2.5-7B-Instruct-4bit",
             ],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
 
         // `ResolutionProgress` is `@Observable`, so a SwiftUI view can bind to it
@@ -264,7 +265,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
@@ -290,7 +292,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
@@ -320,7 +323,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
 
         // One resolve makes both generation models resident together — no
@@ -365,7 +369,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
@@ -425,7 +430,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
@@ -464,7 +470,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
@@ -497,7 +504,8 @@ struct ExamplesTests {
             description: "Local coding assistant.",
             standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+            decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
         )
 
         // Resolve: the profile, and every handle it vends, is what keeps the
@@ -560,7 +568,8 @@ struct ExamplesTests {
                 description: "Local coding assistant.",
                 standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
                 flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
-                embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+                embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+                decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"]
             )
             let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
@@ -657,6 +666,7 @@ struct ExamplesTests {
                         standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
                         flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
                         embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+                        decision: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
                         context: context
                     ),
                     reporting: ResolutionProgress()

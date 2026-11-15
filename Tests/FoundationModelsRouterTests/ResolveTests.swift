@@ -229,6 +229,7 @@ struct ResolveTests {
         standard: ["org/std-a", "org/std-b"],
         flash: ["org/flash-a"],
         embedding: ["org/emb-a"],
+        decision: ["org/flash-a"],
         context: ScriptedSessionContext.tokens
     )
 
@@ -543,6 +544,7 @@ struct ResolveTests {
             standard: [shared],
             flash: ["org/flash-only"],
             embedding: [shared],
+            decision: ["org/flash-only"],
             context: ScriptedSessionContext.tokens
         )
 
@@ -605,6 +607,7 @@ struct ResolveTests {
             standard: [dualFail],
             flash: [dualFail, "org/dual-fail-flash"],
             embedding: ["org/emb-only"],
+            decision: [dualFail, "org/dual-fail-flash"],
             context: ScriptedSessionContext.tokens
         )
 
@@ -665,6 +668,7 @@ struct ResolveTests {
             standard: [direct, generic],
             flash: ["org/flash-only"],
             embedding: ["org/emb-only"],
+            decision: ["org/flash-only"],
             context: ScriptedSessionContext.tokens
         )
 
@@ -806,6 +810,7 @@ struct ResolveTests {
             standard: [big, small],
             flash: [flash],
             embedding: [embedding],
+            decision: [flash],
             context: nil
         )
 
@@ -978,6 +983,7 @@ struct ResolveTests {
             standard: [ModelRef(repo: "org/std-a", drafter: drafter), "org/std-b"],
             flash: ["org/flash-a"],
             embedding: ["org/emb-a"],
+            decision: ["org/flash-a"],
             context: ScriptedSessionContext.tokens
         )
     }
@@ -1078,6 +1084,7 @@ struct ResolveTests {
         ],
         flash: ["mlx-community/Qwen3-4B-4bit"],
         embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"],
+        decision: ["mlx-community/Qwen3-4B-4bit"],
         context: nil
     )
 

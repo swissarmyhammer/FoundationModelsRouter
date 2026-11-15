@@ -82,7 +82,7 @@ struct LocalModelPathTests {
     func profileResolvesEverySlot() {
         let profile = ProfileDefinition(
             name: "local", description: "local models",
-            standard: [ModelRef(repo: "~/s")], flash: [ModelRef(repo: "./f")], embedding: [ModelRef(repo: "/e")])
+            standard: [ModelRef(repo: "~/s")], flash: [ModelRef(repo: "./f")], embedding: [ModelRef(repo: "/e")], decision: [ModelRef(repo: "./f")])
 
         let resolved = profile.resolvingLocalModelPaths(home: Self.home, workingDirectory: Self.workingDirectory)
 

@@ -54,8 +54,8 @@ let urgency = try await profile.decision.makeSession(state: .text(ticket))
 print(urgency)  // The probability of "yes", from 0 to 1.
 ```
 
-When no `decision` candidate fits the memory that the other slots leave, the
-slot uses the `flash` model. See [Decisions](docs/decision.md).
+The `decision` slot is required: when no decision candidate fits, the resolve
+fails. See [Decisions](docs/decision.md).
 
 ## Local models
 
@@ -95,7 +95,7 @@ dependencies: [
 
 - [Installation details](docs/installation.md): the macOS floor, the model cache folder, the Hugging Face token.
 - [Models, residency and tools](docs/residency.md): why `standard` and `flash` are two different models, the process-wide model pool, tool hosting.
-- [Decisions](docs/decision.md): the `decision` slot, its default model, the decision path (native GGUF, `decider_config.json` or generic), the memory rule and the flash fallback.
+- [Decisions](docs/decision.md): the `decision` slot, its default model, the decision path (native GGUF, `decider_config.json` or generic), and the memory rule.
 - [ANE embedding models](docs/ane-embedding.md): the default CoreML embedding model, how the router detects it, and models in a local folder.
 - [Tests](docs/testing.md): hermetic and real-model tests, and where the worked examples are.
 - [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration): a runnable demo with two models.

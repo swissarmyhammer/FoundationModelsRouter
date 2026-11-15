@@ -109,7 +109,8 @@ struct SharedModelLockContentionTests {
             description: "the standard and flash slots name two different models",
             standard: [Self.sharedRef],
             flash: [Self.flashRef],
-            embedding: ["org/shared-embedder"]
+            embedding: ["org/shared-embedder"],
+            decision: [Self.flashRef]
         )
         let profile = try await router.resolve(profile: definition, reporting: ResolutionProgress())
 

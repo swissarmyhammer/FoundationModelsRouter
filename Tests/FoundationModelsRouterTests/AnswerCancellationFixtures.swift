@@ -36,7 +36,8 @@ extension AnswerCancellationTests {
         description: "test profile",
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
-        embedding: ["org/emb-a"]
+        embedding: ["org/emb-a"],
+        decision: ["org/flash-a"]
     )
 
     static let stubDimension = 8

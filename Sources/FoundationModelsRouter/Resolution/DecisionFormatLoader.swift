@@ -21,8 +21,8 @@ enum DecisionFormatLoader {
     /// file from the folder, with no call to `source`. A reference to a Hub
     /// repository reads the whole file at the revision of the reference.
     ///
-    /// An error is an error of the decision slot only: the caller logs it and
-    /// uses its fallback. It never stops the resolve of the profile.
+    /// An error fails the resolve of the profile: the decision slot is
+    /// required (``DecisionFormatFailure``).
     ///
     /// - Parameters:
     ///   - ref: The reference of the decision model.

@@ -1,0 +1,1 @@
+{"id":"01M7FEHRQP7XGG45Q1MP7Q2460","timestamp":"2026-11-15T11:12:46.838609Z","op":"create","item_id":"01M7FEHRQHZN9N2128QPQE6E03","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: bfd4f2\n+tag_name: feature\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: bfd4f2\n-tag_name: feature\n","transaction_id":null}

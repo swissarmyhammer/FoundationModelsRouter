@@ -2,8 +2,9 @@
 ///
 /// Each slot (`standard`, `flash`, `embedding`, `decision`) lists candidate
 /// ``ModelRef``s in preference order; resolution picks the first that fits the
-/// request and residency constraints. When no `decision` candidate fits, the
-/// decision slot uses the `flash` model. `context` is the working context size in tokens — it
+/// request and residency constraints. Every slot is required: when no
+/// candidate of a slot fits, the decision slot included, the resolve fails.
+/// `context` is the working context size in tokens — it
 /// scales the KV-cache footprint and determines whether a candidate fits.
 ///
 /// The `standard` and `flash` slots of one resolved profile never use the same
@@ -43,9 +44,10 @@ public struct ProfileDefinition: Sendable, Codable {
 
     /// The candidate models of the decision slot, in preference order.
     ///
-    /// When no candidate fits, the decision slot uses the `flash` model. An
-    /// empty list is valid: the decision slot then always uses the `flash`
-    /// model.
+    /// The slot is required: when no candidate fits, or the list is empty,
+    /// the resolve fails. The slot never uses the model of another slot in
+    /// place of its own candidates. A candidate can name the model of the
+    /// `standard` or `flash` slot, and then costs no more memory.
     public var decision: [ModelRef]
 
     /// The decision candidates that a profile gets when it names none: the

@@ -170,7 +170,7 @@ struct PooledResidencyTests {
 
         let profile = ProfileDefinition(
             name: "counted", description: "three models the pool counts",
-            standard: ["org/count-std"], flash: ["org/count-flash"], embedding: ["org/count-emb"]
+            standard: ["org/count-std"], flash: ["org/count-flash"], embedding: ["org/count-emb"], decision: ["org/count-flash"]
         )
         var resolved: LanguageModelProfile? = try await router.resolve(
             profile: profile, reporting: ResolutionProgress())
@@ -205,7 +205,8 @@ struct PooledResidencyTests {
             description: "both sessions want the identical models",
             standard: ["org/std-shared"],
             flash: ["org/flash-shared"],
-            embedding: ["org/emb-shared"]
+            embedding: ["org/emb-shared"],
+            decision: ["org/flash-shared"]
         )
 
         let first = try await router.resolve(profile: shared, reporting: ResolutionProgress())
@@ -240,11 +241,11 @@ struct PooledResidencyTests {
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
-            standard: ["org/a-std"], flash: ["org/a-flash"], embedding: ["org/a-emb"]
+            standard: ["org/a-std"], flash: ["org/a-flash"], embedding: ["org/a-emb"], decision: ["org/a-flash"]
         )
         let profileB = ProfileDefinition(
             name: "b", description: "profile B",
-            standard: ["org/b-std"], flash: ["org/b-flash"], embedding: ["org/b-emb"]
+            standard: ["org/b-std"], flash: ["org/b-flash"], embedding: ["org/b-emb"], decision: ["org/b-flash"]
         )
 
         let resolvedA = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
@@ -282,11 +283,11 @@ struct PooledResidencyTests {
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
-            standard: ["org/only-a-std"], flash: ["org/only-a-flash"], embedding: ["org/only-a-emb"]
+            standard: ["org/only-a-std"], flash: ["org/only-a-flash"], embedding: ["org/only-a-emb"], decision: ["org/only-a-flash"]
         )
         let profileB = ProfileDefinition(
             name: "b", description: "profile B, disjoint from A",
-            standard: ["org/only-b-std"], flash: ["org/only-b-flash"], embedding: ["org/only-b-emb"]
+            standard: ["org/only-b-std"], flash: ["org/only-b-flash"], embedding: ["org/only-b-emb"], decision: ["org/only-b-flash"]
         )
 
         let resolvedA = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
@@ -322,7 +323,7 @@ struct PooledResidencyTests {
 
         let shared = ProfileDefinition(
             name: "shared", description: "both profiles want the identical models",
-            standard: ["org/rc-std"], flash: ["org/rc-flash"], embedding: ["org/rc-emb"]
+            standard: ["org/rc-std"], flash: ["org/rc-flash"], embedding: ["org/rc-emb"], decision: ["org/rc-flash"]
         )
 
         var first: LanguageModelProfile? = try await router.resolve(
@@ -401,7 +402,7 @@ struct PooledResidencyTests {
 
         let shared = ProfileDefinition(
             name: "shared", description: "both profiles want the identical standard model",
-            standard: ["org/gate-std"], flash: ["org/gate-flash"], embedding: ["org/gate-emb"]
+            standard: ["org/gate-std"], flash: ["org/gate-flash"], embedding: ["org/gate-emb"], decision: ["org/gate-flash"]
         )
 
         let first = try await router.resolve(profile: shared, reporting: ResolutionProgress())
@@ -459,11 +460,11 @@ struct PooledResidencyTests {
 
         let unpinned = ProfileDefinition(
             name: "unpinned", description: "tracks the default revision",
-            standard: ["org/rev-repo"], flash: ["org/rev-flash-a"], embedding: ["org/rev-emb-a"]
+            standard: ["org/rev-repo"], flash: ["org/rev-flash-a"], embedding: ["org/rev-emb-a"], decision: ["org/rev-flash-a"]
         )
         let pinned = ProfileDefinition(
             name: "pinned", description: "pinned to a specific revision",
-            standard: ["org/rev-repo@rev2"], flash: ["org/rev-flash-b"], embedding: ["org/rev-emb-b"]
+            standard: ["org/rev-repo@rev2"], flash: ["org/rev-flash-b"], embedding: ["org/rev-emb-b"], decision: ["org/rev-flash-b"]
         )
 
         // Both resolved profiles are held for the whole test: an unretained
@@ -497,7 +498,7 @@ struct PooledResidencyTests {
 
         let dualRole = ProfileDefinition(
             name: "dual-role", description: "one repo serves the standard slot and the embedding slot",
-            standard: ["org/role-repo"], flash: ["org/role-flash"], embedding: ["org/role-repo"]
+            standard: ["org/role-repo"], flash: ["org/role-flash"], embedding: ["org/role-repo"], decision: ["org/role-flash"]
         )
 
         let resolved = try await router.resolve(profile: dualRole, reporting: ResolutionProgress())
@@ -535,11 +536,11 @@ struct PooledResidencyTests {
 
         let wide = ProfileDefinition(
             name: "wide", description: "runs the shared repo at the stub window",
-            standard: ["org/ctx-repo"], flash: ["org/ctx-flash-a"], embedding: ["org/ctx-emb-a"]
+            standard: ["org/ctx-repo"], flash: ["org/ctx-flash-a"], embedding: ["org/ctx-emb-a"], decision: ["org/ctx-flash-a"]
         )
         let narrow = ProfileDefinition(
             name: "narrow", description: "runs the identical repo at a smaller context",
-            standard: ["org/ctx-repo"], flash: ["org/ctx-flash-b"], embedding: ["org/ctx-emb-b"],
+            standard: ["org/ctx-repo"], flash: ["org/ctx-flash-b"], embedding: ["org/ctx-emb-b"], decision: ["org/ctx-flash-b"],
             context: ResidencyFixtures.steppedDownContext
         )
 
@@ -581,11 +582,11 @@ struct PooledResidencyTests {
 
         let wide = ProfileDefinition(
             name: "wide", description: "owns the generation model and embedder the narrow profile reuses",
-            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-flash"], embedding: ["org/ctx-charge-emb"]
+            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-flash"], embedding: ["org/ctx-charge-emb"], decision: ["org/ctx-charge-flash"]
         )
         let narrow = ProfileDefinition(
             name: "narrow", description: "reuses the generation model and embedder at a smaller context, brings its own flash",
-            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-narrow-flash"], embedding: ["org/ctx-charge-emb"],
+            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-narrow-flash"], embedding: ["org/ctx-charge-emb"], decision: ["org/ctx-charge-narrow-flash"],
             context: ResidencyFixtures.steppedDownContext
         )
 
@@ -628,12 +629,14 @@ struct PooledResidencyTests {
             name: "narrow", description: "loads the shared generation model first, at a smaller context",
             standard: ["org/ctx-release-std"], flash: ["org/ctx-release-narrow-flash"],
             embedding: ["org/ctx-release-narrow-emb"],
+            decision: ["org/ctx-release-narrow-flash"],
             context: ResidencyFixtures.steppedDownContext
         )
         let wide = ProfileDefinition(
             name: "wide", description: "reuses the generation model at the stub window with its own flash model and embedder",
             standard: ["org/ctx-release-std"], flash: ["org/ctx-release-wide-flash"],
-            embedding: ["org/ctx-release-wide-emb"]
+            embedding: ["org/ctx-release-wide-emb"],
+            decision: ["org/ctx-release-wide-flash"]
         )
 
         var resolvedNarrow: LanguageModelProfile? = try await router.resolve(
@@ -676,7 +679,8 @@ struct PooledResidencyTests {
             name: "disjoint", description: "cannot fit beside the resident profiles",
             standard: [ModelRef("\(refPrefix)-std")],
             flash: [ModelRef("\(refPrefix)-flash")],
-            embedding: [ModelRef("\(refPrefix)-emb")]
+            embedding: [ModelRef("\(refPrefix)-emb")],
+            decision: [ModelRef("\(refPrefix)-flash")]
         )
         do {
             _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
@@ -704,7 +708,7 @@ struct PooledResidencyTests {
 
         let profile = ProfileDefinition(
             name: "solo", description: "one profile, used sequentially",
-            standard: ["org/solo-std"], flash: ["org/solo-flash"], embedding: ["org/solo-emb"]
+            standard: ["org/solo-std"], flash: ["org/solo-flash"], embedding: ["org/solo-emb"], decision: ["org/solo-flash"]
         )
 
         var first: LanguageModelProfile? = try await router.resolve(
@@ -773,11 +777,11 @@ struct PooledResidencyTests {
 
         let profileA = ProfileDefinition(
             name: "a", description: "owns the shared embedding model",
-            standard: ["org/race-a-std"], flash: ["org/race-a-flash"], embedding: [sharedEmbeddingRef]
+            standard: ["org/race-a-std"], flash: ["org/race-a-flash"], embedding: [sharedEmbeddingRef], decision: ["org/race-a-flash"]
         )
         let profileB = ProfileDefinition(
             name: "b", description: "wants the same embedding model; its own standard slot is slow to load",
-            standard: [gatedRef], flash: ["org/race-b-flash"], embedding: [sharedEmbeddingRef]
+            standard: [gatedRef], flash: ["org/race-b-flash"], embedding: [sharedEmbeddingRef], decision: ["org/race-b-flash"]
         )
 
         var resolvedA: LanguageModelProfile? = try await router.resolve(
@@ -855,7 +859,7 @@ struct PooledResidencyTests {
 
         let pair = ProfileDefinition(
             name: "pair", description: "standard and flash name two different models",
-            standard: ["org/pair-repo"], flash: ["org/pair-flash"], embedding: ["org/pair-emb"]
+            standard: ["org/pair-repo"], flash: ["org/pair-flash"], embedding: ["org/pair-emb"], decision: ["org/pair-flash"]
         )
         let resolvedPair = try await router.resolve(profile: pair, reporting: ResolutionProgress())
         // Each generation slot loads its own container.
@@ -867,7 +871,7 @@ struct PooledResidencyTests {
         // pair trio reserved — both whole generation footprints.
         let disjoint = ProfileDefinition(
             name: "disjoint", description: "cannot fit beside the pair trio",
-            standard: ["org/pin-std"], flash: ["org/pin-flash"], embedding: ["org/pin-emb"]
+            standard: ["org/pin-std"], flash: ["org/pin-flash"], embedding: ["org/pin-emb"], decision: ["org/pin-flash"]
         )
         do {
             _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
@@ -900,7 +904,7 @@ struct PooledResidencyTests {
 
         let pair = ProfileDefinition(
             name: "pair", description: "standard and flash name two different models",
-            standard: ["org/share-repo"], flash: ["org/share-flash"], embedding: ["org/share-emb"]
+            standard: ["org/share-repo"], flash: ["org/share-flash"], embedding: ["org/share-emb"], decision: ["org/share-flash"]
         )
         let holder = try await router.resolve(profile: pair, reporting: ResolutionProgress())
         // The same trio again: the containers are shared, and each of its
@@ -916,7 +920,8 @@ struct PooledResidencyTests {
         let disjoint = ProfileDefinition(
             name: "disjoint", description: "cannot fit beside the pair trio",
             standard: ["org/share-pin-std"], flash: ["org/share-pin-flash"],
-            embedding: ["org/share-pin-emb"]
+            embedding: ["org/share-pin-emb"],
+            decision: ["org/share-pin-flash"]
         )
         do {
             _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
@@ -958,11 +963,11 @@ struct PooledResidencyTests {
 
         let profileA = ProfileDefinition(
             name: "a", description: "owns the models B will reuse",
-            standard: ["org/reuse-std"], flash: ["org/reuse-flash"], embedding: ["org/reuse-emb"]
+            standard: ["org/reuse-std"], flash: ["org/reuse-flash"], embedding: ["org/reuse-emb"], decision: ["org/reuse-flash"]
         )
         let profileB = ProfileDefinition(
             name: "b", description: "reuses A's generation model and embedder, brings its own flash",
-            standard: ["org/reuse-std"], flash: ["org/reuse-b-flash"], embedding: ["org/reuse-emb"]
+            standard: ["org/reuse-std"], flash: ["org/reuse-b-flash"], embedding: ["org/reuse-emb"], decision: ["org/reuse-b-flash"]
         )
 
         let resolvedA = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
@@ -979,7 +984,8 @@ struct PooledResidencyTests {
         let disjoint = ProfileDefinition(
             name: "disjoint", description: "cannot fit beside A and B",
             standard: ["org/reuse-pin-std"], flash: ["org/reuse-pin-flash"],
-            embedding: ["org/reuse-pin-emb"]
+            embedding: ["org/reuse-pin-emb"],
+            decision: ["org/reuse-pin-flash"]
         )
         do {
             _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
@@ -1020,7 +1026,7 @@ struct PooledResidencyTests {
 
         let held = ProfileDefinition(
             name: "held", description: "a tool outlives the profile object",
-            standard: ["org/held-std"], flash: ["org/held-flash"], embedding: ["org/held-emb"]
+            standard: ["org/held-std"], flash: ["org/held-flash"], embedding: ["org/held-emb"], decision: ["org/held-flash"]
         )
 
         var profile: LanguageModelProfile? = try await router.resolve(
@@ -1069,11 +1075,11 @@ struct PooledResidencyTests {
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
-            standard: ["org/drop-a-std"], flash: ["org/drop-a-flash"], embedding: ["org/drop-a-emb"]
+            standard: ["org/drop-a-std"], flash: ["org/drop-a-flash"], embedding: ["org/drop-a-emb"], decision: ["org/drop-a-flash"]
         )
         let profileB = ProfileDefinition(
             name: "b", description: "profile B, disjoint from A",
-            standard: ["org/drop-b-std"], flash: ["org/drop-b-flash"], embedding: ["org/drop-b-emb"]
+            standard: ["org/drop-b-std"], flash: ["org/drop-b-flash"], embedding: ["org/drop-b-emb"], decision: ["org/drop-b-flash"]
         )
 
         var resolvedA: LanguageModelProfile? = try await router.resolve(

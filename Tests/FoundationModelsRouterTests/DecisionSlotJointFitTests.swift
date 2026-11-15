@@ -1,15 +1,15 @@
 import Foundation
 import FoundationModelsRouterTestSupport
-import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
 
-/// Tests of the flash fallback of the decision slot in the pure joint fit. No
-/// decision candidate of these tests can be sized, so the slot uses the flash
-/// winner, records each of its candidates, and records the flash fallback.
-/// `JointFitTests` tests the decision pass with candidates that fit. No
-/// network and no I/O: the footprints are injected.
+/// Tests of the decision slot as a required slot of the pure joint fit (task
+/// ^ybx7vvn). The decision slot never uses the flash model in place of its
+/// own: a decision candidate that fits no budget fails the resolve, and a
+/// derived window leaves room for the decision model. `JointFitTests` tests
+/// the choice among decision candidates. No network and no I/O: the
+/// footprints are injected.
 @Suite("The decision slot of the joint fit")
 struct DecisionSlotJointFitTests {
     // MARK: - Fixed values
@@ -23,60 +23,65 @@ struct DecisionSlotJointFitTests {
     /// The one embedding candidate.
     private static let embeddingRef: ModelRef = "org/embedding"
 
-    /// The decision candidates, in preference order. ``footprints`` has no
-    /// entry for them, so they cannot be sized.
-    private static let decisionRefs: [ModelRef] = ["org/decider-a", "org/decider-b"]
+    /// A decision candidate with a footprint.
+    private static let deciderRef: ModelRef = "org/decider"
 
-    /// The native window of each candidate, for the derived-window test.
+    /// The decision candidates that cannot be sized, in preference order.
+    /// ``footprints`` has no entry for them.
+    private static let unsizableDeciders: [ModelRef] = ["org/decider-a", "org/decider-b"]
+
+    /// The native window of each candidate, for the derived-window tests.
     private static let nativeWindow = 4096
 
-    /// The raw footprint of each trio candidate.
-    private static let footprints: [ModelRef: Int64] = [
-        standardRef: 9_000,
-        flashRef: 2_000,
-        embeddingRef: 500,
-    ]
+    /// The bytes of KV cache that the standard model adds for each token.
+    private static let standardBytesPerToken: Int64 = 2
 
-    /// The shared budget: enough for the trio.
-    private static let budgetBytes: Int64 = 20_000
+    /// The bytes of the decision model: weights only, no KV cache.
+    private static let deciderBytes: Int64 = 1_500
 
-    /// A record of each candidate the joint fit sized.
-    private final class SizedRefs: Sendable {
-        /// The refs, in the order of the calls.
-        private let refs = Mutex<[ModelRef]>([])
-
-        /// The refs that the footprint provider got.
-        var sized: [ModelRef] { refs.withLock { $0 } }
-
-        /// Records one call.
-        ///
-        /// - Parameter ref: The candidate of the call.
-        func record(_ ref: ModelRef) {
-            refs.withLock { $0.append(ref) }
+    /// The raw footprint of each candidate at `context`.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate.
+    ///   - context: The working context.
+    /// - Returns: The bytes, or `nil` for a candidate with no footprint.
+    private static func footprint(of ref: ModelRef, context: Int) -> Int64? {
+        switch ref {
+        case standardRef: 1_000 + standardBytesPerToken * Int64(context)
+        case flashRef: 2_000
+        case embeddingRef: 500
+        case deciderRef: deciderBytes
+        default: nil
         }
     }
 
+    /// A budget in which the trio fits at the native window with no byte to
+    /// spare, so a decision model fits only at a smaller window.
+    private static let fullBudgetBytes: Int64 = 1_000 + 2 * 4096 + 2_000 + 500
+
     // MARK: - Helpers
 
-    /// The test profile: one candidate for each trio slot, and
-    /// ``decisionRefs`` for the decision slot.
+    /// The test profile: one candidate for each trio slot, and `decision`
+    /// for the decision slot.
     ///
-    /// - Parameter context: The working context, or `nil` to derive it.
+    /// - Parameters:
+    ///   - decision: The decision candidates.
+    ///   - context: The working context, or `nil` to derive it.
     /// - Returns: The profile.
-    private static func profile(context: Int? = ScriptedSessionContext.tokens) -> ProfileDefinition {
+    private static func profile(decision: [ModelRef], context: Int? = nil) -> ProfileDefinition {
         ProfileDefinition(
             name: "decision-fit",
             description: "one candidate for each trio slot",
             standard: [standardRef],
             flash: [flashRef],
             embedding: [embeddingRef],
-            decision: decisionRefs,
+            decision: decision,
             context: context
         )
     }
 
-    /// The reason that the footprint provider of ``resolve(_:sizedRefs:)``
-    /// gives for a ref with no footprint.
+    /// The reason that the footprint provider gives for a ref with no
+    /// footprint.
     ///
     /// - Parameter ref: The ref with no footprint.
     /// - Returns: The reason.
@@ -84,114 +89,102 @@ struct DecisionSlotJointFitTests {
         "no footprint for \(ref.stringValue)"
     }
 
-    /// Runs the joint fit over ``footprints``, and records each sized ref in
-    /// `sizedRefs`.
+    /// Runs the joint fit over ``footprint(of:context:)``.
     ///
     /// - Parameters:
     ///   - profile: The profile to resolve.
-    ///   - sizedRefs: The record of each sized candidate.
+    ///   - budgetBytes: The shared budget.
     /// - Returns: The joint resolution.
     /// - Throws: The error of the joint fit.
-    private static func resolve(
-        _ profile: ProfileDefinition = profile(), sizedRefs: SizedRefs = SizedRefs()
-    ) throws -> JointResolution {
+    private static func resolve(_ profile: ProfileDefinition, budgetBytes: Int64) throws -> JointResolution {
         try JointFit.resolve(
             profile: profile,
             budgetBytes: budgetBytes,
-            footprint: { ref, _, _ in
-                sizedRefs.record(ref)
-                return footprints[ref].map { .success($0) }
+            footprint: { ref, context, _ in
+                footprint(of: ref, context: context).map { .success($0) }
                     ?? .failure(.metadataUnavailable(noFootprintReason(for: ref)))
             },
             nativeMaxContext: { _ in .success(nativeWindow) }
         )
     }
 
-    /// The resolution of the decision slot.
-    ///
-    /// - Parameter resolution: The joint resolution.
-    /// - Returns: The resolution of the decision slot.
-    /// - Throws: When the joint resolution has no decision slot.
-    private static func decisionSlot(of resolution: JointResolution) throws -> SlotResolution {
-        try #require(resolution.slots.first { $0.slot == .decision })
+    // MARK: - Room for the decision model
+
+    @Test("a derived window leaves room for the decision model")
+    func derivedWindowLeavesRoomForTheDecisionModel() throws {
+        let resolution = try Self.resolve(Self.profile(decision: [Self.deciderRef]), budgetBytes: Self.fullBudgetBytes)
+
+        #expect(resolution.decision == Self.deciderRef)
     }
 
-    // MARK: - The flash winner
+    @Test("the decision model makes the derived window smaller by its own bytes")
+    func decisionModelShrinksTheDerivedWindow() throws {
+        let resolution = try Self.resolve(Self.profile(decision: [Self.deciderRef]), budgetBytes: Self.fullBudgetBytes)
+        let decisionSlot = try #require(resolution.slots.first { $0.slot == .decision })
 
-    @Test("the decision model is the flash winner")
-    func decisionIsTheFlashWinner() throws {
-        let resolution = try Self.resolve()
-
-        #expect(resolution.decision == resolution.flash)
-    }
-
-    @Test("the decision model is the flash winner when the window is derived")
-    func decisionIsTheFlashWinnerAtADerivedWindow() throws {
-        let resolution = try Self.resolve(Self.profile(context: nil))
-
-        #expect(resolution.decision == resolution.flash)
-    }
-
-    @Test("the decision slot chooses the flash winner")
-    func decisionSlotChoosesTheFlashWinner() throws {
-        let slot = try Self.decisionSlot(of: Self.resolve())
-
-        #expect(slot.chosen == Self.flashRef)
+        #expect(
+            decisionSlot.contextTokens == Self.nativeWindow - Int(Self.deciderBytes / Self.standardBytesPerToken))
     }
 
     @Test("the decision slot comes after the flash slot in allocation order")
     func decisionSlotIsLastInAllocationOrder() throws {
-        let resolution = try Self.resolve()
+        let resolution = try Self.resolve(Self.profile(decision: [Self.deciderRef]), budgetBytes: Self.fullBudgetBytes)
 
         #expect(resolution.slots.map(\.slot) == [.embedding, .standard, .flash, .decision])
     }
 
-    @Test("the decision slot gets the budget that the flash slot left")
-    func decisionSlotGetsTheBudgetAfterFlash() throws {
-        let slot = try Self.decisionSlot(of: Self.resolve())
-        let trioBytes = Self.footprints.values.reduce(0, +)
+    // MARK: - No decision model
 
-        #expect(slot.remainingBudgetBytes == Self.budgetBytes - trioBytes)
+    @Test(
+        "a decision model that fits at no window fails the resolve, and the failure names the decision slot",
+        arguments: [nil, ScriptedSessionContext.tokens])
+    func unfitDecisionModelFailsTheResolve(context: Int?) throws {
+        let failure = try #require(throws: ResolutionFailure.self) {
+            try Self.resolve(Self.profile(decision: Self.unsizableDeciders, context: context), budgetBytes: 1_000_000)
+        }
+        let decisionSlot = try #require(failure.slots.first { $0.slot == .decision })
+
+        #expect(decisionSlot.chosen == nil)
+        #expect(
+            decisionSlot.considered.map(\.verdict)
+                == Self.unsizableDeciders.map { .metadataUnavailable(Self.noFootprintReason(for: $0)) })
     }
 
-    // MARK: - The record of the slot
-
-    @Test("the decision slot records the flash fallback")
-    func decisionSlotRecordsTheFlashFallback() throws {
-        let slot = try Self.decisionSlot(of: Self.resolve())
-
-        #expect(slot.fallback == .flashModel)
-    }
-
-    @Test("the decision slot records each candidate, in preference order, with the reason it cannot be sized")
-    func decisionSlotRecordsEachCandidateAsUnsizable() throws {
-        let slot = try Self.decisionSlot(of: Self.resolve())
+    @Test("a decision model too large for the budget fails the resolve with its footprint")
+    func tooLargeDecisionModelFailsTheResolve() throws {
+        let failure = try #require(throws: ResolutionFailure.self) {
+            try Self.resolve(
+                Self.profile(decision: [Self.deciderRef], context: Self.nativeWindow),
+                budgetBytes: Self.fullBudgetBytes)
+        }
+        let decisionSlot = try #require(failure.slots.first { $0.slot == .decision })
 
         #expect(
-            slot.considered.map(\.verdict)
-                == Self.decisionRefs.map { .metadataUnavailable(Self.noFootprintReason(for: $0)) })
+            decisionSlot.considered
+                == [
+                    CandidateReport(
+                        ref: Self.deciderRef, estimatedFootprintBytes: Self.deciderBytes,
+                        chargedBytes: Self.deciderBytes, verdict: .tooLarge)
+                ])
+        #expect(failure.description.contains(Self.deciderRef.stringValue))
     }
 
-    @Test("the joint fit sizes each decision candidate when none fits")
-    func jointFitSizesEachDecisionCandidate() throws {
-        let sizedRefs = SizedRefs()
-        _ = try Self.resolve(sizedRefs: sizedRefs)
+    @Test("a profile with no decision candidate fails the resolve", arguments: [nil, ScriptedSessionContext.tokens])
+    func emptyDecisionListFailsTheResolve(context: Int?) throws {
+        let failure = try #require(throws: ResolutionFailure.self) {
+            try Self.resolve(Self.profile(decision: [], context: context), budgetBytes: 1_000_000)
+        }
 
-        #expect(Set(Self.decisionRefs).isSubset(of: sizedRefs.sized))
+        #expect(failure.slots.contains { $0.slot == .decision && $0.chosen == nil })
     }
 
-    @Test("the fallback of a slot renders as \"fallback: flash model\"")
-    func fallbackRendersItsText() {
-        #expect(SlotFallback.flashModel.description == "fallback: flash model")
-    }
+    @Test("the standard candidate of a derived window that the decision slot blocks records the decision slot")
+    func standardCandidateRecordsTheBlockingDecisionSlot() throws {
+        let failure = try #require(throws: ResolutionFailure.self) {
+            try Self.resolve(Self.profile(decision: Self.unsizableDeciders), budgetBytes: 1_000_000)
+        }
+        let standardSlot = try #require(failure.slots.first { $0.slot == .standard })
 
-    @Test("a failure report shows the fallback of a slot that has one")
-    func failureReportShowsTheFallback() {
-        let decisionSlot = SlotResolution(
-            slot: .decision, remainingBudgetBytes: 0, chosen: Self.flashRef, considered: [],
-            contextTokens: ScriptedSessionContext.tokens, fallback: .flashModel)
-        let failure = ResolutionFailure(profileName: "decision-fit", budgetBytes: 0, slots: [decisionSlot])
-
-        #expect(failure.description.contains(SlotFallback.flashModel.description))
+        #expect(standardSlot.considered.map(\.verdict) == [.trioBlocked(.decision)])
     }
 }

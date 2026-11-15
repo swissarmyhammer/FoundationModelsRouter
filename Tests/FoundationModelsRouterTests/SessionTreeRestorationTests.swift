@@ -104,7 +104,8 @@ struct SessionTreeRestorationTests {
         description: "test profile",
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
-        embedding: ["org/emb-a"]
+        embedding: ["org/emb-a"],
+        decision: ["org/flash-a"]
     )
 
     /// A differently-resolving profile definition: its `.standard`/`.flash`
@@ -116,7 +117,8 @@ struct SessionTreeRestorationTests {
         description: "a differently-resolving profile for the model-mismatch test",
         standard: ["org/std-b"],
         flash: ["org/flash-b"],
-        embedding: ["org/emb-a"]
+        embedding: ["org/emb-a"],
+        decision: ["org/flash-b"]
     )
 
     private static let stubDimension = 8

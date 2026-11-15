@@ -88,7 +88,7 @@ struct GGUFResolveTests {
     private static func profile(standard: [ModelRef]) -> ProfileDefinition {
         ProfileDefinition(
             name: "gguf", description: "an MLX candidate and a GGUF candidate", standard: standard,
-            flash: ["org/flash-a"], embedding: ["org/emb-a"], context: ScriptedSessionContext.tokens)
+            flash: ["org/flash-a"], embedding: ["org/emb-a"], decision: ["org/flash-a"], context: ScriptedSessionContext.tokens)
     }
 
     /// Resolves `profile` over `source` with the stub probe and loader.

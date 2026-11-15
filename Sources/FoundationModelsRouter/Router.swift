@@ -232,9 +232,12 @@ public actor Router {
     ///   slots never use the same model.
     /// - Throws: ``SameGenerationModelFailure`` before any load when the
     ///   profile names only one model for both the `standard` and the `flash`
-    ///   slot, ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   slot, ``ResolutionFailure`` when the four slots do not fit the
+    ///   effective budget (the decision slot included: it never uses the
+    ///   model of another slot in place of its own candidates),
     ///   ``NoWindowFailure`` when the profile names no context and no standard
-    ///   candidate's window could be read,
+    ///   candidate's window could be read, ``DecisionFormatFailure`` when the
+    ///   prompt format of the decision model cannot be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
     ///   or load error from the ``ModelLoader``.
     public func resolve(
@@ -314,8 +317,7 @@ public actor Router {
     /// The slots a resolve acquires, in acquisition order: `standard` before
     /// `flash`, then the embedding, then the decision slot. The decision slot
     /// is last, so its key can be the key of a slot that this resolve holds
-    /// already (the flash fallback, or a decision candidate that is the
-    /// standard or flash model).
+    /// already (a decision candidate that is the standard or flash model).
     private static let acquisitionOrder: [ModelSlot] = [.standard, .flash, .embedding, .decision]
 
     /// One slot's hold this resolve took, whether this resolve loaded the
@@ -369,7 +371,7 @@ public actor Router {
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``SameGenerationModelFailure`` when the profile names only one
     ///   model for both generation slots,
-    ///   ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   ``ResolutionFailure`` when the four slots do not fit the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -404,7 +406,7 @@ public actor Router {
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``SameGenerationModelFailure`` when the profile names only one
     ///   model for both generation slots,
-    ///   ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   ``ResolutionFailure`` when the four slots do not fit the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -464,10 +466,12 @@ public actor Router {
     ///   - span: The resolve span, which takes the budget this attempt priced
     ///     against.
     /// - Returns: The joint fit, the holds and the containers of the profile.
-    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
-    ///   ``NoWindowFailure`` when the profile names no context and no standard
-    ///   candidate's window could be read, `CancellationError` when the
-    ///   calling task is cancelled, or any download or load error.
+    /// - Throws: ``ResolutionFailure`` when the four slots do not fit the
+    ///   effective budget, ``NoWindowFailure`` when the profile names no
+    ///   context and no standard candidate's window could be read,
+    ///   ``DecisionFormatFailure`` when the prompt format of the decision
+    ///   model cannot be read, `CancellationError` when the calling task is
+    ///   cancelled, or any download or load error.
     private func runAdmission(
         admission: ModelPoolAdmission,
         profile def: ProfileDefinition,
@@ -488,9 +492,8 @@ public actor Router {
             residentKeys: Set(footprint.resident.keys),
             progress: progress
         )
-        let decisionPlan = await DecisionSlotPlan.make(
-            for: fitted, metadataByRef: metadataByRef, source: metadataSource,
-            logger: RouterTelemetry.logger(.repoMetadataReader, explicit: explicitLogger))
+        let decisionPlan = try await planDecisionSlot(
+            resolution: fitted, metadataByRef: metadataByRef, progress: progress)
         await markChosen(resolution: decisionPlan.resolution, progress: progress)
 
         do {
@@ -505,6 +508,36 @@ public actor Router {
                 await recordLoadFailure(error: error, progress: progress)
             }
             throw error
+        }
+    }
+
+    /// Gets the decision path of the decision slot of `resolution`
+    /// (``DecisionSlotPlan``), and records a failure into the progress before
+    /// it throws the failure again.
+    ///
+    /// - Parameters:
+    ///   - resolution: The joint fit of this resolve.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - progress: The progress that takes a failure.
+    /// - Returns: The plan of the decision slot.
+    /// - Throws: ``DecisionFormatFailure`` when the prompt format of the
+    ///   decision model cannot be read.
+    private func planDecisionSlot(
+        resolution: JointResolution,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        progress: ResolutionProgress
+    ) async throws -> DecisionSlotPlan {
+        do {
+            return try await DecisionSlotPlan.make(
+                for: resolution, metadataByRef: metadataByRef, source: metadataSource)
+        } catch let failure as DecisionFormatFailure {
+            await recordFailure(
+                outcomes: [(.decision, nil)],
+                failedReason: "the prompt format of the decision model could not be read",
+                description: failure.description,
+                progress: progress
+            )
+            throw failure
         }
     }
 
@@ -574,8 +607,7 @@ public actor Router {
     /// The decision container of the hold of the decision slot.
     ///
     /// A hold whose container cannot answer on the path does not stop the
-    /// resolve: the decision slot never blocks a profile. Its container then
-    /// throws the error at the first decision (``UnavailableDecisionContainer``):
+    /// resolve. Its container throws the error at the first decision (``UnavailableDecisionContainer``):
     /// usually ``PooledLogitsModelError/notLogitsCapable(_:)`` for a prompt
     /// format, or `PooledDecisionsModelError.notDecisionCapable(_:)` for the
     /// native path.
@@ -623,8 +655,7 @@ public actor Router {
     /// pool (``PromptCacheSizing/withBudget(adding:isolation:_:)``).
     ///
     /// A slot whose key a hold of this resolve serves already (the decision
-    /// slot on the flash fallback, or on the model of the standard or flash
-    /// slot) costs 0 bytes: the hold sends no footprint
+    /// slot on the model of the standard or flash slot) costs 0 bytes: the hold sends no footprint
     /// and no session bytes, the prompt cache gets no smaller budget, and the
     /// hold is not a new load. The model is resident once, so it is charged
     /// once.

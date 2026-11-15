@@ -51,7 +51,7 @@ struct CrossRouterResidencyTests {
     /// The trio every sharing test resolves from both routers.
     private static let sharedTrio = ProfileDefinition(
         name: "shared", description: "both routers want the identical models",
-        standard: [sharedStandardRef], flash: ["org/x-flash"], embedding: ["org/x-emb"]
+        standard: [sharedStandardRef], flash: ["org/x-flash"], embedding: ["org/x-emb"], decision: ["org/x-flash"]
     )
 
     /// Every ref ``sharedTrio`` names, one for each slot.
@@ -61,7 +61,7 @@ struct CrossRouterResidencyTests {
     /// ``oneTrioBudget``.
     private static let disjointTrio = ProfileDefinition(
         name: "disjoint", description: "cannot fit beside the shared trio",
-        standard: ["org/x-other-std"], flash: ["org/x-other-flash"], embedding: ["org/x-other-emb"]
+        standard: ["org/x-other-std"], flash: ["org/x-other-flash"], embedding: ["org/x-other-emb"], decision: ["org/x-other-flash"]
     )
 
     private static func makeTempDir() -> URL {

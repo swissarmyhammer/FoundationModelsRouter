@@ -106,7 +106,8 @@ struct ResolutionProgressPublicSurfaceTests {
         description: "one candidate for each slot",
         standard: [standardRef],
         flash: [flashRef],
-        embedding: [embeddingRef]
+        embedding: [embeddingRef],
+        decision: [flashRef]
     )
 
     /// A ``MachineProbe`` that reports fixed hardware facts.

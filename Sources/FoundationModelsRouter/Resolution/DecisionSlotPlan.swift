@@ -1,10 +1,8 @@
 import FoundationModelsDecision
-import Logging
 
 /// The model and the decision path of the decision slot of one resolve.
 ///
-/// The path of a decision model that is not the fallback comes in this
-/// order:
+/// The path of the decision model comes in this order:
 ///
 /// 1. A GGUF model whose decision type llama.cpp supports
 ///    (``RepoMetadata/hasNativeDecisionType``) takes the native path. The
@@ -16,23 +14,12 @@ import Logging
 ///
 /// An MLX model has no decision type, thus it uses only 2 and 3.
 ///
-/// The flash fallback (``SlotFallback/flashModel``) reads no file. It takes
-/// the native path when the flash model has a supported decision type, and
-/// else it uses `GenericPromptFormat`. The decision type comes from the
-/// sizing step, thus it costs no read and cannot fail, and the path of a
-/// model is the same in the fallback as in the decision slot.
-///
-/// When the read of `decider_config.json` fails, the decision slot changes to
-/// the flash fallback before any acquire, and the failure is logged. A
-/// failure of the decision slot never stops the resolve.
+/// The decision slot is required (task ^ybx7vvn). When the read of
+/// `decider_config.json` fails, the resolve fails with
+/// ``DecisionFormatFailure`` before any acquire: the slot never uses another
+/// model, or another format, in place of the one the repository states.
 struct DecisionSlotPlan: Sendable {
-    /// The reason that the report of the decision slot records, and that the
-    /// warning tells, when the format of the decision model cannot be read.
-    static let formatUnavailableReason = "the prompt format of the decision model could not be read"
-
-    /// The joint resolution that the resolve applies. Its decision slot is
-    /// the flash fallback when the format of the chosen decision model could
-    /// not be read.
+    /// The joint resolution that the resolve applies.
     let resolution: JointResolution
 
     /// The decision path of the model of the decision slot.
@@ -45,19 +32,15 @@ struct DecisionSlotPlan: Sendable {
     ///   - metadataByRef: The sizing metadata of each candidate.
     ///   - source: The metadata source that reads the `decider_config.json`
     ///     file of a Hub repository.
-    ///   - logger: The logger of the warning when the format cannot be read.
     /// - Returns: The plan.
+    /// - Throws: ``DecisionFormatFailure`` when the decision model was not
+    ///   sized, or when its `decider_config.json` file cannot be read.
     static func make(
         for resolution: JointResolution,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
-        source: any MetadataSource,
-        logger: Logger
-    ) async -> DecisionSlotPlan {
-        guard let decisionSlot = resolution.slots.first(where: { $0.slot == .decision }),
-            decisionSlot.fallback == nil, let chosen = decisionSlot.chosen
-        else {
-            return fallbackPlan(of: resolution, metadataByRef: metadataByRef)
-        }
+        source: any MetadataSource
+    ) async throws -> DecisionSlotPlan {
+        let chosen = resolution.decision
         do {
             guard case .success(let metadata) = metadataByRef[chosen] else {
                 throw RepoMetadataError.metadataUnavailable("candidate \(chosen.stringValue) was not sized")
@@ -68,29 +51,24 @@ struct DecisionSlotPlan: Sendable {
             let format = try await DecisionFormatLoader.format(for: chosen, metadata: metadata, source: source)
             return DecisionSlotPlan(resolution: resolution, path: .promptFormat(format))
         } catch {
-            logger.warning(
-                "\(formatUnavailableReason); the decision slot uses the flash model",
-                metadata: RouterTelemetry.errorMetadata(error).merging(
-                    [RouterTelemetry.LogMetadataKey.modelRef: "\(chosen.stringValue)"]) { _, ref in ref })
-            return fallbackPlan(
-                of: resolution.fallingBackToFlash(because: formatUnavailableReason), metadataByRef: metadataByRef)
+            throw DecisionFormatFailure(model: chosen, underlyingError: error)
         }
     }
+}
 
-    /// Makes the plan of a decision slot that uses the flash fallback, or
-    /// that chose no model. It reads no file.
-    ///
-    /// - Parameters:
-    ///   - resolution: The joint resolution that the resolve applies.
-    ///   - metadataByRef: The sizing metadata of each candidate.
-    /// - Returns: The plan: the native path when the model of the decision
-    ///   slot has a supported decision type, else `GenericPromptFormat`.
-    private static func fallbackPlan(
-        of resolution: JointResolution, metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
-    ) -> DecisionSlotPlan {
-        guard case .success(let metadata) = metadataByRef[resolution.decision], metadata.hasNativeDecisionType else {
-            return DecisionSlotPlan(resolution: resolution, path: .promptFormat(GenericPromptFormat()))
-        }
-        return DecisionSlotPlan(resolution: resolution, path: .native)
+/// The error thrown when the prompt format of the chosen decision model
+/// cannot be read (``DecisionSlotPlan``). The resolve fails, because the
+/// decision slot is required.
+struct DecisionFormatFailure: Error, CustomStringConvertible {
+    /// The decision model whose format could not be read.
+    let model: ModelRef
+
+    /// The error of the read.
+    let underlyingError: any Error
+
+    /// A one-line rendering that names the model and the error.
+    var description: String {
+        "DecisionFormatFailure: the prompt format of the decision model \(model.stringValue) "
+            + "could not be read: \(underlyingError)"
     }
 }

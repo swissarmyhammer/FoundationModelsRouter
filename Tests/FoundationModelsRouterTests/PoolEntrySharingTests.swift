@@ -123,7 +123,8 @@ struct PoolEntrySharingTests {
         return ProfileDefinition(
             name: name, description: "refs that no other test names",
             standard: [ModelRef("\(prefix)-std")], flash: [ModelRef("\(prefix)-flash")],
-            embedding: [ModelRef("\(prefix)-emb")]
+            embedding: [ModelRef("\(prefix)-emb")],
+            decision: [ModelRef("\(prefix)-flash")]
         )
     }
 

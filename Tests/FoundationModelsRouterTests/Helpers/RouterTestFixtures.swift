@@ -226,12 +226,13 @@ enum RouterTestFixtures {
     static let stubProbe = StubProbe(
         chip: "Apple Test", totalRAM: stubTotalRAM, recommendedMaxWorkingSetSize: stubWorkingSet)
 
-    /// The standard test profile: one candidate for each slot of the trio,
-    /// and no decision candidate.
+    /// The standard test profile: one candidate for each slot, and the flash
+    /// model as the one decision candidate.
     ///
-    /// The profile names no decision candidate, so its decision slot uses the
-    /// flash model, and a resolve of it reads no metadata of the default
-    /// decision model (``ProfileDefinition/defaultDecisionCandidates``).
+    /// The decision candidate is the flash model, so the decision slot holds
+    /// the flash entry once more at no cost, and a resolve of the profile
+    /// reads no metadata of the default decision model
+    /// (``ProfileDefinition/defaultDecisionCandidates``).
     ///
     /// - Parameter context: The profile's working-context override. The
     ///   default is `ScriptedSessionContext.tokens`, the small, known window
@@ -244,7 +245,7 @@ enum RouterTestFixtures {
             standard: ["org/std-a"],
             flash: ["org/flash-a"],
             embedding: ["org/emb-a"],
-            decision: [],
+            decision: ["org/flash-a"],
             context: context
         )
     }

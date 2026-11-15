@@ -10,10 +10,10 @@ import Testing
 
 /// Tests of the decision slot through ``Router/resolve(profile:reporting:)``,
 /// over a stub loader and a stub metadata source. The decision candidate of
-/// these tests cannot be sized, so the decision slot uses the flash winner:
-/// the decision hold is a second hold of the flash entry, which costs no
-/// bytes and no second preload. `DecisionSlotFitTests` tests a decision
-/// candidate that fits. No test downloads or loads a model, and no test makes
+/// these tests is the flash model, so the decision hold is a second hold of
+/// the flash entry, which costs no bytes and no second preload. A decision
+/// candidate that cannot be sized fails the resolve (task ^ybx7vvn).
+/// `DecisionSlotFitTests` tests a decision candidate of its own. No test downloads or loads a model, and no test makes
 /// a network request.
 @Suite("The decision slot of a resolve")
 struct DecisionSlotResolveTests {
@@ -22,7 +22,8 @@ struct DecisionSlotResolveTests {
     /// The prefix of the temp directory of each test.
     private static let tempDirPrefix = "DecisionSlotResolveTests"
 
-    /// The one decision candidate of ``profile``.
+    /// A decision candidate that ``UnsizableDeciderMetadataSource`` cannot
+    /// size.
     private static let deciderRef: ModelRef = "org/decider-a"
 
     /// Why ``UnsizableDeciderMetadataSource`` gives no metadata of
@@ -48,9 +49,9 @@ struct DecisionSlotResolveTests {
     /// The yes-or-no question of the decision tests.
     private static let question = "Does the state report a failure?"
 
-    /// The test profile: the standard test profile, with ``deciderRef`` as
-    /// the one decision candidate.
-    private static var profile: ProfileDefinition {
+    /// The standard test profile, with ``deciderRef`` as the one decision
+    /// candidate.
+    private static var unsizableDeciderProfile: ProfileDefinition {
         var profile = RouterTestFixtures.profile()
         profile.decision = [deciderRef]
         return profile
@@ -158,14 +159,22 @@ struct DecisionSlotResolveTests {
 
     // MARK: - Helpers
 
-    /// Resolves ``profile`` over a ``RecordingLoader`` of `container` and an
+    /// Resolves `profile` over a ``RecordingLoader`` of `container` and an
     /// ``UnsizableDeciderMetadataSource``, in a fresh pool.
     ///
-    /// - Parameter container: The container of each generation slot.
+    /// - Parameters:
+    ///   - profile: The profile to resolve. The default is the standard test
+    ///     profile, whose decision candidate is its flash model.
+    ///   - container: The container of each generation slot.
+    ///   - progress: The progress of the resolve.
     /// - Returns: The profile, the loader, the pool and the progress.
     /// - Throws: The error of the resolve.
     @MainActor
-    private static func resolve(over container: any LoadedLLMContainer = BasicLLMContainer()) async throws -> Resolved {
+    private static func resolve(
+        _ profile: ProfileDefinition = RouterTestFixtures.profile(),
+        over container: any LoadedLLMContainer = BasicLLMContainer(),
+        progress: ResolutionProgress = ResolutionProgress()
+    ) async throws -> Resolved {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: cacheDir) }
         let loader = RecordingLoader(container: container)
@@ -173,9 +182,8 @@ struct DecisionSlotResolveTests {
         let router = Router(
             cacheDir: cacheDir, probe: RouterTestFixtures.stubProbe,
             metadataSource: UnsizableDeciderMetadataSource(), loader: loader, pool: pool)
-        let progress = ResolutionProgress()
-        let profile = try await router.resolve(profile: Self.profile, reporting: progress)
-        return Resolved(profile: profile, loader: loader, pool: pool, progress: progress)
+        let resolved = try await router.resolve(profile: profile, reporting: progress)
+        return Resolved(profile: resolved, loader: loader, pool: pool, progress: progress)
     }
 
     /// Makes a live container over a stub model that gives log probabilities.
@@ -188,9 +196,9 @@ struct DecisionSlotResolveTests {
             contextWindow: liveContextWindow, tokenCounter: CharacterTokenCounter())
     }
 
-    // MARK: - The flash winner
+    // MARK: - The flash model as the decision candidate
 
-    @Test("the decision handle uses the flash winner")
+    @Test("a decision candidate that is the flash model gives the flash winner")
     @MainActor
     func decisionHandleUsesTheFlashWinner() async throws {
         let resolved = try await Self.resolve()
@@ -198,21 +206,30 @@ struct DecisionSlotResolveTests {
         #expect(resolved.profile.decision.chosen == resolved.profile.flash.chosen)
     }
 
-    @Test("the decision handle records the flash fallback")
+    @Test("a decision candidate that cannot be sized fails the resolve, and the failure names the decision slot")
     @MainActor
-    func decisionHandleRecordsTheFlashFallback() async throws {
-        let resolved = try await Self.resolve()
+    func unsizableDeciderFailsTheResolve() async throws {
+        let failure = try await #require(throws: ResolutionFailure.self) {
+            _ = try await Self.resolve(Self.unsizableDeciderProfile)
+        }
+        let decisionSlot = try #require(failure.slots.first { $0.slot == .decision })
 
-        #expect(resolved.profile.decision.resolution.fallback == .flashModel)
+        #expect(decisionSlot.chosen == nil)
+        #expect(decisionSlot.considered.map(\.ref) == [Self.deciderRef])
+        #expect(decisionSlot.considered.map(\.verdict) == [.metadataUnavailable(Self.unsizableDeciderReason)])
     }
 
-    @Test("the decision handle records the decision candidate with the reason it cannot be sized")
+    @Test("a decision candidate that cannot be sized fails the decision slot of the progress")
     @MainActor
-    func decisionHandleRecordsEachCandidate() async throws {
-        let considered = try await Self.resolve().profile.decision.resolution.considered
+    func unsizableDeciderFailsTheProgress() async throws {
+        let progress = ResolutionProgress()
+        _ = try? await Self.resolve(Self.unsizableDeciderProfile, progress: progress)
 
-        #expect(considered.map(\.ref) == [Self.deciderRef])
-        #expect(considered.map(\.verdict) == [.metadataUnavailable(Self.unsizableDeciderReason)])
+        #expect(progress.slots[.decision]?.chosen == nil)
+        guard case .failed = progress.slots[.decision]?.state else {
+            Issue.record("the decision slot is not failed: \(String(describing: progress.slots[.decision]))")
+            return
+        }
     }
 
     @Test("the decision slot of the progress is ready with the flash winner")
@@ -334,7 +351,7 @@ struct DecisionSlotResolveTests {
     @Test("a resolve fetches the metadata of a decision candidate once")
     @MainActor
     func decisionCandidateIsFetchedOnce() async throws {
-        let fetched = try await Self.fetchedRepos(resolving: Self.profile)
+        let fetched = try await Self.fetchedRepos(resolving: Self.unsizableDeciderProfile)
 
         #expect(fetched.filter { $0 == Self.deciderRef.repo }.count == 1)
     }

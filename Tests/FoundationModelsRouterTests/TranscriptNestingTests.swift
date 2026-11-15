@@ -127,7 +127,8 @@ struct TranscriptNestingTests {
         description: "test profile",
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
-        embedding: ["org/emb-a"]
+        embedding: ["org/emb-a"],
+        decision: ["org/flash-a"]
     )
 
     /// A profile with `context: nil`, so resolution derives the working
@@ -139,6 +140,7 @@ struct TranscriptNestingTests {
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
         embedding: ["org/emb-a"],
+        decision: ["org/flash-a"],
         context: nil
     )
 

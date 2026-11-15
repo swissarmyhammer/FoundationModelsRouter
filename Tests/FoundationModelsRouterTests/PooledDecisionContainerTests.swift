@@ -212,8 +212,8 @@ struct PooledDecisionContainerTests {
 
     // MARK: - Reasoning off
 
-    /// A chat template that leaves a thinking block open makes the decision
-    /// of the flash fallback throw. The check is in `GenericPromptFormat`
+    /// A chat template that leaves a thinking block open makes a decision in
+    /// the generic format throw. The check is in `GenericPromptFormat`
     /// with no closed-think fallback: the container gives the format to the
     /// pooled decision model unchanged.
     @Test("a template that cannot turn reasoning off makes a decision throw unsupportedModel")

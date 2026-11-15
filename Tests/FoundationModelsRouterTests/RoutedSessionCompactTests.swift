@@ -155,6 +155,7 @@ struct RoutedSessionCompactTests {
             standard: ["org/std-a"],
             flash: ["org/flash-a"],
             embedding: ["org/emb-a"],
+            decision: ["org/flash-a"],
             context: context
         )
     }

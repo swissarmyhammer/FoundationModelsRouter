@@ -57,7 +57,7 @@ struct ResolveLocalModelTests {
     private static func profile(embedding: [ModelRef]) -> ProfileDefinition {
         ProfileDefinition(
             name: "local", description: "local embedder",
-            standard: [hubStandard], flash: [hubFlash], embedding: embedding, context: context)
+            standard: [hubStandard], flash: [hubFlash], embedding: embedding, decision: [hubFlash], context: context)
     }
 
     /// Makes a router over the stubs.

@@ -45,7 +45,7 @@ h2oai/h2o-lightning-4b-gguf/h2o-lightning-4b-Q4_K_M.gguf@61f8d8b7a8c2d84426d0d14
 This is the `h2o-lightning-4b` model, quantized to `Q4_K_M`, in GGUF format,
 at a pinned revision. The GGUF file has the decision type `h2o-lightning`, thus
 the decision slot takes the native decision path (see the next section). An
-empty list is also valid. The slot then always uses the `flash` model.
+empty list fails the resolve: the slot is required.
 
 ## The decision path
 
@@ -78,11 +78,9 @@ The router reads `decider_config.json` through the metadata source of the
 sizing step, at the revision of the model reference. A local folder records the
 file at its top, as a Hub repository does.
 
-The flash fallback reads no file. It takes the native path when the `flash`
-model is a GGUF model with a supported decision type. Else it uses
-`GenericPromptFormat`. The decision type comes from the sizing step, thus this
-costs no read and cannot fail. The path of a model is the same in the fallback
-as in the decision slot.
+When the router cannot read the prompt format of the chosen candidate (for
+example, `decider_config.json` is not valid), the resolve fails with
+`DecisionFormatFailure`, which names the model and the error of the read.
 
 `GenericPromptFormat` turns reasoning off in the chat template. Some chat
 templates ignore this request and leave a thinking block open (`<think>` or
@@ -92,38 +90,22 @@ probabilities. Thus the format does not close the block. It throws
 
 ## The memory rule
 
-The decision pass runs after the trio (`embedding`, `standard` and `flash`) is
-chosen:
+The decision slot is required, as each other slot is. It never uses the model
+of another slot in place of its own candidates.
 
-1. The trio is fitted first. The decision slot does not take part in that fit.
-   Thus the decision slot cannot make the trio choose a smaller model or a
-   smaller context.
-2. The decision pass gets only the memory that the trio leaves. It uses the
-   context of the trio.
-3. The pass tries each decision candidate in preference order. The first
+1. The four slots (`embedding`, `standard`, `flash` and `decision`) are fitted
+   together, in that order, against one budget, at one context.
+2. When the profile names no context, the window search sizes the four slots
+   together. Thus the decision model gets its bytes first, and the window is
+   smaller by them.
+3. The slot tries each decision candidate in preference order. The first
    candidate that fits wins.
-4. A candidate with the same pool key as a model of the trio is the same
-   resident model. It costs 0 more bytes.
-
-## The flash fallback
-
-When no decision candidate fits, the slot uses the `flash` model. Thus the
-decision slot never stops a resolve, also when the profile gives no candidate.
-
-The slot also uses the `flash` model when the router cannot read the prompt
-format of the chosen candidate (for example, `decider_config.json` is not
-valid). The router then logs a warning on the
-`FoundationModelsRouter.RepoMetadataReader` logger: "the prompt format of the
-decision model could not be read; the decision slot uses the flash model". The
-metadata of the warning gives the model reference and the type of the error.
-
-To see if a resolved profile uses the flash fallback:
-
-- `profile.decision.chosen` is equal to `profile.flash.chosen`.
-- `profile.decision.footprintBytes` is 0, because the model is resident one
-  time.
-- The `FoundationModelsRouter.resolve` span has the attribute
-  `model.ref.decision`, with the same value as `model.ref.flash`.
+4. A candidate with the same pool key as the model of the `embedding`,
+   `standard` or `flash` slot is the same resident model. It costs 0 more
+   bytes.
+5. When no decision candidate fits, at the smallest window too, the resolve
+   fails with `ResolutionFailure`. Its description names each slot, each
+   candidate, its footprint and its verdict.
 
 ### The rejections in the resolution
 
@@ -131,20 +113,18 @@ The resolution of the slot records why each candidate was rejected. Code in
 this package and in its test targets reads it from
 `profile.decision.resolution`, which has `package` access:
 
-- `fallback` is `SlotFallback.flashModel` when the slot uses the `flash` model,
-  else `nil`.
 - `considered` holds one `CandidateReport` for each decision candidate, in
   preference order. Its `verdict` tells the result:
 
 | Verdict | Meaning |
 |---|---|
 | `chosen` | The candidate fits, and the slot uses it. |
-| `tooLarge` | The candidate needs more bytes than the trio left. |
+| `tooLarge` | The candidate needs more bytes than the other slots left. |
 | `skippedHigherPreferenceChosen` | A candidate earlier in the list won. The router did not size this one. |
 | `metadataUnavailable(reason)` | The router could not size the candidate, or could not read its prompt format. `reason` tells why. |
 
 `ResolutionProgress.slots[.decision]?.chosen` gives the model of the slot
-during the resolve, with the fallback applied.
+during the resolve.
 
 ### A model that cannot answer on its path
 

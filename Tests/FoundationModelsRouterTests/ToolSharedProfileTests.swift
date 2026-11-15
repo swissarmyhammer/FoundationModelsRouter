@@ -137,7 +137,8 @@ struct ToolSharedProfileTests {
         description: "test profile",
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
-        embedding: ["org/emb-a"]
+        embedding: ["org/emb-a"],
+        decision: ["org/flash-a"]
     )
 
     private static let stubDimension = 8

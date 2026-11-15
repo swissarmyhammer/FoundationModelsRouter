@@ -89,6 +89,7 @@ private let ggufProfile = ProfileDefinition(
     standard: [ggufModel],
     flash: [flashModel],
     embedding: [RealModels.embedding],
+    decision: [flashModel],
     context: ggufProfileContext
 )
 
@@ -100,6 +101,7 @@ private let selfDraftingProfile = ProfileDefinition(
     standard: [ModelRef(repo: ggufModel.repo, path: ggufModel.path, revision: ggufModel.revision, drafter: ggufModel)],
     flash: [flashModel],
     embedding: [RealModels.embedding],
+    decision: [flashModel],
     context: ggufProfileContext
 )
 
@@ -111,6 +113,7 @@ private let mixedSlotProfile = ProfileDefinition(
     standard: [largeMLXModel, ggufModel],
     flash: [flashModel],
     embedding: [RealModels.embedding],
+    decision: [flashModel],
     context: ggufProfileContext
 )
 

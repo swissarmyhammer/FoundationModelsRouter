@@ -24,6 +24,7 @@ private let twoModelProfile = ProfileDefinition(
     standard: ["mlx-community/Qwen3-4B-4bit"],
     flash: ["mlx-community/Qwen3-1.7B-4bit"],
     embedding: [RealModels.embedding],
+    decision: ["mlx-community/Qwen3-1.7B-4bit"],
     context: twoModelContextTokens
 )
 
