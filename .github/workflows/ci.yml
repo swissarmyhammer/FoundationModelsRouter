@@ -35,7 +35,11 @@ name: CI
 # bootstrap, so the bootstrap stays; the header of
 # `MetalLibraryTestBootstrap.swift` holds the measurement.
 #
-# `CIWorkflowTests` pins this call and its input.
+# `integration-runs-on` sends the integration job only to a runner labelled
+# `large-memory` (m3u1). The pool's other runner, mini-01, has 32 GB, and
+# it decodes a 27B model at about 6 tokens a second against 30 on m3u1: on
+# 2026-11-15 its integration runs ran out of Metal memory twice, and with a
+# smaller Flint took 61 minutes. The unit job still runs on any runner.
 
 on:
   push:
@@ -54,3 +58,5 @@ jobs:
       # The real-model suites are a nested package. This input makes the unit
       # job build it on every run and makes the integration job run it.
       integration-package-path: IntegrationTests
+      # Only the large runners: see the header.
+      integration-runs-on: '["self-hosted","macOS","large-memory"]'

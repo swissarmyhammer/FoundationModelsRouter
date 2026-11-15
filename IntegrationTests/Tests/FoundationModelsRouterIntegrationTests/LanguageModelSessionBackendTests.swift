@@ -10,8 +10,8 @@ import Testing
 /// The same real `mlx-community` generation model the rest of this target's
 /// gated suites use for the `.standard` slot.
 ///
-/// Qwen3 4B since 2026-11-15 (task ^467gchm). The suite drove Muse-Glimmer-30B
-/// before, and took 414 seconds on the 32 GB runner `mini-01`.
+/// Qwen 3.8 27B since 2026-11-15 (task ^467gchm). The suite drove
+/// Muse-Glimmer-30B before.
 private let sessionBackendModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
@@ -665,8 +665,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         // `cachedTokenCount: promptCache.reusedTokenCount`. Fork revision
         // 239b41e made ExecutorPromptCachePlan.make accept the rank-2,
         // all-ones-masked text-only input that the Muse Glimmer processor
-        // rendered when this suite drove it; a dense Qwen3 renders a plain
-        // text input, and this count is positive for it too. The two packages
+        // rendered when this suite drove it; Qwen 3.8 renders a plain text
+        // input, and the checkpoint of its recurrent caches keeps this count
+        // positive for it too. The two packages
         // of this repository resolve the fork branch independently, and
         // Package.resolved is gitignored, so read the revision this package
         // resolved before you trust any claim about the fork. This assertion is
@@ -691,7 +692,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // plus every token answer 1 generated, and `TranscriptConverter` drops
         // the `.reasoning` entries of earlier answers from the chat history on
         // purpose. A reasoning model reasons directly after the generation
-        // prompt (Qwen3 in a `<think>` block), so answer 2's
+        // prompt (Qwen 3.8 in a `<think>` block), so answer 2's
         // render diverges from the ledger at the first generated token, and the
         // fork rewinds the cache to the end of answer 1's prompt. Measured
         // 2026-08-22 at fork pin 41e9f41, under the argmax decoding

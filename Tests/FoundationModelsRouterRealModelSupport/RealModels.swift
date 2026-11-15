@@ -3,26 +3,25 @@ import FoundationModelsRouter
 /// The real `mlx-community` models the gated integration suite resolves
 /// against actual hardware.
 ///
-/// Both generation slots name dense Qwen3 models. Qwen3.5/3.6/3.8 give their
-/// linear/GDN layers a `MambaCache`, which is not trimmable, and one
-/// non-trimmable entry stops prefix reuse for the whole cache list, so those
-/// models lose prompt caching. Every cache entry of a dense Qwen3 is
-/// trimmable, so the prompt-cache suites can reuse a prefix.
+/// The `standard` slot names Qwen 3.8 27B, the standard model of the product.
+/// 48 of its 64 layers are linear attention, whose recurrent cache cannot
+/// rewind. The MLX fork keeps a checkpoint of those caches at the end of each
+/// prompt (`PromptCacheCheckpoint`), so a next answer still reuses the
+/// prefix, and the prompt-cache suites hold on it.
 ///
-/// The slots named Muse-Glimmer-30B until 2026-11-15. The CI runner
-/// `mini-01` has 32 GB and decodes a 30B model at about 6 tokens a second,
-/// so the suites of this slot alone took more than ten minutes there. The
-/// suites test the router, not the model, and small models run them in a
-/// fraction of that time.
+/// The slot named Muse-Glimmer-30B until 2026-11-15 (task ^467gchm). The
+/// gated suites run only on a runner labelled `large-memory` (see
+/// `.github/workflows/ci.yml`), so the slot runs the model the product runs.
 public enum RealModels {
-    /// `.standard` slot: Qwen3 4B, dense, in 4 bits.
-    public static let standard: ModelRef = "mlx-community/Qwen3-4B-4bit"
+    /// `.standard` slot: Qwen 3.8 27B in the `mxfp4` quantization, the same
+    /// reference as `StandardModels.qwen38`.
+    public static let standard: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 
-    /// `.flash` slot: Qwen3 1.7B, dense, in 4 bits.
+    /// `.flash` slot: Qwen3 4B, dense, in 4 bits.
     ///
     /// The flash slot names a different, smaller model than ``standard``, so
     /// the gated suites run two generation models.
-    public static let flash: ModelRef = "mlx-community/Qwen3-1.7B-4bit"
+    public static let flash: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
     /// `.embedding` slot: small enough that co-residency alongside the
     /// generation models above is never the constraint.
