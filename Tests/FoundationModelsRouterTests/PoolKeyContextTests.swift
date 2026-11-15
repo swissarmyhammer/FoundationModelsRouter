@@ -308,7 +308,7 @@ struct PoolKeyContextTests {
         context: Int, resident: ModelPoolKey
     ) -> Result<Int64, RepoMetadataError> {
         Router.footprintBytes(
-            for: ref, context: context, metadataByRef: [ref: .success(metadata)],
+            for: ref, in: .standard, context: context, metadataByRef: [ref: .success(metadata)],
             membership: [ref: [.standard]], residentKeys: [resident])
     }
 }

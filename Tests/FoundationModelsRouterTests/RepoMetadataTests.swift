@@ -1010,7 +1010,7 @@ struct RepoMetadataTests {
             raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
 
         let bytes = Router.footprintBytes(
-            for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
+            for: ref, in: .embedding, context: 4_096, metadataByRef: [ref: .success(metadata)],
             membership: [ref: [.embedding]], residentKeys: [])
 
         #expect(try bytes.get() == Self.coreMLBundleBytes)
@@ -1027,7 +1027,7 @@ struct RepoMetadataTests {
         let metadata = try RepoMetadata(
             raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
         return Router.footprintBytes(
-            for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
+            for: ref, in: .standard, context: 4_096, metadataByRef: [ref: .success(metadata)],
             membership: [ref: slots], residentKeys: [])
     }
 
@@ -1077,7 +1077,7 @@ struct RepoMetadataTests {
             raw: RawRepoMetadata(configJSON: nil, treeJSON: Self.coreMLTreeJSON), repo: ref.repo)
 
         let bytes = Router.footprintBytes(
-            for: ref, context: 4_096, metadataByRef: [ref: .success(metadata)],
+            for: ref, in: .flash, context: 4_096, metadataByRef: [ref: .success(metadata)],
             membership: [ref: [.embedding, .flash]], residentKeys: [])
 
         #expect(throws: RepoMetadataError.self) { try bytes.get() }

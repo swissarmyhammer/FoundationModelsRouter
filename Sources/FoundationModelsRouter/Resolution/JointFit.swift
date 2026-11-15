@@ -36,7 +36,8 @@ struct JointResolution: Sendable, Equatable {
 /// and a tool body holds nothing (task ^qhgfajc), so a flash call inside an
 /// open submission on the same model does not wait on itself. The flash slot
 /// is sized with the pool key of the standard winner, so the standard model
-/// costs it 0 more bytes, and the resolve loads the model once.
+/// costs it only one session of KV cache (the provider prices it), and the
+/// resolve loads the model once.
 ///
 /// The decision slot is required, as each other slot is (task ^ybx7vvn). It
 /// never uses the model of another slot in place of its own candidates: when
@@ -62,14 +63,16 @@ enum JointFit {
     /// looks for a fit in `smallestWindow...nativeMaxContext`.
     private static let smallestWindow = 1
 
-    /// The raw footprint of a candidate at a context, as the caller injects
-    /// it. The third argument is the pool keys of the models that this
-    /// resolve allocated before it sizes the candidate. A candidate that one
-    /// of these keys serves (``ModelPoolKey/canServe(_:)``) costs 0 more
-    /// bytes. The flash slot passes the key of the standard winner, and the
-    /// decision slot the keys of the winners of the embedding, standard and
-    /// flash slots.
-    typealias FootprintProvider = (ModelRef, Int, Set<ModelPoolKey>) -> Result<Int64, RepoMetadataError>
+    /// The raw footprint of a candidate in a slot at a context, as the
+    /// caller injects it. The second argument is the slot that sizes the
+    /// candidate. The fourth argument is the pool keys of the models that
+    /// this resolve allocated before it sizes the candidate: the flash slot
+    /// passes the key of the standard winner, and the decision slot the keys
+    /// of the winners of the embedding, standard and flash slots. A candidate
+    /// that one of these keys serves (``ModelPoolKey/canServe(_:)``) is a
+    /// model that this resolve loads already, so it costs only what its slot
+    /// adds to that model.
+    typealias FootprintProvider = (ModelRef, ModelSlot, Int, Set<ModelPoolKey>) -> Result<Int64, RepoMetadataError>
 
     /// The shared budget as the slots consume it, in allocation order.
     private struct SharedBudget {
@@ -214,7 +217,7 @@ enum JointFit {
             }
 
             let report = evaluateCandidate(
-                ref, context: context, budget: budget, allocatedKeys: allocatedKeys, footprint: footprint)
+                ref, slot: slot, context: context, budget: budget, allocatedKeys: allocatedKeys, footprint: footprint)
             considered.append(report)
             if report.verdict == .chosen {
                 chosen = ref
@@ -230,17 +233,18 @@ enum JointFit {
         )
     }
 
-    /// Sizes one candidate against the remaining budget at `context` and gives
-    /// its verdict. The candidate is charged its whole raw footprint estimate,
-    /// as `footprint` gives it for `allocatedKeys`.
+    /// Sizes one candidate of `slot` against the remaining budget at
+    /// `context` and gives its verdict. The candidate is charged its whole
+    /// raw footprint estimate, as `footprint` gives it for `allocatedKeys`.
     private static func evaluateCandidate(
         _ ref: ModelRef,
+        slot: ModelSlot,
         context: Int,
         budget: SharedBudget,
         allocatedKeys: Set<ModelPoolKey>,
         footprint: FootprintProvider
     ) -> CandidateReport {
-        switch footprint(ref, context, allocatedKeys) {
+        switch footprint(ref, slot, context, allocatedKeys) {
         case .failure(.metadataUnavailable(let reason)):
             return CandidateReport(
                 ref: ref,
@@ -367,7 +371,9 @@ enum JointFit {
     /// budget. Each slot's choice is charged before the next slot is
     /// resolved. The flash slot is sized with the pool key of the standard
     /// winner, and the decision slot with the pool keys of the three winners
-    /// before it, so a candidate that one of them serves costs 0 more bytes.
+    /// before it, so a candidate that one of them serves costs only what its
+    /// slot adds to that model: one session of KV cache in the flash slot,
+    /// and 0 bytes in the decision slot.
     ///
     /// - Parameter candidates: The candidates each slot tries here.
     private static func attemptSlots(

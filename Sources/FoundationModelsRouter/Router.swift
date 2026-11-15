@@ -647,11 +647,14 @@ public actor Router {
     /// after a failed acquire, the budget goes back to the footprint of the
     /// pool (``PromptCacheSizing/withBudget(adding:isolation:_:)``).
     ///
-    /// A slot whose key a hold of this resolve serves already (the decision
-    /// slot on the model of the standard or flash slot) costs 0 bytes: the hold sends no footprint
-    /// and no session bytes, the prompt cache gets no smaller budget, and the
-    /// hold is not a new load. The model is resident once, so it is charged
-    /// once.
+    /// A slot whose key a hold of this resolve serves already is not a new
+    /// load: the model is resident once, so its weights are charged once.
+    /// The decision slot on the model of the standard or flash slot costs 0
+    /// bytes: the hold sends no footprint and no session bytes, and the
+    /// prompt cache gets no smaller budget. The flash slot on the model of
+    /// the standard slot costs one session KV cache, as a hold on a model
+    /// that the pool keeps for another owner does: each flash session opens
+    /// a cache of its own beside the standard session (task ^t4zn88x).
     ///
     /// - Parameters:
     ///   - slot: The slot being acquired.
@@ -675,8 +678,9 @@ public actor Router {
         let chosen = Self.chosenRef(of: slot, in: resolution)
         let request = slot.poolKey(of: chosen, context: slotRes.contextTokens)
         let isHeldByThisResolve = heldKeys.contains { $0.canServe(request) }
-        let footprintBytes = isHeldByThisResolve ? 0 : Self.chosenFootprint(for: slotRes)
-        let sessionBytes = isHeldByThisResolve
+        let isFree = isHeldByThisResolve && slot != .flash
+        let footprintBytes = isFree ? 0 : Self.chosenFootprint(for: slotRes)
+        let sessionBytes = isFree
             ? 0
             : Self.chosenSessionBytes(
                 of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef)
@@ -903,8 +907,11 @@ public actor Router {
     ///
     /// A candidate that a key in `allocatedKeys` serves
     /// (``ModelPoolKey/canServe(_:)``) is a model that this resolve allocated
-    /// already, so it costs 0 more bytes. A candidate that a key in
-    /// `residentKeys` serves is a model that the pool keeps for another
+    /// already. In the flash slot it costs one session KV cache at
+    /// `context`: each flash session opens a hold with a cache of its own
+    /// beside the standard session (task ^t4zn88x). In the decision slot it
+    /// costs 0 more bytes, because a decision call is small. A candidate that
+    /// a key in `residentKeys` serves is a model that the pool keeps for another
     /// owner, so it is charged its marginal cost: one session KV cache at
     /// `context` for a generation model, and zero for an embedder. A
     /// generation model that loads at a fixed context (GGUF) is resident
@@ -919,18 +926,20 @@ public actor Router {
     ///
     /// - Parameters:
     ///   - ref: The candidate to size.
+    ///   - sizingSlot: The slot that sizes the candidate.
     ///   - context: The working context of the candidate.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
     ///   - membership: Every slot that each ref is a candidate for.
     ///   - residentKeys: The keys of the models that the pool keeps resident.
     ///   - allocatedKeys: The keys of the models that this resolve allocated
-    ///     before it sizes `ref`. The fit of the embedding, standard and
-    ///     flash slots allocates none of them before it sizes a candidate.
-    ///     The decision pass of the joint fit gives the keys of the three
-    ///     winners (``JointFit/FootprintProvider``).
+    ///     before it sizes `ref`: the key of the standard winner for the
+    ///     flash slot, the keys of the three winners for the decision slot,
+    ///     and none for the embedding and standard slots
+    ///     (``JointFit/FootprintProvider``).
     /// - Returns: The largest footprint, or why the candidate cannot be sized.
     static func footprintBytes(
         for ref: ModelRef,
+        in sizingSlot: ModelSlot,
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         membership: [ModelRef: Set<ModelSlot>],
@@ -948,7 +957,7 @@ public actor Router {
             }
             let pricing = SlotPricing(
                 ref: ref, metadata: metadata, context: context, metadataByRef: metadataByRef,
-                residentKeys: residentKeys, allocatedKeys: allocatedKeys)
+                residentKeys: residentKeys, allocatedKeys: allocatedKeys, sizingSlot: sizingSlot)
             return Result { () throws(RepoMetadataError) -> Int64 in
                 let figures = try slots.map { slot throws(RepoMetadataError) in try pricing.footprint(in: slot).get() }
                 // Total by construction: every ref in `metadataByRef` came
@@ -963,7 +972,7 @@ public actor Router {
     }
 
     /// The pricing of one sized candidate at one context, for each slot that
-    /// lists it (``footprintBytes(for:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
+    /// lists it (``footprintBytes(for:in:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
     private struct SlotPricing {
         /// The candidate.
         let ref: ModelRef
@@ -984,16 +993,24 @@ public actor Router {
         /// The keys of the models that this resolve allocated already.
         let allocatedKeys: Set<ModelPoolKey>
 
-        /// The bytes that the candidate costs in `slot`: 0 when this resolve
-        /// allocated its model, its marginal cost when the pool keeps it
-        /// resident, else its whole footprint.
+        /// The slot that sizes the candidate.
+        let sizingSlot: ModelSlot
+
+        /// The bytes that the candidate costs in `slot`: one session KV
+        /// cache when this resolve allocated its model and the flash slot
+        /// sizes it, 0 when this resolve allocated its model and another
+        /// slot sizes it, its marginal cost when the pool keeps it resident,
+        /// else its whole footprint.
         ///
         /// - Parameter slot: A slot that lists the candidate.
         /// - Returns: The bytes, or the error of a drafter that could not be
         ///   sized.
         func footprint(in slot: ModelSlot) -> Result<Int64, RepoMetadataError> {
             let key = slot.poolKey(of: ref, context: context)
-            guard !allocatedKeys.contains(where: { $0.canServe(key) }) else { return .success(0) }
+            guard !allocatedKeys.contains(where: { $0.canServe(key) }) else {
+                let isSharedFlash = sizingSlot == .flash && slot.poolRole == .llm
+                return .success(isSharedFlash ? metadata.footprint.kvBytes(context: context) : 0)
+            }
             let isResident = residentKeys.contains { $0.canServe(key) }
             switch slot.poolRole {
             case .embedding:
@@ -1072,9 +1089,9 @@ public actor Router {
             return try JointFit.resolve(
                 profile: def,
                 budgetBytes: budget,
-                footprint: { ref, context, allocatedKeys in
+                footprint: { ref, slot, context, allocatedKeys in
                     Self.footprintBytes(
-                        for: ref, context: context, metadataByRef: metadataByRef,
+                        for: ref, in: slot, context: context, metadataByRef: metadataByRef,
                         membership: membership, residentKeys: residentKeys, allocatedKeys: allocatedKeys
                     )
                 },

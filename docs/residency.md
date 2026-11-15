@@ -3,9 +3,10 @@
 ## `standard` and `flash` can be one model
 
 The `standard` and `flash` slots can name the same model. `Router.resolve`
-then loads the model once, and the `flash` slot costs no more memory: the
-joint fit charges it 0 bytes, and the `flash` hold is a second hold of the
-`standard` entry.
+then loads the model once. The `flash` hold is a second hold of the
+`standard` entry, and the joint fit charges it one session of KV cache at the
+context: each `flash` session opens a cache of its own beside the `standard`
+session. Its weights are charged once, in the `standard` slot.
 
 A synchronous tool call, for example the multitool `searchTools`, runs a
 selection call on `flash` inside an open submission on `standard`. That call

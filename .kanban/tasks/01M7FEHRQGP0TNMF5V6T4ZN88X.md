@@ -9,6 +9,14 @@ comments:
     - evidence: 45890682 feat(resolution)!: allow one model in both the standard and the flash slot; `swift test` 2715 + 42 + 19 green; IntegrationTests and Benchmarks build clean.
     - note: the shared flash slot is charged 0 bytes, and so is its session KV (the acquire of a key this resolve already holds adds no session bytes), the same rule the decision slot follows.
   timestamp: 2026-11-15T11:30:13.059513+00:00
+- actor: claude-code
+  id: 01m7ffvf3y546s7w2c32zg52mq
+  text: |-
+    ### follow-up — changed (coordinator)
+    - A flash slot that shares the standard model is now charged one session of KV at the context (`metadata.footprint.kvBytes(context:)`) in the joint fit and in the acquire (footprint + session bytes), the marginal cost of a resident LLM. The decision slot served by a winner stays at 0.
+    - `JointFit.FootprintProvider` and `Router.footprintBytes` take the sizing slot.
+    - commit: `fix(resolution): charge the KV of a flash slot that shares the standard model`; `swift test` 2716 + 42 + 19 green.
+  timestamp: 2026-11-15T11:35:33.246258+00:00
 position_column: done
 position_ordinal: ffffffffff9780
 title: Allow one model in both the standard and the flash slot

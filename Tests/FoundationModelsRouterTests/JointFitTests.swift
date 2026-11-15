@@ -46,7 +46,7 @@ struct JointFitTests {
         _ table: [ModelRef: Int64] = raw,
         unavailable: [ModelRef: String] = [:]
     ) -> JointFit.FootprintProvider {
-        chargingAllocatedModelsNothing { ref, _, _ in
+        chargingAllocatedModelsNothing { ref, _, _, _ in
             if let reason = unavailable[ref] {
                 return .failure(.metadataUnavailable(reason))
             }
@@ -300,7 +300,7 @@ struct JointFitTests {
     private static func sizedFootprint(
         _ table: [ModelRef: Footprint]
     ) -> JointFit.FootprintProvider {
-        chargingAllocatedModelsNothing { ref, context, _ in
+        chargingAllocatedModelsNothing { ref, _, context, _ in
             guard let footprint = table[ref] else {
                 return .failure(.metadataUnavailable("no footprint injected for \(ref.stringValue)"))
             }
@@ -978,14 +978,14 @@ struct JointFitTests {
 
     /// `base`, with 0 bytes for a candidate that one of the allocated pool
     /// keys serves, as the router prices it
-    /// (``Router/footprintBytes(for:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
+    /// (``Router/footprintBytes(for:in:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
     private static func chargingAllocatedModelsNothing(
         _ base: @escaping JointFit.FootprintProvider
     ) -> JointFit.FootprintProvider {
-        { ref, context, allocatedKeys in
+        { ref, slot, context, allocatedKeys in
             let request = ModelSlot.decision.poolKey(of: ref, context: context)
             guard !allocatedKeys.contains(where: { $0.canServe(request) }) else { return .success(0) }
-            return base(ref, context, allocatedKeys)
+            return base(ref, slot, context, allocatedKeys)
         }
     }
 

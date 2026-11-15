@@ -10,8 +10,9 @@ import Testing
 /// The model call of a session holds the lock of its model only for the call
 /// into the model, and a tool body holds nothing (task ^qhgfajc), so a flash
 /// call inside an open submission on the same model does not wait on itself.
-/// One model can thus serve both generation slots: the flash slot takes the
-/// standard model at no extra charge, and the resolve loads it once.
+/// One model can thus serve both generation slots: the resolve loads it once,
+/// and the flash slot is charged one session of KV cache at the context, the
+/// cache that each flash session opens beside the standard session.
 @Suite("One model in both generation slots")
 struct SharedGenerationModelTests {
     // MARK: - Candidate references
@@ -46,16 +47,24 @@ struct SharedGenerationModelTests {
     /// metadata's tiny models.
     private static let routerRAMBytes: Int64 = 48 << 30
 
-    /// A footprint that grows with the context for a generation model, and
-    /// that is 0 for a model that an allocated pool key serves, as the
-    /// router prices it.
+    /// The bytes of one session of KV cache of a generation model at
+    /// `context`.
+    private static func kvBytes(context: Int) -> Int64 {
+        bytesPerToken * Int64(context)
+    }
+
+    /// A footprint that grows with the context for a generation model. A
+    /// flash candidate that an allocated pool key serves costs one session of
+    /// KV cache, as the router prices it.
     private static func footprint(
-        _ ref: ModelRef, _ context: Int, _ allocatedKeys: Set<ModelPoolKey>
+        _ ref: ModelRef, _ slot: ModelSlot, _ context: Int, _ allocatedKeys: Set<ModelPoolKey>
     ) -> Result<Int64, RepoMetadataError> {
         guard ref != embeddingModel else { return .success(embeddingBytes) }
-        let request = ModelSlot.flash.poolKey(of: ref, context: context)
-        guard !allocatedKeys.contains(where: { $0.canServe(request) }) else { return .success(0) }
-        return .success(weightBytes + bytesPerToken * Int64(context))
+        let request = slot.poolKey(of: ref, context: context)
+        guard !allocatedKeys.contains(where: { $0.canServe(request) }) else {
+            return .success(slot == .flash ? kvBytes(context: context) : 0)
+        }
+        return .success(weightBytes + kvBytes(context: context))
     }
 
     /// A `nativeMaxContext` closure that gives each model ``nativeWindow``.
@@ -115,24 +124,45 @@ struct SharedGenerationModelTests {
         #expect(result.flash == Self.standardModel)
     }
 
-    @Test("the flash slot of the standard model is charged 0 bytes")
-    func flashOfTheStandardModelIsFree() throws {
-        let result = try Self.jointFit(Self.profile(standard: [Self.standardModel], flash: [Self.standardModel]))
-        let flash = try Self.resolution(result.slots, for: .flash)
-
-        #expect(
-            flash.considered
-                == [CandidateReport(ref: Self.standardModel, estimatedFootprintBytes: 0, chargedBytes: 0, verdict: .chosen)])
-    }
-
-    @Test("a derived window of one model in both slots is charged that model once")
-    func derivedWindowChargesTheSharedModelOnce() throws {
-        let budget = Self.embeddingBytes + Self.weightBytes + Self.bytesPerToken * Int64(Self.nativeWindow)
+    @Test("a derived window of one model in both slots is smaller by the KV cache of the flash session")
+    func derivedWindowChargesTheFlashSessionKV() throws {
+        let budget = Self.embeddingBytes + Self.weightBytes + Self.kvBytes(context: Self.nativeWindow)
         let result = try Self.jointFit(
             Self.profile(standard: [Self.standardModel], flash: [Self.standardModel], context: nil),
             budgetBytes: budget)
 
-        #expect(try Self.resolution(result.slots, for: .standard).contextTokens == Self.nativeWindow)
+        #expect(try Self.resolution(result.slots, for: .standard).contextTokens == Self.nativeWindow / 2)
+    }
+
+    // MARK: - The price of the router
+
+    /// The sizing metadata of the stub models of the resolve tests.
+    private static func stubMetadata(of ref: ModelRef) throws -> RepoMetadata {
+        try RepoMetadata(raw: RouterTestFixtures.rawMetadata, repo: ref.repo)
+    }
+
+    /// The price of the router of ``standardModel`` in `slot`, when the
+    /// standard slot allocated it at `context`.
+    private static func priceOfTheAllocatedStandardModel(in slot: ModelSlot, context: Int) throws -> Int64 {
+        let metadata = try stubMetadata(of: standardModel)
+        return try Router.footprintBytes(
+            for: standardModel, in: slot, context: context, metadataByRef: [standardModel: .success(metadata)],
+            membership: [standardModel: [.standard, .flash, .decision]], residentKeys: [],
+            allocatedKeys: [ModelSlot.standard.poolKey(of: standardModel, context: context)]
+        ).get()
+    }
+
+    @Test("the router charges a flash slot of the allocated standard model one session of KV cache")
+    func routerChargesTheSharedFlashSessionKV() throws {
+        let context = ScriptedSessionContext.tokens
+        let price = try Self.priceOfTheAllocatedStandardModel(in: .flash, context: context)
+
+        #expect(price == (try Self.stubMetadata(of: Self.standardModel)).footprint.kvBytes(context: context))
+    }
+
+    @Test("the router charges a decision slot of the allocated standard model nothing")
+    func routerChargesTheSharedDecisionNothing() throws {
+        #expect(try Self.priceOfTheAllocatedStandardModel(in: .decision, context: ScriptedSessionContext.tokens) == 0)
     }
 
     // MARK: - Router
@@ -157,9 +187,9 @@ struct SharedGenerationModelTests {
         #expect(await spy.llmLoads == [Self.standardModel])
     }
 
-    @Test("resolve charges the flash handle of the standard model no footprint")
+    @Test("resolve charges the flash handle of the standard model one session of KV cache")
     @MainActor
-    func resolveChargesTheSharedFlashNothing() async throws {
+    func resolveChargesTheSharedFlashSessionKV() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationModelTests")
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
@@ -172,7 +202,9 @@ struct SharedGenerationModelTests {
             reporting: ResolutionProgress()
         )
 
-        #expect(resolved.flash.footprintBytes == 0)
-        #expect(resolved.standard.footprintBytes > 0)
+        let kvBytes = try Self.stubMetadata(of: Self.standardModel).footprint
+            .kvBytes(context: ScriptedSessionContext.tokens)
+        #expect(resolved.flash.footprintBytes == kvBytes)
+        #expect(resolved.standard.footprintBytes > kvBytes)
     }
 }

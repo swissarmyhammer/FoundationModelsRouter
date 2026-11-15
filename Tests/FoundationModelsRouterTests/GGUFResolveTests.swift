@@ -132,7 +132,7 @@ struct GGUFResolveTests {
         let drafter = try Self.ggufMetadata(GGUFHeaderFixtures.denseBytes, weightBytes: Self.drafterBytes)
 
         let bytes = Router.footprintBytes(
-            for: ref, context: Self.context,
+            for: ref, in: .standard, context: Self.context,
             metadataByRef: [ref: .success(target), Self.drafterRef: .success(drafter)],
             membership: [ref: [.standard]], residentKeys: [])
 
@@ -170,7 +170,7 @@ struct GGUFResolveTests {
         in slot: ModelSlot, residentKeys: Set<ModelPoolKey> = [], allocatedKeys: Set<ModelPoolKey> = []
     ) throws -> Result<Int64, RepoMetadataError> {
         Router.footprintBytes(
-            for: draftedGGUFRef, context: context, metadataByRef: try draftedGGUFMetadata(),
+            for: draftedGGUFRef, in: slot, context: context, metadataByRef: try draftedGGUFMetadata(),
             membership: [draftedGGUFRef: [slot]], residentKeys: residentKeys, allocatedKeys: allocatedKeys)
     }
 

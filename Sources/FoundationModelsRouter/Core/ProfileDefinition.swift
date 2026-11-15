@@ -8,7 +8,8 @@
 /// scales the KV-cache footprint and determines whether a candidate fits.
 ///
 /// The `standard` and `flash` slots can name the same model. The resolve then
-/// loads the model once, and the `flash` slot costs no more memory.
+/// loads the model once, and the `flash` slot costs only one session of KV
+/// cache at the context.
 ///
 /// The type is pure value semantics — no dependency on MLX — and is `Sendable`
 /// and `Codable`. `context`'s `Codable` shape is back-compatible by
@@ -29,7 +30,8 @@ public struct ProfileDefinition: Sendable, Codable {
     /// Candidate models for the `flash` slot, in preference order.
     ///
     /// A candidate can be the model of the `standard` slot. The resolve then
-    /// loads that model once, and the `flash` slot costs no more memory.
+    /// loads that model once, and the `flash` slot costs only one session of
+    /// KV cache at the context.
     public var flash: [ModelRef]
 
     /// Candidate models for the `embedding` slot, in preference order.

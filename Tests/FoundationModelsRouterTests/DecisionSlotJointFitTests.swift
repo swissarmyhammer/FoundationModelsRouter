@@ -100,7 +100,7 @@ struct DecisionSlotJointFitTests {
         try JointFit.resolve(
             profile: profile,
             budgetBytes: budgetBytes,
-            footprint: { ref, context, _ in
+            footprint: { ref, _, context, _ in
                 footprint(of: ref, context: context).map { .success($0) }
                     ?? .failure(.metadataUnavailable(noFootprintReason(for: ref)))
             },
