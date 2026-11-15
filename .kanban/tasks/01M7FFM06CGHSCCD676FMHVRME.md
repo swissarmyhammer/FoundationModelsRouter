@@ -8,6 +8,14 @@ comments:
     ### Decision (user, 2026-11-15)
     "let's do a 16k window default, and let's make it settable per profile". The decision slot gets a context of its own: `ProfileDefinition.decisionContext`, defaulting to 16,384 tokens. The decision candidate is sized and loaded at that context, not at the shared window. ACPAgent has to add it to its configs.
   timestamp: 2026-11-15T11:43:52.457014+00:00
+- actor: claude-code
+  id: 01m7fgy1yr3knbqejk76q994es
+  text: |-
+    ### commit — changed
+    - evidence: c08efe3d feat(resolution)!: give the decision slot a context of its own; `swift test` 2725 + 42 + 19 green (two full runs); IntegrationTests and Benchmarks build clean.
+    - API: `ProfileDefinition.decisionContext: Int` (public var), init parameter `decisionContext: Int = ProfileDefinition.defaultDecisionContext` (last, after `context`), `public static let defaultDecisionContext = 16_384`; JSON without the key decodes to the default. New `SlotProgress.contextTokens: Int?`; span attributes `context.tokens` and `context.decision_tokens`; `ResolvedProfile.decisionContext` (required).
+    - note: an allocated MLX key serves any decision context (Router SlotPricing.isAllocated uses `withoutContext` when the candidate is not GGUF); a GGUF key serves up to its own context.
+  timestamp: 2026-11-15T11:54:26.648291+00:00
 position_column: done
 position_ordinal: ffffffffff9980
 title: Size and load the decision model at a context of its own, not the shared window
