@@ -117,7 +117,7 @@ struct ReasoningTokenLimitTests {
         let renders = fixture.log.renders
         #expect(renders.count == 2)
         let recovery = try #require(renders.last)
-        #expect(recovery.promptTexts.last == RoutedSessionActor.reasoningStopContinuationPrompt)
+        #expect(recovery.promptTexts.last == RoutedSessionActor.answerOnlyRequest)
         let keptReasoning = try #require(Self.reasoningTexts(of: recovery).first)
         #expect(keptReasoning.hasPrefix(try #require(script.reasoningLines.first)))
 
@@ -163,7 +163,7 @@ struct ReasoningTokenLimitTests {
         #expect(stop.recovery == nil)
         #expect(Self.finishReasons(in: events) == [.reasoningTokenLimit, .completed])
         #expect(fixture.log.renders.count == 2)
-        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassPrompt)
+        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassAnswerPrompt)
         #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
         #expect(events.answers.first?.reply == RepeatingReasoningModel.Executor.answerText)
         #expect(events.answers.count == 1)

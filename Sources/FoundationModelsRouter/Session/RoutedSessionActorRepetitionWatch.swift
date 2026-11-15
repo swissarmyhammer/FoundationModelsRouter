@@ -109,22 +109,38 @@ enum WatchStopReport: Sendable {
 
     /// The prompt of the recovery that follows the stop. A repetition stop
     /// on a repeated tool call names the tool and the count (task ^8eq31j0).
-    var continuationPrompt: String {
+    /// A session with no tools gets a prompt that asks only for the final
+    /// answer (task ^jw0yqvg).
+    ///
+    /// - Parameter hasTools: Whether the model of the session can call a
+    ///   tool (``RoutedSessionActor/hasDeclaredTools``).
+    /// - Returns: The prompt.
+    func continuationPrompt(hasTools: Bool) -> String {
         switch self {
         case .repetition(let stop):
-            return stop.repeatedToolCall.map(RoutedSessionActor.repeatedToolCallContinuationPrompt)
-                ?? RoutedSessionActor.repetitionStopContinuationPrompt
+            if let repeatedToolCall = stop.repeatedToolCall {
+                return RoutedSessionActor.repeatedToolCallContinuationPrompt(repeatedToolCall)
+            }
+            return hasTools
+                ? RoutedSessionActor.repetitionStopContinuationPrompt : RoutedSessionActor.repetitionStopAnswerPrompt
         case .reasoning:
-            return RoutedSessionActor.reasoningStopContinuationPrompt
+            return hasTools ? RoutedSessionActor.reasoningStopContinuationPrompt : RoutedSessionActor.answerOnlyRequest
         }
     }
 
     /// The prompt of the final pass that follows the stop when no recovery
-    /// is left: ``RoutedSessionActor/finalPassPrompt``, after the notice of
-    /// the repeated tool call when the stop has one (task ^8eq31j0).
-    var finalPassPrompt: String {
-        guard let repeatedToolCall = summary.repeatedToolCall else { return RoutedSessionActor.finalPassPrompt }
-        return RoutedSessionActor.repeatedToolCallNotice(repeatedToolCall) + " " + RoutedSessionActor.finalPassPrompt
+    /// is left: ``RoutedSessionActor/finalPassPrompt``, or
+    /// ``RoutedSessionActor/finalPassAnswerPrompt`` in a session with no
+    /// tools (task ^jw0yqvg), after the notice of the repeated tool call when
+    /// the stop has one (task ^8eq31j0).
+    ///
+    /// - Parameter hasTools: Whether the model of the session can call a
+    ///   tool (``RoutedSessionActor/hasDeclaredTools``).
+    /// - Returns: The prompt.
+    func finalPassPrompt(hasTools: Bool) -> String {
+        let prompt = hasTools ? RoutedSessionActor.finalPassPrompt : RoutedSessionActor.finalPassAnswerPrompt
+        guard let repeatedToolCall = summary.repeatedToolCall else { return prompt }
+        return RoutedSessionActor.repeatedToolCallNotice(repeatedToolCall) + " " + prompt
     }
 
     /// The log category, the message and the metadata key of the log line
@@ -206,20 +222,34 @@ struct WatchStopMarker: Sendable {
 /// That stop runs no recovery: the turn ends there, as if the model had
 /// ended it.
 extension RoutedSessionActor {
-    /// The end of each prompt of a recovery after a repetition stop: it tells
-    /// the model to act.
+    /// The end of each prompt of a recovery after a repetition stop, in a
+    /// session with tools: it tells the model to act.
     static let repetitionStopActRequest = """
         Stop reasoning. \
         Your next output must be one tool call that makes the change you decided on, or your final answer.
         """
 
-    /// The prompt of the attempt that goes on after a repetition stop.
+    /// The end of each prompt of a recovery in a session with no tools
+    /// (task ^jw0yqvg): it asks only for the final answer, and names no tool
+    /// call. It is also the whole prompt of a recovery after a reasoning
+    /// stop in such a session.
+    static let answerOnlyRequest = "Stop reasoning. Your next output must be your final answer."
+
+    /// The start of the prompt of the attempt that goes on after a
+    /// repetition stop: it tells the model why the session stopped it.
+    static let repetitionStopNotice =
+        "Your last output repeated lines that you already wrote, so the session stopped it. "
+
+    /// The prompt of the attempt that goes on after a repetition stop, in a
+    /// session with tools.
     ///
     /// The render already holds the original prompt and the new part of the
     /// stopped output, so the attempt does not send the original prompt again.
-    static let repetitionStopContinuationPrompt =
-        "Your last output repeated lines that you already wrote, so the session stopped it. "
-        + repetitionStopActRequest
+    static let repetitionStopContinuationPrompt = repetitionStopNotice + repetitionStopActRequest
+
+    /// The prompt of the attempt that goes on after a repetition stop, in a
+    /// session with no tools (task ^jw0yqvg).
+    static let repetitionStopAnswerPrompt = repetitionStopNotice + answerOnlyRequest
 
     /// The sentences that tell the model which tool call it repeated
     /// (task ^8eq31j0). A general text that tells the model not to repeat
@@ -245,8 +275,8 @@ extension RoutedSessionActor {
         repeatedToolCallNotice(call) + " The session stopped your last output. " + repetitionStopActRequest
     }
 
-    /// The prompt of the final pass of an answer: the pass after a stop that
-    /// found no recovery left (task ^0dcsd3t).
+    /// The prompt of the final pass of an answer in a session with tools: the
+    /// pass after a stop that found no recovery left (task ^0dcsd3t).
     ///
     /// The tools of the session stay available in the final pass, and the
     /// work of an agent is in a tool call, not in its final text. So the
@@ -257,6 +287,21 @@ extension RoutedSessionActor {
         If a change is not made yet, make it now with one tool call. \
         Then give your final answer with what you know now.
         """
+
+    /// The prompt of the final pass of an answer in a session with no tools
+    /// (task ^jw0yqvg): the model has no tool to call, so the prompt asks
+    /// only for the final answer.
+    static let finalPassAnswerPrompt = """
+        No recovery is left, so this is your last output. Stop reasoning. \
+        Give your final answer with what you know now.
+        """
+
+    /// Whether the model of the session can call a tool
+    /// (``declaredToolNames``), so a recovery prompt and the final pass
+    /// prompt may ask for a tool call (task ^jw0yqvg).
+    var hasDeclaredTools: Bool {
+        !declaredToolNames.isEmpty
+    }
 
     /// The text of the response that closes a stopped reasoning in the render
     /// (``ReasoningClosure``, task ^0dcsd3t).
@@ -709,27 +754,26 @@ extension RoutedSessionActor {
             return try await runFinalPass(after: report, attempt: attempt, body: body)
         }
         repetitionWatch.recoveriesSinceProgress = recovery
+        let prompt = report.continuationPrompt(hasTools: hasDeclaredTools)
         guard compacts else {
-            return try await runContinuation(
-                after: attempt, prompt: report.continuationPrompt, reasoningOff: true, body: body)
+            return try await runContinuation(after: attempt, prompt: prompt, reasoningOff: true, body: body)
         }
         return try await compactAndContinue(
-            attempt: attempt, reason: .outputCeilingStop, continuationPrompt: report.continuationPrompt,
-            reasoningOff: true, body: body)
+            attempt: attempt, reason: .outputCeilingStop, continuationPrompt: prompt, reasoningOff: true, body: body)
     }
 
     /// Runs the final pass of the answer after a stop that found no recovery
     /// left (task ^0dcsd3t), and never gives an empty reply.
     ///
-    /// The final pass sends ``WatchStopReport/finalPassPrompt`` under the
-    /// token ceiling of the stopped attempt
+    /// The final pass sends ``WatchStopReport/finalPassPrompt(hasTools:)``
+    /// under the token ceiling of the stopped attempt
     /// (``StoppedAttempt/responseTokenCeiling``): the pass gets no limit of
     /// its own. Its first model pass runs with the reasoning of the model
-    /// off. The tools of the session stay available, so the pass can make a
-    /// tool call, and the tool loop goes on to its end (task ^8eq31j0), with
-    /// the reasoning on in each later pass (task ^bhdj5v9). It runs one time
-    /// in an answer. When it gives no text, or when a stop comes in or after
-    /// it, the reply is the text that states the stop
+    /// off. In a session with tools, the tools stay available, so the pass
+    /// can make a tool call, and the tool loop goes on to its end (task
+    /// ^8eq31j0), with the reasoning on in each later pass (task ^bhdj5v9).
+    /// It runs one time in an answer. When it gives no text, or when a stop
+    /// comes in or after it, the reply is the text that states the stop
     /// (``WatchStop/stoppedAnswerText``).
     ///
     /// - Parameters:
@@ -747,7 +791,7 @@ extension RoutedSessionActor {
         guard !repetitionWatch.finalPassRan else { return stopText }
         repetitionWatch.finalPassRan = true
         let reply = try await runContinuation(
-            after: attempt, prompt: report.finalPassPrompt, reasoningOff: true, body: body)
+            after: attempt, prompt: report.finalPassPrompt(hasTools: hasDeclaredTools), reasoningOff: true, body: body)
         return reply.allSatisfy(\.isWhitespace) ? stopText : reply
     }
 }

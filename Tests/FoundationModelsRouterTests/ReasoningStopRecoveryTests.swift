@@ -183,7 +183,7 @@ struct ReasoningStopRecoveryTests {
         #expect(events.repetitionStops.map(\.recovery) == [1])
         #expect(events.reasoningStops.map(\.recovery) == [2, nil])
         #expect(fixture.log.reasoningLevels == [nil, off, off, off])
-        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassPrompt)
+        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassAnswerPrompt)
 
         let answer = try #require(events.answers.first)
         #expect(answer.reply == RepeatingReasoningModel.Executor.answerText)
@@ -223,7 +223,7 @@ struct ReasoningStopRecoveryTests {
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         let recovery = try #require(fixture.log.renders.last)
-        #expect(recovery.promptTexts.last == RoutedSessionActor.reasoningStopContinuationPrompt)
+        #expect(recovery.promptTexts.last == RoutedSessionActor.answerOnlyRequest)
         #expect(Self.responseTextBeforeLastPrompt(in: recovery) == RoutedSessionActor.reasoningClosureText)
     }
 

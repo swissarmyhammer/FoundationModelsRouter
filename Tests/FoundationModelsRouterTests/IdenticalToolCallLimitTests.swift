@@ -222,7 +222,7 @@ struct IdenticalToolCallLimitSettingTests {
             generatedTokens: 0, countedLines: 0, newLines: 0, tokensWithoutNewLine: 0,
             detection: RepetitionDetection(), recovery: 1, repeatedToolCall: Self.repeatedCall)
 
-        let prompt = WatchStopReport.repetition(stop).continuationPrompt
+        let prompt = WatchStopReport.repetition(stop).continuationPrompt(hasTools: true)
 
         #expect(prompt.contains("You called `files` with the same arguments 3 times in a row."))
         #expect(prompt.contains("Do not call it again with these arguments."))
@@ -235,7 +235,9 @@ struct IdenticalToolCallLimitSettingTests {
             generatedTokens: 0, countedLines: 0, newLines: 0, tokensWithoutNewLine: 0,
             detection: RepetitionDetection(), recovery: 1)
 
-        #expect(WatchStopReport.repetition(stop).continuationPrompt == RoutedSessionActor.repetitionStopContinuationPrompt)
+        #expect(
+            WatchStopReport.repetition(stop).continuationPrompt(hasTools: true)
+                == RoutedSessionActor.repetitionStopContinuationPrompt)
     }
 
     @Test("the final pass prompt lets the model make the change with one tool call")

@@ -182,7 +182,7 @@ struct RepetitionStopTests {
         let renders = fixture.log.renders
         #expect(renders.count == 2)
         let continuation = try #require(renders.last)
-        #expect(continuation.promptTexts.last == RoutedSessionActor.repetitionStopContinuationPrompt)
+        #expect(continuation.promptTexts.last == RoutedSessionActor.repetitionStopAnswerPrompt)
         #expect(Self.reasoningText(of: continuation) == [Self.keptReasoning])
 
         let recordedReasoning = await fixture.recorder.events.filter { $0.kind == .reasoning }.compactMap(\.text)
@@ -206,7 +206,7 @@ struct RepetitionStopTests {
         #expect(stops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil, nil])
         #expect(Self.finishReasons(in: events) == Array(repeating: .repeatedLines, count: recoveries + 2))
         #expect(fixture.log.renders.count == recoveries + 2)
-        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassPrompt)
+        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassAnswerPrompt)
         // The first submission delivers the message. Each recovery and the
         // final pass is one continuation submission of the same chain, and
         // the chain has one answer. The final pass stops again, so the reply

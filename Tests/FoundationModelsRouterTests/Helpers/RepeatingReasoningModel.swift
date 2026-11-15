@@ -257,8 +257,9 @@ struct RepeatingReasoningScript: Sendable, Hashable {
 ///   ``Executor/answerText`` at once;
 /// - the first call of the session, and each call whose prompt is
 ///   ``RoutedSessionActor/repetitionStopContinuationPrompt``,
-///   ``RoutedSessionActor/reasoningStopContinuationPrompt`` or
-///   ``RoutedSessionActor/finalPassPrompt`` when
+///   ``RoutedSessionActor/reasoningStopContinuationPrompt``,
+///   ``RoutedSessionActor/finalPassPrompt``, or the matching prompt of a
+///   session with no tools, when
 ///   ``repeatsAfterStop`` is `true`, plays ``script``: it writes the
 ///   reasoning lines one by one, does what ``RepeatingReasoningScript/hold``
 ///   names, and writes ``RepeatingReasoningScript/ending``;
@@ -377,11 +378,15 @@ struct RepeatingReasoningModel: LanguageModel {
         }
 
         /// The prompts of the continuation calls after a stop of the session:
-        /// the two recoveries, and the final pass (task ^0dcsd3t).
+        /// the two recoveries, and the final pass (task ^0dcsd3t), in a
+        /// session with tools and in one with no tools (task ^jw0yqvg).
         private static let continuationPrompts: Set<String> = [
             RoutedSessionActor.repetitionStopContinuationPrompt,
             RoutedSessionActor.reasoningStopContinuationPrompt,
             RoutedSessionActor.finalPassPrompt,
+            RoutedSessionActor.repetitionStopAnswerPrompt,
+            RoutedSessionActor.answerOnlyRequest,
+            RoutedSessionActor.finalPassAnswerPrompt,
         ]
 
         /// The code of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.

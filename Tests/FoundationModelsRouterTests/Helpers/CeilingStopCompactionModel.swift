@@ -112,13 +112,15 @@ struct CeilingStopCompactionModel: LanguageModel {
         }
 
         /// Whether `prompt` is the prompt of a continuation attempt: after a
-        /// ceiling stop, or after a reasoning stop (task ^hm9trt5).
+        /// ceiling stop, or after a reasoning stop (task ^hm9trt5), in a
+        /// session with tools or in one with no tools (task ^jw0yqvg).
         ///
         /// - Parameter prompt: The text of one prompt of the transcript.
         /// - Returns: `true` when the prompt holds a continuation prompt.
         private static func isContinuationPrompt(_ prompt: String) -> Bool {
             prompt.contains(RoutedSessionActor.ceilingStopContinuationPrompt)
                 || prompt.contains(RoutedSessionActor.reasoningStopContinuationPrompt)
+                || prompt.contains(RoutedSessionActor.answerOnlyRequest)
         }
 
         /// Sends one text response and its usage.

@@ -109,7 +109,9 @@ enum ReasoningOnlyOutput {
 /// ``RepetitionDetection/reasoningTokenLimit`` (``RecoveryFirstPass``, task
 /// ^qmewzw0). A detection that is not enabled stops nothing.
 extension RoutedSessionActor {
-    /// The prompt of the attempt that goes on after a reasoning stop.
+    /// The prompt of the attempt that goes on after a reasoning stop, in a
+    /// session with tools. A session with no tools gets
+    /// ``answerOnlyRequest`` (task ^jw0yqvg).
     ///
     /// The render already holds the original prompt and the reasoning so
     /// far, closed (``ReasoningClosure``), so the attempt does not send the

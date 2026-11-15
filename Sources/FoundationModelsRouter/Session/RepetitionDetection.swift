@@ -146,7 +146,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// lines of each reasoning entry of the call in flight. When the
     /// reasoning entry that the call writes now reaches this limit, the
     /// session stops the call, keeps the reasoning so far, and runs a
-    /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``,
+    /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``
+    /// (``RoutedSessionActor/answerOnlyRequest`` in a session with no tools),
     /// whose first model pass runs with the reasoning of the model off, which
     /// tells the model to act. A model that always reasons cannot turn its
     /// reasoning off: that first model pass reasons under
