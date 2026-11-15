@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7ff8s8dm7fmmh4b9wqq9py1
+  text: |-
+    ### commit — changed
+    - evidence: 119e7ba8 fix(resolution)!: the decision slot always gets its decision model; `swift test` 2716 + 42 + 19 green; `swift build --package-path IntegrationTests --build-tests` clean.
+    - note: the decision model is sized at the context of the other slots (a GGUF decision model's KV grows with the window). Kept as before. A decision container that cannot answer on its path still resolves and throws at the first decision (UnavailableDecisionContainer); not a flash fallback, left as is.
+  timestamp: 2026-11-15T11:25:21.037231+00:00
 position_column: done
 position_ordinal: ffffffffff9680
 title: 'The decision slot always gets its decision model: no flash fallback, fail resolve when it cannot fit'

@@ -1,16 +1,17 @@
 # Models, residency and tools
 
-## `standard` and `flash` are always two different models
+## `standard` and `flash` can be one model
 
-The `standard` and `flash` slots of one resolved profile never use the same
-model. A synchronous tool call, for example the multitool `searchTools`, runs a
-selection call on `flash` inside an open submission on `standard`. Each model
-has one FIFO work queue, so one model in both slots would wait on itself.
+The `standard` and `flash` slots can name the same model. `Router.resolve`
+then loads the model once, and the `flash` slot costs no more memory: the
+joint fit charges it 0 bytes, and the `flash` hold is a second hold of the
+`standard` entry.
 
-`Router.resolve` skips, in the `flash` list, the model that `standard` chose,
-and takes the next `flash` candidate. When the `standard` and `flash` lists
-name only the same one model, `Router.resolve` throws before it loads a model.
-Give the `flash` slot at least one candidate that is not the `standard` model.
+A synchronous tool call, for example the multitool `searchTools`, runs a
+selection call on `flash` inside an open submission on `standard`. That call
+does not wait on its own submission: a model call holds the lock of its model
+only for the call into the model, and a tool body holds nothing. The two
+calls take turns at the lock.
 
 ## Residency is process-wide
 

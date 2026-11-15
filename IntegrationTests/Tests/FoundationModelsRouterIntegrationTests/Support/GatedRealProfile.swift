@@ -6,9 +6,8 @@ import FoundationModelsRouterRealModelSupport
 /// and a real embedder, all resident at one time, over the ``RealModels``
 /// repositories.
 ///
-/// The `standard` and `flash` slots name two different models, because the
-/// two generation slots of one resolved profile never use the same model.
-/// See ``RealModels/flash``. Each slot loads its own resident container, which
+/// The `standard` and `flash` slots name two different models. See
+/// ``RealModels/flash``. Each slot loads its own resident container, which
 /// is what ``gatedRealProfileResidentContainerCount`` counts.
 ///
 /// One definition for the whole target. ``IntegrationTests`` resolves it end to

@@ -34,12 +34,9 @@ public enum RealModels {
     /// (see `PromptCacheBudgetIntegrationTests` and
     /// `RealToolAnswerComparisonTests`).
     ///
-    /// The `standard` and `flash` slots of one resolved profile never use
-    /// the same model: a synchronous tool call runs a selection call on
-    /// `flash` inside an open submission on `standard`, and each model has
-    /// one FIFO work queue, so one model in both slots would wait on itself.
-    /// The published Muse Glimmer repositories differ only in quantization,
-    /// so the flash slot names a different, smaller model. Qwen3 4B has no
+    /// The flash slot names a different, smaller model than ``standard``, so
+    /// the gated suites run two generation models. The published Muse
+    /// Glimmer repositories differ only in quantization. Qwen3 4B has no
     /// recurrent layers, so its whole cache list is trimmable, as
     /// ``standard``'s is.
     public static let flash: ModelRef = "mlx-community/Qwen3-4B-4bit"

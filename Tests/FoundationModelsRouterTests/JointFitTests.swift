@@ -672,9 +672,9 @@ struct JointFitTests {
     // MARK: - The profile the field report failed on
 
     /// The `multitool-cli-demo` generation model. The field report named it in
-    /// both the `standard` and the `flash` slot. The two slots must now use
-    /// two different models, so the profile below gives `flash`
-    /// ``multitoolFlash``.
+    /// both the `standard` and the `flash` slot. The profile below gives
+    /// `flash` the smaller ``multitoolFlash``, so the two slots hold two
+    /// models.
     private static let multitoolGeneration: ModelRef = "org/Qwen3.8-27B-mxfp4"
 
     /// The smaller generation model the `flash` slot of the profile below names.

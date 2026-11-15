@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8580'
+position_column: done
+position_ordinal: ffffffffff9780
 title: Allow one model in both the standard and the flash slot
 ---
 ## Problem

@@ -13,8 +13,9 @@ import Testing
 /// and ``twoHandBuiltHandlesOverOneContainerContend()`` holds it to the
 /// contract through one drill.
 ///
-/// ``Router/resolve(profile:reporting:)`` never builds that graph for one
-/// profile: the `standard` and `flash` slots never use the same model.
+/// ``Router/resolve(profile:reporting:)`` builds that graph for a profile that
+/// names one model in both the `standard` and the `flash` slot
+/// (`SharedGenerationModelTests`). A profile that names two models gets two:
 /// ``resolvedStandardAndFlashHandlesHaveTwoModels()`` holds a resolve to that.
 ///
 /// Each container is a ``LiveBackendContainer`` over a ``PassObservingModel``,
@@ -30,8 +31,7 @@ struct SharedModelLockContentionTests {
     /// wraps.
     private static let sharedRef: ModelRef = "org/shared-llm"
 
-    /// The model the `flash` slot names: a different model from ``sharedRef``,
-    /// because the two generation slots never use the same model.
+    /// The model the `flash` slot names: a different model from ``sharedRef``.
     private static let flashRef: ModelRef = "org/flash-llm"
 
     /// The prompt the first answer is given.

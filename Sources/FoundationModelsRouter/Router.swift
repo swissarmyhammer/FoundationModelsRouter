@@ -229,10 +229,8 @@ public actor Router {
     ///   - authored: The authored profile to resolve.
     ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
     /// - Returns: The resolved, resident profile. Its `standard` and `flash`
-    ///   slots never use the same model.
-    /// - Throws: ``SameGenerationModelFailure`` before any load when the
-    ///   profile names only one model for both the `standard` and the `flash`
-    ///   slot, ``ResolutionFailure`` when the four slots do not fit the
+    ///   slots can use the same model, which the pool then loads once.
+    /// - Throws: ``ResolutionFailure`` when the four slots do not fit the
     ///   effective budget (the decision slot included: it never uses the
     ///   model of another slot in place of its own candidates),
     ///   ``NoWindowFailure`` when the profile names no context and no standard
@@ -369,9 +367,7 @@ public actor Router {
     ///   - span: The resolve span, which takes the budget this attempt priced
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
-    /// - Throws: ``SameGenerationModelFailure`` when the profile names only one
-    ///   model for both generation slots,
-    ///   ``ResolutionFailure`` when the four slots do not fit the effective budget,
+    /// - Throws: ``ResolutionFailure`` when the four slots do not fit the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -404,9 +400,7 @@ public actor Router {
     ///   - span: The resolve span, which takes the budget this attempt priced
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
-    /// - Throws: ``SameGenerationModelFailure`` when the profile names only one
-    ///   model for both generation slots,
-    ///   ``ResolutionFailure`` when the four slots do not fit the effective budget,
+    /// - Throws: ``ResolutionFailure`` when the four slots do not fit the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -422,7 +416,6 @@ public actor Router {
         // so a cancelled resolve gives back all that it acquired.
         try Task.checkCancellation()
         await beginSizing(progress: progress)
-        try await rejectSharedGenerationModel(profile: def, progress: progress)
         // The metadata does not depend on the pool, so its fetch runs before
         // the admission job and does not keep the admission queue waiting.
         let metadataByRef = await sizeCandidates(profile: def)
@@ -1064,28 +1057,6 @@ public actor Router {
     }
 
     // MARK: - Joint fit
-
-    /// Throws before any sizing or load when `def` names only one model for
-    /// both the `standard` slot and the `flash` slot, and records the failure
-    /// into the progress. The standard and flash slots never use the same
-    /// model; see ``SameGenerationModelFailure``.
-    ///
-    /// - Throws: ``SameGenerationModelFailure`` when
-    ///   ``ProfileDefinition/sharedGenerationModel`` is not `nil`.
-    private func rejectSharedGenerationModel(
-        profile def: ProfileDefinition,
-        progress: ResolutionProgress
-    ) async throws {
-        guard let model = def.sharedGenerationModel else { return }
-        let failure = SameGenerationModelFailure(profileName: def.name, model: model)
-        await recordFailure(
-            outcomes: [(.flash, nil)],
-            failedReason: "the standard slot already uses the only flash candidate",
-            description: failure.description,
-            progress: progress
-        )
-        throw failure
-    }
 
     /// Runs the pure joint fit and, on failure, records the diagnostics into the
     /// progress before rethrowing.

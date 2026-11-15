@@ -18,10 +18,6 @@ enum Verdict: Sendable, Equatable {
     /// A higher-preference candidate was already chosen, so this one was not sized.
     case skippedHigherPreferenceChosen
 
-    /// This flash-slot candidate is the model the standard slot chose, so it
-    /// was not sized. The standard and flash slots never use the same model.
-    case sameModelAsStandard
-
     /// This candidate could not be sized. The associated value is the reason.
     case metadataUnavailable(String)
 }
@@ -209,9 +205,6 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
             return "trio blocked by \(slot.rawValue)"
         case .skippedHigherPreferenceChosen:
             return "skipped (higher-preference candidate chosen)"
-        case .sameModelAsStandard:
-            return "skipped (the standard slot already uses this model; "
-                + "the standard and flash slots must use different models)"
         case .metadataUnavailable(let reason):
             return "metadata unavailable (\(reason))"
         }
@@ -250,31 +243,5 @@ struct NoWindowFailure: Error, Equatable, CustomStringConvertible {
             + "could be read. There is no context, so no slot was sized."
         let lines = standardConsidered.map { "    - \(ResolutionFailure.line(for: $0))" }
         return ([header] + lines).joined(separator: "\n")
-    }
-}
-
-/// The error thrown when a profile names only one model for both the
-/// `standard` slot and the `flash` slot. See
-/// ``ProfileDefinition/sharedGenerationModel``.
-///
-/// The standard and flash slots of one resolved profile never use the same
-/// model. A synchronous tool call, for example the multitool `searchTools`,
-/// runs a selection call on `flash` inside an open submission on `standard`.
-/// Each model has one FIFO work queue, so with one model in both slots the
-/// selection call would wait on its own submission. The router throws this
-/// error before it sizes or loads a model.
-struct SameGenerationModelFailure: Error, Equatable, CustomStringConvertible {
-    /// The name of the profile that could not be resolved.
-    let profileName: String
-
-    /// The one model the profile names for both generation slots.
-    let model: ModelRef
-
-    /// A one-line rendering of the failure that names both slots and the model.
-    var description: String {
-        "SameGenerationModelFailure: profile \"\(profileName)\" names only \(model.stringValue) "
-            + "for both the standard slot and the flash slot. The standard and flash slots "
-            + "must use different models: a tool call on flash inside a submission on standard "
-            + "would wait on the queue of its own model."
     }
 }

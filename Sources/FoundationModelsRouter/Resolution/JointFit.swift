@@ -31,12 +31,12 @@ struct JointResolution: Sendable, Equatable {
 /// estimate, the `charge`, is not more than the bytes that remain:
 /// `charge <= remaining`.
 ///
-/// The standard and flash slots never use the same model. The flash slot skips
-/// the model the standard slot chose, and records it as
-/// ``Verdict/sameModelAsStandard``. A synchronous tool call runs a selection
-/// call on `flash` inside an open submission on `standard`, and each model has
-/// one FIFO work queue, so one model in both slots would wait on itself. Each
-/// slot thus loads its own container and is charged its whole footprint.
+/// The standard and flash slots can use the same model (task ^t4zn88x). A
+/// model call holds the lock of its model only for the call into the model,
+/// and a tool body holds nothing (task ^qhgfajc), so a flash call inside an
+/// open submission on the same model does not wait on itself. The flash slot
+/// is sized with the pool key of the standard winner, so the standard model
+/// costs it 0 more bytes, and the resolve loads the model once.
 ///
 /// The decision slot is required, as each other slot is (task ^ybx7vvn). It
 /// never uses the model of another slot in place of its own candidates: when
@@ -66,8 +66,9 @@ enum JointFit {
     /// it. The third argument is the pool keys of the models that this
     /// resolve allocated before it sizes the candidate. A candidate that one
     /// of these keys serves (``ModelPoolKey/canServe(_:)``) costs 0 more
-    /// bytes. Only the decision slot passes keys: the keys of the winners of
-    /// the embedding, standard and flash slots.
+    /// bytes. The flash slot passes the key of the standard winner, and the
+    /// decision slot the keys of the winners of the embedding, standard and
+    /// flash slots.
     typealias FootprintProvider = (ModelRef, Int, Set<ModelPoolKey>) -> Result<Int64, RepoMetadataError>
 
     /// The shared budget as the slots consume it, in allocation order.
@@ -94,8 +95,7 @@ enum JointFit {
     ///   - budgetBytes: The shared memory budget, in bytes.
     ///   - footprint: The raw footprint of a candidate at a context. May be a marginal cost for a resident model.
     ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
-    /// - Returns: The chosen model of each slot and per-slot reasoning. The
-    ///   standard and flash models are never the same model.
+    /// - Returns: The chosen model of each slot and per-slot reasoning.
     /// - Throws: ``ResolutionFailure`` when any slot, the decision slot
     ///   included, has no viable candidate,
     ///   or ``NoWindowFailure`` when the context is derived and no standard
@@ -183,18 +183,13 @@ enum JointFit {
     /// candidate in preference order wins. Each candidate gets a verdict.
     ///
     /// - Parameters:
-    ///   - excluded: The model the slot must not use, or `nil`. The flash slot
-    ///     passes the model the standard slot chose, because the standard and
-    ///     flash slots never use the same model. That candidate is recorded as
-    ///     ``Verdict/sameModelAsStandard`` and never sized.
     ///   - allocatedKeys: The pool keys of the models that this resolve
-    ///     allocated before this slot. The embedding, standard and flash
-    ///     slots pass none (the default). The decision slot passes the keys
-    ///     of their winners.
+    ///     allocated before this slot. The embedding and standard slots pass
+    ///     none (the default). The flash slot passes the key of the standard
+    ///     winner, and the decision slot the keys of the three winners.
     private static func resolveSlot(
         _ slot: ModelSlot,
         candidates: [ModelRef],
-        excluding excluded: ModelRef? = nil,
         budget: SharedBudget,
         context: Int,
         allocatedKeys: Set<ModelPoolKey> = [],
@@ -205,15 +200,14 @@ enum JointFit {
 
         for ref in candidates {
             // Once a higher-preference candidate has won, lower-preference ones
-            // are recorded as skipped and never sized. The excluded model is
-            // recorded as skipped too.
-            if let skipped = skippedVerdict(for: ref, chosen: chosen, excluded: excluded) {
+            // are recorded as skipped and never sized.
+            guard chosen == nil else {
                 considered.append(
                     CandidateReport(
                         ref: ref,
                         estimatedFootprintBytes: nil,
                         chargedBytes: nil,
-                        verdict: skipped
+                        verdict: .skippedHigherPreferenceChosen
                     )
                 )
                 continue
@@ -234,25 +228,6 @@ enum JointFit {
             considered: considered,
             contextTokens: context
         )
-    }
-
-    /// The verdict for a candidate the slot does not size, or `nil` when the
-    /// slot must size it.
-    ///
-    /// - Parameters:
-    ///   - ref: The candidate.
-    ///   - chosen: The higher-preference candidate the slot already chose, or `nil`.
-    ///   - excluded: The model the slot must not use, or `nil`.
-    /// - Returns: ``Verdict/skippedHigherPreferenceChosen`` after a choice,
-    ///   ``Verdict/sameModelAsStandard`` for the excluded model, or `nil`.
-    private static func skippedVerdict(for ref: ModelRef, chosen: ModelRef?, excluded: ModelRef?) -> Verdict? {
-        if chosen != nil {
-            return .skippedHigherPreferenceChosen
-        }
-        if ref == excluded {
-            return .sameModelAsStandard
-        }
-        return nil
     }
 
     /// Sizes one candidate against the remaining budget at `context` and gives
@@ -390,10 +365,9 @@ enum JointFit {
 
     /// Resolves the four slots at one working context against one shared
     /// budget. Each slot's choice is charged before the next slot is
-    /// resolved. The flash slot never takes the model the standard slot
-    /// chose. The decision slot is sized with the pool keys of the three
-    /// winners before it, so a decision candidate that one of them serves
-    /// costs 0 more bytes.
+    /// resolved. The flash slot is sized with the pool key of the standard
+    /// winner, and the decision slot with the pool keys of the three winners
+    /// before it, so a candidate that one of them serves costs 0 more bytes.
     ///
     /// - Parameter candidates: The candidates each slot tries here.
     private static func attemptSlots(
@@ -422,9 +396,9 @@ enum JointFit {
         let flash = resolveSlot(
             .flash,
             candidates: candidates.flash,
-            excluding: standard.chosen,
             budget: budget,
             context: context,
+            allocatedKeys: allocatedKeys(embedding: nil, standard: standard.chosen, flash: nil, context: context),
             footprint: footprint
         )
         budget.charge(flash)

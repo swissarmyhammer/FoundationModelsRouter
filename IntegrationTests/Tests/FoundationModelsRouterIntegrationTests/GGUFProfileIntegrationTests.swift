@@ -24,10 +24,10 @@ private let ggufModel: ModelRef = "ggml-org/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q8_0.
 /// The `flash` candidate of each profile of this suite: the small MLX instruct
 /// model the compaction smoke suites already load, 680 MB.
 ///
-/// `Router.resolve(profile:reporting:)` fills all three slots, and the
-/// `standard` and `flash` slots never use the same model. So a profile whose
-/// `standard` slot is ``ggufModel`` names a different `flash` model. No test
-/// of this suite generates on it.
+/// `Router.resolve(profile:reporting:)` fills every slot. A profile whose
+/// `standard` slot is ``ggufModel`` names this MLX model as its `flash` model,
+/// so each resolve loads one model of each format. No test of this suite
+/// generates on it.
 private let flashModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
 /// The MLX candidate of the mixed slot: the 17 GB model of the gated
