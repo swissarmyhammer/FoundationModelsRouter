@@ -977,14 +977,15 @@ struct JointFitTests {
     }
 
     /// `base`, with 0 bytes for a candidate that one of the allocated pool
-    /// keys serves, as the router prices it
+    /// keys serves, as the router prices an MLX model, whose key serves any
+    /// context
     /// (``Router/footprintBytes(for:in:context:metadataByRef:membership:residentKeys:allocatedKeys:)``).
     private static func chargingAllocatedModelsNothing(
         _ base: @escaping JointFit.FootprintProvider
     ) -> JointFit.FootprintProvider {
         { ref, slot, context, allocatedKeys in
             let request = ModelSlot.decision.poolKey(of: ref, context: context)
-            guard !allocatedKeys.contains(where: { $0.canServe(request) }) else { return .success(0) }
+            guard !allocatedKeys.contains(where: { $0.withoutContext.canServe(request) }) else { return .success(0) }
             return base(ref, slot, context, allocatedKeys)
         }
     }

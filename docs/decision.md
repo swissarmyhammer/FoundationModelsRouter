@@ -47,6 +47,39 @@ at a pinned revision. The GGUF file has the decision type `h2o-lightning`, thus
 the decision slot takes the native decision path (see the next section). An
 empty list fails the resolve: the slot is required.
 
+## The context of the slot
+
+The decision slot has a context of its own: `ProfileDefinition.decisionContext`,
+in tokens. Its default is `ProfileDefinition.defaultDecisionContext`, 16,384
+tokens. Set it in the initializer, or on the property:
+
+```swift
+let profile = ProfileDefinition(
+    name: "coding",
+    description: "Code agent with a short decision state.",
+    standard: ["mlx-community/Qwen3-14B-4bit"],
+    flash: ["mlx-community/Qwen3-1.7B-4bit"],
+    embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"],
+    decisionContext: 8_192
+)
+```
+
+The router sizes the decision model at this context, asks the pool for it at
+this context, and loads it at this context. It does not use the working
+context (`context`) of the other slots. A decision state is usually small, and
+a GGUF decision model allocates its whole KV cache when it loads, so the
+working context would take memory from the `standard` window for nothing. The
+host builds each `DecisionState`, so the host chooses the bound on its size.
+
+The resolve reports the context:
+
+- `profile.decision.resolution.contextTokens`, and
+  `ResolutionProgress.slots[.decision]?.contextTokens`;
+- the `context.decision_tokens` attribute of the `FoundationModelsRouter.resolve`
+  span, beside `context.tokens`, the working context;
+- the `decisionContext` field of the resolved profile in the `index.md` record
+  of a root session.
+
 ## The decision path
 
 The router selects the decision path of the chosen model in this order:
@@ -94,15 +127,20 @@ The decision slot is required, as each other slot is. It never uses the model
 of another slot in place of its own candidates.
 
 1. The four slots (`embedding`, `standard`, `flash` and `decision`) are fitted
-   together, in that order, against one budget, at one context.
+   together, in that order, against one budget. The decision slot is sized at
+   `decisionContext`, and the other slots at the working context.
 2. When the profile names no context, the window search sizes the four slots
    together. Thus the decision model gets its bytes first, and the window is
-   smaller by them.
+   smaller by them. The decision charge does not grow with the window, so
+   each token of the window goes to the other slots.
 3. The slot tries each decision candidate in preference order. The first
    candidate that fits wins.
-4. A candidate with the same pool key as the model of the `embedding`,
-   `standard` or `flash` slot is the same resident model. It costs 0 more
-   bytes.
+4. A candidate that is the model of the `embedding`, `standard` or `flash`
+   slot, under a pool key that serves the decision context, is the same
+   resident model. It costs 0 more bytes. An MLX model keeps no context in the
+   pool, so it serves any decision context. A GGUF model loads at a fixed
+   context, so it serves a decision context up to its own: a GGUF `flash`
+   model at a 100,000-token window serves a 16,384-token decision slot.
 5. When no decision candidate fits, at the smallest window too, the resolve
    fails with `ResolutionFailure`. Its description names each slot, each
    candidate, its footprint and its verdict.

@@ -16,7 +16,8 @@
 /// construction (an ordinary `Optional`'s synthesized coding): JSON that omits
 /// the key decodes to `nil`, and legacy JSON carrying a number decodes to that
 /// number unchanged. JSON that omits the `decision` key decodes to
-/// ``defaultDecisionCandidates``.
+/// ``defaultDecisionCandidates``, and JSON that omits the `decisionContext`
+/// key decodes to ``defaultDecisionContext``.
 public struct ProfileDefinition: Sendable, Codable {
     /// The profile's unique, human-meaningful name.
     public var name: String
@@ -66,6 +67,20 @@ public struct ProfileDefinition: Sendable, Codable {
     /// early.
     public var context: Int?
 
+    /// The context of the decision slot, in tokens: the slot sizes, keys and
+    /// loads its model at this context, and not at ``context``.
+    ///
+    /// A decision state is small, and a GGUF decision model allocates its
+    /// whole KV cache at load, so the shared window would take memory from
+    /// the `standard` window for nothing. The host builds each
+    /// `DecisionState`, so the bound on its size is the host's to choose. The
+    /// default is ``defaultDecisionContext``.
+    public var decisionContext: Int
+
+    /// The context of the decision slot that a profile gets when it names
+    /// none: 16,384 tokens.
+    public static let defaultDecisionContext = 16_384
+
     /// Creates a profile definition.
     ///
     /// - Parameters:
@@ -79,6 +94,8 @@ public struct ProfileDefinition: Sendable, Codable {
     ///   - context: The working context size in tokens, as an override.
     ///     Omit it, or pass `nil`, to derive the context from the model at
     ///     resolve time.
+    ///   - decisionContext: The context of the decision slot, in tokens.
+    ///     Omit it to use ``defaultDecisionContext``.
     public init(
         name: String,
         description: String,
@@ -86,7 +103,8 @@ public struct ProfileDefinition: Sendable, Codable {
         flash: [ModelRef],
         embedding: [ModelRef],
         decision: [ModelRef] = ProfileDefinition.defaultDecisionCandidates,
-        context: Int? = nil
+        context: Int? = nil,
+        decisionContext: Int = ProfileDefinition.defaultDecisionContext
     ) {
         self.name = name
         self.description = description
@@ -95,12 +113,14 @@ public struct ProfileDefinition: Sendable, Codable {
         self.embedding = embedding
         self.decision = decision
         self.context = context
+        self.decisionContext = decisionContext
     }
 
     /// Creates a profile definition from a decoder.
     ///
     /// A missing `decision` key gives ``defaultDecisionCandidates``. A missing
-    /// `context` key gives `nil`.
+    /// `context` key gives `nil`. A missing `decisionContext` key gives
+    /// ``defaultDecisionContext``.
     ///
     /// - Parameter decoder: The decoder to read the profile from.
     /// - Throws: `DecodingError` when a required key is missing, or when a
@@ -115,7 +135,9 @@ public struct ProfileDefinition: Sendable, Codable {
             embedding: try container.decode([ModelRef].self, forKey: .embedding),
             decision: try container.decodeIfPresent([ModelRef].self, forKey: .decision)
                 ?? Self.defaultDecisionCandidates,
-            context: try container.decodeIfPresent(Int.self, forKey: .context)
+            context: try container.decodeIfPresent(Int.self, forKey: .context),
+            decisionContext: try container.decodeIfPresent(Int.self, forKey: .decisionContext)
+                ?? Self.defaultDecisionContext
         )
     }
 

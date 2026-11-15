@@ -11,7 +11,9 @@ each slot, and gives a ``LanguageModelProfile``. The profile has one handle for
 each slot. Pass a handle into the initializer of a tool.
 
 The `decision` slot answers questions about a state with probabilities. The
-slot is required: when no decision candidate fits, the resolve fails. A GGUF
+slot is required: when no decision candidate fits, the resolve fails. It
+runs at a context of its own, ``ProfileDefinition/decisionContext``, 16,384
+tokens by default. A GGUF
 decision model whose
 `<arch>.decision.type` llama.cpp supports answers with the decision code of
 llama.cpp. Another model gets the prompt format of its `decider_config.json`

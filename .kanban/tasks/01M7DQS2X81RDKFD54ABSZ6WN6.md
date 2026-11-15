@@ -31,10 +31,16 @@ comments:
     - why stuck: the card asks that the watch stop this loop before the ceiling. On the live MLX path it cannot yet: mlx-swift-lm buffers the response text of an allowed tool turn until the pass ends (see the research comment). New task ^vz48htj covers the executor change. It is in another package and needs the breaking-push warning, so a human decides. The Router side is complete.
     - next: decide and schedule ^vz48htj. Then /review this card.
   timestamp: 2026-11-14T19:47:38.551691+00:00
-depends_on:
-- 01M7DSDQEM12GPCTB7ZVZ48HTJ
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7fgam6vgq68hzbz313003at
+  text: |-
+    ### done
+    - evidence: 487eeb65 feat(session): stop a repeating block of response lines (^bsz6wn6), pushed and green on CI 43634856384.
+    - The tool-turn gap (^vz48htj) is closed as won't do by the user on 2026-11-15: shell runs in the background through multitool / runCode.
+  timestamp: 2026-11-15T11:43:49.979786+00:00
+depends_on: []
+position_column: done
+position_ordinal: ffffffffff9880
 title: Detect a repetition loop in the response text before the token ceiling
 ---
 ## Problem

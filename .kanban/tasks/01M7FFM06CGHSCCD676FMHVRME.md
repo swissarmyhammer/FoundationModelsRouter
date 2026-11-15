@@ -1,8 +1,15 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8480'
+comments:
+- actor: claude-code
+  id: 01m7fgapm9nd7tb9qcw97qx94a
+  text: |-
+    ### Decision (user, 2026-11-15)
+    "let's do a 16k window default, and let's make it settable per profile". The decision slot gets a context of its own: `ProfileDefinition.decisionContext`, defaulting to 16,384 tokens. The decision candidate is sized and loaded at that context, not at the shared window. ACPAgent has to add it to its configs.
+  timestamp: 2026-11-15T11:43:52.457014+00:00
+position_column: done
+position_ordinal: ffffffffff9980
 title: Size and load the decision model at a context of its own, not the shared window
 ---
 ## Problem

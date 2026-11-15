@@ -238,7 +238,11 @@ struct DecisionSlotResolveTests {
         let resolved = try await Self.resolve()
         let decision = try #require(resolved.progress.slots[.decision])
 
-        #expect(decision == SlotProgress(state: .ready, chosen: resolved.profile.flash.chosen))
+        #expect(
+            decision
+                == SlotProgress(
+                    state: .ready, chosen: resolved.profile.flash.chosen,
+                    contextTokens: ProfileDefinition.defaultDecisionContext))
     }
 
     // MARK: - The shared key

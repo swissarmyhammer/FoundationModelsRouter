@@ -199,6 +199,15 @@ enum RouterTelemetry {
         /// The budget the fit ran against, in bytes.
         static let budgetBytes = "budget.bytes"
 
+        /// The working context that a resolve chose, in tokens, on the
+        /// resolve span: the context of the embedding, standard and flash
+        /// slots.
+        static let resolvedContextTokens = "context.tokens"
+
+        /// The context of the decision slot that a resolve used, in tokens,
+        /// on the resolve span (``ProfileDefinition/decisionContext``).
+        static let decisionContextTokens = "context.decision_tokens"
+
         /// How many tokens went into the model call. On a submission span it
         /// is the usage of the submission, summed over its generation calls.
         static let tokensIn = "tokens.in"

@@ -120,10 +120,10 @@ struct DecisionSlotJointFitTests {
     @Test("the decision model makes the derived window smaller by its own bytes")
     func decisionModelShrinksTheDerivedWindow() throws {
         let resolution = try Self.resolve(Self.profile(decision: [Self.deciderRef]), budgetBytes: Self.fullBudgetBytes)
-        let decisionSlot = try #require(resolution.slots.first { $0.slot == .decision })
+        let standardSlot = try #require(resolution.slots.first { $0.slot == .standard })
 
         #expect(
-            decisionSlot.contextTokens == Self.nativeWindow - Int(Self.deciderBytes / Self.standardBytesPerToken))
+            standardSlot.contextTokens == Self.nativeWindow - Int(Self.deciderBytes / Self.standardBytesPerToken))
     }
 
     @Test("the decision slot comes after the flash slot in allocation order")

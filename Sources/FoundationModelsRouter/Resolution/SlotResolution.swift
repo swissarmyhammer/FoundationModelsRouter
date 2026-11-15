@@ -101,7 +101,9 @@ package struct SlotResolution: Sendable, Equatable {
     package let considered: [CandidateReport]
 
     /// The working context, in tokens, this slot's candidates were sized at.
-    /// Every slot in one ``JointResolution`` shares the same value.
+    /// The embedding, standard and flash slots of one ``JointResolution``
+    /// share one value. The decision slot has its own
+    /// (``ProfileDefinition/decisionContext``).
     package let contextTokens: Int
 
     /// Creates a slot resolution.

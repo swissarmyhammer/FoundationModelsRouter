@@ -44,7 +44,10 @@ struct JointResolution: Sendable, Equatable {
 /// no decision candidate fits, the resolve fails, and the failure names the
 /// decision slot. The slot is sized in the same attempt as the other three,
 /// so a derived window leaves room for the decision model, and the window is
-/// smaller by its bytes. A decision candidate that the pool key of an earlier
+/// smaller by its bytes. The decision slot is sized at a context of its own,
+/// ``ProfileDefinition/decisionContext`` (task ^fmhvrme), so its charge does
+/// not grow with the window: the window search gives each token of the
+/// window to the other slots. A decision candidate that the pool key of an earlier
 /// winner serves is the same model, so it costs 0 more bytes: the provider
 /// gets the pool keys of the embedding, standard and flash winners.
 ///
@@ -283,6 +286,9 @@ enum JointFit {
         /// The decision-slot candidates.
         let decision: [ModelRef]
 
+        /// The context of the decision slot (``ProfileDefinition/decisionContext``).
+        let decisionContext: Int
+
         /// The profile's embedding, flash and decision candidates, with
         /// `standard` as the standard-slot candidates.
         init(profile: ProfileDefinition, standard: [ModelRef]) {
@@ -290,6 +296,7 @@ enum JointFit {
             self.standard = standard
             flash = profile.flash
             decision = profile.decision
+            decisionContext = profile.decisionContext
         }
 
         /// The four models `winner` chose, one for each slot.
@@ -298,6 +305,7 @@ enum JointFit {
             standard = [winner.standard]
             flash = [winner.flash]
             decision = [winner.decision]
+            decisionContext = winner.attempt.decision.contextTokens
         }
     }
 
@@ -367,8 +375,9 @@ enum JointFit {
         let decision: ModelRef
     }
 
-    /// Resolves the four slots at one working context against one shared
-    /// budget. Each slot's choice is charged before the next slot is
+    /// Resolves the four slots against one shared budget: the embedding,
+    /// standard and flash slots at the working context, and the decision
+    /// slot at its own context. Each slot's choice is charged before the next slot is
     /// resolved. The flash slot is sized with the pool key of the standard
     /// winner, and the decision slot with the pool keys of the three winners
     /// before it, so a candidate that one of them serves costs only what its
@@ -412,7 +421,7 @@ enum JointFit {
             .decision,
             candidates: candidates.decision,
             budget: budget,
-            context: context,
+            context: candidates.decisionContext,
             allocatedKeys: allocatedKeys(
                 embedding: embedding.chosen, standard: standard.chosen, flash: flash.chosen, context: context),
             footprint: footprint
@@ -539,7 +548,9 @@ enum JointFit {
     /// The difference, divided by the tokens between the two, is the bytes
     /// each token adds. The budget left after the charge at the smallest
     /// window, divided by the bytes for each token, floored, is the number of
-    /// tokens the window can add.
+    /// tokens the window can add. The decision slot is sized at its own
+    /// context in both measures, so its charge is in the budget it leaves
+    /// and not in the bytes for each token.
     ///
     /// - Returns: The window, or `nil` when a charge cannot be sized or the
     ///   charge does not grow with the window.
@@ -732,7 +743,7 @@ enum JointFit {
             .decision,
             candidates: profile.decision,
             budget: budget,
-            context: triedContext,
+            context: profile.decisionContext,
             allocatedKeys: allocatedKeys(
                 embedding: embeddingResolution.chosen, standard: nil, flash: flashResolution.chosen,
                 context: triedContext),

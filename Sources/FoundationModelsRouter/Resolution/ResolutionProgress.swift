@@ -36,17 +36,25 @@ public struct SlotProgress: Sendable, Equatable {
     /// Total bytes of the chosen model's weights, or `0` when not yet known.
     public internal(set) var bytesTotal: Int64
 
+    /// The context, in tokens, at which the joint fit sized the slot, or
+    /// `nil` until the slot is chosen. The decision slot has a context of its
+    /// own (``ProfileDefinition/decisionContext``); the other slots share
+    /// the working context.
+    public internal(set) var contextTokens: Int?
+
     /// Creates a slot progress value.
     init(
         state: State = .pending,
         chosen: ModelRef? = nil,
         bytesDownloaded: Int64 = 0,
-        bytesTotal: Int64 = 0
+        bytesTotal: Int64 = 0,
+        contextTokens: Int? = nil
     ) {
         self.state = state
         self.chosen = chosen
         self.bytesDownloaded = bytesDownloaded
         self.bytesTotal = bytesTotal
+        self.contextTokens = contextTokens
     }
 
     /// The share of a slot's work that downloading accounts for.

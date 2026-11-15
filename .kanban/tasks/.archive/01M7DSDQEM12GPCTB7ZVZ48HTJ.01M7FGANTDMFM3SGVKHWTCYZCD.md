@@ -11,6 +11,12 @@ comments:
     - Scope addition: streaming `.response` text alone does not cover this case. The fix also needs a stop for a tool-call body that runs away, decided in mlx (where the parser holds the body). For example, it could stream the tool-call text as it decodes so the router's cycle watch can read it, or put a cap/cycle check inside the tool-call parser. Test it with a hermetic executor that scripts a looping tool-call argument.
     - Next: once the instance ends, read the transcript under FoundationModelsACPAgent/bench/preds.flint3.transcripts/django__django-13447/ to confirm where the tokens went.
   timestamp: 2026-11-14T22:22:23.388392+00:00
+- actor: claude-code
+  id: 01m7fgaj5te01hfxx4psh7vwre
+  text: |-
+    ### Decision (user, 2026-11-15): won't do
+    "no the only tool that will really have this problem is shell, and this will be in the background via multitool / runCode". A runaway inside a tool-call body is only a real risk for shell commands. Those run in the background through multitool / runCode, so mlx-swift-lm does not need to stream the response text and tool-call bodies of a tool turn.
+  timestamp: 2026-11-15T11:43:47.898379+00:00
 position_column: todo
 position_ordinal: '8180'
 title: Stream the response text of an allowed tool turn so the repetition watch can see it live

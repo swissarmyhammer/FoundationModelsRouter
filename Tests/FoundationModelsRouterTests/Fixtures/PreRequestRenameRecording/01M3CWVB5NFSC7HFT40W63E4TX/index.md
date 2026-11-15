@@ -17,6 +17,7 @@ profile:
   embedding: org/emb-a
   decision: org/flash-a
   context: 1000
+  decisionContext: 16384
 configuration:
   workingDirectory: file:///fixture-work/
   toolNames: []

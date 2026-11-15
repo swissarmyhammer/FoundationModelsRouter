@@ -116,6 +116,6 @@ extension ProfileDefinition {
         return ProfileDefinition(
             name: name, description: description,
             standard: resolve(standard), flash: resolve(flash), embedding: resolve(embedding),
-            decision: resolve(decision), context: context)
+            decision: resolve(decision), context: context, decisionContext: decisionContext)
     }
 }

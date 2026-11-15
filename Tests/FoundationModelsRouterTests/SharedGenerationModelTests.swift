@@ -54,14 +54,15 @@ struct SharedGenerationModelTests {
     }
 
     /// A footprint that grows with the context for a generation model. A
-    /// flash candidate that an allocated pool key serves costs one session of
-    /// KV cache, as the router prices it.
+    /// candidate that an allocated pool key serves, at any context as the key
+    /// of an MLX model does, costs one session of KV cache in the flash slot
+    /// and nothing in the decision slot, as the router prices it.
     private static func footprint(
         _ ref: ModelRef, _ slot: ModelSlot, _ context: Int, _ allocatedKeys: Set<ModelPoolKey>
     ) -> Result<Int64, RepoMetadataError> {
         guard ref != embeddingModel else { return .success(embeddingBytes) }
         let request = slot.poolKey(of: ref, context: context)
-        guard !allocatedKeys.contains(where: { $0.canServe(request) }) else {
+        guard !allocatedKeys.contains(where: { $0.withoutContext.canServe(request) }) else {
             return .success(slot == .flash ? kvBytes(context: context) : 0)
         }
         return .success(weightBytes + kvBytes(context: context))

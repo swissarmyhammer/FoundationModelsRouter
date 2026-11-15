@@ -632,6 +632,10 @@ public actor Router {
             span.attributes[RouterTelemetry.AttributeKey.chosenModelRef(slot: slot)] =
                 chosenRef(of: slot, in: resolution).stringValue
         }
+        span.attributes[RouterTelemetry.AttributeKey.resolvedContextTokens] =
+            Int64(slotResolution(for: resolution, slot: .standard).contextTokens)
+        span.attributes[RouterTelemetry.AttributeKey.decisionContextTokens] =
+            Int64(slotResolution(for: resolution, slot: .decision).contextTokens)
     }
 
     // MARK: - Residency
@@ -996,6 +1000,24 @@ public actor Router {
         /// The slot that sizes the candidate.
         let sizingSlot: ModelSlot
 
+        /// Whether a model that this resolve allocated serves `key`.
+        ///
+        /// A GGUF model loads at a fixed context, so its allocated key serves
+        /// a request at that context or a smaller one
+        /// (``ModelPoolKey/canServe(_:)``). Any other generation model keeps
+        /// no context in the pool, so its key serves a request at any
+        /// context: the decision slot asks at its own context
+        /// (``ProfileDefinition/decisionContext``), which can be larger than
+        /// the window of the slot that allocated the model.
+        ///
+        /// - Parameter key: The key that the sizing slot asks the pool for.
+        /// - Returns: `true` when an allocated key serves `key`.
+        private func isAllocated(_ key: ModelPoolKey) -> Bool {
+            allocatedKeys.contains { allocated in
+                allocated.canServe(key) || (metadata.gguf == nil && allocated.withoutContext.canServe(key))
+            }
+        }
+
         /// The bytes that the candidate costs in `slot`: one session KV
         /// cache when this resolve allocated its model and the flash slot
         /// sizes it, 0 when this resolve allocated its model and another
@@ -1007,7 +1029,7 @@ public actor Router {
         ///   sized.
         func footprint(in slot: ModelSlot) -> Result<Int64, RepoMetadataError> {
             let key = slot.poolKey(of: ref, context: context)
-            guard !allocatedKeys.contains(where: { $0.canServe(key) }) else {
+            guard !isAllocated(key) else {
                 let isSharedFlash = sizingSlot == .flash && slot.poolRole == .llm
                 return .success(isSharedFlash ? metadata.footprint.kvBytes(context: context) : 0)
             }
@@ -1229,7 +1251,8 @@ public actor Router {
             flash: resolution.flash,
             embedding: resolution.embedding,
             decision: resolution.decision,
-            context: Self.slotResolution(for: resolution, slot: .standard).contextTokens
+            context: Self.slotResolution(for: resolution, slot: .standard).contextTokens,
+            decisionContext: Self.slotResolution(for: resolution, slot: .decision).contextTokens
         )
         return LanguageModelProfile(
             definitionName: def.name,
@@ -1358,6 +1381,7 @@ public actor Router {
             for slotRes in resolution.slots {
                 var sp = progress.slots[slotRes.slot] ?? SlotProgress()
                 sp.chosen = slotRes.chosen
+                sp.contextTokens = slotRes.contextTokens
                 sp.state = .pending
                 progress.slots[slotRes.slot] = sp
             }

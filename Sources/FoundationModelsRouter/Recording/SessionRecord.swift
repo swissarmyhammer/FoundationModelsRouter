@@ -35,11 +35,14 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         let flash: ModelRef
         /// The concrete model chosen for the `.embedding` slot.
         let embedding: ModelRef
-        /// The concrete model chosen for the `.decision` slot. It is the
-        /// `.flash` model when no decision candidate was used.
+        /// The concrete model chosen for the `.decision` slot.
         let decision: ModelRef
-        /// The working context, in tokens, shared by every slot.
+        /// The working context, in tokens, of the embedding, standard and
+        /// flash slots.
         let context: Int
+        /// The context, in tokens, of the `.decision` slot
+        /// (``ProfileDefinition/decisionContext``).
+        let decisionContext: Int
     }
 
     /// The parent session, the root session and the tool call that spawned
