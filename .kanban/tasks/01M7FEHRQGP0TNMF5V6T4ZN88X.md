@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7ffhpe3caw8vq914wn9kkja
+  text: |-
+    ### commit — changed
+    - evidence: 45890682 feat(resolution)!: allow one model in both the standard and the flash slot; `swift test` 2715 + 42 + 19 green; IntegrationTests and Benchmarks build clean.
+    - note: the shared flash slot is charged 0 bytes, and so is its session KV (the acquire of a key this resolve already holds adds no session bytes), the same rule the decision slot follows.
+  timestamp: 2026-11-15T11:30:13.059513+00:00
 position_column: done
 position_ordinal: ffffffffff9780
 title: Allow one model in both the standard and the flash slot
