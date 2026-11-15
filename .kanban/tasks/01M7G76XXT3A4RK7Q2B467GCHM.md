@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffff9b80
 title: Take Muse Glimmer out of the integration tests
 ---
 User decision (2026-11-15): "let's take muse glimmer out of the integration tests". Part of getting the integration job well under 30 minutes (mini-01, 32 GB, decodes a 27B at 6.4 tok/s against 30.6 on m3u1).
