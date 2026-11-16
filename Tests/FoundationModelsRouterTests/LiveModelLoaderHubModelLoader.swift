@@ -62,8 +62,17 @@ extension LiveModelLoader {
     /// - Returns: The client of each GGUF download.
     /// - Throws: When a stored property is missing or of another type.
     func requireGGUFHubClient() throws -> HubClient {
-        let hub: HubSource = try Self.stored(named: "hub", in: requireGGUFSource())
-        return hub.client()
+        try requireGGUFHubSource().client()
+    }
+
+    /// The `HubSource` of the GGUF source of this live loader: the client of
+    /// each GGUF download and the offline mode. The source keeps it private,
+    /// so this reads it by its name.
+    ///
+    /// - Returns: The hub source of each GGUF model.
+    /// - Throws: When a stored property is missing or of another type.
+    func requireGGUFHubSource() throws -> HubSource {
+        try Self.stored(named: "hub", in: requireGGUFSource())
     }
 
     /// The `GGUFSource` of the GGUF loader of this live loader: the cache it
