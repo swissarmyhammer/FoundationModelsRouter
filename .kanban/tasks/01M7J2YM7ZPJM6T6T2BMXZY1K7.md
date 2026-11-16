@@ -60,8 +60,15 @@ comments:
     - finding at JSONFileSessionUsageStore.swift:247 ticked. Not committed.
     - next: /review
   timestamp: 2026-11-16T13:08:46.988051+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7j7mjbvys4e99dzc5ybdmts
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (9116bbf4); 0 findings (0 confirmed, 0 refuted); all prior findings are checked
+    - next: none. The task is in done.
+  timestamp: 2026-11-16T13:09:41.883229+00:00
+position_column: done
+position_ordinal: ffffffffff9d80
 title: 'Session usage store: SessionUsageStore and the JSON file store (ROUTER-3, D186)'
 ---
 ## What
