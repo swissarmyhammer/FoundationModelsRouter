@@ -271,6 +271,17 @@ import Testing
         #expect(fixture.makeStore().usages().isEmpty)
     }
 
+    /// A file entry with no pin and no last use is not a usage: the read
+    /// removes it, as a write does.
+    @Test func aFileEntryWithNoPinAndNoUseIsRemovedAtTheRead() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        try fixture.writeFile(
+            #"{"version":\#(JSONFileSessionUsageStore.fileVersion),"sessions":{"\#(ULID().ulidString)":{}}}"#)
+
+        #expect(fixture.makeStore().usages().isEmpty)
+    }
+
     /// A write after a damaged file replaces the file, and a new store reads
     /// the write back.
     @Test func aWriteAfterADamagedFileComesBack() throws {

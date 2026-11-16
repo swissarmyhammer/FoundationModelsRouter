@@ -44,7 +44,23 @@ comments:
     - decisions: a failed write leaves the file and memory as they were; an unknown version, a non-ULID key, or two keys that give one ULID make the file "damaged" (empty store + warning `a session usage file cannot be read; the store starts empty`); `maximumRecentCount` must not be negative (precondition); trim order is newest lastUsedAt first, then the greater ULID.
     - next: /review
   timestamp: 2026-11-16T13:03:29.574339+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m7j7fm8zce526qq4v26rq85w
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (9133d2ea); 1 finding (1 confirmed, 1 refuted) — Sources/FoundationModelsRouter/Directory/JSONFileSessionUsageStore.swift:247 completeness/invariant-propagation
+    - next: implement the finding. Drop decoded entries that have no pin and no last use in `usages(decoding:)`. Add a test for a valid-ULID entry with `{}`.
+  timestamp: 2026-11-16T13:06:59.999235+00:00
+- actor: claude-code
+  id: 01m7j7jwrc1v6187ck0akanfya
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Directory/JSONFileSessionUsageStore.swift (`usages(decoding:)` now drops entries with `!hasPinOrUse`; type doc and decode doc state that a read removes them, as a write does), Tests/FoundationModelsRouterTests/JSONFileSessionUsageStoreTests.swift (new test `aFileEntryWithNoPinAndNoUseIsRemovedAtTheRead`). RED: that test failed (`usages().isEmpty` false), 15 others passed. GREEN: `swift test --filter JSONFileSessionUsageStoreTests` named and passed 16 tests in 1 suite.
+    - The rule now holds at both entries to memory: the decode and the change path. `trimmed` keeps its `.distantPast` fallback only because `lastUsedAt` is Optional; no entry without a pin and without a use can reach it now.
+    - finding at JSONFileSessionUsageStore.swift:247 ticked. Not committed.
+    - next: /review
+  timestamp: 2026-11-16T13:08:46.988051+00:00
+position_column: review
 position_ordinal: '80'
 title: 'Session usage store: SessionUsageStore and the JSON file store (ROUTER-3, D186)'
 ---
@@ -65,3 +81,12 @@ Add `SessionUsageStore`, a protocol of Router, and `JSONFileSessionUsageStore`, 
 ## Tests
 - `Tests/FoundationModelsRouterTests/JSONFileSessionUsageStoreTests.swift`
 - Run: `swift test --filter JSONFileSessionUsageStoreTests` #router-3
+
+## Review Findings (2026-11-16 07:04)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 10 not reviewed.
+
+> 10 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 10 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Directory/JSONFileSessionUsageStore.swift:247` `completeness/invariant-propagation` — The read path keeps an entry that has no pin and no last use. The write path removes such entries (`usages[id] = usage.hasPinOrUse ? usage : nil` at line 158), and the doc comment says a usage with no pin and no last use is removed. But `usages(decoding:)` returns every decoded entry unchanged. A file that holds a valid ULID with an empty object, such as `{"version":1,"sessions":{"<valid-ulid>":{}}}`, makes `usages()` and `usage(of:)` return an entry that the store's own rule says must not exist. The entry stays until the next write. The `trimmed` sort also has to fall back to `.distantPast` for it. Drop entries with `!hasPinOrUse` when the file is decoded, so the read path enforces the same rule as the write path. Add one test that writes a valid-ULID entry with `{}` and asserts that `usages()` is empty.

@@ -19,7 +19,8 @@ import Synchronization
 /// The store keeps all the pinned usages, and at most
 /// ``maximumRecentCount`` usages that are not pinned. A write removes the
 /// usages that are not pinned and have the oldest last use first. A usage
-/// with no pin and no last use is removed.
+/// with no pin and no last use is removed: a write removes it, and a read of
+/// the file removes it too.
 ///
 /// A `Mutex` holds the usages, so each call is safe from each thread. A write
 /// changes the usages in memory only after the file write succeeds.
@@ -231,7 +232,8 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
     /// Decodes the usages of the data of a file.
     ///
     /// - Parameter data: The data of the file.
-    /// - Returns: The usages, by session id.
+    /// - Returns: The usages, by session id. An entry with no pin and no last
+    ///   use is not a usage, so the read removes it, as a write does.
     /// - Throws: A decoding error when the data is not the JSON object of a
     ///   file, or ``SessionUsageFileError`` when the version is not
     ///   ``fileVersion`` or a session id is not valid.
@@ -245,6 +247,7 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
             return (id, usage)
         }
         return try Dictionary(pairs) { _, _ in throw SessionUsageFileError.duplicateSessionID }
+            .filter { $0.value.hasPinOrUse }
     }
 
     /// Writes the usages to the file atomically, and makes its folder when it
