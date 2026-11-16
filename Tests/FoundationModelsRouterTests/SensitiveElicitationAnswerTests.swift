@@ -63,10 +63,12 @@ struct SensitiveElicitationAnswerTests {
     /// - Parameters:
     ///   - request: The question.
     ///   - response: The answer of the user.
-    /// - Returns: The prompt text, or an empty string.
-    private static func mailText(_ request: ElicitationRequest, _ response: ElicitationResponse) -> String {
+    /// - Returns: The prompt text.
+    /// - Throws: An error that fails the test when the mail has no prompt
+    ///   text.
+    private static func mailText(_ request: ElicitationRequest, _ response: ElicitationResponse) throws -> String {
         let id = request.elicitationId
-        return ElicitationAnswerValidationTests.AnsweredQuestion.mailText(of: id, mailed(request, response)) ?? ""
+        return try #require(ElicitationAnswerValidationTests.AnsweredQuestion.mailText(of: id, mailed(request, response)))
     }
 
     // MARK: - The record
@@ -74,8 +76,8 @@ struct SensitiveElicitationAnswerTests {
     /// The production change that makes this test fail: a mail that carries
     /// the content of a sensitive answer.
     @Test("the answer mail of an accepted sensitive question holds no content")
-    func aSensitiveAcceptMailsNoContent() {
-        let text = Self.mailText(Self.tokenQuestion(isSensitive: true), Self.acceptedSecret)
+    func aSensitiveAcceptMailsNoContent() throws {
+        let text = try Self.mailText(Self.tokenQuestion(isSensitive: true), Self.acceptedSecret)
 
         #expect(!text.contains(Self.secret))
     }
@@ -84,8 +86,8 @@ struct SensitiveElicitationAnswerTests {
     /// sensitive answer that does not tell the model that the tool has the
     /// content.
     @Test("the answer mail of an accepted sensitive question tells the model that the tool has the content")
-    func aSensitiveAcceptMailSaysTheToolHasTheContent() {
-        let text = Self.mailText(Self.tokenQuestion(isSensitive: true), Self.acceptedSecret)
+    func aSensitiveAcceptMailSaysTheToolHasTheContent() throws {
+        let text = try Self.mailText(Self.tokenQuestion(isSensitive: true), Self.acceptedSecret)
 
         #expect(text.contains(AskedQuestions.withheldContentNote))
     }

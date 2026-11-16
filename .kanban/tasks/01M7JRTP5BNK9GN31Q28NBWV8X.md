@@ -42,6 +42,13 @@ comments:
     - evidence: review sha HEAD~1..HEAD (339b78b2); 1 finding (1 confirmed, 3 refuted) — Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69 reuse/reuse
     - next: remove the second copy of the answer mail construction in SensitiveElicitationAnswerTests.mailText(_:_:). Use the helper of the sibling suite, or move one shared helper to a location that both suites use. Then review again.
   timestamp: 2026-11-16T19:28:03.496820+00:00
+- actor: claude-code
+  id: 01m7jxe4jfec2tbtn5j07ykh2c
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (e13112c1). The prior finding at SensitiveElicitationAnswerTests.swift:69 (reuse/reuse) is fixed: the helper now uses the shared mail helper. 2 new findings (2 confirmed, 1 refuted): Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69 (swift/optionals), Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69 (test-integrity/no-test-cheating).
+    - next: Remove the `?? ""` fallback from the mail helper. Make each test fail when the mail is nil, for example with `try #require(...)`. Then run the review again.
+  timestamp: 2026-11-16T19:30:39.823797+00:00
 position_column: review
 position_ordinal: '80'
 title: The answer to a sensitive elicitation goes to the model and the recording with no content (D101)
@@ -79,3 +86,13 @@ Tell foundationmodelsacpagent-30 (uds:/tmp/cc-socks/95892.sock) the commit, so t
 > - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
 
 - [x] `Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69` `reuse/reuse` — `SensitiveElicitationAnswerTests.mailText(_:_:)` rebuilds the answer mail (`Mail(sender: .elicitation(id), body: .elicitationAnswer(...)).promptText`) that `AnsweredQuestion.mailText(of:_:)` already builds in the sibling suite. The two helpers differ only in the optional handling (`?? ""` here, `String?` there). Two copies of the mail construction can drift apart, so a change to how the answer mail is built would have to be made in both places. Call `ElicitationAnswerValidationTests.AnsweredQuestion.mailText(of: id, mailed(request, response))` and apply the `?? ""` at the call site, or move the shared helper to one place that both suites use. Do not keep a second copy of the `Mail(...)` construction.
+
+## Review Findings (2026-11-16 13:29)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69` `swift/optionals` — The `?? ""` turns a missing answer mail into an empty string. A test that cannot find the mail then passes. The no-content test asserts `!text.contains(Self.secret)`, which is true for an empty string, so a broken production path reads as a pass. Have the helper fail the test when the mail is nil, for example by using `try #require(...)` or `XCTUnwrap` in a throwing test helper, so a missing mail fails the test. Do not return an empty string as a default.
+- [x] `Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69` `test-integrity/no-test-cheating` — The `?? ""` fallback turns a nil mail text into an empty string. The `!text.contains(...)` assertions in the mail-content tests then pass whenever the helper returns nil, so they cannot fail when no mail is produced. This makes the sensitive-mail content checks vacuous. Return the optional from `mailText` and assert non-nil before the content checks, for example `let text = try #require(Self.mailText(...))`, so a missing mail fails the test instead of passing it. Keep the `?? ""` only where a test does not depend on the mail existing.
