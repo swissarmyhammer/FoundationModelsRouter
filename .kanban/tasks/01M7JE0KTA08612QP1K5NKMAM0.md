@@ -32,8 +32,15 @@ comments:
     - evidence: 2 new files — Tests/FoundationModelsRouterTests/Helpers/HubRequestGuard.swift, Tests/FoundationModelsRouterTests/HubRequestGuardTests.swift. `swift test --filter HubRequestGuardTests`: 3 tests in 1 suite pass. Full `swift test` one time: exit 0, 2806 tests in 328 suites + 45 in 24 + 19 in 3 pass; no compiler warning (only the swift-build note "missing creator for mutated node" of the mlx-swift_Cmlx bundle, not from this change).
     - next: /review
   timestamp: 2026-11-16T15:09:56.582225+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jemrfkwy9pvxgys3mp635e
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (8aa18ece); 0 findings (0 confirmed, 2 refuted); no prior findings. Acceptance boxes ticked at the coordinator's request, from the evidence: (1) the implementation comment records one failing run with the Hub URL, then the removal; the commit adds only HubRequestGuard.swift and HubRequestGuardTests.swift; (2) the guard is only in Tests/FoundationModelsRouterTests, and the real-model suites are in the separate IntegrationTests package; (3) the added lines have no setenv, HF_HUB_OFFLINE, HF_ENDPOINT or ProcessInfo environment use; (4) the implement comment records one full `swift test` with exit 0 and no warning (not run again by review).
+    - next: none. The task is in done.
+  timestamp: 2026-11-16T15:12:08.179375+00:00
+position_column: done
+position_ordinal: ffffffffffa280
 title: A check that fails when a unit test sends a request to the Hugging Face Hub
 ---
 ## What
@@ -49,7 +56,7 @@ Then choose the most reliable practical check, for example:
 If no check is practical, record why on this task and close it with no code change.
 
 ## Acceptance criteria
-- [ ] The check fails when a unit test makes a Hub request (prove it: make it fail one time on purpose, then remove that).
-- [ ] The check does not apply to FoundationModelsRouterRealModelSupport and the real-model suites.
-- [ ] No process environment change (no `HF_HUB_OFFLINE` set by tests).
-- [ ] Full `swift test` green. #router-3
+- [x] The check fails when a unit test makes a Hub request (prove it: make it fail one time on purpose, then remove that).
+- [x] The check does not apply to FoundationModelsRouterRealModelSupport and the real-model suites.
+- [x] No process environment change (no `HF_HUB_OFFLINE` set by tests).
+- [x] Full `swift test` green. #router-3
