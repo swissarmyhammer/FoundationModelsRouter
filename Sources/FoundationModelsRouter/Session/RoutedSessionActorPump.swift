@@ -504,7 +504,10 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - ``RepetitionWatchState/toolCallRun``: the count of identical
     ///   consecutive tool calls runs within one answer (task ^8eq31j0);
     /// - ``runMailStoppedIds``: one run mail stops at most one model call of
-    ///   the answer (task ^zetnz36).
+    ///   the answer (task ^zetnz36);
+    /// - ``noOpAnswerRequested``: an answer asks the model at most one time
+    ///   for its answer after a round of only no-op calls with no text (task
+    ///   ^b5cp7v3).
     ///
     /// The third limit, the one overflow retry, is no stored state: the first
     /// submission of each answer gets the permission
@@ -523,5 +526,6 @@ extension RoutedSessionActor: SessionMailObserver {
         repetitionWatch.toolCallRun = IdenticalToolCallRun()
         runMailStoppedIds = []
         staleWaitNudged = false
+        noOpAnswerRequested = false
     }
 }

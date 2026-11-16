@@ -11,6 +11,12 @@ import Testing
 /// answer: each no-op call gets ``RoutedSessionActor/noOpToolCallEndReason``
 /// as its output, and the answer ends with the last text of the model.
 ///
+/// Task ^b5cp7v3: when the model wrote no text in that round, the answer does
+/// not end with no text. It goes on one time with
+/// ``RoutedSessionActor/noOpAnswerRequestPrompt``, and the reply is the text
+/// of that pass. A user asked "what is today", got a tool call, and then no
+/// answer.
+///
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``StagedReasoningModel``. No GPU is in the loop, and no operation
 /// of the session is pending.
@@ -33,6 +39,11 @@ struct NoOpToolCallWithNothingPendingTests {
     /// The count of the model calls that each loop a waiting snippet.
     private static let waitingCallCount = 5
 
+    /// The count of the model calls of an answer whose first two calls give
+    /// only no-op calls with no text: the first call, and the one pass that
+    /// asks for the answer (task ^b5cp7v3).
+    private static let callsOfAnAnswerThatAsksOneTime = 2
+
     /// The text a model call writes before its no-op call.
     private static let lastText = "VERDICT: PASS"
 
@@ -49,6 +60,12 @@ struct NoOpToolCallWithNothingPendingTests {
         else { return false }
         return code.hasPrefix(waitingPrefix) || code == computingCode
     }
+
+    /// The script of a model call that writes no text and calls one waiting
+    /// snippet (task ^b5cp7v3). A call after it writes
+    /// ``RepeatingReasoningModel/Executor/answerText``.
+    private static let silentWaitingScript = RepeatingReasoningScript(
+        reasoningLines: [], hold: .noHold, ending: .runCode(waitingPrefix + "1"))
 
     /// The scripts of a model that calls one distinct waiting snippet on each
     /// call: `return waiting-1`, `return waiting-2`, and so on.
@@ -85,6 +102,18 @@ struct NoOpToolCallWithNothingPendingTests {
         return output
     }
 
+    /// The text of the prompt in `entry`.
+    ///
+    /// - Parameter entry: A transcript entry.
+    /// - Returns: The text, or `nil` for an entry that is not a prompt.
+    private static func promptText(of entry: Transcript.Entry) -> String? {
+        guard case .prompt(let prompt) = entry else { return nil }
+        return prompt.segments.compactMap { segment in
+            guard case .text(let text) = segment else { return nil }
+            return text.content
+        }.joined()
+    }
+
     /// The text of each segment of `output`, joined.
     ///
     /// - Parameter output: A tool output.
@@ -115,22 +144,21 @@ struct NoOpToolCallWithNothingPendingTests {
         #expect(runs.value == 0)
     }
 
-    @Test("a round of only no-op calls ends the answer after its model call")
-    func aRoundOfOnlyNoOpCallsEndsTheAnswer() async throws {
+    @Test("a second round of only no-op calls with no text ends the answer: the answer asks the model one time")
+    func theAnswerAsksTheModelOneTime() async throws {
         let (fixture, _) = try await Self.runAnswer(scripts: Self.waitingScripts)
         defer { await fixture.end() }
 
-        #expect(fixture.log.renders.count == 1)
+        #expect(fixture.log.renders.count == Self.callsOfAnAnswerThatAsksOneTime)
     }
 
-    @Test("a no-op snippet that computes a value gets the reason as its output, and the transcript ends with it")
+    @Test("a no-op snippet that computes a value gets the reason as its output")
     func aComputingNoOpCallGetsTheReason() async throws {
         let (fixture, _) = try await Self.runAnswer(
             scripts: [RepeatingReasoningScript(reasoningLines: [], hold: .noHold, ending: .runCode(Self.computingCode))])
         defer { await fixture.end() }
 
-        let last = try #require(await fixture.session.transcript.last)
-        let output = try #require(Self.toolOutput(of: last))
+        let output = try #require(await fixture.session.transcript.lazy.compactMap(Self.toolOutput(of:)).first)
         #expect(Self.text(of: output) == RoutedSessionActor.noOpToolCallEndReason)
     }
 
@@ -143,5 +171,24 @@ struct NoOpToolCallWithNothingPendingTests {
         defer { await fixture.end() }
 
         #expect(try Self.reply(in: events) == Self.lastText)
+    }
+
+    @Test("the answer that a round of only no-op calls with no text ends replies with the text of the next model pass")
+    func anAnswerWithNoTextRepliesWithTheNextPass() async throws {
+        let (fixture, events) = try await Self.runAnswer(
+            scripts: [Self.silentWaitingScript])
+        defer { await fixture.end() }
+
+        #expect(try Self.reply(in: events) == RepeatingReasoningModel.Executor.answerText)
+    }
+
+    @Test("the next model pass after a round of only no-op calls with no text gets the request for the answer")
+    func theNextPassGetsTheAnswerRequest() async throws {
+        let (fixture, _) = try await Self.runAnswer(
+            scripts: [Self.silentWaitingScript])
+        defer { await fixture.end() }
+
+        let prompts = await fixture.session.transcript.compactMap(Self.promptText(of:))
+        #expect(prompts.last == RoutedSessionActor.noOpAnswerRequestPrompt)
     }
 }

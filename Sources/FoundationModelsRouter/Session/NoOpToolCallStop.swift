@@ -19,7 +19,10 @@ import FoundationModelsExtras
 /// - When the round has only no-op calls and nothing is pending, nothing can
 ///   arrive, so the answer ends. Each no-op call gets a fixed output that
 ///   tells the model why (``RoutedSessionActor/noOpToolCallEndReason``), and
-///   the reply of the answer is the last text of the model.
+///   the reply of the answer is the last text of the model. When the model
+///   wrote no text, the answer goes on one time with
+///   ``RoutedSessionActor/noOpAnswerRequestPrompt``, which asks for the
+///   answer as text, and the reply is the text of that pass (task ^b5cp7v3).
 ///
 /// A no-op call never runs, so it is never progress for the recovery budget
 /// of the repetition watch (``RepetitionDetection/recoveriesPerAnswer``).
@@ -165,7 +168,9 @@ struct NoOpToolCallStop: Sendable {
 /// result of the pending operation as the next message when it settles
 /// (``RoutedSessionActor/settledRunDeliveryPrompt``). With nothing pending,
 /// each no-op call gets ``noOpToolCallEndReason`` as its output, and the
-/// answer ends with the last text of the model.
+/// answer ends with the last text of the model. When the model wrote no text,
+/// one more pass asks for the answer (``noOpAnswerRequestPrompt``, task
+/// ^b5cp7v3).
 ///
 /// This is not a stop of the repetition watch: it has no count and no
 /// recovery, and it does not change the render of the watch.
@@ -182,6 +187,15 @@ extension RoutedSessionActor {
     static let noOpToolCallEndReason = """
         This tool call does no work here. Nothing is pending, so nothing can arrive, \
         and the answer ends. Write your report as text.
+        """
+
+    /// The prompt of the one pass that goes on after a round of only no-op
+    /// calls with nothing pending and no text from the model (task
+    /// ^b5cp7v3). It asks for the answer as text, with no tool call, so the
+    /// answer does not end with no text.
+    static let noOpAnswerRequestPrompt = """
+        Nothing is pending, so no result can arrive. Do not call a tool. \
+        Give your answer now as text, with what you know.
         """
 
     /// Holds the body of a no-op tool call, and stops the model call at the
@@ -333,15 +347,18 @@ extension RoutedSessionActor {
     ///   nothing can arrive. Each no-op call gets
     ///   ``noOpToolCallEndReason`` as its output, so the model learns why its
     ///   answer ended, and the answer ends with the last text of the model in
-    ///   the attempt.
+    ///   the attempt. When the model wrote no text, one more pass asks for the
+    ///   answer (``replyOrAskForTheAnswer(lastText:attempt:body:)``, task
+    ///   ^b5cp7v3).
     ///
     /// - Parameters:
     ///   - stop: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
     ///   - body: The model work to run.
     /// - Returns: The response text of the next attempt when the round had a
-    ///   real call; else the last text of the model in the attempt when
-    ///   nothing is pending, or an empty reply.
+    ///   real call; else, when nothing is pending, the last text of the model
+    ///   in the attempt or the text of the pass that asks for the answer; else
+    ///   an empty reply.
     /// - Throws: What the next attempt throws.
     func continueAfterNoOpToolCallStop(
         _ stop: NoOpToolCallStop,
@@ -359,7 +376,34 @@ extension RoutedSessionActor {
         let rebuilt = await recordAttemptStoppedAtRound(
             liveEntries: stop.liveEntries,
             results: endReasons(answeringTheNoOpCallsOf: stop.liveEntries, attempt: attempt), attempt: attempt)
-        return Self.lastResponseText(of: rebuilt, entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt)
+        let lastText = Self.lastResponseText(of: rebuilt, entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt)
+        return try await replyOrAskForTheAnswer(lastText: lastText, attempt: attempt, body: body)
+    }
+
+    /// The reply of an answer that a round of only no-op calls ended while
+    /// nothing is pending (task ^b5cp7v3).
+    ///
+    /// The answer must end with text. When the model wrote text in the
+    /// attempt, that text is the reply. When it wrote none, the answer goes
+    /// on one time with ``noOpAnswerRequestPrompt``, and the reply is the
+    /// text of that pass. The request runs one time in an answer, so a model
+    /// that again gives only no-op calls and no text ends the answer.
+    ///
+    /// - Parameters:
+    ///   - lastText: The last text of the model in the stopped attempt.
+    ///   - attempt: The stopped attempt, already recorded.
+    ///   - body: The model work to run.
+    /// - Returns: `lastText`, or the response text of the pass that asks for
+    ///   the answer.
+    /// - Throws: What the pass that asks for the answer throws.
+    private func replyOrAskForTheAnswer(
+        lastText: String,
+        attempt: StoppedAttempt,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        guard lastText.allSatisfy(\.isWhitespace), !noOpAnswerRequested else { return lastText }
+        noOpAnswerRequested = true
+        return try await runContinuation(after: attempt, prompt: Self.noOpAnswerRequestPrompt, body: body)
     }
 
     /// Records the stopped attempt with the output of each real call of the

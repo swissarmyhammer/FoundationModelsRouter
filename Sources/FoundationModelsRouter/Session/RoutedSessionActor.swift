@@ -748,6 +748,12 @@ actor RoutedSessionActor: RoutedSession {
     /// pump clears it for each new answer.
     var staleWaitNudged = false
 
+    /// Whether the running answer already asked the model for its answer
+    /// after a round of only no-op calls with nothing pending and no text
+    /// (``RoutedSessionActor/noOpAnswerRequestPrompt``, task ^b5cp7v3). The
+    /// pump clears it for each new answer.
+    var noOpAnswerRequested = false
+
     /// The advisor of the hint to give a code change to an agent, or `nil`
     /// when the session gets no hint. The vending site binds it before it
     /// returns the session (``bind(delegationAdvisor:)``). See

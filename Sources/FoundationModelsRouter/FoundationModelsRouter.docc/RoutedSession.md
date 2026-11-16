@@ -148,7 +148,10 @@ The session pushes settlement to the model — the model never polls:
   mail, the transcript holds no marked call, and the terminal of the run is
   the next message that starts the model. With nothing pending, nothing can
   arrive: each marked call gets a fixed output that tells the model why its
-  answer ended, and the reply is the last text of the model. A marked call
+  answer ended, and the reply is the last text of the model. When the model
+  wrote no text, the answer goes on one time with a prompt that asks for the
+  answer as text with no tool call, and the reply is the text of that pass.
+  An answer asks one time only. A marked call
   never runs, so it never counts as progress for
   ``RepetitionDetection/recoveriesPerAnswer``. The recording does not hold
   the check, so a host gives it again to
