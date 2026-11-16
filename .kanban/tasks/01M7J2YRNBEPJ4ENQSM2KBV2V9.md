@@ -32,9 +32,25 @@ comments:
     - design: the store is in `Registry` under the one lock. The live summary builder has a `usage` parameter. Each recorded summary gets the usage through `recordedSummary(of:)` / `withUsage(_:_:)`. All 5 callers of the host roots now use `allRecordingRoots()` (the host roots, then the store roots that the host does not give, in path order). A live subagent or fork writes no recording root (nil keeps the root that the store holds).
     - next: review.
   timestamp: 2026-11-16T13:17:07.905695+00:00
+- actor: claude-code
+  id: 01m7j89hrsgdnn76e76hxdns6v
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (a4e8411a); 1 finding (1 confirmed, 1 refuted) — Tests/FoundationModelsRouterTests/RouterSessionDirectoryUsageTests.swift:116 reuse/reuse
+    - next: implement the finding. Move the session-closing helper `close(_:)` into the shared test helpers (Tests/FoundationModelsRouterTests/Helpers/). Call it from this suite and the four other directory suites. Parameterize a difference; do not add a fifth copy.
+  timestamp: 2026-11-16T13:21:09.401934+00:00
+- actor: claude-code
+  id: 01m7j8c28n6vband1cwh9cf97y
+  text: |-
+    ### implement — changed
+    - finding: `RouterSessionDirectoryUsageTests.swift:116` `reuse/reuse`. The shared helper is already in Tests/FoundationModelsRouterTests/Helpers/: `SessionFixtureLifecycle.close(_ sessions:opening:releasing:permits:)`. Its defaults are no gate and no semaphore, so `SessionFixtureLifecycle.close(sessions)` does the same as each private copy. Other suites (HumanWaitGateTests, CrossRouterResidencyTests, NestedGenerationReentryTests) already call it. I did not add a new helper, because a new helper would be one more copy.
+    - removed the private `static func close(_:)` from 4 suites: RouterSessionDirectoryUsageTests, RouterSessionDirectoryRestoreTests, RouterSessionDirectoryEventTests, RouterSessionDirectoryRegistrationTests. Each `Self.close(...)` call now is `SessionFixtureLifecycle.close(...)`. Not changed: RouterSessionDirectoryArchiveTests `Fixture.close(_ session:)` (it also opens a latch, closes the launcher sessions and removes the folders) and the `fixture.close(_:)` of the Delivery and Message suites (other teardown). They are not copies.
+    - evidence: `swift test --filter RouterSessionDirectory` gives 173 tests in 14 suites passed, exit 0. The 4 changed suites are named and pass. There are no compiler warnings (the one build warning is the mlx bundle `missing creator for mutated node`, the same as before).
+    - next: review.
+  timestamp: 2026-11-16T13:22:31.829521+00:00
 depends_on:
 - 01M7J2YM7ZPJM6T6T2BMXZY1K7
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: 'RouterSessionDirectory: use(usageStore:), setPinned, markUsed, pinned filter and order (ROUTER-3, D186)'
 ---
@@ -53,3 +69,12 @@ title: 'RouterSessionDirectory: use(usageStore:), setPinned, markUsed, pinned fi
 
 ## Tests
 - `Tests/FoundationModelsRouterTests/RouterSessionDirectoryUsageTests.swift` #router-3
+
+## Review Findings (2026-11-16 07:17)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryUsageTests.swift:116` `reuse/reuse` — The new static helper `close(_:)` repeats a session-closing helper that other directory test suites already define. It adds one more private copy instead of using a shared test helper. Move the helper into the shared test helpers (for example beside SessionDirectoryRouterPair in Tests/FoundationModelsRouterTests/Helpers/) and call it from this suite and the four others. If the helpers differ in what they close, parameterize the difference instead of adding a fifth copy.

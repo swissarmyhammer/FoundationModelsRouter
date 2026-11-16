@@ -53,13 +53,6 @@ import Testing
             completionToken: ToolContext.makeCompletionToken(), isCancelled: { false })
     }
 
-    /// Closes each session in `sessions`.
-    private static func close(_ sessions: [any RoutedSession]) async {
-        for session in sessions {
-            await session.close()
-        }
-    }
-
     // MARK: - Root
 
     /// A session from `router.resolve(...).standard.makeSession(configuration:)`
@@ -71,7 +64,7 @@ import Testing
         let found = try await fixture.directory.sessions(matching: SessionQuery(kind: .root))
 
         #expect(found.map(\.id) == [session.id])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     /// A new root has the kind `root` and no parent.
@@ -83,7 +76,7 @@ import Testing
 
         #expect(summary.kind == .root)
         #expect(summary.parentID == nil)
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     // MARK: - Subagent
@@ -99,7 +92,7 @@ import Testing
 
         #expect(summary.kind == .subagent)
         #expect(summary.parentID == parent.id)
-        await Self.close([child, parent])
+        await SessionFixtureLifecycle.close([child, parent])
     }
 
     /// A session with a recorded agent spawn is a subagent of the spawning
@@ -115,7 +108,7 @@ import Testing
 
         #expect(summary.kind == .subagent)
         #expect(summary.parentID == spawningSessionId)
-        await Self.close([child])
+        await SessionFixtureLifecycle.close([child])
     }
 
     // MARK: - Separation
@@ -133,7 +126,7 @@ import Testing
 
         #expect(inFirst.map(\.id) == [firstSession.id])
         #expect(inSecond.map(\.id) == [secondSession.id])
-        await Self.close([firstSession, secondSession])
+        await SessionFixtureLifecycle.close([firstSession, secondSession])
     }
 
     /// A profile built by hand, with no router that resolved it, registers its
@@ -152,6 +145,6 @@ import Testing
 
         #expect(found.isEmpty)
         #expect(profile.standard.sessionDirectory == nil)
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 }

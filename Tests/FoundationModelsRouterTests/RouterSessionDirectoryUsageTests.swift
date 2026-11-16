@@ -110,15 +110,6 @@ import Testing
         return summary
     }
 
-    /// Closes each session.
-    ///
-    /// - Parameter sessions: The sessions.
-    private static func close(_ sessions: [any RoutedSession]) async {
-        for session in sessions {
-            await session.close()
-        }
-    }
-
     // MARK: - Pin and use of a live session
 
     /// `setPinned` on a live session writes the pin to the store and sends
@@ -374,7 +365,7 @@ import Testing
         let found = try await fixture.liveDirectory.sessions(matching: Self.allSessions(pinned: true))
 
         #expect(found.map(\.id) == [pinned.id])
-        await Self.close([pinned, other])
+        await SessionFixtureLifecycle.close([pinned, other])
     }
 
     /// `pinned: false` gives only the sessions that are not pinned.
@@ -389,7 +380,7 @@ import Testing
         let found = try await fixture.liveDirectory.sessions(matching: Self.allSessions(pinned: false))
 
         #expect(found.map(\.id) == [other.id])
-        await Self.close([pinned, other])
+        await SessionFixtureLifecycle.close([pinned, other])
     }
 
     // MARK: - Order
@@ -408,7 +399,7 @@ import Testing
         let found = try await fixture.liveDirectory.sessions(matching: Self.allSessions(order: .lastUsedFirst))
 
         #expect(found.map(\.id) == [sessions[0].id, sessions[1].id, sessions[2].id])
-        await Self.close(sessions)
+        await SessionFixtureLifecycle.close(sessions)
     }
 
     /// `pinOrder` gives the first pin first, then the sessions that are not
@@ -425,7 +416,7 @@ import Testing
         let found = try await fixture.liveDirectory.sessions(matching: Self.allSessions(order: .pinOrder))
 
         #expect(found.map(\.id) == [sessions[0].id, sessions[1].id, sessions[2].id])
-        await Self.close(sessions)
+        await SessionFixtureLifecycle.close(sessions)
     }
 
     // MARK: - Restart

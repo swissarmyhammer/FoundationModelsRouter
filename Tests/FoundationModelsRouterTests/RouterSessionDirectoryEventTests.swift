@@ -42,13 +42,6 @@ import Testing
         return Fixture(router: router, profile: profile)
     }
 
-    /// Closes each session in `sessions`.
-    private static func close(_ sessions: [any RoutedSession]) async {
-        for session in sessions {
-            await session.close()
-        }
-    }
-
     // MARK: - Started
 
     /// A stream opened before a vend gets `started` with the summary of the
@@ -62,7 +55,7 @@ import Testing
 
         let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
         #expect(received == [.started(summary, requestedByClient: nil)])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     /// Two streams opened before a vend each get `started`.
@@ -80,7 +73,7 @@ import Testing
             requestedByClient: nil)
         #expect(receivedByFirst == [started])
         #expect(receivedBySecond == [started])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     /// A stream opened after a vend does not get the `started` of that
@@ -94,7 +87,7 @@ import Testing
         let received = await events.next(count: 1)
 
         #expect(received == [Self.marker])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     /// `register` puts the client that asked for the start in the one
@@ -110,7 +103,7 @@ import Testing
 
         let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
         #expect(received == [.started(summary, requestedByClient: Self.requestingClient)])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     /// A second registration of a session that is still live sends no
@@ -125,7 +118,7 @@ import Testing
         let received = await events.next(count: 1)
 
         #expect(received == [Self.marker])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     // MARK: - Order
@@ -142,7 +135,7 @@ import Testing
 
         let summary = try await SessionDirectorySummaries.summary(of: session.id, in: fixture.directory)
         #expect(received == [.started(summary, requestedByClient: nil), stateChanged])
-        await Self.close([session])
+        await SessionFixtureLifecycle.close([session])
     }
 
     // MARK: - Buffer

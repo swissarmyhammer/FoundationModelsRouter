@@ -24,13 +24,6 @@ import Testing
         }
     }
 
-    /// Closes each session in `sessions`.
-    private static func close(_ sessions: [any RoutedSession]) async {
-        for session in sessions {
-            await session.close()
-        }
-    }
-
     // MARK: - Restore
 
     /// `restoreSession(id:)` gives a root that is in the directory, as a root.
@@ -44,7 +37,7 @@ import Testing
 
             #expect(summary.kind == .root)
             #expect(summary.parentID == nil)
-            await Self.close([restored.session])
+            await SessionFixtureLifecycle.close([restored.session])
         }
     }
 
@@ -63,7 +56,7 @@ import Testing
 
             #expect(summary.kind == .subagent)
             #expect(summary.parentID == spawningSessionId)
-            await Self.close([restored.session])
+            await SessionFixtureLifecycle.close([restored.session])
         }
     }
 
@@ -85,7 +78,7 @@ import Testing
             #expect(summary.title == SessionFactsFixtures.title)
             #expect(summary.startedBy == startedBy)
             #expect(summary.origin == .tool)
-            await Self.close([restored.session])
+            await SessionFixtureLifecycle.close([restored.session])
         }
     }
 
