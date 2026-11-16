@@ -296,6 +296,28 @@ the reason `RunPlane.noUserPresentReason`. The session sends no
 cancel. The default is ``UserPresence/interactive``. The session's `index.md` records the
 value, and a restore applies it again.
 
+An answer that reaches the waiting run also goes to the session as
+``MailBody/elicitationAnswer(id:response:)`` mail, so the model sees the
+answer. The mail carries the answer that the run gets: an accepted form
+answer that does not agree with the requested schema becomes the same
+decline for the run and for the mail. The answer to a sensitive question
+(`ElicitationRequest.sensitive`) holds a secret, for example a token. The
+run gets the full answer, but the mail holds no value of the answer, because
+the mail goes into the prompt of the model and into the recording:
+
+- An accept becomes an accept whose content is only
+  `{"content":"withheld; the tool has it"}`. It tells the model that the
+  user answered and that the tool has the content.
+- A decline whose reason tells that the answer is not valid
+  (`ElicitationRequestedSchema.invalidAnswerReasonPrefix`) gets a fixed
+  reason with no value of the answer. The reason of the check can name a key
+  or a value of the answer.
+- Each other decline and each cancel does not change.
+
+No other output of the session writes the content of an answer: the logs,
+the telemetry, the journal, the session events, the events of the session
+directory and the relay of a subagent question do not.
+
 An accepted URL-mode question whose flow completes gets one
 ``SessionEvent/elicitationCompleted(_:)`` with the id of its
 ``SessionEvent/elicitationRequested(_:)``. The completion can come from

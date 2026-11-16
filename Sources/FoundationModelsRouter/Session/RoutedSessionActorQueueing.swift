@@ -201,7 +201,10 @@ extension RoutedSessionActor {
     /// declines an accepted form answer that does not agree with the
     /// requested schema. For such an answer the mail carries the same
     /// decline, not the content. Thus the model and the run see the same
-    /// answer.
+    /// answer. The exception is a sensitive question
+    /// (``ElicitationRequest/sensitive``): the run gets the full answer, and
+    /// the mail holds no value of the answer, because the mail goes into the
+    /// prompt of the model and into the recording.
     ///
     /// An answer that resumes a run that waits only for the user starts work
     /// of the session. Its lease begins before the run plane gets the
@@ -246,7 +249,8 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - id: The id of the question.
     ///   - response: The answer of the user.
-    /// - Returns: `response`, or the decline that the run gets.
+    /// - Returns: `response`, the decline that the run gets, or an answer
+    ///   with no value of the user for a sensitive question.
     private func mailedResponse(answering id: ULID, with response: ElicitationResponse) -> ElicitationResponse {
         askedQuestions.mailedResponse(answering: id, with: response)
     }

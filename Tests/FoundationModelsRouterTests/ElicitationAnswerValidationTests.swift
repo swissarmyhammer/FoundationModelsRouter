@@ -34,13 +34,19 @@ struct ElicitationAnswerValidationTests {
     /// A field that no declared schema has.
     private static let unknownField = "nickname"
 
+    /// The name of the folder of the recording, in the temp folder of a test.
+    private static let recordingFolder = "recording"
+
     /// What one answered question gave.
-    private struct AnsweredQuestion {
+    struct AnsweredQuestion {
         /// The answer that the run got.
         let run: ElicitationResponse
 
         /// Each prompt that reached the backend, joined in order.
         let prompts: String
+
+        /// The text of each file of the recording of the session, joined.
+        let recording: String
 
         /// The prompt text of the answer mail of the question with
         /// `response`.
@@ -79,21 +85,29 @@ struct ElicitationAnswerValidationTests {
     /// and waits until the session is idle.
     ///
     /// The post of the question returns after the journal recorded it, so
-    /// the session knows its schema before the answer.
+    /// the session knows its schema before the answer. The session records
+    /// to a folder of the test, and the call reads that recording after the
+    /// close of the session.
     ///
     /// - Parameters:
     ///   - request: The question.
     ///   - response: The answer of the user.
-    /// - Returns: The answer that the run got, and the prompts of the backend.
+    /// - Returns: The answer that the run got, the prompts of the backend,
+    ///   and the recording.
     /// - Throws: When a step of the session throws, or the answer is not
     ///   delivered. Before it throws, it closes the session (rule T1).
-    private static func answer(
+    static func answer(
         _ request: ElicitationRequest, with response: ElicitationResponse
     ) async throws -> AnsweredQuestion {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = MailQueueFixtures.Backend(script: [:])
-        let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        let recordingRoot = dir.appendingPathComponent(recordingFolder, isDirectory: true)
+        let profile = try await RouterTestFixtures.resolveStandardProfile(
+            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend), cacheDir: dir,
+            recordingsDir: recordingRoot
+        ).profile
+        let session = profile.standard.makeSession()
         do {
             _ = try await session.respond(to: firstPrompt)
 
@@ -113,12 +127,27 @@ struct ElicitationAnswerValidationTests {
             #expect(await session.becomesIdle())
             await session.close()
             withExtendedLifetime(profile) {}
-            return AnsweredQuestion(run: run, prompts: backend.prompts.joined(separator: "\n"))
+            return AnsweredQuestion(
+                run: run, prompts: backend.prompts.joined(separator: "\n"), recording: try text(under: recordingRoot))
         } catch {
             await session.close()
             withExtendedLifetime(profile) {}
             throw error
         }
+    }
+
+    /// The text of each regular file under `folder`, joined in the order of
+    /// their paths.
+    ///
+    /// - Parameter folder: The folder.
+    /// - Returns: The text.
+    /// - Throws: When a file cannot be read as UTF-8 text.
+    private static func text(under folder: URL) throws -> String {
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey])?
+            .compactMap { $0 as? URL }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true } ?? []
+        return try files.sorted { $0.path < $1.path }.map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
     }
 
     /// Checks that the run got a decline for a content that is not valid,

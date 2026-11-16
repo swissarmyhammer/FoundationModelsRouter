@@ -41,6 +41,14 @@ struct SubagentQuestionRelayTests {
     /// The accepted answer to the form question of the leaf.
     private static let acceptedForm = ElicitationResponse.accept(content: ["ok": .boolean(true)])
 
+    /// The secret in the answer to a sensitive question. It is a fake value.
+    private static let secretToken = "fake-test-token-value"
+
+    /// The accepted answer to a sensitive question of the leaf
+    /// (``SubagentAskStep/isSensitive``).
+    private static let sensitiveAnswer = ElicitationResponse.accept(
+        content: [SubagentAskStep.tokenField: .string(secretToken)])
+
     // MARK: - Helpers
 
     /// A root session whose child asked one question, with the feeds of
@@ -326,6 +334,42 @@ struct SubagentQuestionRelayTests {
         #expect(middleDepth.depthByKind[.elicitationAnswer] == nil)
         #expect(middleDepth.running.isEmpty)
         #expect(PendingElicitationFixtures.ends(in: outputs).isEmpty)
+    }
+
+    /// The production change that makes this test fail: a level that mails
+    /// the content of an answer to a sensitive question to its model, or a
+    /// relay that gives the leaf run the mailed answer in place of the
+    /// answer of the user.
+    @Test("a root answer to a sensitive question reaches the leaf run, and no level mails its content")
+    func aSensitiveRootAnswerReachesTheLeafRunAndNoLevelMailsItsContent() async throws {
+        let laterAnswers = RunLatch()
+        let rootStep = SubagentRelayStep(agentName: Self.reviewer)
+        let fixture = try await SubagentRelayFixture.make(
+            root: rootStep, children: [.ask(SubagentAskStep(isSensitive: true))],
+            container: BackgroundingLLMContainer(holdLaterAnswers: laterAnswers))
+        defer { await fixture.end(opening: [laterAnswers, rootStep.gate]) }
+        var rootFeed = await fixture.session.streamSessionEvents().makeAsyncIterator()
+        try await fixture.start()
+        let leaf = try #require(try await fixture.box.waitForChildren(Self.once).first)
+        let id = try #require(try firstQuestion(in: await Self.outputsThroughQuestion(&rootFeed)).elicitation)
+            .elicitationId
+
+        _ = await fixture.session.respond(elicitationId: id.description, response: Self.sensitiveAnswer)
+        let answers = try await fixture.box.waitForAnswers(Self.once)
+        let rootBackend = try #require(await (fixture.session as? RoutedSessionActor)?.backend as? BackgroundingBackend)
+        let leafBackend = try #require(await (leaf.session as? RoutedSessionActor)?.backend as? BackgroundingBackend)
+        let answerLine = "[answer to elicitation \(id.ulidString)]"
+        // The wait also ends on the next prompt of the leaf (rule T1). The
+        // prompt of the answer mail comes before the prompt of the terminal
+        // of the asking run, or in the same prompt. The backend holds that
+        // first later prompt, so no other prompt can come after it.
+        try await leafBackend.changes.wait(
+            until: { leafBackend.receivedPrompts.contains { $0.contains(answerLine) } },
+            endingOn: { leafBackend.receivedPrompts.count >= Self.leafPromptsThroughTheFirstMail })
+        let prompts = (rootBackend.receivedPrompts + leafBackend.receivedPrompts).joined(separator: "\n")
+
+        #expect(answers == [Self.sensitiveAnswer])
+        #expect(!prompts.contains(Self.secretToken))
     }
 
     /// The production change that makes this test fail: a relaying level

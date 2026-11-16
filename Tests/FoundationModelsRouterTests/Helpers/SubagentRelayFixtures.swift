@@ -47,10 +47,34 @@ struct SubagentAskStep: Sendable {
     /// question.
     var asksForURL = false
 
+    /// Whether the question is a sensitive form question with one string
+    /// field, ``tokenField``: its answer holds a secret
+    /// (`ElicitationRequest.sensitive`). A URL-mode step ignores it.
+    var isSensitive = false
+
     /// When set, the asking run first starts a fake background run in its
     /// own session, held on this latch, so the session works while its
     /// question is open.
     var besideRun: RunLatch?
+
+    /// The name of the string field of a sensitive question.
+    static let tokenField = "token"
+
+    /// The question of the step, with a new id.
+    ///
+    /// - Returns: A URL-mode question, a sensitive form question, or the
+    ///   proceed question.
+    func makeRequest() -> ElicitationRequest {
+        if asksForURL {
+            return ElicitationRequest(
+                message: "Open the page", elicitationId: ULID.generate(), url: SessionWorkEventTests.approvalURL)
+        }
+        guard isSensitive else { return MountFixtures.proceedRequest() }
+        return ElicitationRequest(
+            message: "token?", elicitationId: ULID.generate(),
+            requestedSchema: ElicitationRequestedSchema(properties: [Self.tokenField: .string(ElicitationStringSchema())]),
+            sensitive: true)
+    }
 }
 
 /// Holds the facts that ``SubagentJobTool`` and a test share: the role of
@@ -426,12 +450,7 @@ struct SubagentJobTool: Tool, BackgroundTool {
             _ = await trackFakeRun(on: session.runPlane, latch: besideRun)
         }
         box.noteAskContext(context)
-        let request =
-            step.asksForURL
-            ? ElicitationRequest(
-                message: "Open the page", elicitationId: ULID.generate(), url: SessionWorkEventTests.approvalURL)
-            : MountFixtures.proceedRequest()
-        let answer = try await context.elicit(request)
+        let answer = try await context.elicit(step.makeRequest())
         box.noteAnswer(answer)
         return "answered: \(answer.action.rawValue)"
     }

@@ -123,6 +123,11 @@ struct AskedQuestions: Sendable {
         /// answer mail to this session.
         let isRelayed: Bool
 
+        /// Whether the answer to the question holds a secret
+        /// (``ElicitationRequest/sensitive``). The answer mail of such a
+        /// question carries no content and no value of the answer.
+        let isSensitive: Bool
+
         /// Whether the question is a URL-mode question: its completion gives
         /// ``SessionEvent/elicitationCompleted(_:)``.
         var takesCompletion: Bool {
@@ -157,7 +162,7 @@ struct AskedQuestions: Sendable {
         let isForm = request.mode == .form
         questions[request.elicitationId] = Question(
             state: isForm ? .form : .url, mailID: mailID, requestedSchema: isForm ? request.requestedSchema : nil,
-            isRelayed: request.isRelayed)
+            isRelayed: request.isRelayed, isSensitive: request.sensitive)
     }
 
     /// Whether the recorded question `id` is a question that a
@@ -205,9 +210,48 @@ struct AskedQuestions: Sendable {
         questions.removeValue(forKey: id) != nil
     }
 
+    /// The key of the one field of ``withheldAnswer``.
+    static let withheldContentKey = "content"
+
+    /// The value of the one field of ``withheldAnswer``: it tells the model
+    /// that the user answered, and that the tool has the content.
+    static let withheldContentNote = "withheld; the tool has it"
+
+    /// The accepted answer that the session mails for a sensitive question
+    /// (``ElicitationRequest/sensitive``). It holds no value of the user. Its
+    /// prompt text tells the model that the tool has the content.
+    ///
+    /// `MailBody` and `ElicitationResponse` give an accept no other place
+    /// for this note. An accept with no content already means an answer with
+    /// no fields, so the note is the content of the mail.
+    static let withheldAnswer = ElicitationResponse.accept(
+        content: [withheldContentKey: .string(withheldContentNote)])
+
+    /// The reason of the decline that the session mails for a sensitive
+    /// answer that is not valid. The reason of ``ToolContext/elicit(_:)``
+    /// can name a key or a value of the answer, so the mail carries this
+    /// fixed reason in its place.
+    static let withheldInvalidAnswerReason =
+        ElicitationRequestedSchema.invalidAnswerReasonPrefix + "the details are withheld because the question is sensitive"
+
     /// The answer to the question `id` that the session mails to the model
     /// (``MailBody/elicitationAnswer(id:response:)``). It is the answer that
-    /// the run gets from ``ToolContext/elicit(_:)``.
+    /// the run gets from ``ToolContext/elicit(_:)`` (``checkedResponse(answering:with:)``),
+    /// with no content and no value of the answer when the question is
+    /// sensitive (``withholdingValues(of:)``).
+    ///
+    /// - Parameters:
+    ///   - id: The id of the question.
+    ///   - response: The answer of the user.
+    /// - Returns: The answer that the mail carries.
+    func mailedResponse(answering id: ULID, with response: ElicitationResponse) -> ElicitationResponse {
+        let checked = checkedResponse(answering: id, with: response)
+        guard questions[id]?.isSensitive == true else { return checked }
+        return Self.withholdingValues(of: checked)
+    }
+
+    /// The answer to the question `id` that the run gets from
+    /// ``ToolContext/elicit(_:)``.
     ///
     /// An accepted answer to a form-mode question whose content does not
     /// agree with the requested schema
@@ -222,12 +266,36 @@ struct AskedQuestions: Sendable {
     ///   - id: The id of the question.
     ///   - response: The answer of the user.
     /// - Returns: `response`, or the decline that the run gets.
-    func mailedResponse(answering id: ULID, with response: ElicitationResponse) -> ElicitationResponse {
+    private func checkedResponse(answering id: ULID, with response: ElicitationResponse) -> ElicitationResponse {
         guard response.action == .accept,
             let schema = questions[id]?.requestedSchema,
             let failure = schema.validationFailure(of: response.content)
         else { return response }
         return .decline(reason: ElicitationRequestedSchema.invalidAnswerReasonPrefix + failure)
+    }
+
+    /// The answer to a sensitive question with no content and no value of
+    /// the answer.
+    ///
+    /// - An accept becomes ``withheldAnswer``.
+    /// - A decline whose reason starts with
+    ///   ``ElicitationRequestedSchema/invalidAnswerReasonPrefix`` gets
+    ///   ``withheldInvalidAnswerReason``. The check of this level or of a
+    ///   parent level made that reason, and it can name a value of the answer.
+    /// - Each other decline and each cancel does not change: the user or the
+    ///   run plane gave its reason.
+    ///
+    /// - Parameter response: The answer that the run gets.
+    /// - Returns: The answer that the mail carries.
+    private static func withholdingValues(of response: ElicitationResponse) -> ElicitationResponse {
+        switch response.action {
+        case .accept:
+            return withheldAnswer
+        case .decline where response.reason?.hasPrefix(ElicitationRequestedSchema.invalidAnswerReasonPrefix) == true:
+            return .decline(reason: withheldInvalidAnswerReason)
+        case .decline, .cancel:
+            return response
+        }
     }
 
     /// Whether the journal recorded the question `id`.

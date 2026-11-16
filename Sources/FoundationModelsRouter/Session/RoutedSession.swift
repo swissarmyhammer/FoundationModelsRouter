@@ -935,7 +935,10 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// requested schema (``ElicitationRequestedSchema/validationFailure(of:)``),
     /// the run and the mail both get a decline whose reason is
     /// ``ElicitationRequestedSchema/invalidAnswerReasonPrefix`` followed by
-    /// the failure.
+    /// the failure. For a sensitive question (``ElicitationRequest/sensitive``)
+    /// the run gets the full answer, and the mail holds no value of the
+    /// answer: an accept carries only a note that the tool has the content,
+    /// and the decline of an answer that is not valid carries a fixed reason.
     ///
     /// A question that a ``SubagentQuestionRelay`` sent up from a subagent
     /// gives no answer mail to this session: the answer goes down to the
