@@ -35,8 +35,15 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterTests/LiveModelLoaderOfflineTests.swift, Tests/FoundationModelsRouterTests/LiveModelLoaderHubModelLoader.swift. `swift test --filter LiveModelLoaderOfflineTests`: 3 passed. Full `swift test`: 2839 tests in 330 suites passed, plus 48 and 19 in the other test bundles; 0 failures. One SwiftPM build warning that is not in this change: "missing creator for mutated node" for the mlx-swift_Cmlx.bundle.
     - next: /review
   timestamp: 2026-11-16T17:44:49.840447+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jqgp63mjjp5jtsp5xwtrz9
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (35b3ce8b). 0 findings, 0 confirmed, 0 refuted. 7 validator runs, 0 failed. The review engine examined 3 files. The .reviewignore file excluded 2 .kanban files.
+    - next: None. The task is in done.
+  timestamp: 2026-11-16T17:47:11.939861+00:00
+position_column: done
+position_ordinal: ffffffffffa680
 title: Extras LlamaCppModelLoader takes the offline mode, and LiveModelLoader gives it
 ---
 ## What
