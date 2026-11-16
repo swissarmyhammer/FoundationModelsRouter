@@ -25,6 +25,7 @@ full rules.
 ### Profiles
 
 - ``ProfileDefinition``
+- ``ModelProfiles``
 - ``LanguageModelProfile``
 - ``ModelSlot``
 
