@@ -229,6 +229,23 @@ struct IdenticalToolCallLimitSettingTests {
         #expect(prompt != RoutedSessionActor.repetitionStopContinuationPrompt)
     }
 
+    /// A model that called a tool with wrong arguments three times took the
+    /// final-answer exit of the recovery prompt and ended its task with no
+    /// change (task ^8t957pd, django__django-14411 of the flint24 bench).
+    @Test("the recovery prompt of a stop on a repeated tool call asks for a different call, not a final answer")
+    func recoveryPromptAsksForADifferentCall() {
+        let stop = RepetitionStop(
+            generatedTokens: 0, countedLines: 0, newLines: 0, tokensWithoutNewLine: 0,
+            detection: RepetitionDetection(), recovery: 1, repeatedToolCall: Self.repeatedCall)
+
+        let prompt = WatchStopReport.repetition(stop).continuationPrompt(hasTools: true)
+
+        #expect(!prompt.contains("final answer"))
+        #expect(prompt.contains("Read what its output says"))
+        #expect(prompt.contains("Your next output must be one tool call"))
+        #expect(prompt.contains("a different tool"))
+    }
+
     @Test("the recovery prompt of a stop with no repeated tool call does not change")
     func recoveryPromptWithoutCallIsTheGeneralPrompt() {
         let stop = RepetitionStop(

@@ -265,14 +265,25 @@ extension RoutedSessionActor {
         """
     }
 
+    /// The end of the prompt of a recovery after a repeated tool call: it
+    /// asks for a different call and offers no final answer (task ^8t957pd).
+    /// A model that called a tool with wrong arguments took the final-answer
+    /// exit of ``repetitionStopActRequest`` and ended its task with no
+    /// change. The final pass still lets the model answer.
+    static let repeatedToolCallActRequest = """
+        Stop reasoning. Read what its output says: if it reports an error, \
+        such as a wrong operation or argument, use what it lists as valid. \
+        Your next output must be one tool call: the same tool with corrected arguments, or a different tool.
+        """
+
     /// The prompt of the attempt that goes on after a repetition stop on a
     /// repeated tool call (task ^8eq31j0): the notice of the call, then the
-    /// request to act.
+    /// request for a different call (task ^8t957pd).
     ///
     /// - Parameter call: The repeated tool call.
     /// - Returns: The prompt.
     static func repeatedToolCallContinuationPrompt(_ call: RepeatedToolCall) -> String {
-        repeatedToolCallNotice(call) + " The session stopped your last output. " + repetitionStopActRequest
+        repeatedToolCallNotice(call) + " The session stopped your last output. " + repeatedToolCallActRequest
     }
 
     /// The prompt of the final pass of an answer in a session with tools: the
