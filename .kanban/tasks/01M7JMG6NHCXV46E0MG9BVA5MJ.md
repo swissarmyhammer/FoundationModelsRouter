@@ -25,8 +25,15 @@ comments:
     - evidence: full `swift test` once, exit 0: 2837 tests in 330 suites, 48 tests in 26 suites, 19 tests in 3 suites, all pass, 0 warnings. Files: Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Resolution/ProfileFitEstimate.swift (new), Sources/FoundationModelsRouter/FoundationModelsRouter.docc/FoundationModelsRouter.md, Tests/FoundationModelsRouterTests/EstimateFitTests.swift (new), Tests/FoundationModelsRouterPublicSurfaceTests/ProfileFitEstimatePublicSurfaceTests.swift (new)
     - next: /review
   timestamp: 2026-11-16T17:13:00.120815+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jnsqw2dm0p1adj2ka8xrqj
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (ecb6a699): 0 findings, 0 confirmed, 1 refuted, 7 attempted, 0 failed. The ignore rule excluded 2 .kanban files. No validator matched FoundationModelsRouter.docc/FoundationModelsRouter.md.
+    - next: The task is in done. No more work is necessary.
+  timestamp: 2026-11-16T17:17:11.426227+00:00
+position_column: done
+position_ordinal: ffffffffffa580
 title: 'Router.estimateFit(of:): fit estimate with no download and no load (ROUTER-12, D189)'
 ---
 ## Goal
