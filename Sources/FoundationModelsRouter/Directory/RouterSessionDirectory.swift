@@ -35,6 +35,14 @@ import Synchronization
 /// (``useRecordingRoots(_:)``) answer as recorded summaries
 /// (``RecordedSessions``).
 ///
+/// The directory keeps the pin and the last use of each session in the
+/// ``SessionUsageStore`` that the host gives with ``use(usageStore:)``
+/// (ROUTER-3, D186). ``setPinned(_:of:)`` and ``markUsed(_:)`` write it, each
+/// summary reads it, and ``sessions(matching:)`` filters by the pin and
+/// orders by the pin or by the last use. The recording root of each usage
+/// joins the recording roots of the host, so a recorded session that the
+/// store knows is found after a restart.
+///
 /// This version answers ``sessions(matching:)`` and ``summary(of:)`` for the
 /// live sessions, with the state and the last summary of each, and for the
 /// recorded root sessions, ``start(_:)`` starts a root session through the
@@ -159,6 +167,20 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// after the close. It is never cleared, but a new live registration
         /// of an id removes the id: a restored session starts not suspended.
         var suspendedIDs: Set<ULID> = []
+
+        /// The store of the pin and the last use of each session (ROUTER-3,
+        /// D186), or `nil` before ``RouterSessionDirectory/use(usageStore:)``.
+        /// The lock keeps it, so a summary that the lock builds reads it.
+        var usageStore: (any SessionUsageStore)?
+
+        /// The usage of the session `id` in ``usageStore``.
+        ///
+        /// - Parameter id: The session id.
+        /// - Returns: The usage, or `nil` when there is no store or the store
+        ///   keeps no usage for `id`.
+        func usage(of id: ULID) -> SessionUsage? {
+            usageStore?.usage(of: id)
+        }
     }
 
     /// The registry and the event streams. A lock keeps them, so the
@@ -266,7 +288,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
             entry.inboxWatcher = watcher
             registry.entries[session.id] = entry
-            registry.fanout.send(.started(Self.summary(of: session, in: entry), requestedByClient: requestedByClient))
+            let summary = Self.summary(of: session, in: entry, usage: registry.usage(of: session.id))
+            registry.fanout.send(.started(summary, requestedByClient: requestedByClient))
             return true
         }
         if isNew {
@@ -328,17 +351,20 @@ public actor RouterSessionDirectory: SessionDirectory {
                 gone.cancelFeeds()
             }
             registry.entries = registry.entries.filter { $0.value.session != nil }
-            return registry.entries.values.compactMap(Self.summary(of:))
+            let usages = registry.usageStore?.usages() ?? [:]
+            return registry.entries.compactMap { id, entry in Self.summary(of: entry, usage: usages[id]) }
         }
     }
 
     /// The summary of one registered session, or `nil` when the session is
     /// gone.
     ///
-    /// - Parameter entry: The registry entry.
+    /// - Parameters:
+    ///   - entry: The registry entry.
+    ///   - usage: The usage of the session in the usage store, or `nil`.
     /// - Returns: The summary.
-    private static func summary(of entry: Entry) -> SessionSummary? {
-        entry.session.map { summary(of: $0, in: entry) }
+    private static func summary(of entry: Entry, usage: SessionUsage?) -> SessionSummary? {
+        entry.session.map { summary(of: $0, in: entry, usage: usage) }
     }
 
     /// The summary of a live session, from its `nonisolated` properties, its
@@ -347,12 +373,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The state is the tracked work state, or `archived` when the facts of
     /// the session hold `archivedAt`: a live session whose record says it is
     /// archived reads as archived, so the resolver refuses a message to it.
+    /// The pin and the last use come from `usage` (``use(usageStore:)``).
     ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - entry: The registry entry of `session`.
+    ///   - usage: The usage of the session in the usage store, or `nil` when
+    ///     the store keeps none or the directory has no store.
     /// - Returns: The summary.
-    private static func summary(of session: any RoutedSession, in entry: Entry) -> SessionSummary {
+    private static func summary(
+        of session: any RoutedSession, in entry: Entry, usage: SessionUsage?
+    ) -> SessionSummary {
         let facts = session.facts
         return SessionSummary(
             id: session.id,
@@ -369,7 +400,9 @@ public actor RouterSessionDirectory: SessionDirectory {
             createdAt: session.id.timestamp,
             updatedAt: entry.updatedAt,
             lastSummary: entry.tracking.lastSummary,
-            isLive: true)
+            isLive: true,
+            pinnedAt: usage?.pinnedAt,
+            lastUsedAt: usage?.lastUsedAt)
     }
 
     // MARK: - Query
@@ -377,8 +410,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// See `SessionDirectory.sessions(matching:)`. The live sessions answer,
     /// and with `includesRecorded` the root sessions on disk under the
     /// recording roots too (``RecordedSessions``); a session that is live and
-    /// recorded answers once, as live. The result is newest first (ULID
-    /// order), cut to the limit of `query`.
+    /// recorded answers once, as live. The result is in the order of `query`
+    /// (``ordered(_:by:)``), cut to the limit of `query`. Each summary has the
+    /// pin and the last use of the usage store (``use(usageStore:)``).
     ///
     /// - Parameter query: The filter. Each field that is not nil must match.
     /// - Returns: The summaries of the matching sessions.
@@ -394,7 +428,50 @@ public actor RouterSessionDirectory: SessionDirectory {
             }
             .filter { Self.matches($0, query) }
             .sorted { $0.id > $1.id }
-        return Array(matching.prefix(max(0, query.limit)))
+        return Array(Self.ordered(matching, by: query.order).prefix(max(0, query.limit)))
+    }
+
+    /// Puts summaries in the order of a query.
+    ///
+    /// - `newestFirst`: the newest first (ULID order), as `newestFirst` holds
+    ///   them.
+    /// - `pinOrder`: the first pin first, then the sessions that are not
+    ///   pinned, the newest first.
+    /// - `lastUsedFirst`: the last use first, then the sessions that have no
+    ///   use, the newest first.
+    ///
+    /// - Parameters:
+    ///   - newestFirst: The summaries, the newest first.
+    ///   - order: The order of the query.
+    /// - Returns: The summaries in `order`.
+    private static func ordered(_ newestFirst: [SessionSummary], by order: SessionOrder) -> [SessionSummary] {
+        switch order {
+        case .newestFirst:
+            return newestFirst
+        case .pinOrder:
+            return sorted(newestFirst, by: \.pinnedAt, earliestFirst: true)
+        case .lastUsedFirst:
+            return sorted(newestFirst, by: \.lastUsedAt, earliestFirst: false)
+        }
+    }
+
+    /// Sorts summaries by a time. The summaries with no time come after the
+    /// others. The sort is stable, so equal times and the summaries with no
+    /// time keep the order of `summaries`.
+    ///
+    /// - Parameters:
+    ///   - summaries: The summaries, the newest first.
+    ///   - time: The time to sort by.
+    ///   - earliestFirst: `true` for the earliest time first, `false` for the
+    ///     latest time first.
+    /// - Returns: The sorted summaries.
+    private static func sorted(
+        _ summaries: [SessionSummary], by time: KeyPath<SessionSummary, Date?>, earliestFirst: Bool
+    ) -> [SessionSummary] {
+        let timed = summaries
+            .compactMap { summary in summary[keyPath: time].map { (time: $0, summary: summary) } }
+            .sorted { earliestFirst ? $0.time < $1.time : $0.time > $1.time }
+        return timed.map(\.summary) + summaries.filter { $0[keyPath: time] == nil }
     }
 
     /// See `SessionDirectory.summary(of:)`. A live session answers with its
@@ -421,7 +498,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   session with the id.
     private nonisolated func liveSummary(of id: ULID) -> SessionSummary? {
         state.withLock { registry in
-            registry.entries[id].flatMap(Self.summary(of:))
+            registry.entries[id].flatMap { Self.summary(of: $0, usage: registry.usage(of: id)) }
         }
     }
 
@@ -440,18 +517,46 @@ public actor RouterSessionDirectory: SessionDirectory {
             query.state.map { $0 == summary.state },
             query.parentID.map { $0 == summary.parentID },
             query.startedBy.map { $0 == summary.startedBy },
+            query.pinned.map { $0 == summary.isPinned },
         ]
         return checks.allSatisfy { $0 ?? true }
     }
 
     /// The summaries of the root sessions on disk under the recording roots
-    /// of the host (``useRecordingRoots(_:)``).
+    /// of the host (``useRecordingRoots(_:)``) and of the usage store
+    /// (``allRecordingRoots()``), each with the pin and the last use of the
+    /// usage store.
     ///
     /// - Returns: One summary for each recorded root session, in no order.
     /// - Throws: The error of the recording roots of the host, or of a read
     ///   of the record of past sessions.
     private func recordedSummaries() async throws -> [SessionSummary] {
-        try RecordedSessions(roots: try await recordingRoots()).summaries()
+        let usages = currentUsageStore()?.usages() ?? [:]
+        return try RecordedSessions(roots: try await allRecordingRoots()).summaries()
+            .map { Self.withUsage($0, usages[$0.id]) }
+    }
+
+    /// The summary of a recorded session, made from its record, with the pin
+    /// and the last use of the usage store.
+    ///
+    /// - Parameter record: The record of the session.
+    /// - Returns: The summary. It is never live.
+    private nonisolated func recordedSummary(of record: SessionRecord) -> SessionSummary {
+        Self.withUsage(RecordedSessions.summary(of: record), currentUsageStore()?.usage(of: record.sessionId))
+    }
+
+    /// A summary with the pin and the last use of a usage.
+    ///
+    /// - Parameters:
+    ///   - summary: The summary of a session.
+    ///   - usage: The usage of the session, or `nil` for no pin and no use.
+    /// - Returns: `summary` with ``SessionSummary/pinnedAt`` and
+    ///   ``SessionSummary/lastUsedAt`` of `usage`.
+    private static func withUsage(_ summary: SessionSummary, _ usage: SessionUsage?) -> SessionSummary {
+        var summary = summary
+        summary.pinnedAt = usage?.pinnedAt
+        summary.lastUsedAt = usage?.lastUsedAt
+        return summary
     }
 
     /// Lists the session folders of a recording root and returns the
@@ -514,6 +619,150 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameter roots: Gives the recording roots of the host.
     public func useRecordingRoots(_ roots: @escaping @Sendable () async throws -> [URL]) {
         recordingRoots = roots
+    }
+
+    /// The recording roots of the host, then each recording root of the
+    /// usage store (``SessionUsage/recordingRoot``) that the host does not
+    /// give, in path order. So a recorded session that the store knows is
+    /// found after a restart also when the host gives no root for it. Each
+    /// read of the recorded sessions reads the roots through this call.
+    ///
+    /// - Returns: The recording roots.
+    /// - Throws: The error of the recording roots of the host.
+    private func allRecordingRoots() async throws -> [URL] {
+        let hostRoots = try await recordingRoots()
+        let storeRoots = (currentUsageStore()?.usages().values.compactMap(\.recordingRoot) ?? [])
+            .map(Self.comparablePath(of:))
+        let addedRoots = Set(storeRoots).subtracting(hostRoots.map(Self.comparablePath(of:)))
+        return hostRoots + addedRoots.sorted().map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    // MARK: - Usage store
+
+    /// Gives the directory the store of the pin and the last use of each
+    /// session (ROUTER-3, D186). ``setPinned(_:of:)`` and ``markUsed(_:)``
+    /// write it, and each summary gets ``SessionSummary/pinnedAt`` and
+    /// ``SessionSummary/lastUsedAt`` from it. The recording root of each
+    /// usage joins the recording roots of the host, so a recorded session
+    /// that the store knows is found after a restart. A later call replaces
+    /// the store.
+    ///
+    /// The call reads the store one time before it keeps it, so the first
+    /// read of a file store does not occur under the lock of the registry.
+    ///
+    /// - Parameter usageStore: The usage store of the host.
+    public func use(usageStore: any SessionUsageStore) {
+        _ = usageStore.usages()
+        state.withLock { $0.usageStore = usageStore }
+    }
+
+    /// The usage store of ``use(usageStore:)``.
+    ///
+    /// - Returns: The store, or `nil` when the host gave none.
+    private nonisolated func currentUsageStore() -> (any SessionUsageStore)? {
+        state.withLock { $0.usageStore }
+    }
+
+    /// See `SessionDirectory.setPinned(_:of:)` (Pin Session and Unpin
+    /// Session, D118). Writes the pin to the usage store with the recording
+    /// root of the session (``changeUsage(of:_:)``), and sends one
+    /// `factsChanged` when the pin changes. A pin of a pinned session keeps
+    /// its first time and sends no event. A directory with no usage store
+    /// changes nothing and sends no event, as the Extras default does.
+    ///
+    /// - Parameters:
+    ///   - pinned: `true` to pin the session, `false` to unpin it.
+    ///   - id: The session id.
+    /// - Returns: The summary of the session with the new pin.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id; the error of the recording roots of
+    ///   the host; the read error of the `index.md` of a recorded session; or
+    ///   the write error of the store.
+    @discardableResult
+    public func setPinned(_ pinned: Bool, of id: ULID) async throws -> SessionSummary {
+        try await changeUsage(of: id) { store, recordingRoot, time in
+            try store.setPinned(pinned, of: id, recordingRoot: recordingRoot, at: time)
+        }
+    }
+
+    /// See `SessionDirectory.markUsed(_:)` (D184). Writes the time of the use
+    /// to the usage store with the recording root of the session
+    /// (``changeUsage(of:_:)``), and sends one `factsChanged`. A directory
+    /// with no usage store changes nothing and sends no event, as the Extras
+    /// default does.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The summary of the session with the new time of the last
+    ///   use.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id; the error of the recording roots of
+    ///   the host; the read error of the `index.md` of a recorded session; or
+    ///   the write error of the store.
+    @discardableResult
+    public func markUsed(_ id: ULID) async throws -> SessionSummary {
+        try await changeUsage(of: id) { store, recordingRoot, time in
+            try store.markUsed(id, recordingRoot: recordingRoot, at: time)
+        }
+    }
+
+    /// Changes the usage of the session `id` in the usage store, and sends
+    /// `factsChanged` with the new summary when the pin or the last use
+    /// changed: the one path of ``setPinned(_:of:)`` and ``markUsed(_:)``.
+    ///
+    /// A live session sends its live summary and stamps the time of change
+    /// of its entry (``recordFactsChange(of:)``). A recorded session sends
+    /// its recorded summary; its `index.md` is not written.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - change: Writes the change to the store with the recording root of
+    ///     the session (``usageTarget(of:)``) and the time of the call, and
+    ///     gives the usage after the change.
+    /// - Returns: The summary of the session after the change, or the summary
+    ///   with no change when the directory has no usage store.
+    /// - Throws: What ``usageTarget(of:)`` throws, or what `change` throws.
+    private func changeUsage(
+        of id: ULID, _ change: (any SessionUsageStore, URL?, Date) throws -> SessionUsage
+    ) async throws -> SessionSummary {
+        let target = try await usageTarget(of: id)
+        guard let store = currentUsageStore() else { return target.summary }
+        let usage = try change(store, target.recordingRoot, Date())
+        guard usage.pinnedAt != target.summary.pinnedAt || usage.lastUsedAt != target.summary.lastUsedAt else {
+            return target.summary
+        }
+        guard target.summary.isLive else {
+            let changed = Self.withUsage(target.summary, usage)
+            emit(.factsChanged(changed))
+            return changed
+        }
+        recordFactsChange(of: id)
+        return try requireLiveSummary(of: id)
+    }
+
+    /// The summary of the session `id` before a change of its usage, and the
+    /// recording root to write with the change.
+    ///
+    /// A live root session that records durably gives the folder that holds
+    /// its recording directory. A live subagent or fork gives `nil`, so the
+    /// store keeps the root it holds: its folder can sit inside the folder of
+    /// its parent, which is not a recording root. A memory-only session gives
+    /// `nil` too. A recorded session that is not live gives the recording
+    /// root that holds its folder.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The summary and the recording root.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id; the error of the recording roots of the
+    ///   host; or the read error of the `index.md` of a recorded session.
+    private func usageTarget(of id: ULID) async throws -> (summary: SessionSummary, recordingRoot: URL?) {
+        if let session = session(id: id), let summary = liveSummary(of: id) {
+            let folder = summary.kind == .root ? Self.ledgerDirectory(of: session) : nil
+            return (summary, folder?.deletingLastPathComponent())
+        }
+        guard let folder = try await recordedFolder(of: id), let record = try SessionIndexFile.read(in: folder) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        return (recordedSummary(of: record), folder.deletingLastPathComponent())
     }
 
     // MARK: - Launcher
@@ -635,7 +884,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             guard var entry = registry.entries[id], let session = entry.session else { return }
             entry.updatedAt = Date()
             registry.entries[id] = entry
-            registry.fanout.send(.factsChanged(Self.summary(of: session, in: entry)))
+            registry.fanout.send(.factsChanged(Self.summary(of: session, in: entry, usage: registry.usage(of: id))))
         }
     }
 
@@ -1454,13 +1703,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// The folder of the recorded session `id` under the recording roots of
-    /// the host: the folder named by the id in the first root that holds one.
+    /// the host and of the usage store (``allRecordingRoots()``): the folder
+    /// named by the id in the first root that holds one.
     ///
     /// - Parameter id: The session id.
     /// - Returns: The folder, or `nil` when no root holds one.
     /// - Throws: The error of the recording roots of the host.
     private func recordedFolder(of id: ULID) async throws -> URL? {
-        try await recordingRoots()
+        try await allRecordingRoots()
             .map { $0.appendingPathComponent(id.description, isDirectory: true) }
             .first { folder in
                 var isDirectory: ObjCBool = false
@@ -1612,9 +1862,9 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
         var record = stored
         change(&record)
-        guard record != stored else { return (RecordedSessions.summary(of: stored), false) }
+        guard record != stored else { return (recordedSummary(of: stored), false) }
         try SessionIndexFile.save(record, in: folder)
-        return (RecordedSessions.summary(of: record), true)
+        return (recordedSummary(of: record), true)
     }
 
     /// Changes the record of a live session through the session itself, and
@@ -1802,7 +2052,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   error of an `index.md`, or the errors of ``firstPrompt(of:)`` for the
     ///   transcript of a child.
     public func recordedChildren(of parent: ULID) async throws -> [RecordedChild] {
-        try RecordedSessions(roots: try await recordingRoots()).nestedEntries()
+        try RecordedSessions(roots: try await allRecordingRoots()).nestedEntries()
             .filter { $0.record.agentSpawn?.parentSessionId == parent }
             .compactMap { entry in
                 RecordedChild(
@@ -1840,7 +2090,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   `JSONLFileError.readFailed(description:)` for a transcript that does
     ///   not read.
     public func firstPrompt(of session: ULID) async throws -> String? {
-        for root in try await recordingRoots() where FileManager.default.fileExists(atPath: root.path) {
+        for root in try await allRecordingRoots() where FileManager.default.fileExists(atPath: root.path) {
             guard let folder = try TranscriptTree.sessionFolder(of: session, under: root) else { continue }
             return try FirstPromptReader.firstPrompt(ofSessionIn: folder)
         }
@@ -1881,7 +2131,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// `JSONLFileError.readFailed(description:)` for a transcript that does
     /// not read.
     public func runStatuses(of session: ULID) async throws -> [RunKey: RunStatus] {
-        for root in try await recordingRoots() where FileManager.default.fileExists(atPath: root.path) {
+        for root in try await allRecordingRoots() where FileManager.default.fileExists(atPath: root.path) {
             guard let folder = try TranscriptTree.sessionFolder(of: session, under: root) else { continue }
             let tree = try TranscriptTree.loadChain(ofSessionIn: folder, under: root)
             return OrphanRunScan(scanning: try tree.effectiveEntryEvents(forSession: session)).statuses
@@ -2112,7 +2362,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             entry.cancelFeeds()
             entry.tracking.archive()
             entry.updatedAt = Date()
-            var summary = Self.summary(of: session, in: entry)
+            var summary = Self.summary(of: session, in: entry, usage: registry.usage(of: id))
             summary.isLive = false
             return summary
         }
