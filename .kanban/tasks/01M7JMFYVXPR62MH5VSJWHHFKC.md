@@ -18,8 +18,15 @@ comments:
     - evidence: 4 files — Sources/FoundationModelsRouter/Core/ModelProfiles.swift (new), Tests/FoundationModelsRouterTests/ModelProfilesTests.swift (new), Tests/FoundationModelsRouterPublicSurfaceTests/ModelProfilesPublicSurfaceTests.swift (new), Sources/FoundationModelsRouter/FoundationModelsRouter.docc/FoundationModelsRouter.md. Full `swift test` one run: exit 0; Swift Testing 2826 tests in 329 suites, 47 tests in 25 suites, 19 tests in 3 suites passed; XCTest 0 tests; 0 failures; no compiler warnings (only the SwiftPM "missing creator for mutated node" build note, which is not from this change).
     - next: /review. The task stays in doing. No commit.
   timestamp: 2026-11-16T16:59:15.385040+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jmx8mt24jgv813ba4h6psg
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (bb8757c3). The engine gave 0 findings, 0 confirmed, 0 refuted (7 attempted, 0 failed). The task has no prior review findings. The engine did not review FoundationModelsRouter.docc/FoundationModelsRouter.md because no validator matches it.
+    - next: The task is in done.
+  timestamp: 2026-11-16T17:01:38.330668+00:00
+position_column: done
+position_ordinal: ffffffffffa480
 title: 'ModelProfiles: four builtin named profiles (ROUTER-12, D189)'
 ---
 ## Goal
