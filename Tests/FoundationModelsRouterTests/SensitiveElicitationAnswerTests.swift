@@ -57,7 +57,8 @@ struct SensitiveElicitationAnswerTests {
         return questions.mailedResponse(answering: request.elicitationId, with: response)
     }
 
-    /// The prompt text of the answer mail of `request` for `response`.
+    /// The prompt text of the answer mail of `request` for `response`. The
+    /// mail comes from ``ElicitationAnswerValidationTests/AnsweredQuestion/mailText(of:_:)``.
     ///
     /// - Parameters:
     ///   - request: The question.
@@ -65,8 +66,7 @@ struct SensitiveElicitationAnswerTests {
     /// - Returns: The prompt text, or an empty string.
     private static func mailText(_ request: ElicitationRequest, _ response: ElicitationResponse) -> String {
         let id = request.elicitationId
-        let answer = mailed(request, response)
-        return Mail(sender: .elicitation(id), body: .elicitationAnswer(id: id, response: answer)).promptText ?? ""
+        return ElicitationAnswerValidationTests.AnsweredQuestion.mailText(of: id, mailed(request, response)) ?? ""
     }
 
     // MARK: - The record

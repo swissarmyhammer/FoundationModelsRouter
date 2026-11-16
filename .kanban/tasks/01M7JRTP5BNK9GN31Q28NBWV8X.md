@@ -35,7 +35,14 @@ comments:
     - evidence: 8 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorWorkEvents.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorQueueing.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md, Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift (new), Tests/FoundationModelsRouterTests/ElicitationAnswerValidationTests.swift, Tests/FoundationModelsRouterTests/Helpers/SubagentRelayFixtures.swift, Tests/FoundationModelsRouterTests/SubagentQuestionRelayTests.swift. `swift test --filter 'SensitiveElicitationAnswerTests|aSensitiveRootAnswerReachesTheLeafRunAndNoLevelMailsItsContent|ElicitationAnswerValidationTests'`: 16 tests in 3 suites passed. Full `swift test`: 2851 + 48 + 19 tests passed, 0 failures.
     - next: /review. Not committed. After the commit, tell foundationmodelsacpagent-30 the sha.
   timestamp: 2026-11-16T19:24:35.397870+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m7jx9bx85b85sjhntty1890h
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (339b78b2); 1 finding (1 confirmed, 3 refuted) — Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69 reuse/reuse
+    - next: remove the second copy of the answer mail construction in SensitiveElicitationAnswerTests.mailText(_:_:). Use the helper of the sibling suite, or move one shared helper to a location that both suites use. Then review again.
+  timestamp: 2026-11-16T19:28:03.496820+00:00
+position_column: review
 position_ordinal: '80'
 title: The answer to a sensitive elicitation goes to the model and the recording with no content (D101)
 ---
@@ -60,3 +67,15 @@ ACPAgent (foundationmodelsacpagent-30) reports a leak of a secret. `RoutedSessio
 
 ## After it lands
 Tell foundationmodelsacpagent-30 (uds:/tmp/cc-socks/95892.sock) the commit, so that it turns the token request back on and sets the flag. #router-3
+
+## Review Findings (2026-11-16 13:25)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 3 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+
+- [x] `Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69` `reuse/reuse` — `SensitiveElicitationAnswerTests.mailText(_:_:)` rebuilds the answer mail (`Mail(sender: .elicitation(id), body: .elicitationAnswer(...)).promptText`) that `AnsweredQuestion.mailText(of:_:)` already builds in the sibling suite. The two helpers differ only in the optional handling (`?? ""` here, `String?` there). Two copies of the mail construction can drift apart, so a change to how the answer mail is built would have to be made in both places. Call `ElicitationAnswerValidationTests.AnsweredQuestion.mailText(of: id, mailed(request, response))` and apply the `?? ""` at the call site, or move the shared helper to one place that both suites use. Do not keep a second copy of the `Mail(...)` construction.
