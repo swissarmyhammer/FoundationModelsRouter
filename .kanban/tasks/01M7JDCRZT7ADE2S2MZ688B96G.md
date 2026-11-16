@@ -21,8 +21,15 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Sizing/GGUFRepoMetadata.swift, Tests/FoundationModelsRouterTests/LiveModelLoaderOfflineTests.swift (new), LiveModelLoaderCacheFolderTests.swift, LiveModelLoaderCoreMLTests.swift, ModelStorageSummaryTests.swift. `swift test --filter LiveModelLoader` 14 tests in 5 suites pass; `--filter ModelStorageSummary` 17 tests pass; full `swift test` one time: 2803 tests in 327 suites pass, exit 0, no warnings.
     - next: /review
   timestamp: 2026-11-16T14:55:48.425006+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jds0w7ksj4e1bn5mkm2e73
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (e2455271); 0 findings (0 confirmed, 0 refuted); no prior findings
+    - next: none. The task is in done.
+  timestamp: 2026-11-16T14:56:59.271244+00:00
+position_column: done
+position_ordinal: ffffffffffa180
 title: Unit tests with a fake hub cache use the offline mode of the hub source (Extras 2f64483)
 ---
 ## What
