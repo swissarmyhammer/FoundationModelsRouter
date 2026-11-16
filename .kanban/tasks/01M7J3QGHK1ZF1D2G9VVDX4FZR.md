@@ -30,10 +30,17 @@ comments:
     - evidence: the doc comments of Core/ModelChoices.swift no longer give GB sizes (16.1/0.3/8.3/4.6/2.3 GB, 32 GB and 16 GB machine). The doc now says that each standard choice after the default is a smaller model than the default, and that storageSummary(of:).totalBytes gives the size at run time. The test name "a model for a 16 GB machine" is now "the smallest Qwen3 4-bit model". A check of the whole diff found no other number from memory; the test numbers (1_000, 30, 400) are fixture values. `swift test --filter ModelChoices`: 17 + 3 tests passed. The build had no new warning.
     - next: /review
   timestamp: 2026-11-16T13:43:16.099701+00:00
+- actor: claude-code
+  id: 01m7j9sc64qt5kh0kqdxrjxn86
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (1a2ee949); 0 findings (0 confirmed, 4 refuted); no prior findings
+    - next: none. The task is in done.
+  timestamp: 2026-11-16T13:47:16.548410+00:00
 depends_on:
 - 01M7J2Z8PTQ4Q7J3C20B5CP7V3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffa080
 title: Model choices of each slot for the Settings Models pane (TestudoApp ^453zgr3, D183 (c))
 ---
 ## What
