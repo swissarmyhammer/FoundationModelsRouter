@@ -21,6 +21,17 @@ struct ModelChoicesTests {
     /// An MLX reference with an MTP drafter.
     static let drafterRef = ModelRef(repo: "org/target-4bit", drafter: "org/target-MTP-4bit")
 
+    /// The builtin default model in its text form: the same model as the
+    /// first builtin generation choice, with no drafter.
+    static let defaultModelTextRef: ModelRef = "mlx-community/Qwen3.8-27B-4bit"
+
+    /// The builtin default model with a drafter of its own, which is not the
+    /// builtin drafter.
+    static let defaultModelOwnDrafterRef = ModelRef(
+        repo: "mlx-community/Qwen3.8-27B-4bit",
+        drafter: "org/custom-MTP-4bit"
+    )
+
     /// Makes a profile with the given candidates of the `standard` slot.
     ///
     /// - Parameter standard: The candidates of the `standard` slot.
@@ -107,6 +118,34 @@ struct ModelChoicesTests {
         let profile = Self.makeProfile(standard: builtin.reversed())
 
         #expect(profile.choices(for: .standard) == builtin.reversed())
+    }
+
+    @Test("A candidate in text form of a builtin model is one choice, with the builtin drafter")
+    func textFormCandidateTakesTheBuiltinDrafter() {
+        let profile = Self.makeProfile(standard: [Self.defaultModelTextRef])
+
+        #expect(profile.choices(for: .standard) == ModelChoices.builtin(for: .standard))
+    }
+
+    @Test("A candidate with a drafter of its own keeps that drafter")
+    func candidateKeepsItsOwnDrafter() {
+        let profile = Self.makeProfile(standard: [Self.defaultModelOwnDrafterRef])
+
+        #expect(profile.choices(for: .standard).first?.drafter == "org/custom-MTP-4bit")
+    }
+
+    @Test("A candidate with a drafter of its own is one choice for its model")
+    func candidateWithItsOwnDrafterIsOneChoice() {
+        let profile = Self.makeProfile(standard: [Self.defaultModelOwnDrafterRef])
+
+        #expect(profile.choices(for: .standard).count == ModelChoices.builtin(for: .standard).count)
+    }
+
+    @Test("The other choices keep their order when a candidate takes the builtin drafter")
+    func otherChoicesKeepTheirOrder() {
+        let profile = Self.makeProfile(standard: ["org/custom-a", Self.defaultModelTextRef])
+
+        #expect(profile.choices(for: .standard) == ["org/custom-a"] + ModelChoices.builtin(for: .standard))
     }
 
     @Test("The choices of the decision slot of a default profile are the default decision candidates")

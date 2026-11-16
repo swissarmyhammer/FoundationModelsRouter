@@ -79,19 +79,45 @@ extension ProfileDefinition {
 
     /// The models that a slot can take, for a settings pane: the candidates
     /// of the slot in this profile, then the builtin choices of the slot
-    /// (``ModelChoices/builtin(for:)``), with no copy.
+    /// (``ModelChoices/builtin(for:)``), with one choice for each model.
     ///
-    /// A reference with a drafter and the same reference with no drafter are
-    /// two choices: they load different models. The list makes no download
-    /// and no network request. A change of the slot applies at the next
-    /// resolve, as ``slotModel(for:)`` states.
+    /// The model of a reference is its repository or local location, its
+    /// path (the GGUF file or folder) and its revision. The drafter is not
+    /// part of it. When two references name the same model, the list keeps
+    /// one choice, at the position of the first reference. When that
+    /// reference has no drafter, the choice takes the drafter of the first
+    /// later reference that has one: a profile that names the builtin
+    /// default in its text form thus gets the builtin MTP drafter. A
+    /// reference with a drafter of its own keeps that drafter.
+    ///
+    /// The list makes no download and no network request. A change of the
+    /// slot applies at the next resolve, as ``slotModel(for:)`` states.
     ///
     /// - Parameter slot: The slot.
     /// - Returns: The choices, in order: the candidates of the profile first.
     public func choices(for slot: ModelSlot) -> [ModelRef] {
+        let entries = (candidatesBySlot[slot] ?? []) + ModelChoices.builtin(for: slot)
+        let drafters = Dictionary(
+            entries.compactMap { entry in entry.drafter.map { (entry.withoutDrafter, $0) } },
+            uniquingKeysWith: { first, _ in first }
+        )
         var seen: Set<ModelRef> = []
-        return ((candidatesBySlot[slot] ?? []) + ModelChoices.builtin(for: slot)).filter {
-            seen.insert($0).inserted
+        return entries.filter { seen.insert($0.withoutDrafter).inserted }.map { entry in
+            ModelRef(
+                repo: entry.repo,
+                path: entry.path,
+                revision: entry.revision,
+                drafter: entry.drafter ?? drafters[entry.withoutDrafter]
+            )
         }
+    }
+}
+
+extension ModelRef {
+    /// The model of the reference with no drafter: the repository or local
+    /// location, the path and the revision. Two references with the same
+    /// value name the same model.
+    fileprivate var withoutDrafter: ModelRef {
+        ModelRef(repo: repo, path: path, revision: revision)
     }
 }
