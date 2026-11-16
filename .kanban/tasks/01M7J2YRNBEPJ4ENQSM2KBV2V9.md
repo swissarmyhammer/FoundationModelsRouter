@@ -48,10 +48,17 @@ comments:
     - evidence: `swift test --filter RouterSessionDirectory` gives 173 tests in 14 suites passed, exit 0. The 4 changed suites are named and pass. There are no compiler warnings (the one build warning is the mlx bundle `missing creator for mutated node`, the same as before).
     - next: review.
   timestamp: 2026-11-16T13:22:31.829521+00:00
+- actor: claude-code
+  id: 01m7j8dpq41vxz29ze9h5nrc7r
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (8358c700); 0 findings (0 confirmed, 0 refuted); all prior findings are checked
+    - next: none. The task is in done.
+  timestamp: 2026-11-16T13:23:25.540227+00:00
 depends_on:
 - 01M7J2YM7ZPJM6T6T2BMXZY1K7
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffff9e80
 title: 'RouterSessionDirectory: use(usageStore:), setPinned, markUsed, pinned filter and order (ROUTER-3, D186)'
 ---
 ## What
