@@ -257,6 +257,49 @@ public actor Router {
         }
     }
 
+    /// Estimates whether a profile fits the memory budget of this machine,
+    /// with no download and no load.
+    ///
+    /// The estimate runs the sizing and the joint fit of
+    /// ``resolve(profile:reporting:)``, so the two choose the same model for
+    /// each slot from the same budget. It reads the repository metadata of
+    /// each candidate as the sizing of a resolve does. The budget is the
+    /// whole machine budget: the estimate does not subtract the models that
+    /// the pool keeps resident, and it gives no discount for them. Thus one
+    /// profile gets the same estimate whatever other profiles are loaded.
+    ///
+    /// The estimate takes no admission job of the pool and no hold, drives
+    /// no progress, and calls no loader. It does not read the prompt format
+    /// of the decision model, because that read is not part of the sizing.
+    /// A local model path in the `~` or `./` form becomes an absolute path,
+    /// as in a resolve.
+    ///
+    /// The estimate does not throw. A profile that does not fit, a candidate
+    /// that could not be sized, and a cancelled task each give an estimate
+    /// that does not fit, with the reason in
+    /// ``ProfileFitEstimate/failure``.
+    ///
+    /// - Parameter authored: The authored profile to estimate.
+    /// - Returns: The estimate.
+    public func estimateFit(of authored: ProfileDefinition) async -> ProfileFitEstimate {
+        let def = authored.resolvingLocalModelPaths()
+        let budget = hostBudget()
+        guard !Task.isCancelled else {
+            return .cancelled(budgetBytes: budget)
+        }
+        let metadataByRef = await sizeCandidates(profile: def)
+        guard !Task.isCancelled else {
+            return .cancelled(budgetBytes: budget)
+        }
+        do {
+            let resolution = try Self.jointResolution(
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: [])
+            return Self.fitEstimate(of: resolution, budget: budget)
+        } catch {
+            return ProfileFitEstimate(failure: String(describing: error), budgetBytes: budget)
+        }
+    }
+
     /// Gives this router an explicit logger for the log records of each
     /// later resolve and of each load in it.
     ///
@@ -1106,21 +1149,9 @@ public actor Router {
         residentKeys: Set<ModelPoolKey>,
         progress: ResolutionProgress
     ) async throws -> JointResolution {
-        let membership = Self.slotMembership(profile: def)
         do {
-            return try JointFit.resolve(
-                profile: def,
-                budgetBytes: budget,
-                footprint: { ref, slot, context, allocatedKeys in
-                    Self.footprintBytes(
-                        for: ref, in: slot, context: context, metadataByRef: metadataByRef,
-                        membership: membership, residentKeys: residentKeys, allocatedKeys: allocatedKeys
-                    )
-                },
-                nativeMaxContext: { ref in
-                    Self.nativeMaxContextResult(for: ref, metadataByRef: metadataByRef)
-                }
-            )
+            return try Self.jointResolution(
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: residentKeys)
         } catch let failure as ResolutionFailure {
             await recordFailure(
                 outcomes: failure.slots.map { ($0.slot, $0.chosen) },
@@ -1138,6 +1169,61 @@ public actor Router {
             )
             throw failure
         }
+    }
+
+    /// Runs the pure joint fit of a profile against a budget, with the
+    /// footprint and the native max context of each candidate from its sized
+    /// metadata. A resolve (``runJointFit(profile:budget:metadataByRef:residentKeys:progress:)``)
+    /// and a fit estimate (``estimateFit(of:)``) both call it.
+    ///
+    /// - Parameters:
+    ///   - def: The authored profile.
+    ///   - budget: The budget that the four slots share, in bytes.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - residentKeys: The keys of the models that the pool keeps
+    ///     resident. A candidate that one of them serves costs only its
+    ///     marginal bytes.
+    /// - Returns: The chosen model of each slot and the reasons.
+    /// - Throws: ``ResolutionFailure`` when the four slots do not fit the
+    ///   budget, or ``NoWindowFailure`` when the profile names no context and
+    ///   no standard candidate's window could be read.
+    private static func jointResolution(
+        profile def: ProfileDefinition,
+        budget: Int64,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        residentKeys: Set<ModelPoolKey>
+    ) throws -> JointResolution {
+        let membership = slotMembership(profile: def)
+        return try JointFit.resolve(
+            profile: def,
+            budgetBytes: budget,
+            footprint: { ref, slot, context, allocatedKeys in
+                footprintBytes(
+                    for: ref, in: slot, context: context, metadataByRef: metadataByRef,
+                    membership: membership, residentKeys: residentKeys, allocatedKeys: allocatedKeys
+                )
+            },
+            nativeMaxContext: { ref in
+                nativeMaxContextResult(for: ref, metadataByRef: metadataByRef)
+            }
+        )
+    }
+
+    // MARK: - Fit estimate
+
+    /// The estimate of a joint fit: the chosen model of each slot, and the
+    /// sum of the bytes that each chosen model charged.
+    ///
+    /// - Parameters:
+    ///   - resolution: The joint fit.
+    ///   - budget: The budget of the fit.
+    /// - Returns: The estimate of a profile that fits.
+    private static func fitEstimate(of resolution: JointResolution, budget: Int64) -> ProfileFitEstimate {
+        let requiredBytes = resolution.slots.reduce(Int64(0)) { total, slotRes in
+            total + (chosenReport(for: slotRes)?.chargedBytes ?? 0)
+        }
+        let chosen = Dictionary(uniqueKeysWithValues: acquisitionOrder.map { ($0, chosenRef(of: $0, in: resolution)) })
+        return ProfileFitEstimate(requiredBytes: requiredBytes, budgetBytes: budget, chosen: chosen)
     }
 
     // MARK: - Download & load

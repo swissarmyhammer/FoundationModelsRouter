@@ -20,7 +20,20 @@ llama.cpp. Another model gets the prompt format of its `decider_config.json`
 file, or the generic format. The repository file `docs/decision.md` gives the
 full rules.
 
+``Router/estimateFit(of:)`` runs the same sizing and the same fit against the
+whole memory budget of the host, with no download and no load. It gives a
+``ProfileFitEstimate``, so a host can show which profiles fit before the user
+selects one.
+
 ## Topics
+
+### Resolution
+
+- ``Router``
+- ``Router/resolve(profile:reporting:)``
+- ``Router/estimateFit(of:)``
+- ``ProfileFitEstimate``
+- ``ResolutionProgress``
 
 ### Profiles
 
