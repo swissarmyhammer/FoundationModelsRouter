@@ -1,6 +1,15 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7jdw2g1j77n9e67axny7jtc
+  text: |-
+    ### blocked — waiting for Extras push
+    - Extras committed 2feae8f (NOT on origin/main yet; it waits for the CI run of 2f64483). The Extras session tells us when it is pushed.
+    - API: `LlamaCppModelLoader(cacheDirectory: URL? = nil, tokenProvider: TokenProvider = .environment, options: LlamaLanguageModel.Options = .init(), offline: Bool? = nil)`. It gives `offline` to its `GGUFSource`. `true` sends no Hub request; a GGUF model that is not cached throws `ModelDownloadError.notCachedOffline(repository:revision:)`. `nil` reads `HF_HUB_OFFLINE`.
+    - next: when 2feae8f is on origin/main, update Extras in .build and give `LiveModelLoader.offline` to the `LlamaCppModelLoader`.
+  timestamp: 2026-11-16T14:58:39.233816+00:00
 position_column: todo
 position_ordinal: '80'
 title: Extras LlamaCppModelLoader takes the offline mode, and LiveModelLoader gives it
