@@ -102,27 +102,13 @@ struct NoOpToolCallWithNothingPendingTests {
         return output
     }
 
-    /// The text of the prompt in `entry`.
+    /// The prompt of `entry`.
     ///
     /// - Parameter entry: A transcript entry.
-    /// - Returns: The text, or `nil` for an entry that is not a prompt.
-    private static func promptText(of entry: Transcript.Entry) -> String? {
+    /// - Returns: The prompt, or `nil` for an entry that is not a prompt.
+    private static func prompt(of entry: Transcript.Entry) -> Transcript.Prompt? {
         guard case .prompt(let prompt) = entry else { return nil }
-        return prompt.segments.compactMap { segment in
-            guard case .text(let text) = segment else { return nil }
-            return text.content
-        }.joined()
-    }
-
-    /// The text of each segment of `output`, joined.
-    ///
-    /// - Parameter output: A tool output.
-    /// - Returns: The text of the output.
-    private static func text(of output: Transcript.ToolOutput) -> String {
-        output.segments.compactMap { segment in
-            guard case .text(let text) = segment else { return nil }
-            return text.content
-        }.joined()
+        return prompt
     }
 
     /// The reply of the one answer of `events`.
@@ -159,7 +145,7 @@ struct NoOpToolCallWithNothingPendingTests {
         defer { await fixture.end() }
 
         let output = try #require(await fixture.session.transcript.lazy.compactMap(Self.toolOutput(of:)).first)
-        #expect(Self.text(of: output) == RoutedSessionActor.noOpToolCallEndReason)
+        #expect(WatchedText.text(of: output.segments) == RoutedSessionActor.noOpToolCallEndReason)
     }
 
     @Test("the answer that a round of only no-op calls ends replies with the last text of the model")
@@ -188,7 +174,7 @@ struct NoOpToolCallWithNothingPendingTests {
             scripts: [Self.silentWaitingScript])
         defer { await fixture.end() }
 
-        let prompts = await fixture.session.transcript.compactMap(Self.promptText(of:))
-        #expect(prompts.last == RoutedSessionActor.noOpAnswerRequestPrompt)
+        let lastPrompt = try #require(await fixture.session.transcript.compactMap(Self.prompt(of:)).last)
+        #expect(WatchedText.text(of: lastPrompt.segments) == RoutedSessionActor.noOpAnswerRequestPrompt)
     }
 }
