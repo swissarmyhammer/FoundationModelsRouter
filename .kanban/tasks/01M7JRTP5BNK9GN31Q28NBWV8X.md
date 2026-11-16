@@ -49,8 +49,15 @@ comments:
     - evidence: review sha HEAD~1..HEAD (e13112c1). The prior finding at SensitiveElicitationAnswerTests.swift:69 (reuse/reuse) is fixed: the helper now uses the shared mail helper. 2 new findings (2 confirmed, 1 refuted): Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69 (swift/optionals), Tests/FoundationModelsRouterTests/SensitiveElicitationAnswerTests.swift:69 (test-integrity/no-test-cheating).
     - next: Remove the `?? ""` fallback from the mail helper. Make each test fail when the mail is nil, for example with `try #require(...)`. Then run the review again.
   timestamp: 2026-11-16T19:30:39.823797+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jxj8354pp9frjeczq6snd6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (b7b35dae) gives 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). All prior findings are checked. The helper `mailText` now uses `try #require(...)`, thus a missing answer mail fails the test.
+    - next: The task is in done. Tell foundationmodelsacpagent-30 the commit, as "After it lands" says.
+  timestamp: 2026-11-16T19:32:54.501568+00:00
+position_column: done
+position_ordinal: ffffffffffa780
 title: The answer to a sensitive elicitation goes to the model and the recording with no content (D101)
 ---
 ## Problem
