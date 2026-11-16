@@ -20,8 +20,15 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Core/SlotModel.swift, Tests/FoundationModelsRouterTests/ModelChoicesTests.swift; `swift test --filter ModelChoices` 21 + 3 passed; full `swift test` 2810/328 suites + 45 + 19 passed, exit 0
     - next: /review
   timestamp: 2026-11-16T15:15:35.016432+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7jex3pcj5x80j559qvkx3qm
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (ffe87391); 0 findings (0 confirmed, 0 refuted); no prior findings
+    - next: none. The task is in done.
+  timestamp: 2026-11-16T15:16:41.804318+00:00
+position_column: done
+position_ordinal: ffffffffffa380
 title: ProfileDefinition.choices(for:) gives one entry per model, also when only the drafter differs
 ---
 ## What
