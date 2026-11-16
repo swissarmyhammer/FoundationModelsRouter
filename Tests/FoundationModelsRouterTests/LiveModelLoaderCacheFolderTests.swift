@@ -11,7 +11,8 @@ import Testing
 ///
 /// No test downloads. Each test writes a fake snapshot into a temporary
 /// folder and measures it through the public `footprintBytes(of:)` of the
-/// model loader, which reads the same cache as the download.
+/// model loader, which reads the same cache as the download. Each loader is
+/// offline, thus no test sends a request to the Hub.
 ///
 /// The suite is serialized: one test sets `HF_HUB_CACHE` and `HF_HOME` for
 /// the process while it makes its loader, and the other test reads the
@@ -59,7 +60,7 @@ struct LiveModelLoaderCacheFolderTests {
         defer { try? FileManager.default.removeItem(at: given) }
         let other = try Self.makeCache(weightBytes: Self.environmentFolderWeightBytes)
         defer { try? FileManager.default.removeItem(at: other) }
-        let loader = Self.withCacheVariables(naming: other) { LiveModelLoader(cacheDirectory: given) }
+        let loader = Self.withCacheVariables(naming: other) { LiveModelLoader(cacheDirectory: given, offline: true) }
 
         let bytes = try await loader.requireMLXModelLoader().footprintBytes(of: Self.key)
 
@@ -70,7 +71,7 @@ struct LiveModelLoaderCacheFolderTests {
     func noCacheFolderUsesTheDefaultCache() async throws {
         let folder = try Self.makeCache(weightBytes: Self.givenFolderWeightBytes)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let loader = LiveModelLoader()
+        let loader = LiveModelLoader(offline: true)
 
         await #expect(throws: MLXModelLoaderError.notInCache(key: Self.key, revision: Self.mainRef)) {
             try await loader.requireMLXModelLoader().footprintBytes(of: Self.key)
@@ -81,7 +82,7 @@ struct LiveModelLoaderCacheFolderTests {
     func cacheFolderHoldsTheGGUFFiles() async throws {
         let given = try FakeHubCache.make(ref: Self.ref, commit: Self.commit, files: [Self.ggufFileName: 1])
         defer { try? FileManager.default.removeItem(at: given) }
-        let loader = LiveModelLoader(cacheDirectory: given)
+        let loader = LiveModelLoader(cacheDirectory: given, offline: true)
 
         let source: GGUFSource = try loader.requireGGUFSource()
         let files = try source.cachedFiles(of: Self.ref)

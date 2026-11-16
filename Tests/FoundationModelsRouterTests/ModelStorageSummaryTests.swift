@@ -236,7 +236,7 @@ struct ModelStorageSummaryTests {
         try Self.writeFile(of: Self.drafterBytes, in: drafterFolder)
         let ref = ModelRef(repo: modelFolder.path, drafter: ModelRef(repo: drafterFolder.path))
 
-        let summary = try await ModelStorage(cacheDirectory: root).storageSummary(of: ref)
+        let summary = try await ModelStorage(cacheDirectory: root, offline: true).storageSummary(of: ref)
 
         #expect(summary.totalBytes == Self.modelBytes + Self.drafterBytes)
     }

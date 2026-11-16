@@ -12,7 +12,8 @@ import Testing
 /// No test downloads and no test loads a model. Each test writes a fake
 /// snapshot into a temporary Hugging Face cache and measures it through the
 /// public `footprintBytes(of:)` of the model loader, which picks the loader of
-/// the snapshot by its files.
+/// the snapshot by its files. Each loader is offline, thus no test sends a
+/// request to the Hub.
 @Suite("Core ML in the live loader")
 struct LiveModelLoaderCoreMLTests {
     /// The model of the fake snapshot.
@@ -43,7 +44,7 @@ struct LiveModelLoaderCoreMLTests {
     func coreMLSnapshotIsMeasuredAsAPackage() async throws {
         let cache = try Self.makeCache(files: [Self.packageWeightPath: Self.packageWeightBytes])
         defer { try? FileManager.default.removeItem(at: cache) }
-        let loader = LiveModelLoader(cacheDirectory: cache)
+        let loader = LiveModelLoader(cacheDirectory: cache, offline: true)
 
         let bytes = try await loader.footprintBytes(of: ModelPoolKey(ref: Self.ref, role: .embedding))
 
@@ -54,7 +55,7 @@ struct LiveModelLoaderCoreMLTests {
     func safetensorsSnapshotIsMeasuredAsMLX() async throws {
         let cache = try Self.makeCache(files: [Self.safetensorsPath: Self.safetensorsBytes])
         defer { try? FileManager.default.removeItem(at: cache) }
-        let loader = LiveModelLoader(cacheDirectory: cache)
+        let loader = LiveModelLoader(cacheDirectory: cache, offline: true)
 
         let bytes = try await loader.footprintBytes(of: ModelPoolKey(ref: Self.ref, role: .embedding))
 
@@ -67,7 +68,7 @@ struct LiveModelLoaderCoreMLTests {
             Self.packageWeightPath: Self.packageWeightBytes, Self.safetensorsPath: Self.safetensorsBytes,
         ])
         defer { try? FileManager.default.removeItem(at: cache) }
-        let loader = LiveModelLoader(cacheDirectory: cache)
+        let loader = LiveModelLoader(cacheDirectory: cache, offline: true)
 
         let bytes = try await loader.footprintBytes(of: ModelPoolKey(ref: Self.ref, role: .llm))
 

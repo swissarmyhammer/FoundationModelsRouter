@@ -1113,9 +1113,19 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     of its ``ModelRef``. `true` by default. With `false`, a GGUF model
     ///     loads no MTP layers and no drafter. An MLX model is not affected: it
     ///     speculates only when its ``ModelRef`` names a drafter.
+    ///   - offline: `true` to send no request to the Hub to find or load a
+    ///     model: the format and each MLX or Core ML model come from the
+    ///     cached snapshot, and a model that the cache does not hold throws
+    ///     `ModelDownloadError.notCachedOffline(repository:revision:)` of
+    ///     Extras. `false` asks the Hub for the files that the cache does not
+    ///     hold. `nil`, the default, reads `HF_HUB_OFFLINE`. The Extras
+    ///     `LlamaCppModelLoader` takes no mode, thus the download of a GGUF
+    ///     drafter that the cache does not hold reads only `HF_HUB_OFFLINE`.
+    ///     A unit test gives `true`, thus it sends no request and does not
+    ///     change the environment of the process.
     public init(
         reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil,
-        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true
+        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true, offline: Bool? = nil
     ) {
         self.init(
             reporting: reporting,
@@ -1124,7 +1134,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
                 drafterRegistration: Self.drafterRegistration,
                 gguf: LlamaCppModelLoader(
                     cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
-                    options: LlamaLanguageModel.Options(speculativeDecoding: speculativeDecoding))))
+                    options: LlamaLanguageModel.Options(speculativeDecoding: speculativeDecoding)),
+                offline: offline))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test

@@ -115,7 +115,8 @@ extension RepoMetadata {
     ///
     /// The Extras `GGUFSource` chooses the files, as the GGUF loader does:
     /// a file and the projector beside it, or the one model of a folder. The
-    /// header is read from the start of the model file.
+    /// header is read from the start of the model file. The source is
+    /// offline, because a model on the disk needs no Hub.
     ///
     /// - Parameter location: The absolute path of the file or the folder.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the files
@@ -124,7 +125,7 @@ extension RepoMetadata {
         let files: GGUFModelFiles
         let weightBytes: Int64
         do {
-            files = try GGUFSource().cachedFiles(of: ModelRef(repo: location.path))
+            files = try GGUFSource(offline: true).cachedFiles(of: ModelRef(repo: location.path))
             weightBytes = try files.byteCount()
         } catch {
             throw RepoMetadataError.metadataUnavailable(
