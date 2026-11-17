@@ -19,6 +19,11 @@ struct JointResolution: Sendable, Equatable {
     /// Each slot's resolution, in allocation order (embedding, standard,
     /// flash, decision).
     let slots: [SlotResolution]
+
+    /// How the language models of the profile store their KV cache, or `nil`
+    /// for fp16: ``ProfileDefinition/kvCacheQuantization`` of the profile
+    /// that the fit sized (task ^vp19r4r).
+    var kvCache: KVCacheQuantization? = nil
 }
 
 /// The pure joint allocation that picks the highest-preference combination of
@@ -176,13 +181,14 @@ enum JointFit {
 
     /// The pool keys of the models that the embedding, standard and flash
     /// slots chose, each under the key that its slot asks the pool for at
-    /// `context` (``ModelSlot/poolKey(of:context:)``). A slot that chose no
-    /// model gives no key.
+    /// `context` and `kvCache` (``ModelSlot/poolKey(of:context:kvCache:)``).
+    /// A slot that chose no model gives no key.
     private static func allocatedKeys(
-        embedding: ModelRef?, standard: ModelRef?, flash: ModelRef?, context: Int
+        embedding: ModelRef?, standard: ModelRef?, flash: ModelRef?, context: Int, kvCache: KVCacheQuantization?
     ) -> Set<ModelPoolKey> {
         let chosen: [(ModelSlot, ModelRef?)] = [(.embedding, embedding), (.standard, standard), (.flash, flash)]
-        return Set(chosen.compactMap { slot, ref in ref.map { slot.poolKey(of: $0, context: context) } })
+        return Set(
+            chosen.compactMap { slot, ref in ref.map { slot.poolKey(of: $0, context: context, kvCache: kvCache) } })
     }
 
     /// Resolves one slot against the remaining budget. The first viable
@@ -289,6 +295,11 @@ enum JointFit {
         /// The context of the decision slot (``ProfileDefinition/decisionContext``).
         let decisionContext: Int
 
+        /// How the language models store their KV cache
+        /// (``ProfileDefinition/kvCacheQuantization``): part of the pool key
+        /// of each model that a slot chose.
+        let kvCache: KVCacheQuantization?
+
         /// The profile's embedding, flash and decision candidates, with
         /// `standard` as the standard-slot candidates.
         init(profile: ProfileDefinition, standard: [ModelRef]) {
@@ -297,15 +308,18 @@ enum JointFit {
             flash = profile.flash
             decision = profile.decision
             decisionContext = profile.decisionContext
+            kvCache = profile.kvCacheQuantization
         }
 
-        /// The four models `winner` chose, one for each slot.
-        init(chosenBy winner: SlotsWinner) {
+        /// The four models `winner` chose, one for each slot, with the KV
+        /// cache `kvCache`.
+        init(chosenBy winner: SlotsWinner, kvCache: KVCacheQuantization?) {
             embedding = [winner.embedding]
             standard = [winner.standard]
             flash = [winner.flash]
             decision = [winner.decision]
             decisionContext = winner.attempt.decision.contextTokens
+            self.kvCache = kvCache
         }
     }
 
@@ -413,7 +427,8 @@ enum JointFit {
             candidates: candidates.flash,
             budget: budget,
             context: context,
-            allocatedKeys: allocatedKeys(embedding: nil, standard: standard.chosen, flash: nil, context: context),
+            allocatedKeys: allocatedKeys(
+                embedding: nil, standard: standard.chosen, flash: nil, context: context, kvCache: candidates.kvCache),
             footprint: footprint
         )
         budget.charge(flash)
@@ -423,7 +438,8 @@ enum JointFit {
             budget: budget,
             context: candidates.decisionContext,
             allocatedKeys: allocatedKeys(
-                embedding: embedding.chosen, standard: standard.chosen, flash: flash.chosen, context: context),
+                embedding: embedding.chosen, standard: standard.chosen, flash: flash.chosen, context: context,
+                kvCache: candidates.kvCache),
             footprint: footprint
         )
         return SlotsAttempt(embedding: embedding, standard: standard, flash: flash, decision: decision)
@@ -519,7 +535,7 @@ enum JointFit {
     ) -> (window: Int, winner: SlotsWinner) {
         guard
             let window = computedWindow(
-                plan: SlotCandidates(chosenBy: smallestWinner),
+                plan: SlotCandidates(chosenBy: smallestWinner, kvCache: candidates.kvCache),
                 below: failedWindow,
                 budgetBytes: budgetBytes,
                 footprint: footprint
@@ -746,7 +762,7 @@ enum JointFit {
             context: profile.decisionContext,
             allocatedKeys: allocatedKeys(
                 embedding: embeddingResolution.chosen, standard: nil, flash: flashResolution.chosen,
-                context: triedContext),
+                context: triedContext, kvCache: profile.kvCacheQuantization),
             footprint: footprint
         )
         return ResolutionFailure(

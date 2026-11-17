@@ -293,8 +293,7 @@ public actor Router {
         }
         do {
             let resolution = try Self.jointResolution(
-                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: [],
-                kvCache: loader.kvCacheQuantization)
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: [])
             return Self.fitEstimate(of: resolution, budget: budget)
         } catch {
             return ProfileFitEstimate(failure: String(describing: error), budgetBytes: budget)
@@ -724,7 +723,7 @@ public actor Router {
     ) async throws -> AcquiredSlot {
         let slotRes = Self.slotResolution(for: resolution, slot: slot)
         let chosen = Self.chosenRef(of: slot, in: resolution)
-        let request = slot.poolKey(of: chosen, context: slotRes.contextTokens)
+        let request = slot.poolKey(of: chosen, context: slotRes.contextTokens, kvCache: resolution.kvCache)
         let isHeldByThisResolve = heldKeys.contains { $0.canServe(request) }
         let isFree = isHeldByThisResolve && slot != .flash
         let footprintBytes = isFree ? 0 : Self.chosenFootprint(for: slotRes)
@@ -732,9 +731,9 @@ public actor Router {
             ? 0
             : Self.chosenSessionBytes(
                 of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef,
-                kvCache: loader.kvCacheQuantization)
+                kvCache: resolution.kvCache)
         let slotLoader = SlotPoolLoader(
-            loader: loader, slot: slot, context: slotRes.contextTokens,
+            loader: loader, slot: slot, context: slotRes.contextTokens, kvCache: resolution.kvCache,
             reporting: Self.reporter(slot: slot, progress: progress))
         let isResident = isHeldByThisResolve || admission.footprint.resident.keys.contains { $0.canServe(request) }
 
@@ -948,7 +947,7 @@ public actor Router {
     /// every slot it is a candidate for, with the largest figure kept.
     ///
     /// Each slot sizes the candidate under the key that the slot asks the
-    /// pool for (``ModelSlot/poolKey(of:context:)``). A slot of the LLM role
+    /// pool for (``ModelSlot/poolKey(of:context:kvCache:)``). A slot of the LLM role
     /// (standard, flash or decision) sizes it as a generation model: its
     /// weights, its drafter and one session KV cache at `context`. Thus a
     /// decision candidate costs the same as the same ref in the flash slot.
@@ -985,7 +984,7 @@ public actor Router {
     ///     flash slot, the keys of the three winners for the decision slot,
     ///     and none for the embedding and standard slots
     ///     (``JointFit/FootprintProvider``).
-    ///   - kvCache: How the loader stores the KV cache, or `nil` for fp16
+    ///   - kvCache: How the profile stores the KV cache, or `nil` for fp16
     ///     (task ^2fet0gs).
     /// - Returns: The largest footprint, or why the candidate cannot be sized.
     static func footprintBytes(
@@ -1030,7 +1029,7 @@ public actor Router {
         /// The candidate.
         let ref: ModelRef
 
-        /// The footprint of the candidate, with the KV cache the loader
+        /// The footprint of the candidate, with the KV cache the profile
         /// stores.
         let modelFootprint: Footprint
 
@@ -1081,7 +1080,7 @@ public actor Router {
         /// - Returns: The bytes, or the error of a drafter that could not be
         ///   sized.
         func footprint(in slot: ModelSlot) -> Result<Int64, RepoMetadataError> {
-            let key = slot.poolKey(of: ref, context: context)
+            let key = slot.poolKey(of: ref, context: context, kvCache: modelFootprint.kvCacheQuantization)
             guard !isAllocated(key) else {
                 let isSharedFlash = sizingSlot == .flash && slot.poolRole == .llm
                 return .success(isSharedFlash ? modelFootprint.kvBytes(context: context) : 0)
@@ -1107,7 +1106,7 @@ public actor Router {
     ///   - ref: The candidate to size.
     ///   - context: The working context one session decodes at.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
-    ///   - kvCache: How the loader stores the KV cache, or `nil` for fp16.
+    ///   - kvCache: How the profile stores the KV cache, or `nil` for fp16.
     /// - Returns: The raw KV cache bytes, or why the candidate cannot be sized.
     private static func sessionBytes(
         for ref: ModelRef,
@@ -1134,7 +1133,7 @@ public actor Router {
     ///   - ref: The chosen candidate.
     ///   - context: The working context its sessions decode at.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
-    ///   - kvCache: How the loader stores the KV cache, or `nil` for fp16.
+    ///   - kvCache: How the profile stores the KV cache, or `nil` for fp16.
     /// - Returns: The raw KV cache bytes.
     private static func chosenSessionBytes(
         of slot: ModelSlot,
@@ -1165,8 +1164,7 @@ public actor Router {
     ) async throws -> JointResolution {
         do {
             return try Self.jointResolution(
-                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: residentKeys,
-                kvCache: loader.kvCacheQuantization)
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: residentKeys)
         } catch let failure as ResolutionFailure {
             await recordFailure(
                 outcomes: failure.slots.map { ($0.slot, $0.chosen) },
@@ -1206,11 +1204,11 @@ public actor Router {
         profile def: ProfileDefinition,
         budget: Int64,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
-        residentKeys: Set<ModelPoolKey>,
-        kvCache: KVCacheQuantization?
+        residentKeys: Set<ModelPoolKey>
     ) throws -> JointResolution {
         let membership = slotMembership(profile: def)
-        return try JointFit.resolve(
+        let kvCache = def.kvCacheQuantization
+        var resolution = try JointFit.resolve(
             profile: def,
             budgetBytes: budget,
             footprint: { ref, slot, context, allocatedKeys in
@@ -1224,6 +1222,8 @@ public actor Router {
                 nativeMaxContextResult(for: ref, metadataByRef: metadataByRef)
             }
         )
+        resolution.kvCache = kvCache
+        return resolution
     }
 
     // MARK: - Fit estimate

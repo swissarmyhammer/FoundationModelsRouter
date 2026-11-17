@@ -113,9 +113,11 @@ extension ProfileDefinition {
         func resolve(_ refs: [ModelRef]) -> [ModelRef] {
             refs.map { LocalModelPath.resolved($0, home: home, workingDirectory: workingDirectory) }
         }
-        return ProfileDefinition(
-            name: name, description: description,
-            standard: resolve(standard), flash: resolve(flash), embedding: resolve(embedding),
-            decision: resolve(decision), context: context, decisionContext: decisionContext)
+        var profile = self
+        profile.standard = resolve(standard)
+        profile.flash = resolve(flash)
+        profile.embedding = resolve(embedding)
+        profile.decision = resolve(decision)
+        return profile
     }
 }

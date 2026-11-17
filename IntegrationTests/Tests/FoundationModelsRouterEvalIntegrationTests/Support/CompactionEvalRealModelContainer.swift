@@ -92,7 +92,7 @@ struct CompactionEvalRealModelContainer: Sendable {
     /// - Returns: The loaded container and the pinned mode.
     /// - Throws: `unexpectedContainerType` if what was loaded is not an
     ///   ``LiveLLMContainer``, or whatever
-    ///   ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)`` throws while
+    ///   ``LiveModelLoader/loadLLM(ref:slot:context:kvCache:reporting:)`` throws while
     ///   resolving and loading `ref`.
     static func load(
         ref: ModelRef,
@@ -107,6 +107,7 @@ struct CompactionEvalRealModelContainer: Sendable {
             ref: ref,
             slot: .standard,
             context: context,
+            kvCache: nil,
             reporting: { _ in }
         )
         guard let container = loaded as? LiveLLMContainer else {

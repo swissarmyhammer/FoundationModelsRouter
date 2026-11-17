@@ -40,7 +40,7 @@ struct LoaderErrorPublicSurfaceTests {
     func catchesTheErrorOfAnUnconfiguredLoad() async throws {
         let error = await #expect(throws: ModelLoaderError.notConfigured) {
             _ = try await UnconfiguredModelLoader().loadLLM(
-                ref: Self.ref, slot: .standard, context: Self.context, reporting: { _ in })
+                ref: Self.ref, slot: .standard, context: Self.context, kvCache: nil, reporting: { _ in })
         }
         let thrown: any Error = try #require(error)
         #expect(!Self.isLiveLoaderFailure(thrown))

@@ -60,10 +60,11 @@ private actor PromptCacheRecordingLoader: ModelLoader {
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
         try recordLoad(of: ref)
-        return try await stub.loadLLM(ref: ref, slot: slot, context: context, reporting: reporting)
+        return try await stub.loadLLM(ref: ref, slot: slot, context: context, kvCache: kvCache, reporting: reporting)
     }
 
     func loadEmbedder(

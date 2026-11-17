@@ -192,7 +192,7 @@ struct DecisionContextTests {
         try Router.footprintBytes(
             for: flashRef, in: .decision, context: decisionContext, metadataByRef: [flashRef: .success(metadata)],
             membership: [flashRef: [.flash, .decision]], residentKeys: [],
-            allocatedKeys: [ModelSlot.flash.poolKey(of: flashRef, context: flashContext)]
+            allocatedKeys: [ModelSlot.flash.poolKey(of: flashRef, context: flashContext, kvCache: nil)]
         ).get()
     }
 
@@ -234,7 +234,7 @@ struct DecisionContextTests {
         }
 
         func loadLLM(
-            ref: ModelRef, slot: ModelSlot, context: Int, reporting: @escaping @Sendable (DownloadProgress) -> Void
+            ref: ModelRef, slot: ModelSlot, context: Int, kvCache: KVCacheQuantization?, reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             BasicLLMContainer()
         }

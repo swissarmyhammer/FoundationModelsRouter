@@ -106,6 +106,20 @@ struct EstimateFitTests {
         #expect(estimate.requiredBytes == ResidencyFixtures.oneTrioFootprint)
     }
 
+    @Test("A fit prices the KV cache that the profile names (^vp19r4r)")
+    func fitPricesTheProfileKVCache() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let router = Self.makeRouter(budgetBytes: RouterTestFixtures.stubWorkingSet, cacheDir: dir)
+        var quantized = RouterTestFixtures.profile()
+        quantized.kvCacheQuantization = .bits8
+
+        let float16 = try #require(await router.estimateFit(of: RouterTestFixtures.profile()).requiredBytes)
+        let bits8 = try #require(await router.estimateFit(of: quantized).requiredBytes)
+
+        #expect(bits8 < float16, "fp16 \(float16), bits8 \(bits8)")
+    }
+
     // MARK: - No fit
 
     @Test("A profile does not fit a budget that is too small")

@@ -24,6 +24,9 @@ actor LoadSpy {
     /// Every generation-model load, in load order.
     private(set) var llmLoads: [ModelRef] = []
 
+    /// The KV cache of every generation-model load, in load order.
+    private(set) var llmLoadKVCaches: [KVCacheQuantization?] = []
+
     /// Every embedder load, in load order.
     private(set) var embedderLoads: [ModelRef] = []
 
@@ -32,8 +35,13 @@ actor LoadSpy {
 
     /// Records one generation-model load.
     ///
-    /// - Parameter ref: The ref the loader was asked for.
-    func recordLLMLoad(_ ref: ModelRef) { llmLoads.append(ref) }
+    /// - Parameters:
+    ///   - ref: The ref the loader was asked for.
+    ///   - kvCache: The KV cache the loader was asked for.
+    func recordLLMLoad(_ ref: ModelRef, kvCache: KVCacheQuantization? = nil) {
+        llmLoads.append(ref)
+        llmLoadKVCaches.append(kvCache)
+    }
 
     /// Records one embedder load.
     ///
@@ -113,9 +121,10 @@ struct SpyingModelLoader: ModelLoader {
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        await spy.recordLLMLoad(ref)
+        await spy.recordLLMLoad(ref, kvCache: kvCache)
         reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
         if ref == gatedRef, let entrySignal, let releaseGate {
             entrySignal.signal()

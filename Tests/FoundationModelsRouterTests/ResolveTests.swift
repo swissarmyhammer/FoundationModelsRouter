@@ -167,6 +167,7 @@ struct ResolveTests {
             ref: ModelRef,
             slot: ModelSlot,
             context: Int,
+            kvCache: KVCacheQuantization?,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             await stubLoad(ref: ref, reporting: reporting, record: { loadedLLMRefs.append($0) }) { StubLLMContainer() }

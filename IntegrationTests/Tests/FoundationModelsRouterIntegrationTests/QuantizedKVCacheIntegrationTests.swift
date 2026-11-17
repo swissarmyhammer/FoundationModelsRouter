@@ -37,9 +37,9 @@ struct QuantizedKVCacheIntegrationTests {
 
     @Test("Qwen 3.8 loads with an 8-bit KV cache and answers two turns")
     func standardModelAnswersUnderEightBitCache() async throws {
-        let loader = LiveModelLoader(kvCacheQuantization: .bits8)
+        let loader = LiveModelLoader()
         let loaded = try await loader.loadLLM(
-            ref: StandardModels.qwen38, slot: .standard, context: Self.contextTokens, reporting: { _ in })
+            ref: StandardModels.qwen38, slot: .standard, context: Self.contextTokens, kvCache: .bits8, reporting: { _ in })
         let container = try #require(loaded as? LiveLLMContainer)
         let model = try #require(container.model as? MLXLanguageModel)
         #expect(

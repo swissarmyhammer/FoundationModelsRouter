@@ -136,7 +136,7 @@ struct CoreTypesTests {
         let ref: ModelRef = "org/decider"
 
         #expect(
-            ModelSlot.decision.poolKey(of: ref, context: Self.decisionSlotContext)
+            ModelSlot.decision.poolKey(of: ref, context: Self.decisionSlotContext, kvCache: nil)
                 == ModelPoolKey(ref: ref, role: .llm, contextSize: Self.decisionSlotContext))
     }
 

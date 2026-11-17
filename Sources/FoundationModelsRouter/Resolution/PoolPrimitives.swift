@@ -27,6 +27,13 @@ public typealias ModelRole = FoundationModelsExtras.ModelRole
 /// `import FoundationModelsExtras`.
 public typealias ModelPoolKey = FoundationModelsExtras.ModelPoolKey
 
+/// How a language model stores its KV cache: `.bits8` or `.bits4`, with `nil`
+/// for fp16 (``ProfileDefinition/kvCacheQuantization``). Each pool key of a
+/// language model carries it. `FoundationModelsExtras` owns the type. This
+/// alias keeps a router name, so a router user needs no
+/// `import FoundationModelsExtras`.
+public typealias KVCacheQuantization = FoundationModelsExtras.KVCacheQuantization
+
 extension ModelPoolKey {
     /// Whether the model resident under this key serves `request`, by the
     /// rule of the Extras pool: the same reference and role, and a context at

@@ -235,6 +235,7 @@ struct ResolutionProgressPublicSurfaceTests {
             ref: ModelRef,
             slot: ModelSlot,
             context: Int,
+            kvCache: KVCacheQuantization?,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(generationDownload)

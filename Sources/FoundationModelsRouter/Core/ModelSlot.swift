@@ -35,16 +35,19 @@ extension ModelSlot {
     /// this slot. A slot of the LLM role (generation and decision) asks at
     /// `context`, the context of the resolve, so a loader that loads at a
     /// fixed context (GGUF) loads at it. The loader of the pool drops the
-    /// context when it ignores it (``ModelLoader/poolKey(for:)``). The
-    /// embedding slot asks with no context.
+    /// context when it ignores it (``ModelLoader/poolKey(for:)``). A slot of
+    /// the LLM role also asks with `kvCache`, so a model whose KV cache has
+    /// another width is another model of the pool. The embedding slot asks
+    /// with no context and no KV cache.
     ///
     /// - Parameters:
     ///   - ref: The model.
     ///   - context: The context that the resolve decided for this slot.
+    ///   - kvCache: How the profile stores the KV cache, or `nil` for fp16.
     /// - Returns: The key of the request.
-    func poolKey(of ref: ModelRef, context: Int) -> ModelPoolKey {
+    func poolKey(of ref: ModelRef, context: Int, kvCache: KVCacheQuantization?) -> ModelPoolKey {
         switch poolRole {
-        case .llm: ModelPoolKey(ref: ref, role: .llm, contextSize: context)
+        case .llm: ModelPoolKey(ref: ref, role: .llm, contextSize: context, kvCache: kvCache)
         case .embedding: ModelPoolKey(ref: ref, role: .embedding)
         }
     }

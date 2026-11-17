@@ -61,7 +61,7 @@ struct SharedGenerationModelTests {
         _ ref: ModelRef, _ slot: ModelSlot, _ context: Int, _ allocatedKeys: Set<ModelPoolKey>
     ) -> Result<Int64, RepoMetadataError> {
         guard ref != embeddingModel else { return .success(embeddingBytes) }
-        let request = slot.poolKey(of: ref, context: context)
+        let request = slot.poolKey(of: ref, context: context, kvCache: nil)
         guard !allocatedKeys.contains(where: { $0.withoutContext.canServe(request) }) else {
             return .success(slot == .flash ? kvBytes(context: context) : 0)
         }
@@ -149,7 +149,7 @@ struct SharedGenerationModelTests {
         return try Router.footprintBytes(
             for: standardModel, in: slot, context: context, metadataByRef: [standardModel: .success(metadata)],
             membership: [standardModel: [.standard, .flash, .decision]], residentKeys: [],
-            allocatedKeys: [ModelSlot.standard.poolKey(of: standardModel, context: context)]
+            allocatedKeys: [ModelSlot.standard.poolKey(of: standardModel, context: context, kvCache: nil)]
         ).get()
     }
 

@@ -155,7 +155,7 @@ public struct RealModelContainer: Sendable {
     ///     other suite holds a container, and a suite that pins loads one
     ///     container at a time.
     /// - Returns: The loaded container and the pinned mode.
-    /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
+    /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:kvCache:reporting:)``
     ///   throws, or an expectation failure if what it loaded is not an
     ///   ``LiveLLMContainer``.
     // Only the suites in the IntegrationTests package call this.
@@ -174,7 +174,7 @@ public struct RealModelContainer: Sendable {
             await MLXLanguageModel.evictAll()
         }
         let loaded = try await makeLoader(chatTemplateDate: chatTemplateDate).loadLLM(
-            ref: ref, slot: .standard, context: context, reporting: { _ in })
+            ref: ref, slot: .standard, context: context, kvCache: nil, reporting: { _ in })
         let container = try #require(loaded as? LiveLLMContainer)
         return RealModelContainer(container: container, samplingMode: samplingMode)
     }

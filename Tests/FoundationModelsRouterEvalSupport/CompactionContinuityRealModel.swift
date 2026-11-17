@@ -48,7 +48,7 @@ enum CompactionContinuityRealModel {
     static let ref: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 
     /// The maximum context window, in tokens, to load ``ref`` with — passed
-    /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.
+    /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:kvCache:reporting:)``.
     ///
     /// The fast continuity tier's synthetic budget states its `limit` as this
     /// same number, so a measured context fill and the budget's trigger stay

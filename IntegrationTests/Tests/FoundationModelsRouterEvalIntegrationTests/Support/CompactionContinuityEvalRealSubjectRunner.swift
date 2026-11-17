@@ -95,7 +95,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   already loaded, or the newly-loaded and now-cached one otherwise.
     /// - Throws: ``CompactionContinuityEvaluationError/unexpectedContainerType``
     ///   if the loaded container is not an `LiveLLMContainer`, or
-    ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
+    ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:kvCache:reporting:)``
     ///   throws while resolving/loading ``CompactionContinuityRealModel/ref``.
     private func container() async throws -> CompactionEvalRealModelContainer {
         if let loaded { return loaded }

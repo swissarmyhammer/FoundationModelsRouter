@@ -1,12 +1,13 @@
+import Foundation
 import FoundationModelsLlamaCpp
-import MLXLMCommon
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
 
 /// Proves that a quantized KV cache (task ^2fet0gs) shrinks the KV term of
-/// the footprint as each engine stores it, and that a live loader gives the
-/// setting to the GGUF loader and reports it to the router.
+/// the footprint as each engine stores it, and that the KV cache of a profile
+/// (task ^vp19r4r) reaches each pool key and each load of a language model.
 @Suite("A quantized KV cache sizes and loads as each engine stores it")
 struct KVCacheQuantizationTests {
     /// A context that is not a multiple of the 256 cells llama.cpp pads to.
@@ -90,29 +91,75 @@ struct KVCacheQuantizationTests {
         #expect(try price(.bits8) == 1_000 + Self.mlxElements + Self.mlxElements / 64 * Self.groupOverheadBytes)
     }
 
-    @Test("a live loader quantizes no KV cache by default")
-    func liveLoaderDefault() throws {
-        let loader = LiveModelLoader(offline: true)
+    @Test("a live loader asks its model loader for the KV cache of each load")
+    func liveLoaderKeysTheKVCache() async {
+        let quantizations: [KVCacheQuantization?] = [nil, .bits8, .bits4]
+        let modelLoader = KeyRecordingPoolLoader()
+        let loader = LiveModelLoader(reporting: { _ in }, modelLoader: modelLoader)
 
-        #expect(loader.kvCacheQuantization == nil)
-        #expect(try loader.requireGGUFModelLoader().options.kvCacheType == .float16)
-        #expect(try loader.requireHubModelLoader().kvCache == nil)
+        for quantization in quantizations {
+            _ = try? await loader.loadLLM(
+                ref: "org/model", slot: .standard, context: 4096, kvCache: quantization, reporting: { _ in })
+        }
+
+        #expect(modelLoader.loadedKeys.map(\.kvCache) == quantizations)
     }
 
-    @Test(
-        "a live loader gives its KV cache quantization to the MLX and GGUF loaders and reports it",
-        arguments: [
-            (KVCacheQuantization.bits8, LlamaLanguageModel.KVCacheType.quantized8),
-            (.bits4, .quantized4),
-        ])
-    func liveLoaderGivesSetting(quantization: KVCacheQuantization, cacheType: LlamaLanguageModel.KVCacheType) throws {
-        let loader = LiveModelLoader(offline: true, kvCacheQuantization: quantization)
+    @Test("a resolve loads each language model of the profile with its KV cache, and the embedder with none")
+    func resolveLoadsWithTheProfileKVCache() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "KVCacheQuantizationTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy, recommendedMaxWorkingSetSize: RouterTestFixtures.stubWorkingSet, cacheDir: dir)
+        var profile = RouterTestFixtures.profile()
+        profile.kvCacheQuantization = .bits8
 
-        #expect(loader.kvCacheQuantization == quantization)
-        #expect(try loader.requireGGUFModelLoader().options.kvCacheType == cacheType)
-        #expect(
-            try loader.requireHubModelLoader().kvCache
-                == KVCacheConfiguration(
-                    strategy: .affine(AffineKVCacheConfiguration(bits: Int(quantization.bits), groupSize: 64))))
+        let resolved = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+
+        let kvCaches = await spy.llmLoadKVCaches
+        #expect(!kvCaches.isEmpty)
+        #expect(kvCaches.allSatisfy { $0 == .bits8 })
+        #expect(await spy.embedderLoads.count == 1)
+        withExtendedLifetime(resolved) {}
     }
+
+    @Test("a resident fp16 model does not serve a profile that quantizes the KV cache of the same model")
+    func residentOfAnotherKVCacheIsAnotherModel() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "KVCacheQuantizationTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pool = ModelPool()
+        let float16Spy = LoadSpy()
+        let bits8Spy = LoadSpy()
+        let float16Router = ResidencyFixtures.makeRouter(
+            spy: float16Spy, recommendedMaxWorkingSetSize: RouterTestFixtures.stubWorkingSet, cacheDir: dir, pool: pool)
+        let bits8Router = ResidencyFixtures.makeRouter(
+            spy: bits8Spy, recommendedMaxWorkingSetSize: RouterTestFixtures.stubWorkingSet, cacheDir: dir, pool: pool)
+        var bits8Profile = RouterTestFixtures.profile()
+        bits8Profile.kvCacheQuantization = .bits8
+
+        let float16 = try await float16Router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let bits8 = try await bits8Router.resolve(profile: bits8Profile, reporting: ResolutionProgress())
+
+        #expect(await bits8Spy.llmLoads.sorted { $0.stringValue < $1.stringValue }
+            == float16Spy.llmLoads.sorted { $0.stringValue < $1.stringValue })
+        #expect(await bits8Spy.embedderLoads.isEmpty)
+        withExtendedLifetime((float16, bits8)) {}
+    }
+}
+
+/// A model loader in place of the Extras `HubModelLoader` that records the
+/// key of each load, and gives a container that is no generation model.
+private final class KeyRecordingPoolLoader: PooledModelLoader {
+    private let keys = Mutex<[ModelPoolKey]>([])
+
+    /// The key of each load, in the order the loads came.
+    var loadedKeys: [ModelPoolKey] { keys.withLock { $0 } }
+
+    func load(_ key: ModelPoolKey) async throws -> any Sendable {
+        keys.withLock { $0.append(key) }
+        return key
+    }
+
+    func evict(_ container: any Sendable) async {}
 }

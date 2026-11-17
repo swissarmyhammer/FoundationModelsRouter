@@ -34,8 +34,13 @@ struct SlotPoolLoader: PooledModelLoader {
 
     /// The working context that the resolve decided for ``slot``. A
     /// generation key asks for it; see
-    /// ``ModelLoader/loadLLM(ref:slot:context:reporting:)``.
+    /// ``ModelLoader/loadLLM(ref:slot:context:kvCache:reporting:)``.
     let context: Int
+
+    /// How the profile stores the KV cache of a language model, or `nil` for
+    /// fp16. A generation or decision key asks with it, so the pool keeps a
+    /// model of another KV cache width apart.
+    let kvCache: KVCacheQuantization?
 
     /// Receives each download-progress value of the load.
     let reporting: @Sendable (DownloadProgress) -> Void
@@ -86,7 +91,7 @@ struct SlotPoolLoader: PooledModelLoader {
         switch key.role {
         case .llm:
             return try await loader.loadLLM(
-                ref: key.ref, slot: slot, context: key.contextSize ?? context, reporting: forward)
+                ref: key.ref, slot: slot, context: key.contextSize ?? context, kvCache: key.kvCache, reporting: forward)
         case .embedding:
             return try await loader.loadEmbedder(ref: key.ref, slot: slot, reporting: forward)
         }
@@ -129,7 +134,7 @@ struct SlotPoolLoader: PooledModelLoader {
     /// queue, so the job cannot wait for itself.
     ///
     /// The request asks at ``context`` for a generation slot
-    /// (``ModelSlot/poolKey(of:context:)``). The ``FoundationModelsExtras/ModelHold/key``
+    /// (``ModelSlot/poolKey(of:context:kvCache:)``), with ``kvCache``. The ``FoundationModelsExtras/ModelHold/key``
     /// of the hold is the key of the resident model, so its context is the
     /// context that the model loaded at, which can be larger.
     ///
@@ -145,7 +150,7 @@ struct SlotPoolLoader: PooledModelLoader {
         of ref: ModelRef, in admission: ModelPoolAdmission, footprintBytes: Int64, sessionBytes: Int64
     ) async throws -> ModelHold {
         try await admission.acquire(
-            slot.poolKey(of: ref, context: context), footprintBytes: footprintBytes,
+            slot.poolKey(of: ref, context: context, kvCache: kvCache), footprintBytes: footprintBytes,
             sessionBytes: sessionBytes, loader: self)
     }
 }

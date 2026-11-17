@@ -93,6 +93,7 @@ struct SlotPoolLoaderTests {
 
         func loadLLM(
             ref: ModelRef, slot: ModelSlot, context: Int,
+            kvCache: KVCacheQuantization?,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             recorded.withLock { $0.append(.loadLLM(ref: ref, slot: slot, context: context)) }
@@ -127,6 +128,7 @@ struct SlotPoolLoaderTests {
 
         func loadLLM(
             ref: ModelRef, slot: ModelSlot, context: Int,
+            kvCache: KVCacheQuantization?,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(Self.download)
@@ -177,7 +179,7 @@ struct SlotPoolLoaderTests {
             loader: ForeignLoader(container: ForeignEmbedding()))
         let routerLoader = RecordingModelLoader()
         let slotLoader = SlotPoolLoader(
-            loader: routerLoader, slot: .embedding, context: Self.context, reporting: { _ in })
+            loader: routerLoader, slot: .embedding, context: Self.context, kvCache: nil, reporting: { _ in })
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: 0)
@@ -198,7 +200,7 @@ struct SlotPoolLoaderTests {
             key, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes,
             loader: ForeignLoader(container: ForeignContainer()))
         let slotLoader = SlotPoolLoader(
-            loader: RecordingModelLoader(), slot: .standard, context: Self.context, reporting: { _ in })
+            loader: RecordingModelLoader(), slot: .standard, context: Self.context, kvCache: nil, reporting: { _ in })
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
@@ -220,7 +222,7 @@ struct SlotPoolLoaderTests {
         let routerLoader = RecordingModelLoader()
         let sink = ProgressSink()
         let slotLoader = SlotPoolLoader(
-            loader: routerLoader, slot: .flash, context: Self.context, reporting: sink.record)
+            loader: routerLoader, slot: .flash, context: Self.context, kvCache: nil, reporting: sink.record)
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
@@ -238,7 +240,7 @@ struct SlotPoolLoaderTests {
         let routerLoader = RecordingModelLoader()
         let sink = ProgressSink()
         let slotLoader = SlotPoolLoader(
-            loader: routerLoader, slot: .embedding, context: Self.context, reporting: sink.record)
+            loader: routerLoader, slot: .embedding, context: Self.context, kvCache: nil, reporting: sink.record)
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: 0)
@@ -255,7 +257,7 @@ struct SlotPoolLoaderTests {
         let pool = FoundationModelsExtras.ModelPool()
         let routerLoader = RecordingModelLoader()
         let slotLoader = SlotPoolLoader(
-            loader: routerLoader, slot: .standard, context: Self.context, reporting: { _ in })
+            loader: routerLoader, slot: .standard, context: Self.context, kvCache: nil, reporting: { _ in })
         var hold: ModelHold? = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
         #expect(hold != nil)
@@ -275,7 +277,7 @@ struct SlotPoolLoaderTests {
         let pool = FoundationModelsExtras.ModelPool()
         let stream = pool.progress(for: Self.ref)
         let slotLoader = SlotPoolLoader(
-            loader: RecordingModelLoader(), slot: .standard, context: Self.context, reporting: { _ in })
+            loader: RecordingModelLoader(), slot: .standard, context: Self.context, kvCache: nil, reporting: { _ in })
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
@@ -294,7 +296,7 @@ struct SlotPoolLoaderTests {
         let pool = FoundationModelsExtras.ModelPool()
         let stream = pool.progress(for: Self.ref)
         let slotLoader = SlotPoolLoader(
-            loader: DownloadThenFailLoader(), slot: .embedding, context: Self.context, reporting: { _ in })
+            loader: DownloadThenFailLoader(), slot: .embedding, context: Self.context, kvCache: nil, reporting: { _ in })
 
         await #expect(throws: LoadFailure.self) {
             try await slotLoader.acquireHold(of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: 0)
@@ -430,6 +432,7 @@ struct SlotPoolLoaderTests {
         await #expect(throws: LiveModelLoaderError.self) {
             try await loader.loadLLM(
                 ref: Self.ref, slot: .standard, context: Self.context,
+                kvCache: nil,
                 reporting: Router.reporter(slot: .standard, progress: progress))
         }
 
@@ -448,7 +451,7 @@ struct SlotPoolLoaderTests {
         let loader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in })
 
         await #expect(throws: LiveModelLoaderError.self) {
-            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.context, reporting: { _ in })
+            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.context, kvCache: nil, reporting: { _ in })
         }
 
         #expect(modelLoader.evictedTypes == [String(describing: ForeignContainer.self)])
@@ -463,7 +466,7 @@ struct SlotPoolLoaderTests {
                 key: ModelPoolKey(ref: Self.ref, role: .llm),
                 containerType: String(describing: ForeignContainer.self))
         ) {
-            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.context, reporting: { _ in })
+            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.context, kvCache: nil, reporting: { _ in })
         }
     }
 

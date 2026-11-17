@@ -47,10 +47,11 @@ private actor PhaseRecordingLoader: ModelLoader {
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
         observedLoadPhases.append(await MainActor.run { progress.phase })
-        return try await wrapped.loadLLM(ref: ref, slot: slot, context: context, reporting: reporting)
+        return try await wrapped.loadLLM(ref: ref, slot: slot, context: context, kvCache: kvCache, reporting: reporting)
     }
 
     func loadEmbedder(
@@ -125,12 +126,14 @@ private struct DownloadObservingLoader: ModelLoader {
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
         try await wrapped.loadLLM(
             ref: ref,
             slot: slot,
             context: context,
+            kvCache: kvCache,
             reporting: observer.capturing(slot: slot, forwarding: reporting)
         )
     }

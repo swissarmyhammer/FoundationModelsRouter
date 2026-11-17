@@ -182,11 +182,6 @@ public protocol LoadedDecisionContainer: LoadedModelContainer {
 /// The download-and-load step behind ``Router/resolve(profile:reporting:)``.
 /// The live implementation is ``LiveModelLoader``.
 public protocol ModelLoader: Sendable {
-    /// How the generation models of this loader store their KV cache, or
-    /// `nil` for fp16 (task ^2fet0gs). The router sizes each session KV
-    /// cache with it. The default is `nil`.
-    var kvCacheQuantization: KVCacheQuantization? { get }
-
     /// The key that the Extras model pool keeps the model of `key` under.
     /// The pool asks it at each acquire of the router, before it looks for a
     /// resident model, and the load gets the key it gives.
@@ -215,12 +210,16 @@ public protocol ModelLoader: Sendable {
     ///   - ref: The model to download and load.
     ///   - slot: The slot the model is loaded for.
     ///   - context: The working context that the resolve decided.
+    ///   - kvCache: How the model stores its KV cache, or `nil` for fp16:
+    ///     ``ProfileDefinition/kvCacheQuantization`` of the profile. Two
+    ///     loads of one model with another `kvCache` are two models.
     ///   - reporting: Receives each download-progress observation.
     /// - Throws: If the download or load fails.
     func loadLLM(
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer
 
@@ -257,9 +256,6 @@ public protocol ModelLoader: Sendable {
 }
 
 extension ModelLoader {
-    /// A loader stores an fp16 KV cache unless it says otherwise.
-    public var kvCacheQuantization: KVCacheQuantization? { nil }
-
     /// A loader that ignores the context keeps one model for each reference
     /// and role.
     ///

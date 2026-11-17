@@ -72,6 +72,7 @@ struct PoolKeyContextTests {
 
         func loadLLM(
             ref: ModelRef, slot: ModelSlot, context: Int,
+            kvCache: KVCacheQuantization?,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             contexts.withLock { $0.append(context) }
@@ -117,7 +118,7 @@ struct PoolKeyContextTests {
     private static func slotLoader(
         over loader: any ModelLoader, slot: ModelSlot, context: Int
     ) -> SlotPoolLoader {
-        SlotPoolLoader(loader: loader, slot: slot, context: context, reporting: { _ in })
+        SlotPoolLoader(loader: loader, slot: slot, context: context, kvCache: nil, reporting: { _ in })
     }
 
     /// Acquires ``ref`` in the slot of `slot` at `context` from `pool`.
@@ -205,7 +206,7 @@ struct PoolKeyContextTests {
         let loader = LiveModelLoader(reporting: { _ in }, modelLoader: modelLoader)
 
         await #expect(throws: LiveModelLoaderError.self) {
-            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.largeContext, reporting: { _ in })
+            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.largeContext, kvCache: nil, reporting: { _ in })
         }
 
         #expect(modelLoader.loadedKeys == [Self.generationKey(context: Self.largeContext)])
@@ -265,14 +266,14 @@ struct PoolKeyContextTests {
     @Test("a generation slot requests its model at the resolved context")
     func generationSlotRequestsTheResolvedContext() {
         #expect(
-            ModelSlot.standard.poolKey(of: Self.ref, context: Self.largeContext)
+            ModelSlot.standard.poolKey(of: Self.ref, context: Self.largeContext, kvCache: nil)
                 == Self.generationKey(context: Self.largeContext))
     }
 
     @Test("the embedding slot requests its model with no context")
     func embeddingSlotRequestsNoContext() {
         #expect(
-            ModelSlot.embedding.poolKey(of: Self.ref, context: Self.largeContext)
+            ModelSlot.embedding.poolKey(of: Self.ref, context: Self.largeContext, kvCache: nil)
                 == ModelPoolKey(ref: Self.ref, role: .embedding))
     }
 

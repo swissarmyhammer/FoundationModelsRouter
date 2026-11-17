@@ -1056,11 +1056,6 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// init makes.
     let modelLoader: any PooledModelLoader
 
-    /// How each generation model of this loader stores its KV cache, or
-    /// `nil` for fp16 (task ^2fet0gs). The router sizes each session KV
-    /// cache with it.
-    public let kvCacheQuantization: KVCacheQuantization?
-
     /// The factory that loads the MTP drafter of a reference that names one
     /// (``ModelRef/drafter``). The router links MLXVLM, so
     /// `loadModelContainer` loads a Qwen3.5-family target as a
@@ -1128,15 +1123,9 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     `HubModelLoader` and its `LlamaCppModelLoader` get the same value.
     ///     A unit test gives `true`, thus it sends no request and does not
     ///     change the environment of the process.
-    ///   - kvCacheQuantization: How each generation model stores its KV
-    ///     cache: ``KVCacheQuantization/bits8``, ``KVCacheQuantization/bits4``,
-    ///     or `nil` (the default) for fp16. An MLX model stores an affine
-    ///     cache of that width, and a GGUF model the llama.cpp type of that
-    ///     width.
     public init(
         reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil,
-        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true, offline: Bool? = nil,
-        kvCacheQuantization: KVCacheQuantization? = nil
+        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true, offline: Bool? = nil
     ) {
         self.init(
             reporting: reporting,
@@ -1145,13 +1134,9 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
                 drafterRegistration: Self.drafterRegistration,
                 gguf: LlamaCppModelLoader(
                     cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
-                    options: LlamaLanguageModel.Options(
-                        kvCacheType: kvCacheQuantization?.llamaCppCacheType ?? .float16,
-                        speculativeDecoding: speculativeDecoding),
+                    options: LlamaLanguageModel.Options(speculativeDecoding: speculativeDecoding),
                     offline: offline),
-                offline: offline,
-                kvCache: kvCacheQuantization?.mlxCacheConfiguration),
-            kvCacheQuantization: kvCacheQuantization)
+                offline: offline))
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test
@@ -1163,15 +1148,9 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///   - reporting: Receives the download progress of each load through
     ///     ``load(_:)`` and ``load(key:progressHandler:)``.
     ///   - modelLoader: The loader of each model.
-    ///   - kvCacheQuantization: How `modelLoader` stores the KV cache of each
-    ///     generation model, or `nil` for fp16.
-    package init(
-        reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader,
-        kvCacheQuantization: KVCacheQuantization? = nil
-    ) {
+    package init(reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader) {
         self.reporting = reporting
         self.modelLoader = modelLoader
-        self.kvCacheQuantization = kvCacheQuantization
     }
 
     /// The key that the pool keeps the model of `key` under: the key that
@@ -1238,6 +1217,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// ``poolKey(for:)`` gives it: `HubModelLoader` keeps the context for a
     /// GGUF model, so llama.cpp loads it at `context`, and the window of the
     /// container is that context. It drops the context for each other format.
+    /// The key carries `kvCache`, so the model stores its KV cache at that
+    /// width: an affine cache for MLX, and the llama.cpp type for GGUF.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
     /// which is what keeps the part files filling the Hugging Face cache, so a
@@ -1252,9 +1233,10 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        let key = try await poolKey(for: ModelPoolKey(ref: ref, role: .llm, contextSize: context))
+        let key = try await poolKey(for: ModelPoolKey(ref: ref, role: .llm, contextSize: context, kvCache: kvCache))
         return try await loadGeneration(key: key, progressHandler: Self.downloadHandler(reporting: reporting))
     }
 
@@ -1262,7 +1244,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// the load to `progressHandler`, and wraps
     /// the model in a live container. When the wrap fails, the model loader
     /// evicts the model, so no model stays in memory with no owner. See
-    /// ``loadLLM(ref:slot:context:reporting:)``.
+    /// ``loadLLM(ref:slot:context:kvCache:reporting:)``.
     ///
     /// - Parameters:
     ///   - key: The model to load, as the model loader keys it: with the
@@ -1452,6 +1434,7 @@ public struct UnconfiguredModelLoader: ModelLoader {
         ref: ModelRef,
         slot: ModelSlot,
         context: Int,
+        kvCache: KVCacheQuantization?,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
         throw ModelLoaderError.notConfigured

@@ -984,7 +984,7 @@ struct JointFitTests {
         _ base: @escaping JointFit.FootprintProvider
     ) -> JointFit.FootprintProvider {
         { ref, slot, context, allocatedKeys in
-            let request = ModelSlot.decision.poolKey(of: ref, context: context)
+            let request = ModelSlot.decision.poolKey(of: ref, context: context, kvCache: nil)
             guard !allocatedKeys.contains(where: { $0.withoutContext.canServe(request) }) else { return .success(0) }
             return base(ref, slot, context, allocatedKeys)
         }

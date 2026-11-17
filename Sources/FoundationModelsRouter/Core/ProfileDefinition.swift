@@ -81,6 +81,17 @@ public struct ProfileDefinition: Sendable, Codable {
     /// none: 16,384 tokens.
     public static let defaultDecisionContext = 16_384
 
+    /// How the language models of the profile store their KV cache, or
+    /// `nil` for fp16 (task ^vp19r4r).
+    ///
+    /// The router sizes each session KV cache of the `standard`, `flash` and
+    /// `decision` slots with it, and loads each of their models with it, under
+    /// a pool key that carries it. Thus a decision candidate that names the
+    /// `standard` model still shares it, and two profiles that name one model
+    /// with another setting never share a resident model. Its key is
+    /// `kvBits`, the bits of each element: 8 or 4, or no key for fp16.
+    public var kvCacheQuantization: KVCacheQuantization?
+
     /// Creates a profile definition.
     ///
     /// - Parameters:
@@ -96,6 +107,8 @@ public struct ProfileDefinition: Sendable, Codable {
     ///     resolve time.
     ///   - decisionContext: The context of the decision slot, in tokens.
     ///     Omit it to use ``defaultDecisionContext``.
+    ///   - kvCacheQuantization: How the language models store their KV
+    ///     cache. Omit it, or pass `nil`, for fp16.
     public init(
         name: String,
         description: String,
@@ -104,7 +117,8 @@ public struct ProfileDefinition: Sendable, Codable {
         embedding: [ModelRef],
         decision: [ModelRef] = ProfileDefinition.defaultDecisionCandidates,
         context: Int? = nil,
-        decisionContext: Int = ProfileDefinition.defaultDecisionContext
+        decisionContext: Int = ProfileDefinition.defaultDecisionContext,
+        kvCacheQuantization: KVCacheQuantization? = nil
     ) {
         self.name = name
         self.description = description
@@ -114,17 +128,24 @@ public struct ProfileDefinition: Sendable, Codable {
         self.decision = decision
         self.context = context
         self.decisionContext = decisionContext
+        self.kvCacheQuantization = kvCacheQuantization
+    }
+
+    /// The keys of a profile. ``kvCacheQuantization`` has the key `kvBits`.
+    private enum CodingKeys: String, CodingKey {
+        case name, description, standard, flash, embedding, decision, context, decisionContext
+        case kvCacheQuantization = "kvBits"
     }
 
     /// Creates a profile definition from a decoder.
     ///
     /// A missing `decision` key gives ``defaultDecisionCandidates``. A missing
     /// `context` key gives `nil`. A missing `decisionContext` key gives
-    /// ``defaultDecisionContext``.
+    /// ``defaultDecisionContext``. A missing `kvBits` key gives an fp16 cache.
     ///
     /// - Parameter decoder: The decoder to read the profile from.
-    /// - Throws: `DecodingError` when a required key is missing, or when a
-    ///   value has the wrong type.
+    /// - Throws: `DecodingError` when a required key is missing, when a
+    ///   value has the wrong type, or when `kvBits` is not 8 or 4.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -137,8 +158,44 @@ public struct ProfileDefinition: Sendable, Codable {
                 ?? Self.defaultDecisionCandidates,
             context: try container.decodeIfPresent(Int.self, forKey: .context),
             decisionContext: try container.decodeIfPresent(Int.self, forKey: .decisionContext)
-                ?? Self.defaultDecisionContext
+                ?? Self.defaultDecisionContext,
+            kvCacheQuantization: try Self.decodeKVBits(from: container)
         )
+    }
+
+    /// Encodes the profile: `kvBits` as the bits of each element, with no
+    /// key for fp16, and no `context` key when the context is `nil`.
+    ///
+    /// - Parameter encoder: The encoder to write the profile to.
+    /// - Throws: What the encoder throws.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(description, forKey: .description)
+        try container.encode(standard, forKey: .standard)
+        try container.encode(flash, forKey: .flash)
+        try container.encode(embedding, forKey: .embedding)
+        try container.encode(decision, forKey: .decision)
+        try container.encodeIfPresent(context, forKey: .context)
+        try container.encode(decisionContext, forKey: .decisionContext)
+        try container.encodeIfPresent(kvCacheQuantization?.bits, forKey: .kvCacheQuantization)
+    }
+
+    /// The quantization that the `kvBits` key of `container` names.
+    ///
+    /// - Parameter container: The keys of a profile.
+    /// - Returns: The quantization, or `nil` when the key is absent.
+    /// - Throws: `DecodingError` when the value is not the integer 8 or 4.
+    private static func decodeKVBits(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> KVCacheQuantization? {
+        guard let bits = try container.decodeIfPresent(Int.self, forKey: .kvCacheQuantization) else { return nil }
+        guard let quantization = KVCacheQuantization(bits: bits) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .kvCacheQuantization, in: container,
+                debugDescription: "kvBits is \(bits); it must be 8 or 4, or absent for fp16")
+        }
+        return quantization
     }
 
     /// The per-slot candidate lists keyed by ``ModelSlot``, exposing the slot candidates as data so callers resolve a slot's candidates by lookup rather than by branching over the slot.

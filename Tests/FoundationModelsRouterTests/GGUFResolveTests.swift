@@ -179,7 +179,7 @@ struct GGUFResolveTests {
     /// - Parameter context: The context that the model loaded at.
     /// - Returns: The pool key.
     private static func flashKey(context: Int) -> ModelPoolKey {
-        ModelSlot.flash.poolKey(of: draftedGGUFRef, context: context)
+        ModelSlot.flash.poolKey(of: draftedGGUFRef, context: context, kvCache: nil)
     }
 
     @Test("a GGUF decision candidate gets the footprint of the same ref in the flash slot at the same context")

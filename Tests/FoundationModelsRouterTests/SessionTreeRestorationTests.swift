@@ -62,6 +62,7 @@ struct SessionTreeRestorationTests {
             ref: ModelRef,
             slot: ModelSlot,
             context: Int,
+            kvCache: KVCacheQuantization?,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))

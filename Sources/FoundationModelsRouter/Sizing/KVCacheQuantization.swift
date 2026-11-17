@@ -1,12 +1,10 @@
-import FoundationModelsLlamaCpp
-import MLXLMCommon
+import FoundationModelsExtras
 
-/// How each generation model stores its KV cache (task ^2fet0gs): with fewer
-/// bits for each element than the fp16 default.
-///
-/// The setting is the same for every model of a live loader
-/// (``LiveModelLoader/init(reporting:cacheDirectory:tokenProvider:speculativeDecoding:offline:kvCacheQuantization:)``).
-/// Each engine maps it to its own cache:
+/// The sizing of a quantized KV cache (tasks ^2fet0gs, ^vp19r4r): the Extras
+/// `KVCacheQuantization` that a profile names
+/// (``ProfileDefinition/kvCacheQuantization``) and that each pool key of a
+/// language model of the profile carries. Each engine stores it as its own
+/// cache:
 ///
 /// - An MLX model stores an affine cache: `bits` for each element, and an
 ///   fp16 scale and bias for each group of ``affineGroupSize`` elements.
@@ -17,13 +15,7 @@ import MLXLMCommon
 /// (the linear layers of Qwen 3.8) keeps its size. A quantized cache takes
 /// about half or a quarter of the memory, and its output can differ from the
 /// fp16 cache on near-ties.
-public enum KVCacheQuantization: Sendable, Hashable {
-    /// 8 bits for each element.
-    case bits8
-
-    /// 4 bits for each element.
-    case bits4
-
+extension KVCacheQuantization {
     /// The elements of an MLX affine group, each group with one scale and
     /// one bias.
     static let affineGroupSize: Int64 = 64
@@ -32,29 +24,16 @@ public enum KVCacheQuantization: Sendable, Hashable {
     /// values.
     private static let affineGroupOverheadBytes: Int64 = 4
 
-    /// The bits of each element.
-    var bits: Int64 {
-        switch self {
-        case .bits8: 8
-        case .bits4: 4
+    /// The quantization with `bits` bits for each element.
+    ///
+    /// - Parameter bits: The bits of each element.
+    /// - Returns: The quantization, or `nil` when `bits` is not 8 or 4.
+    init?(bits: Int) {
+        switch bits {
+        case 8: self = .bits8
+        case 4: self = .bits4
+        default: return nil
         }
-    }
-
-    /// The llama.cpp cache type of the same width.
-    var llamaCppCacheType: LlamaLanguageModel.KVCacheType {
-        switch self {
-        case .bits8: .quantized8
-        case .bits4: .quantized4
-        }
-    }
-
-    /// The MLX cache configuration of the same width: an affine cache with
-    /// groups of ``affineGroupSize`` elements.
-    var mlxCacheConfiguration: KVCacheConfiguration {
-        // MLX accepts 8 and 4 bits with groups of 64, so the init does not
-        // throw for any case.
-        let affine = try! AffineKVCacheConfiguration(bits: Int(bits), groupSize: Int(Self.affineGroupSize))
-        return KVCacheConfiguration(strategy: .affine(affine))
     }
 
     /// The bytes of an MLX affine cache of `elements` elements.
@@ -62,7 +41,7 @@ public enum KVCacheQuantization: Sendable, Hashable {
     /// - Parameter elements: The K and V elements of the cache.
     /// - Returns: The quantized elements, and the scale and bias of each group.
     func affineBytes(elements: Int64) -> Int64 {
-        elements * bits / 8 + elements / Self.affineGroupSize * Self.affineGroupOverheadBytes
+        elements * Int64(bits) / 8 + elements / Self.affineGroupSize * Self.affineGroupOverheadBytes
     }
 
     /// The bytes of a llama.cpp cache of this type, from the bytes of the

@@ -98,7 +98,7 @@ struct DecisionSlotResolveTests {
         }
 
         func loadLLM(
-            ref: ModelRef, slot: ModelSlot, context: Int, reporting: @escaping @Sendable (DownloadProgress) -> Void
+            ref: ModelRef, slot: ModelSlot, context: Int, kvCache: KVCacheQuantization?, reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             record.withLock { $0.loadedLLMRefs.append(ref) }
             return container

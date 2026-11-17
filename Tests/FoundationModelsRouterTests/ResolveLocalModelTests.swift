@@ -27,7 +27,7 @@ struct ResolveLocalModelTests {
         private(set) var loadedEmbedderRefs: [ModelRef] = []
 
         func loadLLM(
-            ref: ModelRef, slot: ModelSlot, context: Int, reporting: @escaping @Sendable (DownloadProgress) -> Void
+            ref: ModelRef, slot: ModelSlot, context: Int, kvCache: KVCacheQuantization?, reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             BasicLLMContainer()
         }

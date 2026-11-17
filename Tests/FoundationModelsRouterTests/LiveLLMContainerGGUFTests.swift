@@ -144,7 +144,7 @@ struct LiveLLMContainerGGUFTests {
         let model = try Self.makeModel()
         let loader = LiveModelLoader(reporting: { _ in }, modelLoader: GGUFModelPoolLoader(model: model))
 
-        let loaded = try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.contextSize, reporting: { _ in })
+        let loaded = try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.contextSize, kvCache: nil, reporting: { _ in })
 
         let container = try #require(loaded as? LiveLLMContainer)
         #expect(container.model is LlamaLanguageModel)
@@ -165,7 +165,7 @@ struct LiveLLMContainerGGUFTests {
         let loader = LiveModelLoader(reporting: { _ in }, modelLoader: ContextGGUFPoolLoader())
 
         let loaded = try await loader.loadLLM(
-            ref: Self.ref, slot: .standard, context: Self.resolvedContext, reporting: { _ in })
+            ref: Self.ref, slot: .standard, context: Self.resolvedContext, kvCache: nil, reporting: { _ in })
 
         #expect(try #require(loaded as? LiveLLMContainer).contextWindow == Self.resolvedContext)
     }
@@ -174,7 +174,7 @@ struct LiveLLMContainerGGUFTests {
     func routerAcquireOfAGGUFModelReportsTheResolvedContext() async throws {
         let loader = LiveModelLoader(reporting: { _ in }, modelLoader: ContextGGUFPoolLoader())
         let slotLoader = SlotPoolLoader(
-            loader: loader, slot: .standard, context: Self.resolvedContext, reporting: { _ in })
+            loader: loader, slot: .standard, context: Self.resolvedContext, kvCache: nil, reporting: { _ in })
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: FoundationModelsExtras.ModelPool(), footprintBytes: Self.footprintBytes,
