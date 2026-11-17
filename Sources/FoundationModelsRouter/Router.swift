@@ -662,7 +662,8 @@ public actor Router {
         }
     }
 
-    /// Names the model each slot chose on the resolve span.
+    /// Names the model each slot chose on the resolve span, with its drafter
+    /// when it has one, and the KV cache bits of the language models.
     ///
     /// Written only once the whole resolve succeeded, so the span of a resolve
     /// that threw carries the budget and the error but names no winner.
@@ -672,13 +673,27 @@ public actor Router {
     ///   - span: The resolve span to write one key for each slot on.
     private static func recordChosenModels(resolution: JointResolution, on span: any Span) {
         for slot in acquisitionOrder {
-            span.attributes[RouterTelemetry.AttributeKey.chosenModelRef(slot: slot)] =
-                chosenRef(of: slot, in: resolution).stringValue
+            let chosen = chosenRef(of: slot, in: resolution)
+            span.attributes[RouterTelemetry.AttributeKey.chosenModelRef(slot: slot)] = chosen.stringValue
+            if let drafter = chosen.drafter {
+                span.attributes[RouterTelemetry.AttributeKey.chosenDrafter(slot: slot)] = drafter.stringValue
+            }
         }
+        span.attributes[RouterTelemetry.AttributeKey.kvCacheBits] = kvCacheBits(of: resolution.kvCache)
         span.attributes[RouterTelemetry.AttributeKey.resolvedContextTokens] =
             Int64(slotResolution(for: resolution, slot: .standard).contextTokens)
         span.attributes[RouterTelemetry.AttributeKey.decisionContextTokens] =
             Int64(slotResolution(for: resolution, slot: .decision).contextTokens)
+    }
+
+    /// The value of ``RouterTelemetry/AttributeKey/kvCacheBits``: the bits
+    /// of `quantization`, or 16 for an fp16 cache.
+    ///
+    /// - Parameter quantization: How the language models store their KV
+    ///   cache, or `nil` for fp16.
+    /// - Returns: The bits of each element.
+    private static func kvCacheBits(of quantization: KVCacheQuantization?) -> Int64 {
+        quantization.map { Int64($0.bits) } ?? 16
     }
 
     // MARK: - Residency
@@ -747,7 +762,9 @@ public actor Router {
             // Only a model the pool did not hold opens a load span, so a
             // trace shows a fresh resolve's loads and a later resolve's
             // reuse as two different shapes.
-            let hold = try await withLoadSpan(chosen: chosen, slot: slot, footprintBytes: footprintBytes) {
+            let hold = try await withLoadSpan(
+                chosen: chosen, slot: slot, footprintBytes: footprintBytes, kvCache: resolution.kvCache
+            ) {
                 await setSlotState(slot, to: .downloading, progress: progress)
                 return try await slotLoader.acquireHold(
                     of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
@@ -1266,6 +1283,8 @@ public actor Router {
     ///   - chosen: The model reference being loaded.
     ///   - slot: The slot the model fills.
     ///   - footprintBytes: The chosen candidate's whole raw footprint estimate.
+    ///   - kvCache: How the profile stores the KV cache, written as the bits
+    ///     on the span of a language model.
     ///   - body: The load work the span measures.
     /// - Returns: Whatever `body` produced.
     /// - Throws: Whatever `body` throws.
@@ -1273,12 +1292,19 @@ public actor Router {
         chosen: ModelRef,
         slot: ModelSlot,
         footprintBytes: Int64,
+        kvCache: KVCacheQuantization?,
         _ body: () async throws -> Loaded
     ) async throws -> Loaded {
         try await withEnteredSpan(RouterTelemetry.SpanName.load) { attributes in
             attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
             attributes[RouterTelemetry.AttributeKey.slot] = slot.rawValue
             attributes[RouterTelemetry.AttributeKey.footprintBytes] = footprintBytes
+            if let drafter = chosen.drafter {
+                attributes[RouterTelemetry.AttributeKey.drafter] = drafter.stringValue
+            }
+            if slot.poolRole == .llm {
+                attributes[RouterTelemetry.AttributeKey.kvCacheBits] = Self.kvCacheBits(of: kvCache)
+            }
         } body: { _ in
             let startedAt = ContinuousClock.now
             let loaded = try await body()

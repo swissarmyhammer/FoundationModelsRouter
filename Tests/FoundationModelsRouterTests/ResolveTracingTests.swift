@@ -153,6 +153,53 @@ struct ResolveTracingTests {
         }
     }
 
+    @Test("the resolve span and each language-model load span name the drafter and the KV cache bits (^t7fb207)")
+    func spansNameTheDrafterAndTheKVCacheBits() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "ResolveTracingTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tracer = InMemoryTracer()
+        let router = Self.makeRouter(cacheDir: dir, loader: Self.succeedingLoader, tracer: tracer)
+        let drafter: ModelRef = "org/std-a-mtp"
+        var definition = RouterTestFixtures.profile()
+        definition.standard = [ModelRef(repo: "org/std-a", drafter: drafter)]
+        definition.kvCacheQuantization = .bits8
+
+        let profile = try await router.resolve(profile: definition, reporting: ResolutionProgress())
+
+        let resolveSpan = try #require(tracer.finishedSpans(named: Self.resolveSpanName).first)
+        #expect(resolveSpan.attributes.get("model.drafter.standard") == .string(drafter.stringValue))
+        #expect(resolveSpan.attributes.get("model.drafter.flash") == nil)
+        #expect(resolveSpan.attributes.get("kv_cache.bits") == .int64(8))
+        let loadSpans = tracer.finishedSpans(named: Self.loadSpanName)
+        let standard = try #require(loadSpans.first { $0.attributes.get("slot") == .string("standard") })
+        let flash = try #require(loadSpans.first { $0.attributes.get("slot") == .string("flash") })
+        let embedding = try #require(loadSpans.first { $0.attributes.get("slot") == .string("embedding") })
+        #expect(standard.attributes.get("model.drafter") == .string(drafter.stringValue))
+        #expect(standard.attributes.get("kv_cache.bits") == .int64(8))
+        #expect(flash.attributes.get("model.drafter") == nil)
+        #expect(flash.attributes.get("kv_cache.bits") == .int64(8))
+        #expect(embedding.attributes.get("kv_cache.bits") == nil)
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test("an fp16 profile states 16 KV cache bits and names no drafter (^t7fb207)")
+    func float16ProfileStatesSixteenBits() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "ResolveTracingTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tracer = InMemoryTracer()
+        let router = Self.makeRouter(cacheDir: dir, loader: Self.succeedingLoader, tracer: tracer)
+
+        let profile = try await Self.resolve(on: router)
+
+        let resolveSpan = try #require(tracer.finishedSpans(named: Self.resolveSpanName).first)
+        #expect(resolveSpan.attributes.get("kv_cache.bits") == .int64(16))
+        #expect(resolveSpan.attributes.get("model.drafter.standard") == nil)
+        let standard = try #require(
+            tracer.finishedSpans(named: Self.loadSpanName).first { $0.attributes.get("slot") == .string("standard") })
+        #expect(standard.attributes.get("kv_cache.bits") == .int64(16))
+        withExtendedLifetime(profile) {}
+    }
+
     @Test("a second resolve that reuses the resident models opens no load span")
     func aReusedSlotOpensNoLoadSpan() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "ResolveTracingTests")

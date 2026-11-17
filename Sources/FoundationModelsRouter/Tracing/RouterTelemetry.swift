@@ -151,6 +151,28 @@ enum RouterTelemetry {
             "\(modelRef).\(slot.rawValue)"
         }
 
+        /// The MTP drafter of the loaded model, in canonical string form, on
+        /// a load span. Written only when the model has a drafter
+        /// (``ModelRef/drafter``).
+        static let drafter = "model.drafter"
+
+        /// The key that names the drafter of the model one slot chose, on the
+        /// resolve span: `model.drafter.standard` and so on, in the form of
+        /// ``chosenModelRef(slot:)``. Written only for a slot whose model has
+        /// a drafter.
+        ///
+        /// - Parameter slot: The slot whose chosen model the drafter serves.
+        /// - Returns: The attribute key for that slot.
+        static func chosenDrafter(slot: ModelSlot) -> String {
+            "\(drafter).\(slot.rawValue)"
+        }
+
+        /// The bits of each KV cache element of the language models, on the
+        /// resolve span and on the load span of a language model: 8 or 4
+        /// (``ProfileDefinition/kvCacheQuantization``), or 16 for fp16. An
+        /// embedding load span has no KV cache and carries no value.
+        static let kvCacheBits = "kv_cache.bits"
+
         /// The span id of the session the work runs on.
         static let sessionId = "session.id"
 
