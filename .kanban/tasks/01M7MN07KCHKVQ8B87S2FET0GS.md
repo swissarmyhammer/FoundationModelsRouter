@@ -75,8 +75,15 @@ comments:
     - evidence: `swift test` passed 2859 tests in 332 suites (plus 48 and 19). The KVCacheQuantization suite (8 tests) reads both the MLX and GGUF settings back. IntegrationTests build-tests completes.
     - next: the gated Qwen 3.8 bits8 real-model check, after checking the shared GPU.
   timestamp: 2026-11-17T14:56:12.234425+00:00
-position_column: todo
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7n082gft9e66dmahwqyjsmm
+  text: |-
+    ### test — green
+    - evidence: gated `swift test --package-path IntegrationTests --filter QuantizedKVCacheIntegrationTests` passed 1 test on m5u1. Qwen3.8-27B-mxfp4 loaded through LiveModelLoader(.bits8) has MLXLanguageModel.kvCache == affine 8/64. Two turns of one session answered 42 and then 142.
+    - Chain is complete: mlx-swift-lm stable 59a2ec21 → Extras main 2caa8bb → Router 54a8af3f+ → ACPAgent profile.kvBits (c6a2d28).
+  timestamp: 2026-11-17T14:58:15.695313+00:00
+position_column: done
+position_ordinal: ffffffffffa880
 title: 'Quantized KV cache: one LiveModelLoader option for every model (kvBits 8 / 4)'
 ---
 The user wants to set the KV-cache bits, as in `GenerateParameters(kvBits: 8)`, in the ACPAgent config file and have it apply to every model. This needs a change in each of four repos:
