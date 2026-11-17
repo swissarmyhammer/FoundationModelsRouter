@@ -23,8 +23,14 @@ comments:
     - evidence: `swift test` 2865/333 (+48, +19) green, IntegrationTests build-tests green.
     - next: gated QuantizedKVCacheIntegrationTests once the GPU lock is free.
   timestamp: 2026-11-17T18:39:28.940917+00:00
-position_column: todo
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7nd21t96twchcyw12cz9c9z
+  text: |-
+    ### test — green
+    - evidence: gated QuantizedKVCacheIntegrationTests passed 1 test under bench.lock, 12:41:45 to 12:42:03. Qwen3.8 loaded through LiveModelLoader.loadLLM(kvCache: .bits8), which goes to Extras ModelPoolKey.kvCache: MLXLanguageModel.kvCache is affine 8/64, and two turns answered correctly. Pushed as Router 63e4c70c (Extras 1c69b4f).
+  timestamp: 2026-11-17T18:42:09.865977+00:00
+position_column: done
+position_ordinal: ffffffffffa980
 title: ProfileDefinition carries kvBits; the router applies it per profile at sizing and load
 ---
 This is the user's profile design, relayed by ACPAgent: the Router owns the profile data model, and ACPAgent owns the profile files.
