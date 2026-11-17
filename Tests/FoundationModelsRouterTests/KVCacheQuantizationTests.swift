@@ -1,4 +1,5 @@
 import FoundationModelsLlamaCpp
+import MLXLMCommon
 import Testing
 
 @testable import FoundationModelsRouter
@@ -95,10 +96,11 @@ struct KVCacheQuantizationTests {
 
         #expect(loader.kvCacheQuantization == nil)
         #expect(try loader.requireGGUFModelLoader().options.kvCacheType == .float16)
+        #expect(try loader.requireHubModelLoader().kvCache == nil)
     }
 
     @Test(
-        "a live loader gives its KV cache quantization to the GGUF loader and reports it",
+        "a live loader gives its KV cache quantization to the MLX and GGUF loaders and reports it",
         arguments: [
             (KVCacheQuantization.bits8, LlamaLanguageModel.KVCacheType.quantized8),
             (.bits4, .quantized4),
@@ -108,5 +110,9 @@ struct KVCacheQuantizationTests {
 
         #expect(loader.kvCacheQuantization == quantization)
         #expect(try loader.requireGGUFModelLoader().options.kvCacheType == cacheType)
+        #expect(
+            try loader.requireHubModelLoader().kvCache
+                == KVCacheConfiguration(
+                    strategy: .affine(AffineKVCacheConfiguration(bits: Int(quantization.bits), groupSize: 64))))
     }
 }

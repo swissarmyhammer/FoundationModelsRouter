@@ -1,10 +1,11 @@
 import FoundationModelsLlamaCpp
+import MLXLMCommon
 
 /// How each generation model stores its KV cache (task ^2fet0gs): with fewer
 /// bits for each element than the fp16 default.
 ///
 /// The setting is the same for every model of a live loader
-/// (``LiveModelLoader/init(reporting:cacheDirectory:tokenProvider:speculativeDecoding:kvCacheQuantization:)``).
+/// (``LiveModelLoader/init(reporting:cacheDirectory:tokenProvider:speculativeDecoding:offline:kvCacheQuantization:)``).
 /// Each engine maps it to its own cache:
 ///
 /// - An MLX model stores an affine cache: `bits` for each element, and an
@@ -45,6 +46,15 @@ public enum KVCacheQuantization: Sendable, Hashable {
         case .bits8: .quantized8
         case .bits4: .quantized4
         }
+    }
+
+    /// The MLX cache configuration of the same width: an affine cache with
+    /// groups of ``affineGroupSize`` elements.
+    var mlxCacheConfiguration: KVCacheConfiguration {
+        // MLX accepts 8 and 4 bits with groups of 64, so the init does not
+        // throw for any case.
+        let affine = try! AffineKVCacheConfiguration(bits: Int(bits), groupSize: Int(Self.affineGroupSize))
+        return KVCacheConfiguration(strategy: .affine(affine))
     }
 
     /// The bytes of an MLX affine cache of `elements` elements.

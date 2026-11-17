@@ -1130,8 +1130,9 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     change the environment of the process.
     ///   - kvCacheQuantization: How each generation model stores its KV
     ///     cache: ``KVCacheQuantization/bits8``, ``KVCacheQuantization/bits4``,
-    ///     or `nil` (the default) for fp16. A GGUF model stores the llama.cpp
-    ///     type of that width.
+    ///     or `nil` (the default) for fp16. An MLX model stores an affine
+    ///     cache of that width, and a GGUF model the llama.cpp type of that
+    ///     width.
     public init(
         reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil,
         tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true, offline: Bool? = nil,
@@ -1148,7 +1149,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
                         kvCacheType: kvCacheQuantization?.llamaCppCacheType ?? .float16,
                         speculativeDecoding: speculativeDecoding),
                     offline: offline),
-                offline: offline),
+                offline: offline,
+                kvCache: kvCacheQuantization?.mlxCacheConfiguration),
             kvCacheQuantization: kvCacheQuantization)
     }
 

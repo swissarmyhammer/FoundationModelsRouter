@@ -49,6 +49,32 @@ comments:
       3. Push and send the SHA to ACPAgent ^kcxqh6t.
       4. Run the gated real-model check on Qwen 3.8 under bits8.
   timestamp: 2026-11-17T12:10:46.671809+00:00
+- actor: claude-code
+  id: 01m7mpvmergxt7xpsnjppbag6b
+  text: |-
+    Rebased onto origin 7ed5654f and pushed as 309c52da.
+    - **Conflicts resolved:** the `offline:` init now also takes `kvCacheQuantization:`, and the new `jointResolution`/`estimateFit` path gets `kvCache: loader.kvCacheQuantization`.
+    - **Tests:** 2859 pass.
+    - **Risk until MLX lands:** MLX sizing assumes the quantized cache while MLX stores fp16. ACPAgent was told to keep kvBits unset until the MLX side is in.
+    - **Remaining:** Extras ^cbhcf4v → pass `kvCache` to HubModelLoader, then the gated Qwen 3.8 check.
+  timestamp: 2026-11-17T12:14:10.904165+00:00
+- actor: claude-code
+  id: 01m7mq061e5revef8bvph95cn2
+  text: |-
+    ACPAgent ^kcxqh6t is done and pushed as c6a2d28, against Router 309c52da.
+    - `profile.kvBits` goes through compose → makeRouter → makeLiveModelLoader → `LiveModelLoader(kvCacheQuantization:)`.
+    - Its tests pass: 2225.
+    - No real config sets kvBits until I say MLX is in.
+    - Remaining: mlx-swift-lm ^4zv2rdx (push to stable needs the user's go-ahead), then Extras ^cbhcf4v, then the Router HubModelLoader wiring.
+  timestamp: 2026-11-17T12:16:39.982743+00:00
+- actor: claude-code
+  id: 01m7n049ya0k9a2peenrs2dyfq
+  text: |-
+    ### implement — changed
+    - MLX wired: LiveModelLoader passes `kvCacheQuantization?.mlxCacheConfiguration` (affine, bits 8/4, group 64) to `HubModelLoader(kvCache:)`, using Extras main 2caa8bb and mlx-swift-lm stable 59a2ec21.
+    - evidence: `swift test` passed 2859 tests in 332 suites (plus 48 and 19). The KVCacheQuantization suite (8 tests) reads both the MLX and GGUF settings back. IntegrationTests build-tests completes.
+    - next: the gated Qwen 3.8 bits8 real-model check, after checking the shared GPU.
+  timestamp: 2026-11-17T14:56:12.234425+00:00
 position_column: todo
 position_ordinal: '80'
 title: 'Quantized KV cache: one LiveModelLoader option for every model (kvBits 8 / 4)'
