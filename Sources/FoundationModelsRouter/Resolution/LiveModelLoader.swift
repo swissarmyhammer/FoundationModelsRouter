@@ -1056,6 +1056,11 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// init makes.
     let modelLoader: any PooledModelLoader
 
+    /// How each generation model of this loader stores its KV cache, or
+    /// `nil` for fp16 (task ^2fet0gs). The router sizes each session KV
+    /// cache with it.
+    public let kvCacheQuantization: KVCacheQuantization?
+
     /// The factory that loads the MTP drafter of a reference that names one
     /// (``ModelRef/drafter``). The router links MLXVLM, so
     /// `loadModelContainer` loads a Qwen3.5-family target as a
@@ -1123,9 +1128,14 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///     `HubModelLoader` and its `LlamaCppModelLoader` get the same value.
     ///     A unit test gives `true`, thus it sends no request and does not
     ///     change the environment of the process.
+    ///   - kvCacheQuantization: How each generation model stores its KV
+    ///     cache: ``KVCacheQuantization/bits8``, ``KVCacheQuantization/bits4``,
+    ///     or `nil` (the default) for fp16. A GGUF model stores the llama.cpp
+    ///     type of that width.
     public init(
         reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, cacheDirectory: URL? = nil,
-        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true, offline: Bool? = nil
+        tokenProvider: TokenProvider = .environment, speculativeDecoding: Bool = true, offline: Bool? = nil,
+        kvCacheQuantization: KVCacheQuantization? = nil
     ) {
         self.init(
             reporting: reporting,
@@ -1134,9 +1144,12 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
                 drafterRegistration: Self.drafterRegistration,
                 gguf: LlamaCppModelLoader(
                     cacheDirectory: cacheDirectory, tokenProvider: tokenProvider,
-                    options: LlamaLanguageModel.Options(speculativeDecoding: speculativeDecoding),
+                    options: LlamaLanguageModel.Options(
+                        kvCacheType: kvCacheQuantization?.llamaCppCacheType ?? .float16,
+                        speculativeDecoding: speculativeDecoding),
                     offline: offline),
-                offline: offline))
+                offline: offline),
+            kvCacheQuantization: kvCacheQuantization)
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test
@@ -1148,9 +1161,15 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///   - reporting: Receives the download progress of each load through
     ///     ``load(_:)`` and ``load(key:progressHandler:)``.
     ///   - modelLoader: The loader of each model.
-    package init(reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader) {
+    ///   - kvCacheQuantization: How `modelLoader` stores the KV cache of each
+    ///     generation model, or `nil` for fp16.
+    package init(
+        reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader,
+        kvCacheQuantization: KVCacheQuantization? = nil
+    ) {
         self.reporting = reporting
         self.modelLoader = modelLoader
+        self.kvCacheQuantization = kvCacheQuantization
     }
 
     /// The key that the pool keeps the model of `key` under: the key that

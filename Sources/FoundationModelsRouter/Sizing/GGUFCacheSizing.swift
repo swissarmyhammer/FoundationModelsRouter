@@ -106,10 +106,17 @@ struct GGUFCacheSizing: Sendable, Equatable, Codable {
     /// The bytes of the context of the model at a context size: the KV cache
     /// of the padded cells, and the recurrent state.
     ///
-    /// - Parameter context: The context size, in tokens.
+    /// A quantized cache (task ^2fet0gs) shrinks the KV cache only. The
+    /// recurrent state keeps its size.
+    ///
+    /// - Parameters:
+    ///   - context: The context size, in tokens.
+    ///   - quantization: How the KV cache stores its elements, or `nil` for fp16.
     /// - Returns: The bytes.
-    func bytes(context: Int) -> Int64 {
+    func bytes(context: Int, quantization: KVCacheQuantization? = nil) -> Int64 {
         let cells = (context + Self.contextPadding - 1) / Self.contextPadding * Self.contextPadding
-        return Int64(cells) * keyValueBytesPerCell + recurrentStateBytes
+        let float16Bytes = Int64(cells) * keyValueBytesPerCell
+        let keyValueBytes = quantization?.llamaCppBytes(float16Bytes: float16Bytes) ?? float16Bytes
+        return keyValueBytes + recurrentStateBytes
     }
 }

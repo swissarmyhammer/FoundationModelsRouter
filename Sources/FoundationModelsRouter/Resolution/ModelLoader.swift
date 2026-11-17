@@ -182,6 +182,11 @@ public protocol LoadedDecisionContainer: LoadedModelContainer {
 /// The download-and-load step behind ``Router/resolve(profile:reporting:)``.
 /// The live implementation is ``LiveModelLoader``.
 public protocol ModelLoader: Sendable {
+    /// How the generation models of this loader store their KV cache, or
+    /// `nil` for fp16 (task ^2fet0gs). The router sizes each session KV
+    /// cache with it. The default is `nil`.
+    var kvCacheQuantization: KVCacheQuantization? { get }
+
     /// The key that the Extras model pool keeps the model of `key` under.
     /// The pool asks it at each acquire of the router, before it looks for a
     /// resident model, and the load gets the key it gives.
@@ -252,6 +257,9 @@ public protocol ModelLoader: Sendable {
 }
 
 extension ModelLoader {
+    /// A loader stores an fp16 KV cache unless it says otherwise.
+    public var kvCacheQuantization: KVCacheQuantization? { nil }
+
     /// A loader that ignores the context keeps one model for each reference
     /// and role.
     ///

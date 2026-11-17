@@ -2,7 +2,8 @@ import Foundation
 
 /// The raw resident-memory estimate for one model: `weightBytes + kvBytes(context)`.
 ///
-/// The KV cache is fp16 regardless of weight quantization. Overhead is not
+/// The KV cache is fp16 regardless of weight quantization, unless the loader
+/// quantizes it (``quantizingKVCache(_:)``, task ^2fet0gs). Overhead is not
 /// modeled. The fit step compares this raw estimate with the budget.
 ///
 /// An MLX model is sized from its `config.json`, layer by layer
@@ -39,6 +40,9 @@ struct Footprint: Sendable, Equatable {
 
     /// How the memory of the context grows with the context.
     let cache: Cache
+
+    /// How the KV cache stores its elements, or `nil` for fp16.
+    private(set) var kvCacheQuantization: KVCacheQuantization?
 
     /// Creates a footprint from already-resolved architecture values.
     ///
@@ -106,26 +110,37 @@ struct Footprint: Sendable, Equatable {
         Footprint(weightBytes: weightBytes, layers: 0, kvHeads: 0, headDim: 0)
     }
 
+    /// This footprint with its KV cache stored as `quantization` gives
+    /// (task ^2fet0gs).
+    ///
+    /// - Parameter quantization: How the loader stores the KV cache, or `nil`
+    ///   for fp16.
+    /// - Returns: The footprint with that KV cache.
+    func quantizingKVCache(_ quantization: KVCacheQuantization?) -> Footprint {
+        var footprint = self
+        footprint.kvCacheQuantization = quantization
+        return footprint
+    }
+
     /// The bytes of the context of the model at `context` tokens.
     ///
-    /// For an MLX model it is the fp16 KV cache:
-    /// `2 × layers × context × kvHeads × headDim × 2`. For a GGUF model it is
-    /// ``GGUFCacheSizing/bytes(context:)``: the padded KV cache and the
-    /// recurrent state.
+    /// For an MLX model it is the KV cache of
+    /// `2 × layers × context × kvHeads × headDim` elements: 2 bytes each in
+    /// fp16, or the affine bytes of ``kvCacheQuantization``
+    /// (``KVCacheQuantization/affineBytes(elements:)``). For a GGUF model it
+    /// is ``GGUFCacheSizing/bytes(context:quantization:)``: the padded KV
+    /// cache and the recurrent state.
     ///
     /// - Parameter context: The context, in tokens.
     /// - Returns: The bytes; `0` for an embedder.
     func kvBytes(context: Int) -> Int64 {
         switch cache {
         case .attention(let layers, let kvHeads, let headDim):
-            Self.keyValueTensors
-                * Int64(layers)
-                * Int64(context)
-                * Int64(kvHeads)
-                * Int64(headDim)
-                * Self.cacheElementBytes
+            let elements = Self.keyValueTensors * Int64(layers) * Int64(context) * Int64(kvHeads) * Int64(headDim)
+            guard let kvCacheQuantization else { return elements * Self.cacheElementBytes }
+            return kvCacheQuantization.affineBytes(elements: elements)
         case .gguf(let sizing):
-            sizing.bytes(context: context)
+            return sizing.bytes(context: context, quantization: kvCacheQuantization)
         }
     }
 

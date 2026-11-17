@@ -293,7 +293,8 @@ public actor Router {
         }
         do {
             let resolution = try Self.jointResolution(
-                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: [])
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: [],
+                kvCache: loader.kvCacheQuantization)
             return Self.fitEstimate(of: resolution, budget: budget)
         } catch {
             return ProfileFitEstimate(failure: String(describing: error), budgetBytes: budget)
@@ -730,7 +731,8 @@ public actor Router {
         let sessionBytes = isFree
             ? 0
             : Self.chosenSessionBytes(
-                of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef)
+                of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef,
+                kvCache: loader.kvCacheQuantization)
         let slotLoader = SlotPoolLoader(
             loader: loader, slot: slot, context: slotRes.contextTokens,
             reporting: Self.reporter(slot: slot, progress: progress))
@@ -983,6 +985,8 @@ public actor Router {
     ///     flash slot, the keys of the three winners for the decision slot,
     ///     and none for the embedding and standard slots
     ///     (``JointFit/FootprintProvider``).
+    ///   - kvCache: How the loader stores the KV cache, or `nil` for fp16
+    ///     (task ^2fet0gs).
     /// - Returns: The largest footprint, or why the candidate cannot be sized.
     static func footprintBytes(
         for ref: ModelRef,
@@ -991,7 +995,8 @@ public actor Router {
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         membership: [ModelRef: Set<ModelSlot>],
         residentKeys: Set<ModelPoolKey>,
-        allocatedKeys: Set<ModelPoolKey> = []
+        allocatedKeys: Set<ModelPoolKey> = [],
+        kvCache: KVCacheQuantization? = nil
     ) -> Result<Int64, RepoMetadataError> {
         guard let metadataResult = metadataByRef[ref] else {
             return .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
@@ -1003,8 +1008,9 @@ public actor Router {
                 return .failure(.metadataUnavailable(coreMLInLLMSlotMessage(for: ref, slots: llmSlots)))
             }
             let pricing = SlotPricing(
-                ref: ref, metadata: metadata, context: context, metadataByRef: metadataByRef,
-                residentKeys: residentKeys, allocatedKeys: allocatedKeys, sizingSlot: sizingSlot)
+                ref: ref, modelFootprint: metadata.footprint.quantizingKVCache(kvCache), metadata: metadata,
+                context: context, metadataByRef: metadataByRef, residentKeys: residentKeys,
+                allocatedKeys: allocatedKeys, sizingSlot: sizingSlot)
             return Result { () throws(RepoMetadataError) -> Int64 in
                 let figures = try slots.map { slot throws(RepoMetadataError) in try pricing.footprint(in: slot).get() }
                 // Total by construction: every ref in `metadataByRef` came
@@ -1023,6 +1029,10 @@ public actor Router {
     private struct SlotPricing {
         /// The candidate.
         let ref: ModelRef
+
+        /// The footprint of the candidate, with the KV cache the loader
+        /// stores.
+        let modelFootprint: Footprint
 
         /// The metadata of the candidate.
         let metadata: RepoMetadata
@@ -1074,7 +1084,7 @@ public actor Router {
             let key = slot.poolKey(of: ref, context: context)
             guard !isAllocated(key) else {
                 let isSharedFlash = sizingSlot == .flash && slot.poolRole == .llm
-                return .success(isSharedFlash ? metadata.footprint.kvBytes(context: context) : 0)
+                return .success(isSharedFlash ? modelFootprint.kvBytes(context: context) : 0)
             }
             let isResident = residentKeys.contains { $0.canServe(key) }
             switch slot.poolRole {
@@ -1082,9 +1092,9 @@ public actor Router {
                 return .success(
                     isResident ? 0 : Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context))
             case .llm:
-                guard !isResident else { return .success(metadata.footprint.kvBytes(context: context)) }
+                guard !isResident else { return .success(modelFootprint.kvBytes(context: context)) }
                 return drafterBytes(of: ref, context: context, metadataByRef: metadataByRef)
-                    .map { metadata.footprint.footprint(context: context) + $0 }
+                    .map { modelFootprint.footprint(context: context) + $0 }
             }
         }
     }
@@ -1097,16 +1107,18 @@ public actor Router {
     ///   - ref: The candidate to size.
     ///   - context: The working context one session decodes at.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - kvCache: How the loader stores the KV cache, or `nil` for fp16.
     /// - Returns: The raw KV cache bytes, or why the candidate cannot be sized.
     private static func sessionBytes(
         for ref: ModelRef,
         context: Int,
-        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        kvCache: KVCacheQuantization?
     ) -> Result<Int64, RepoMetadataError> {
         guard let metadataResult = metadataByRef[ref] else {
             return .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
         }
-        return metadataResult.map { $0.footprint.kvBytes(context: context) }
+        return metadataResult.map { $0.footprint.quantizingKVCache(kvCache).kvBytes(context: context) }
     }
 
     /// The raw KV cache estimate of one session of the candidate a slot
@@ -1122,15 +1134,17 @@ public actor Router {
     ///   - ref: The chosen candidate.
     ///   - context: The working context its sessions decode at.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - kvCache: How the loader stores the KV cache, or `nil` for fp16.
     /// - Returns: The raw KV cache bytes.
     private static func chosenSessionBytes(
         of slot: ModelSlot,
         chosen ref: ModelRef,
         context: Int,
-        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        kvCache: KVCacheQuantization?
     ) -> Int64 {
         guard slot.poolRole == .llm else { return 0 }
-        switch sessionBytes(for: ref, context: context, metadataByRef: metadataByRef) {
+        switch sessionBytes(for: ref, context: context, metadataByRef: metadataByRef, kvCache: kvCache) {
         case .success(let cacheBytes):
             return cacheBytes
         case .failure:
@@ -1151,7 +1165,8 @@ public actor Router {
     ) async throws -> JointResolution {
         do {
             return try Self.jointResolution(
-                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: residentKeys)
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: residentKeys,
+                kvCache: loader.kvCacheQuantization)
         } catch let failure as ResolutionFailure {
             await recordFailure(
                 outcomes: failure.slots.map { ($0.slot, $0.chosen) },
@@ -1191,7 +1206,8 @@ public actor Router {
         profile def: ProfileDefinition,
         budget: Int64,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
-        residentKeys: Set<ModelPoolKey>
+        residentKeys: Set<ModelPoolKey>,
+        kvCache: KVCacheQuantization?
     ) throws -> JointResolution {
         let membership = slotMembership(profile: def)
         return try JointFit.resolve(
@@ -1200,7 +1216,8 @@ public actor Router {
             footprint: { ref, slot, context, allocatedKeys in
                 footprintBytes(
                     for: ref, in: slot, context: context, metadataByRef: metadataByRef,
-                    membership: membership, residentKeys: residentKeys, allocatedKeys: allocatedKeys
+                    membership: membership, residentKeys: residentKeys, allocatedKeys: allocatedKeys,
+                    kvCache: kvCache
                 )
             },
             nativeMaxContext: { ref in
