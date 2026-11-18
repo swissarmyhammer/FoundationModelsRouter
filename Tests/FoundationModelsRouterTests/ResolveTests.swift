@@ -1053,27 +1053,6 @@ struct ResolveTests {
     /// machine reports about 81 percent.)
     private static let workingSetOf32GB: Int64 = (32 << 30) * 2 / 3
 
-    /// The sizing keys of a Qwen3.5-family `config.json` (Qwen3.8 27B and its
-    /// MTP head): 64 layers, one full-attention layer in four.
-    private static let qwen38Config: Data = {
-        let layerTypes = (0..<64).map { $0 % 4 == 3 ? #""full_attention""# : #""linear_attention""# }
-        return Data(
-            """
-            {"model_type": "qwen3_5", "text_config": {"num_hidden_layers": 64, "num_attention_heads": 24,
-             "num_key_value_heads": 4, "head_dim": 256, "hidden_size": 5120, "max_position_embeddings": 262144,
-             "layer_types": [\(layerTypes.joined(separator: ","))]}}
-            """.utf8)
-    }()
-
-    /// The sizing keys of a Qwen3 `config.json`.
-    private static func qwen3Config(layers: Int, heads: Int, hidden: Int, maxPositions: Int) -> Data {
-        Data(
-            """
-            {"model_type": "qwen3", "num_hidden_layers": \(layers), "num_attention_heads": \(heads),
-             "num_key_value_heads": 8, "head_dim": 128, "hidden_size": \(hidden), "max_position_embeddings": \(maxPositions)}
-            """.utf8)
-    }
-
     /// The profile of the ACP agent default (2026-10-29): Qwen3.8 27B 4-bit
     /// with its MTP head, Qwen3 4B 4-bit, and the 4-bit Qwen3 0.6B embedder.
     /// No context: the fit picks the window.
@@ -1093,16 +1072,10 @@ struct ResolveTests {
     /// Hugging Face cache of 2026-10-29.
     private static var agentDefaultMetadata: ScriptedMetadataSource {
         let raw: [String: RawRepoMetadata] = [
-            "mlx-community/Qwen3.8-27B-4bit": RawRepoMetadata(
-                configJSON: qwen38Config, treeJSON: HubTreeListing.shards([5_343_268_662, 5_354_185_130, 5_357_087_557])),
-            "mlx-community/Qwen3.8-27B-MTP-4bit": RawRepoMetadata(
-                configJSON: qwen38Config, treeJSON: HubTreeListing.shards([238_934_137])),
-            "mlx-community/Qwen3-4B-4bit": RawRepoMetadata(
-                configJSON: qwen3Config(layers: 36, heads: 32, hidden: 2560, maxPositions: 40960),
-                treeJSON: HubTreeListing.shards([2_263_022_529])),
-            "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ": RawRepoMetadata(
-                configJSON: qwen3Config(layers: 28, heads: 16, hidden: 1024, maxPositions: 32768),
-                treeJSON: HubTreeListing.shards([335_296_756])),
+            "mlx-community/Qwen3.8-27B-4bit": QwenRepoFixtures.qwen38TwentySevenB4Bit,
+            "mlx-community/Qwen3.8-27B-MTP-4bit": QwenRepoFixtures.qwen38TwentySevenBMTP4Bit,
+            "mlx-community/Qwen3-4B-4bit": QwenRepoFixtures.qwen3FourB4Bit,
+            "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ": QwenRepoFixtures.qwen3Embedding4Bit,
         ]
         return ScriptedMetadataSource(
             scripts: raw.mapValues { Array(repeating: .success($0), count: 4) }, defaultRaw: rawMetadata)

@@ -1,9 +1,34 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7qr9twptkyvnzyx2t1v1x7n
+  text: |-
+    Research done.
+    - ProfileFitEstimate is not Codable and has only internal inits. Thus a new field needs no decodeIfPresent and no public init default.
+    - Plan: JointFit.resolve gets a minimum window (default 1, so resolve does not change). searchWindow uses min(minimum, native) as the floor of the search in place of 1. The explicit `context` path ignores the minimum: the window is the context of the author (as with a native window under the minimum).
+    - estimateFit: on a ResolutionFailure with a minimum over 1, it runs the fit again from 1 token. When that fit finds a window, the failure names that window and the minimum ("the largest window that fits is 8,192 tokens; a profile needs 32,768").
+    - Stub tests: budget = requiredBytes of the estimate at an explicit context (49,152 / 8,192), then the estimate with a derived context. The charge is linear in the window, so the window is exact.
+    - Sanity numbers: real configs from the Hub (mlx-community/Qwen3.5-9B-4bit: 32 layers, 8 full_attention, 16 heads, 4 KV heads, head_dim 256, hidden 4096, shards 5,349,771,222 + 600,449,850; MTP 136,884,332). The h2o-lightning-4b Q4_K_M GGUF header (local cache): qwen35, 33 blocks, context 262,144, embedding 2,560, 16 heads, 4 KV heads, key/value length 256, full_attention_interval 4, ssm conv 4 / inner 4,096 / state 128 / groups 16; file 2,708,808,736 bytes.
+  timestamp: 2026-11-18T16:37:08.118584+00:00
+- actor: claude-code
+  id: 01m7qs3gpbm48md2t6yjp1apax
+  text: |-
+    Implementation landed (not committed).
+    - JointFit.resolve has `minimumWindow` (default `smallestWindow` = 1, which is now internal so Router can name it). The search floor is min(minimumWindow, native). computedWindow measures at the floor and the failed window (labels `between:and:`).
+    - Router.estimateFit(of:minimumContextTokens:) gives the minimum to the fit. On a ResolutionFailure with a derived context, it runs the fit again from 1 token. When that finds a window W, the failure is "the largest window that fits is W tokens; a profile needs min(minimum, native)". The counts use the en_US locale so the text is the same on each machine.
+    - An explicit `context` ignores the minimum (decision of this step): the window is the context of the author, as with a native window under the minimum. Existing tests use an explicit 8,192 context and stay green.
+    - Sanity number: the `small` profile (Qwen3.5-9B 4-bit + MTP, kvBits 8, h2o decision, Qwen3 embedding) on a 16 GB working set (2/3 of RAM) gives 52,196 tokens with these fixtures; research says "about 49K". The test accepts 42,000...56,000. Medium (27B 4-bit) does not fit.
+    - Test fixtures: new Helpers/QwenRepoFixtures.swift (real Hub configs and shard sizes); ResolveTests now uses it in place of its private copies (the 32 GB test still gives 18,849). GGUFHeaderFixtures has h2oLightningBytes from the real header.
+
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Resolution/JointFit.swift, Resolution/ProfileFitEstimate.swift, Router.swift, FoundationModelsRouter.docc/FoundationModelsRouter.md; Tests/FoundationModelsRouterTests/EstimateFitWindowTests.swift (new, 8 tests), ProfileFitSanityTests.swift (new, 2 tests), Helpers/QwenRepoFixtures.swift (new), Helpers/GGUFHeaderFixtures.swift, ResolveTests.swift; Tests/FoundationModelsRouterPublicSurfaceTests/ProfileFitEstimatePublicSurfaceTests.swift (+1 test). Full `swift test`: 2927 tests in 340 suites + 49 in 26 + 19 in 3, all passed, 0 issues, no compiler warnings.
+    - next: /review
+  timestamp: 2026-11-18T16:51:09.643268+00:00
 depends_on:
 - 01M7QMG7QQEHJX5BW7VGFNSTE0
-position_column: todo
+position_column: doing
 position_ordinal: '80'
 title: 'ROUTER-13: a profile fits only with a window of 32K tokens or more, and the fit estimate gives the window (D203)'
 ---
@@ -32,11 +57,11 @@ Depends on nothing outside this package. The dependency on ^gfnste0 is only the 
 
 ## Tests
 
-- [ ] A stub metadata source and a budget where the largest window is about 49K tokens: `fits == true`, `contextTokens` is about 49K.
-- [ ] A budget where the largest window is 8K: `fits == false`, `contextTokens == nil`, `failure` names the window and the minimum.
-- [ ] A model whose native window is 16K and fits at native: `fits == true`, `contextTokens == 16384`.
-- [ ] `resolve(profile:)` with the 8K budget still resolves with the 8K window.
-- [ ] Sanity numbers of `research.md`: Qwen3.5-9B 4-bit with `kvBits: 8` and the h2o decision model fits 16 GB with about 49K tokens; Qwen3.8-27B 4-bit does not fit 16 GB.
+- [x] A stub metadata source and a budget where the largest window is about 49K tokens: `fits == true`, `contextTokens` is about 49K.
+- [x] A budget where the largest window is 8K: `fits == false`, `contextTokens == nil`, `failure` names the window and the minimum.
+- [x] A model whose native window is 16K and fits at native: `fits == true`, `contextTokens == 16384`.
+- [x] `resolve(profile:)` with the 8K budget still resolves with the 8K window.
+- [x] Sanity numbers of `research.md`: Qwen3.5-9B 4-bit with `kvBits: 8` and the h2o decision model fits 16 GB with about 49K tokens; Qwen3.8-27B 4-bit does not fit 16 GB.
 
 ## After
 

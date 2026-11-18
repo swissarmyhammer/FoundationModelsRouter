@@ -274,14 +274,28 @@ public actor Router {
     /// A local model path in the `~` or `./` form becomes an absolute path,
     /// as in a resolve.
     ///
+    /// A profile with no explicit context fits only with a window of
+    /// `minimumContextTokens` or more. When the native max context of the
+    /// standard model is smaller, the native max context is the minimum. A
+    /// resolve does not use the minimum: it loads at the largest window that
+    /// fits, also when that window is smaller. When the largest window that
+    /// fits is smaller than the minimum, the failure names both windows. A
+    /// profile with an explicit context fits at that context.
+    ///
     /// The estimate does not throw. A profile that does not fit, a candidate
     /// that could not be sized, and a cancelled task each give an estimate
     /// that does not fit, with the reason in
     /// ``ProfileFitEstimate/failure``.
     ///
-    /// - Parameter authored: The authored profile to estimate.
+    /// - Parameters:
+    ///   - authored: The authored profile to estimate.
+    ///   - minimumContextTokens: The smallest window of a fit, in tokens. The
+    ///     default is ``ProfileFitEstimate/defaultMinimumContextTokens``.
     /// - Returns: The estimate.
-    public func estimateFit(of authored: ProfileDefinition) async -> ProfileFitEstimate {
+    public func estimateFit(
+        of authored: ProfileDefinition,
+        minimumContextTokens: Int = ProfileFitEstimate.defaultMinimumContextTokens
+    ) async -> ProfileFitEstimate {
         let def = authored.resolvingLocalModelPaths()
         let budget = hostBudget()
         guard !Task.isCancelled else {
@@ -293,8 +307,13 @@ public actor Router {
         }
         do {
             let resolution = try Self.jointResolution(
-                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: [])
+                profile: def, budget: budget, minimumWindow: minimumContextTokens, metadataByRef: metadataByRef,
+                residentKeys: [])
             return Self.fitEstimate(of: resolution, budget: budget)
+        } catch let failure as ResolutionFailure {
+            return Self.windowUnderMinimumEstimate(
+                profile: def, budget: budget, minimumContextTokens: minimumContextTokens, metadataByRef: metadataByRef)
+                ?? ProfileFitEstimate(failure: String(describing: failure), budgetBytes: budget)
         } catch {
             return ProfileFitEstimate(failure: String(describing: error), budgetBytes: budget)
         }
@@ -1204,11 +1223,15 @@ public actor Router {
     /// Runs the pure joint fit of a profile against a budget, with the
     /// footprint and the native max context of each candidate from its sized
     /// metadata. A resolve (``runJointFit(profile:budget:metadataByRef:residentKeys:progress:)``)
-    /// and a fit estimate (``estimateFit(of:)``) both call it.
+    /// and a fit estimate (``estimateFit(of:minimumContextTokens:)``) both call it.
     ///
     /// - Parameters:
     ///   - def: The authored profile.
     ///   - budget: The budget that the four slots share, in bytes.
+    ///   - minimumWindow: The smallest derived window of a fit, in tokens
+    ///     (``JointFit/resolve(profile:budgetBytes:minimumWindow:footprint:nativeMaxContext:)``).
+    ///     The default is ``JointFit/smallestWindow``, the search of a
+    ///     resolve.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
     ///   - residentKeys: The keys of the models that the pool keeps
     ///     resident. A candidate that one of them serves costs only its
@@ -1220,6 +1243,7 @@ public actor Router {
     private static func jointResolution(
         profile def: ProfileDefinition,
         budget: Int64,
+        minimumWindow: Int = JointFit.smallestWindow,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         residentKeys: Set<ModelPoolKey>
     ) throws -> JointResolution {
@@ -1228,6 +1252,7 @@ public actor Router {
         var resolution = try JointFit.resolve(
             profile: def,
             budgetBytes: budget,
+            minimumWindow: minimumWindow,
             footprint: { ref, slot, context, allocatedKeys in
                 footprintBytes(
                     for: ref, in: slot, context: context, metadataByRef: metadataByRef,
@@ -1257,7 +1282,44 @@ public actor Router {
             total + (chosenReport(for: slotRes)?.chargedBytes ?? 0)
         }
         let chosen = Dictionary(uniqueKeysWithValues: acquisitionOrder.map { ($0, chosenRef(of: $0, in: resolution)) })
-        return ProfileFitEstimate(requiredBytes: requiredBytes, budgetBytes: budget, chosen: chosen)
+        return ProfileFitEstimate(
+            requiredBytes: requiredBytes, contextTokens: slotResolution(for: resolution, slot: .standard).contextTokens,
+            budgetBytes: budget, chosen: chosen)
+    }
+
+    /// The estimate of a profile whose largest window that fits is smaller
+    /// than the minimum window, with a failure that names the two windows.
+    ///
+    /// The joint fit runs again from one token, as a resolve does. When it
+    /// finds a window, the minimum did not fit: a fit at the minimum or more
+    /// would have won in the first fit. The window that the failure names as
+    /// needed is the minimum, or the native max context of the standard model
+    /// when that is smaller.
+    ///
+    /// - Parameters:
+    ///   - def: The profile, with its local model paths resolved.
+    ///   - budget: The budget of the fit.
+    ///   - minimumContextTokens: The minimum window of the estimate.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    /// - Returns: The estimate, or `nil` when the profile has an explicit
+    ///   context (the minimum did not apply) or no window fits.
+    private static func windowUnderMinimumEstimate(
+        profile def: ProfileDefinition,
+        budget: Int64,
+        minimumContextTokens: Int,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+    ) -> ProfileFitEstimate? {
+        guard def.context == nil,
+            let resolution = try? jointResolution(
+                profile: def, budget: budget, metadataByRef: metadataByRef, residentKeys: []),
+            let windowFit = chosenReport(for: slotResolution(for: resolution, slot: .standard))?.windowFit
+        else {
+            return nil
+        }
+        return ProfileFitEstimate(
+            largestWindow: slotResolution(for: resolution, slot: .standard).contextTokens,
+            minimumWindow: min(minimumContextTokens, windowFit.nativeContextTokens),
+            budgetBytes: budget)
     }
 
     // MARK: - Download & load

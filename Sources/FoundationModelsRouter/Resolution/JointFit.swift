@@ -59,17 +59,21 @@ struct JointResolution: Sendable, Equatable {
 /// When ``ProfileDefinition/context`` is explicit, every candidate is sized at
 /// that one context. When it is `nil`, the context is the largest window that
 /// fits: standard-slot candidates are tried in preference order, and each one
-/// gets the largest window, from one token up to its native max context, at
-/// which all four slots co-fit the budget. The first candidate with a window
-/// wins at that window. The window comes from the model and the budget, not
-/// from a list of steps.
+/// gets the largest window, from the minimum window up to its native max
+/// context, at which all four slots co-fit the budget. The first candidate
+/// with a window wins at that window. The window comes from the model and the
+/// budget, not from a list of steps. A resolve searches from one token
+/// (``smallestWindow``). A fit estimate searches from a larger minimum
+/// (``ProfileFitEstimate/defaultMinimumContextTokens``); when the native max
+/// context of a candidate is smaller, the search starts at the native max
+/// context.
 ///
 /// The allocation is pure. Footprints and native max contexts are injected as
 /// closures, so it does no I/O.
 enum JointFit {
-    /// The smallest window a model can run at: one token. The window search
-    /// looks for a fit in `smallestWindow...nativeMaxContext`.
-    private static let smallestWindow = 1
+    /// The smallest window a model can run at: one token. A resolve looks for
+    /// a fit in `smallestWindow...nativeMaxContext`.
+    static let smallestWindow = 1
 
     /// The raw footprint of a candidate in a slot at a context, as the
     /// caller injects it. The second argument is the slot that sizes the
@@ -104,6 +108,11 @@ enum JointFit {
     /// - Parameters:
     ///   - profile: The authored profile whose slots supply candidates in preference order.
     ///   - budgetBytes: The shared memory budget, in bytes.
+    ///   - minimumWindow: The smallest window that a derived context can
+    ///     have, in tokens. A candidate whose native max context is smaller
+    ///     gets its native max context as the minimum. The default is
+    ///     ``smallestWindow``. An explicit ``ProfileDefinition/context`` does
+    ///     not read it.
     ///   - footprint: The raw footprint of a candidate at a context. May be a marginal cost for a resident model.
     ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
     /// - Returns: The chosen model of each slot and per-slot reasoning.
@@ -114,6 +123,7 @@ enum JointFit {
     static func resolve(
         profile: ProfileDefinition,
         budgetBytes: Int64,
+        minimumWindow: Int = smallestWindow,
         footprint: FootprintProvider,
         nativeMaxContext: (ModelRef) -> Result<Int, RepoMetadataError>
     ) throws -> JointResolution {
@@ -128,6 +138,7 @@ enum JointFit {
         return try resolveAtLargestWindow(
             profile: profile,
             budgetBytes: budgetBytes,
+            minimumWindow: minimumWindow,
             footprint: footprint,
             nativeMaxContext: nativeMaxContext
         )
@@ -453,25 +464,30 @@ enum JointFit {
         /// attempt at that window.
         case found(fit: WindowFit, winner: SlotsWinner)
 
-        /// No window fits. `fit` records the slot that blocked the smallest
-        /// window, and `verdict` is the candidate's verdict for that slot.
+        /// No window from the floor window up fits. `fit` records the slot
+        /// that blocked the floor window, and `verdict` is the candidate's
+        /// verdict for that slot.
         case unfit(fit: WindowFit, verdict: Verdict)
     }
 
-    /// Finds the largest window in `1...native` at which one standard-slot
-    /// candidate and the other three slots co-fit the budget.
+    /// Finds the largest window in `floorWindow...native` at which one
+    /// standard-slot candidate and the other three slots co-fit the budget.
     ///
-    /// The native window is tried first. When it does not fit, a window of
-    /// one token is tried. When that does not fit either, no window fits.
+    /// The native window is tried first. When it does not fit, the floor
+    /// window is tried. When that does not fit either, no window fits.
     /// Otherwise the window is computed from the bytes the four slots charge,
     /// which grow linearly with the window, and confirmed with one attempt.
     ///
-    /// - Parameter native: The candidate's native max context.
+    /// - Parameters:
+    ///   - native: The candidate's native max context.
+    ///   - floorWindow: The smallest window that the search tries. It is not
+    ///     larger than `native`.
     private static func searchWindow(
         candidate: ModelRef,
         profile: ProfileDefinition,
         budgetBytes: Int64,
         native: Int,
+        floorWindow: Int,
         footprint: FootprintProvider
     ) -> WindowSearchResult {
         let candidates = SlotCandidates(profile: profile, standard: [candidate])
@@ -480,23 +496,23 @@ enum JointFit {
             return makeFoundResult(winner: winner, native: native, window: native)
         }
 
-        let atSmallest = attemptSlots(
-            candidates, budgetBytes: budgetBytes, context: smallestWindow, footprint: footprint
+        let atFloor = attemptSlots(
+            candidates, budgetBytes: budgetBytes, context: floorWindow, footprint: footprint
         )
-        let smallestWinner: SlotsWinner
-        switch atSmallest.outcome {
+        let floorWinner: SlotsWinner
+        switch atFloor.outcome {
         case .cofit(let winner):
-            smallestWinner = winner
+            floorWinner = winner
         case .blocked(by: let slot):
             let fit = WindowFit(
                 nativeContextTokens: native,
-                outcome: .blocked(by: slot, estimatedFootprintBytes: atSmallest.standardFootprintBytes)
+                outcome: .blocked(by: slot, estimatedFootprintBytes: atFloor.standardFootprintBytes)
             )
             return .unfit(fit: fit, verdict: verdict(blockedBy: slot))
         }
 
         let largest = largestConfirmedWindow(
-            smallestWinner: smallestWinner,
+            floor: (floorWindow, floorWinner),
             candidates: candidates,
             failedWindow: native,
             budgetBytes: budgetBytes,
@@ -520,14 +536,15 @@ enum JointFit {
     /// Computes the largest window below `failedWindow` from the charges of
     /// the four slots, and confirms it with one attempt. When the attempt does not
     /// co-fit, the computation runs again with that window as the new failed
-    /// window, so each step is smaller and the search ends at the smallest
-    /// window, which `smallestWinner` already confirms.
+    /// window, so each step is smaller and the search ends at the floor
+    /// window, which the winner of `floor` already confirms.
     ///
     /// - Parameters:
-    ///   - smallestWinner: The attempt that co-fit at the smallest window.
+    ///   - floor: The floor window of the search and the attempt that co-fit
+    ///     at it.
     ///   - failedWindow: A window at which the four slots did not co-fit.
     private static func largestConfirmedWindow(
-        smallestWinner: SlotsWinner,
+        floor: (window: Int, winner: SlotsWinner),
         candidates: SlotCandidates,
         failedWindow: Int,
         budgetBytes: Int64,
@@ -535,21 +552,22 @@ enum JointFit {
     ) -> (window: Int, winner: SlotsWinner) {
         guard
             let window = computedWindow(
-                plan: SlotCandidates(chosenBy: smallestWinner, kvCache: candidates.kvCache),
-                below: failedWindow,
+                plan: SlotCandidates(chosenBy: floor.winner, kvCache: candidates.kvCache),
+                between: floor.window,
+                and: failedWindow,
                 budgetBytes: budgetBytes,
                 footprint: footprint
             ),
-            window > smallestWindow
+            window > floor.window
         else {
-            return (smallestWindow, smallestWinner)
+            return floor
         }
         let attempt = attemptSlots(candidates, budgetBytes: budgetBytes, context: window, footprint: footprint)
         if case .cofit(let winner) = attempt.outcome {
             return (window, winner)
         }
         return largestConfirmedWindow(
-            smallestWinner: smallestWinner,
+            floor: floor,
             candidates: candidates,
             failedWindow: window,
             budgetBytes: budgetBytes,
@@ -560,32 +578,37 @@ enum JointFit {
     /// The largest window below `failedWindow` at which the bytes `plan`
     /// charges stay in the budget.
     ///
-    /// The charge is measured at the smallest window and at `failedWindow`.
-    /// The difference, divided by the tokens between the two, is the bytes
-    /// each token adds. The budget left after the charge at the smallest
-    /// window, divided by the bytes for each token, floored, is the number of
-    /// tokens the window can add. The decision slot is sized at its own
-    /// context in both measures, so its charge is in the budget it leaves
-    /// and not in the bytes for each token.
+    /// The charge is measured at `floorWindow` and at `failedWindow`. The
+    /// difference, divided by the tokens between the two, is the bytes each
+    /// token adds. The budget left after the charge at `floorWindow`, divided
+    /// by the bytes for each token, floored, is the number of tokens the
+    /// window can add. The decision slot is sized at its own context in both
+    /// measures, so its charge is in the budget it leaves and not in the
+    /// bytes for each token.
     ///
+    /// - Parameters:
+    ///   - floorWindow: A window at which `plan` co-fits, smaller than
+    ///     `failedWindow`.
+    ///   - failedWindow: A window at which the four slots did not co-fit.
     /// - Returns: The window, or `nil` when a charge cannot be sized or the
     ///   charge does not grow with the window.
     private static func computedWindow(
         plan: SlotCandidates,
-        below failedWindow: Int,
+        between floorWindow: Int,
+        and failedWindow: Int,
         budgetBytes: Int64,
         footprint: FootprintProvider
     ) -> Int? {
         guard
-            let smallestCharge = planChargeBytes(plan, context: smallestWindow, footprint: footprint),
+            let floorCharge = planChargeBytes(plan, context: floorWindow, footprint: footprint),
             let failedCharge = planChargeBytes(plan, context: failedWindow, footprint: footprint)
         else {
             return nil
         }
-        let bytesPerToken = (failedCharge - smallestCharge) / Int64(failedWindow - smallestWindow)
+        let bytesPerToken = (failedCharge - floorCharge) / Int64(failedWindow - floorWindow)
         guard bytesPerToken > 0 else { return nil }
-        let addedTokens = (budgetBytes - smallestCharge) / bytesPerToken
-        return min(failedWindow - 1, smallestWindow + Int(addedTokens))
+        let addedTokens = (budgetBytes - floorCharge) / bytesPerToken
+        return min(failedWindow - 1, floorWindow + Int(addedTokens))
     }
 
     /// The bytes `plan` charges at `context` when every slot keeps its one
@@ -646,7 +669,9 @@ enum JointFit {
 
     /// Resolves a profile whose ``ProfileDefinition/context`` is `nil`. Standard
     /// candidates are tried in preference order. The first candidate with a
-    /// window that fits wins at its largest window.
+    /// window of `minimumWindow` or more that fits wins at its largest
+    /// window. A candidate whose native max context is smaller than
+    /// `minimumWindow` needs only its native max context.
     ///
     /// - Throws: ``NoWindowFailure`` when no standard candidate's window could
     ///   be read, or ``ResolutionFailure`` when no standard candidate has a
@@ -654,6 +679,7 @@ enum JointFit {
     private static func resolveAtLargestWindow(
         profile: ProfileDefinition,
         budgetBytes: Int64,
+        minimumWindow: Int,
         footprint: FootprintProvider,
         nativeMaxContext: (ModelRef) -> Result<Int, RepoMetadataError>
     ) throws -> JointResolution {
@@ -676,11 +702,13 @@ enum JointFit {
                     )
                 )
             case .success(let native):
+                let floorWindow = min(minimumWindow, native)
                 let search = searchWindow(
                     candidate: candidate,
                     profile: profile,
                     budgetBytes: budgetBytes,
                     native: native,
+                    floorWindow: floorWindow,
                     footprint: footprint
                 )
 
@@ -694,7 +722,7 @@ enum JointFit {
                         winner: winner
                     )
                 case .unfit(let fit, let verdict):
-                    lastTriedContext = smallestWindow
+                    lastTriedContext = floorWindow
                     standardConsidered.append(
                         CandidateReport(
                             ref: candidate,
@@ -773,10 +801,10 @@ enum JointFit {
     }
 
     /// The verdict for a standard-slot candidate with no window that fits,
-    /// when `slot` blocked the smallest window.
+    /// when `slot` blocked the floor window of the search.
     ///
     /// - Returns: ``Verdict/tooLarge`` when the candidate itself blocked the
-    ///   smallest window, or ``Verdict/trioBlocked(_:)`` naming the slot that
+    ///   floor window, or ``Verdict/trioBlocked(_:)`` naming the slot that
     ///   blocked it.
     private static func verdict(blockedBy slot: ModelSlot) -> Verdict {
         switch slot {

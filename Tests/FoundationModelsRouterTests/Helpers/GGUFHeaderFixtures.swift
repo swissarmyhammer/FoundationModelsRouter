@@ -174,6 +174,42 @@ enum GGUFHeaderFixtures {
             "ssm.group_count": recurrentGroups,
         ])
 
+    /// The `UINT32` sizing values of the header of
+    /// `h2oai/h2o-lightning-4b-gguf` `h2o-lightning-4b-Q4_K_M.gguf` at the
+    /// pinned revision, as the file in the Hugging Face cache has them on
+    /// 2026-11-18: a Qwen3.5 4B hybrid model.
+    private static let h2oLightningValues: KeyValuePairs<String, UInt32> = [
+        "block_count": 33,
+        "context_length": hybridContext,
+        "embedding_length": 2_560,
+        "attention.head_count": hybridAttentionHeads,
+        "attention.head_count_kv": 4,
+        "attention.key_length": hybridHeadWidth,
+        "attention.value_length": hybridHeadWidth,
+        "full_attention_interval": hybridAttentionInterval,
+        "ssm.conv_kernel": convolutionKernel,
+        "ssm.inner_size": recurrentInnerSize,
+        "ssm.state_size": recurrentStateSize,
+        "ssm.group_count": recurrentGroups,
+    ]
+
+    /// The size of the file `h2o-lightning-4b-Q4_K_M.gguf` at the pinned
+    /// revision, in bytes.
+    static let h2oLightningFileBytes: Int64 = 2_708_808_736
+
+    /// The header of the decision model h2o-lightning-4b `Q4_K_M`: the
+    /// sizing values of ``h2oLightningValues`` and the decision type
+    /// ``supportedDecisionType``, under the architecture `qwen35`.
+    static let h2oLightningBytes: Data = {
+        let architecture = "qwen35"
+        var typedValue = Data()
+        append(textType, to: &typedValue)
+        append(text: supportedDecisionType, to: &typedValue)
+        return bytes(
+            architecture: architecture, values: h2oLightningValues,
+            trailing: [("\(architecture).\(decisionTypeKey)", typedValue)])
+    }()
+
     /// The `UINT32` values of each DFlash drafter: one block, under the
     /// prefix of its architecture.
     private static let dflashDrafterValues: KeyValuePairs<String, UInt32> = [
