@@ -74,8 +74,24 @@ comments:
     - evidence: Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift; `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryQueuedEventTests` 11 tests passed; full `swift test` exit 0: 2917 tests in 338 suites, 48 in 26, 19 in 3, all passed, 0 skipped, no compiler warnings.
     - next: /review. Task stays in doing. Not committed.
   timestamp: 2026-11-18T16:30:31.383783+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7qr0bseyeegkgr5czbv8sb8
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (ef063497) gave 0 findings (0 confirmed, 0 refuted, 7 attempted). The helper `messageEvents(after:)` in RouterSessionDirectoryQueuedEventTests.swift now uses `compactMap` and `reduce(into:)` on the stream, with no mutable accumulator. The 2026-11-18 10:25 item is fixed. All prior items are checked.
+    - next: the task is in done.
+  timestamp: 2026-11-18T16:31:57.742254+00:00
+- actor: claude-code
+  id: 01m7qr0qjgxf2b69gtx20jvwg0
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — RouterSessionDirectoryQueuedEventTests.swift (one expression, no var accumulator)
+    - test: green — swift test in the implement step, 2917 tests in 338 suites (+48, +19), 0 failures
+    - commit: ef063497
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T16:32:09.808651+00:00
+position_column: done
+position_ordinal: ffffffffffaf80
 title: Send a directory event when a message goes into the ledger or the inbox before delivery (D199 follow-up)
 ---
 ## Goal
