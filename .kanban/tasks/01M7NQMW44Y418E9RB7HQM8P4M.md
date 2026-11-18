@@ -30,8 +30,25 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/UserMessageHeader.swift (new), Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift (new, 7 tests), Tests/FoundationModelsRouterTests/UserMessageHeaderTests.swift (new, 1 parameterized test). `swift test --filter "FoundationModelsRouterTests.RouterSessionDirectorySourceSessionTests|FoundationModelsRouterTests.UserMessageHeaderTests"`: 8 tests in 2 suites passed. Full `swift test`: 2890 tests in 336 suites passed, plus 48 tests in 26 suites and 19 tests in 3 suites passed; 0 failures; no compiler warnings (only the known SwiftPM "missing creator" note for the mlx bundle).
     - next: /review
   timestamp: 2026-11-18T14:34:32.476493+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7qhedf81exz8jzgfymk74te
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 23f1433d). 0 findings, 0 confirmed, 0 refuted. 4 files reviewed. 2 .kanban files not reviewed because of the ignore rule.
+    - next: none. The task is in done.
+  timestamp: 2026-11-18T14:37:18.184577+00:00
+- actor: claude-code
+  id: 01m7qherpanv8g641ay6js4sfs
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — RouterSessionDirectory.swift, UserMessageHeader.swift (new), RouterSessionDirectorySourceSessionTests.swift (new), UserMessageHeaderTests.swift (new)
+    - test: green — swift test in the implement step, 2890 tests in 336 suites (+48, +19), 0 failures
+    - commit: 23f1433d
+    - review: clean — 0 findings; task in done
+    - note: the header line is "From the user, in <title> (<folder>)" with no ULID (orchestrator decision, the same words as Extras). It replaces the example in the description.
+  timestamp: 2026-11-18T14:37:29.674894+00:00
+position_column: done
+position_ordinal: ffffffffffab80
 title: Add a source-session header to a user message (D199 (f))
 ---
 ## Goal
