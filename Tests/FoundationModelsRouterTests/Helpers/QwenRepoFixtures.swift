@@ -53,45 +53,152 @@ enum QwenRepoFixtures {
         Data(
             """
             {"model_type": "qwen3", "num_hidden_layers": \(layers), "num_attention_heads": \(heads),
-             "num_key_value_heads": 8, "head_dim": 128, "hidden_size": \(hidden), "max_position_embeddings": \(maxPositions)}
+             "num_key_value_heads": \(Qwen3.keyValueHeads), "head_dim": \(Qwen3.headWidth), "hidden_size": \(hidden),
+             "max_position_embeddings": \(maxPositions)}
             """.utf8)
     }
 
-    /// The sizing keys of the Qwen3.8 27B `config.json` and of its MTP head:
-    /// 64 layers.
-    private static let qwen38Config = qwen35Config(layers: 64, heads: 24, hidden: 5_120)
+    /// The values of the Qwen3 models: the keys of each `config.json` that
+    /// all Qwen3 models share.
+    private enum Qwen3 {
+        /// The `num_key_value_heads` of each Qwen3 config.
+        static let keyValueHeads = 8
 
-    /// The sizing keys of the Qwen3.5 9B `config.json` and of its MTP head:
-    /// 32 layers.
-    private static let qwen35NineBConfig = qwen35Config(layers: 32, heads: 16, hidden: 4_096)
+        /// The `head_dim` of each Qwen3 config.
+        static let headWidth = 128
+    }
+
+    /// The values of `mlx-community/Qwen3.8-27B-4bit` and of its MTP head
+    /// on the Hub: the keys of the `config.json` and the size of each
+    /// weight shard.
+    private enum Qwen38TwentySevenB {
+        /// The `num_hidden_layers` of the config.
+        static let layers = 64
+
+        /// The `num_attention_heads` of the config.
+        static let heads = 24
+
+        /// The `hidden_size` of the config.
+        static let hidden = 5_120
+
+        /// The size of the first weight shard, in bytes.
+        static let firstShardBytes: Int64 = 5_343_268_662
+
+        /// The size of the second weight shard, in bytes.
+        static let secondShardBytes: Int64 = 5_354_185_130
+
+        /// The size of the third weight shard, in bytes.
+        static let thirdShardBytes: Int64 = 5_357_087_557
+
+        /// The size of the one weight shard of the MTP head, in bytes.
+        static let mtpShardBytes: Int64 = 238_934_137
+    }
+
+    /// The values of `mlx-community/Qwen3.5-9B-4bit` and of its MTP head on
+    /// the Hub on 2026-11-18: the keys of the `config.json` and the size of
+    /// each weight shard.
+    private enum Qwen35NineB {
+        /// The `num_hidden_layers` of the config.
+        static let layers = 32
+
+        /// The `num_attention_heads` of the config.
+        static let heads = 16
+
+        /// The `hidden_size` of the config.
+        static let hidden = 4_096
+
+        /// The size of the first weight shard, in bytes.
+        static let firstShardBytes: Int64 = 5_349_771_222
+
+        /// The size of the second weight shard, in bytes.
+        static let secondShardBytes: Int64 = 600_449_850
+
+        /// The size of the one weight shard of the MTP head, in bytes.
+        static let mtpShardBytes: Int64 = 136_884_332
+    }
+
+    /// The values of `mlx-community/Qwen3-4B-4bit` on the Hub: the keys of
+    /// the `config.json` and the size of the weight shard.
+    private enum Qwen3FourB {
+        /// The `num_hidden_layers` of the config.
+        static let layers = 36
+
+        /// The `num_attention_heads` of the config.
+        static let heads = 32
+
+        /// The `hidden_size` of the config.
+        static let hidden = 2_560
+
+        /// The `max_position_embeddings` of the config.
+        static let maxPositions = 40_960
+
+        /// The size of the one weight shard, in bytes.
+        static let shardBytes: Int64 = 2_263_022_529
+    }
+
+    /// The values of `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` on the
+    /// Hub: the keys of the `config.json` and the size of the weight shard.
+    private enum Qwen3Embedding {
+        /// The `num_hidden_layers` of the config.
+        static let layers = 28
+
+        /// The `num_attention_heads` of the config.
+        static let heads = 16
+
+        /// The `hidden_size` of the config.
+        static let hidden = 1_024
+
+        /// The `max_position_embeddings` of the config.
+        static let maxPositions = 32_768
+
+        /// The size of the one weight shard, in bytes.
+        static let shardBytes: Int64 = 335_296_756
+    }
+
+    /// The sizing keys of the Qwen3.8 27B `config.json` and of its MTP head.
+    private static let qwen38Config = qwen35Config(
+        layers: Qwen38TwentySevenB.layers, heads: Qwen38TwentySevenB.heads, hidden: Qwen38TwentySevenB.hidden)
+
+    /// The sizing keys of the Qwen3.5 9B `config.json` and of its MTP head.
+    private static let qwen35NineBConfig = qwen35Config(
+        layers: Qwen35NineB.layers, heads: Qwen35NineB.heads, hidden: Qwen35NineB.hidden)
 
     /// `mlx-community/Qwen3.8-27B-4bit`, with the weight sizes of the Hugging
     /// Face cache of 2026-10-29.
     static let qwen38TwentySevenB4Bit = RawRepoMetadata(
-        configJSON: qwen38Config, treeJSON: HubTreeListing.shards([5_343_268_662, 5_354_185_130, 5_357_087_557]))
+        configJSON: qwen38Config,
+        treeJSON: HubTreeListing.shards([
+            Qwen38TwentySevenB.firstShardBytes, Qwen38TwentySevenB.secondShardBytes,
+            Qwen38TwentySevenB.thirdShardBytes,
+        ]))
 
     /// `mlx-community/Qwen3.8-27B-MTP-4bit`, the MTP head of
     /// ``qwen38TwentySevenB4Bit``.
     static let qwen38TwentySevenBMTP4Bit = RawRepoMetadata(
-        configJSON: qwen38Config, treeJSON: HubTreeListing.shards([238_934_137]))
+        configJSON: qwen38Config, treeJSON: HubTreeListing.shards([Qwen38TwentySevenB.mtpShardBytes]))
 
     /// `mlx-community/Qwen3.5-9B-4bit`, with the weight sizes of the Hub on
     /// 2026-11-18.
     static let qwen35NineB4Bit = RawRepoMetadata(
-        configJSON: qwen35NineBConfig, treeJSON: HubTreeListing.shards([5_349_771_222, 600_449_850]))
+        configJSON: qwen35NineBConfig,
+        treeJSON: HubTreeListing.shards([Qwen35NineB.firstShardBytes, Qwen35NineB.secondShardBytes]))
 
     /// `mlx-community/Qwen3.5-9B-MTP-4bit`, the MTP head of
     /// ``qwen35NineB4Bit``, with the weight size of the Hub on 2026-11-18.
     static let qwen35NineBMTP4Bit = RawRepoMetadata(
-        configJSON: qwen35NineBConfig, treeJSON: HubTreeListing.shards([136_884_332]))
+        configJSON: qwen35NineBConfig, treeJSON: HubTreeListing.shards([Qwen35NineB.mtpShardBytes]))
 
     /// `mlx-community/Qwen3-4B-4bit`.
     static let qwen3FourB4Bit = RawRepoMetadata(
-        configJSON: qwen3Config(layers: 36, heads: 32, hidden: 2_560, maxPositions: 40_960),
-        treeJSON: HubTreeListing.shards([2_263_022_529]))
+        configJSON: qwen3Config(
+            layers: Qwen3FourB.layers, heads: Qwen3FourB.heads, hidden: Qwen3FourB.hidden,
+            maxPositions: Qwen3FourB.maxPositions),
+        treeJSON: HubTreeListing.shards([Qwen3FourB.shardBytes]))
 
     /// `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ`.
     static let qwen3Embedding4Bit = RawRepoMetadata(
-        configJSON: qwen3Config(layers: 28, heads: 16, hidden: 1_024, maxPositions: 32_768),
-        treeJSON: HubTreeListing.shards([335_296_756]))
+        configJSON: qwen3Config(
+            layers: Qwen3Embedding.layers, heads: Qwen3Embedding.heads, hidden: Qwen3Embedding.hidden,
+            maxPositions: Qwen3Embedding.maxPositions),
+        treeJSON: HubTreeListing.shards([Qwen3Embedding.shardBytes]))
 }

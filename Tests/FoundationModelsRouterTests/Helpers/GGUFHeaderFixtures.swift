@@ -174,16 +174,28 @@ enum GGUFHeaderFixtures {
             "ssm.group_count": recurrentGroups,
         ])
 
+    /// The `qwen35.block_count` of the header of
+    /// `h2o-lightning-4b-Q4_K_M.gguf`.
+    private static let h2oLightningBlocks: UInt32 = 33
+
+    /// The `qwen35.embedding_length` of the header of
+    /// `h2o-lightning-4b-Q4_K_M.gguf`.
+    private static let h2oLightningEmbeddingWidth: UInt32 = 2_560
+
+    /// The `qwen35.attention.head_count_kv` of the header of
+    /// `h2o-lightning-4b-Q4_K_M.gguf`.
+    private static let h2oLightningKeyValueHeads: UInt32 = 4
+
     /// The `UINT32` sizing values of the header of
     /// `h2oai/h2o-lightning-4b-gguf` `h2o-lightning-4b-Q4_K_M.gguf` at the
     /// pinned revision, as the file in the Hugging Face cache has them on
     /// 2026-11-18: a Qwen3.5 4B hybrid model.
     private static let h2oLightningValues: KeyValuePairs<String, UInt32> = [
-        "block_count": 33,
+        "block_count": h2oLightningBlocks,
         "context_length": hybridContext,
-        "embedding_length": 2_560,
+        "embedding_length": h2oLightningEmbeddingWidth,
         "attention.head_count": hybridAttentionHeads,
-        "attention.head_count_kv": 4,
+        "attention.head_count_kv": h2oLightningKeyValueHeads,
         "attention.key_length": hybridHeadWidth,
         "attention.value_length": hybridHeadWidth,
         "full_attention_interval": hybridAttentionInterval,
@@ -220,8 +232,13 @@ enum GGUFHeaderFixtures {
         "attention.head_count_kv": fewKeyValueHeads,
     ]
 
-    /// The target layers of the DFlash drafter that llama.cpp loads.
-    private static let dflashTargetLayers: [UInt32] = [1, 2, 3]
+    /// The count of the target layers of the DFlash drafter that llama.cpp
+    /// loads.
+    private static let dflashTargetLayerCount: UInt32 = 3
+
+    /// The target layers of the DFlash drafter that llama.cpp loads: the
+    /// layers from 1 to ``dflashTargetLayerCount``.
+    private static let dflashTargetLayers = Array(1...dflashTargetLayerCount)
 
     /// A drafter with the architecture `dflash-draft` of the fork
     /// converters, which mainline llama.cpp does not load as DFlash.

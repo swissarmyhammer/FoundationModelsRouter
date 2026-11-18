@@ -26,6 +26,38 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Resolution/JointFit.swift, Resolution/ProfileFitEstimate.swift, Router.swift, FoundationModelsRouter.docc/FoundationModelsRouter.md; Tests/FoundationModelsRouterTests/EstimateFitWindowTests.swift (new, 8 tests), ProfileFitSanityTests.swift (new, 2 tests), Helpers/QwenRepoFixtures.swift (new), Helpers/GGUFHeaderFixtures.swift, ResolveTests.swift; Tests/FoundationModelsRouterPublicSurfaceTests/ProfileFitEstimatePublicSurfaceTests.swift (+1 test). Full `swift test`: 2927 tests in 340 suites + 49 in 26 + 19 in 3, all passed, 0 issues, no compiler warnings.
     - next: /review
   timestamp: 2026-11-18T16:51:09.643268+00:00
+- actor: claude-code
+  id: 01m7qsb2fgxzgfaw7mkk44jp6v
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (0bab1e58): 14 findings. ProfileFitEstimatePublicSurfaceTests.swift:75 (test-integrity/no-test-cheating); GGUFHeaderFixtures.swift:182,184,186 and QwenRepoFixtures.swift:62,66,71,76,81,86,90,91,95,96 (code-hygiene/magic-numbers-swift).
+    - checks of the orchestrator: all pass. The resolve path (Router.swift jointResolution call in runJointFit) gives no minimumWindow, so the default is JointFit.smallestWindow (1) and the floor is min(1, native) = 1, the same as before. contextTokens and requiredBytes come from the same resolution (the standard slot window and the charges at that window). The failure text names the largest window and the minimum.
+    - next: correct the 14 findings in the newest Review Findings section, then review again.
+  timestamp: 2026-11-18T16:55:17.232016+00:00
+- actor: claude-code
+  id: 01m7qsbst4yrzwxb9ne9gxtg2j
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — JointFit.swift, ProfileFitEstimate.swift, Router.swift, DocC page, 6 test files
+    - test: green — swift test in the implement step, 2927 tests in 340 suites (+49, +19), 0 issues
+    - commit: 0bab1e58
+    - review: findings — ProfileFitEstimatePublicSurfaceTests.swift:75 (test cannot fail); magic numbers in GGUFHeaderFixtures.swift:182,184,186 and QwenRepoFixtures.swift:62-96
+    - decision (orchestrator): a profile with an explicit `context` uses that window and is not held to the 32K minimum. The bundled profiles set no `context`.
+  timestamp: 2026-11-18T16:55:41.124251+00:00
+- actor: claude-code
+  id: 01m7qsmvfv9g1q9av7zmbb2d77
+  text: |-
+    Review findings corrected (14 of 14).
+    - Public surface test: the test is now "the default minimum window refuses a budget with a smaller window". It uses a canned metadata source (a tiny safetensors config with a native window of 131,072) and a profile with the same model in the four slots. The budget is the charge of the profile at an explicit context of 8,192 (an explicit context ignores the minimum), so the largest derived window is 8,192. The test asserts `!fits` and that `failure` contains "32,768". It reads public fields only. The probe now takes the budget as an init parameter. The old helper call with `minimumContextTokens: nil` is gone; the first test still calls `estimateFit(of:)` with no minimum argument, so the default stays source-compatible.
+    - Proof that it can fail: with `minimumContextTokens: 1` the test failed ("Expectation failed: !estimate.fits && ..."); after the revert it passed.
+    - QwenRepoFixtures: a private enum for each repository (Qwen38TwentySevenB, Qwen35NineB, Qwen3FourB, Qwen3Embedding) and a Qwen3 enum for the shared `num_key_value_heads` 8 and `head_dim` 128 (these were in the string literal, which swiftlint does not read, but they are the same cause). Each shard size has its own constant, because swiftlint also reads the elements of an array literal.
+    - GGUFHeaderFixtures: h2oLightningBlocks (33), h2oLightningEmbeddingWidth (2,560), h2oLightningKeyValueHeads (4), each with the GGUF header field. The same cause in the file: `dflashTargetLayers = [1, 2, 3]` is now `Array(1...dflashTargetLayerCount)`.
+    - Check: swiftlint `no_magic_numbers` with allowed_numbers [0, 1, -1, 100] gives no finding on the three files.
+
+    ### implement — changed
+    - evidence: Tests/FoundationModelsRouterPublicSurfaceTests/ProfileFitEstimatePublicSurfaceTests.swift, Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift, Tests/FoundationModelsRouterTests/Helpers/GGUFHeaderFixtures.swift. Full `swift test` (one run): 2927 tests in 340 suites, 49 in 26, 19 in 3, all passed, exit 0, no compiler warning (only the SwiftPM "missing creator for mutated node" build note of the mlx bundle, which was there before).
+    - next: /review
+  timestamp: 2026-11-18T17:00:37.755802+00:00
 depends_on:
 - 01M7QMG7QQEHJX5BW7VGFNSTE0
 position_column: doing
@@ -66,3 +98,28 @@ Depends on nothing outside this package. The dependency on ^gfnste0 is only the 
 ## After
 
 Push when green. Send the sha to foundationmodelsacpagent-9e and testudoapp-9a. #d203
+
+## Review Findings (2026-11-18 10:51)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 9 file(s) reviewed, 3 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/FoundationModelsRouter.md` — no validator matches this file
+
+- [x] `Tests/FoundationModelsRouterPublicSurfaceTests/ProfileFitEstimatePublicSurfaceTests.swift:75` `test-integrity/no-test-cheating` — The test named 'a host gives the default minimum window to the estimate' asserts only that budgetBytes equals the budget the probe set. That value is an input the test already controls, so the assertion passes whatever minimum window the estimate uses. The test proves nothing about the minimum window, and it cannot fail if the minimum is ignored. Assert on the value that the minimum changes. For example, use a budget whose largest window is under 32,768 tokens and assert `!estimate.fits` with `estimate.failure` naming 32,768. Or assert that `estimate.contextTokens` is at least the minimum when `estimate.fits` is true. Keep the test inside the public surface only if it reads public fields.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/GGUFHeaderFixtures.swift:182` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/GGUFHeaderFixtures.swift:184` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/GGUFHeaderFixtures.swift:186` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:62` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:66` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:71` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:76` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:81` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:86` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:90` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:91` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:95` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift:96` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
