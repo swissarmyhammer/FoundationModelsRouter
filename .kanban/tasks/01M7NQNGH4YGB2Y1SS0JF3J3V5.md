@@ -66,11 +66,27 @@ comments:
     - evidence: Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveredEventTests.swift (order test held on a latch; new `makeHeldFixture()`; dead `firstOutput(of:in:)` deleted). RED shown by a temporary change that sent the event after the first `.textDelta`/`.answered` output: the order test failed at `#expect(beforeTheModelOutput == [messageID])`, the other 7 passed. The change was reverted. `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryDeliveredEventTests`: 8 tests passed. Full `swift test` one time: 2906 tests in 337 suites passed, plus 48 in 26 and 19 in 3; 0 failures, exit 0. Finding flipped to [x], test box 5 ticked.
     - next: /review
   timestamp: 2026-11-18T15:27:11.516051+00:00
+- actor: claude-code
+  id: 01m7qmdd8hdv07fpsy0bq17785
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (198c3079): 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. The prior finding at RouterSessionDirectoryDeliveredEventTests.swift:182 is checked. The test reads the event feed up to the marker while the first model call holds on its latch, so an event that comes after the first model output gives an empty read, and the test fails. `swift test --filter RouterSessionDirectoryDeliveredEventTests`: 8 tests passed.
+    - next: none. The task is in done.
+  timestamp: 2026-11-18T15:29:10.929641+00:00
+- actor: claude-code
+  id: 01m7qmdx6f4xahdjnhj8qed45h
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — RouterSessionDirectoryDeliveredEventTests.swift (the order test holds the model call on a latch; a temporary late-event change made it fail, then it was reverted)
+    - test: green — swift test in the implement step, 2906 tests in 337 suites (+48, +19), 0 failures
+    - commit: 198c3079
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T15:29:27.247998+00:00
 depends_on:
 - 01M7NQMW44Y418E9RB7HQM8P4M
 - 01M7NQN675DJ1QW9MMPTY244ES
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffae80
 title: Put the source session in the messageDelivered event of each directory message (D199 (f), for ACPA-6)
 ---
 ## Goal
