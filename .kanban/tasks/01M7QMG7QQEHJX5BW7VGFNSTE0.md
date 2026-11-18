@@ -50,6 +50,30 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift (+3 tests). RED: the `cancelledOrLost` test failed with the old `apply` (1 issue of 11 tests). Each test was shown to fail: removal of `sendQueued(id)` from `sendDelivered` failed the order test; removal of the `awaitingQueuedEvent` line from `forgetRefusedMail` failed the refused-mail test; both reverted. `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryQueuedEventTests`: 11 tests passed. Full `swift test`: 2917 tests in 338 suites passed, 48 in 26 passed, 19 in 3 passed; 0 failures; no warning other than the known mlx-swift_Cmlx bundle note.
     - next: review. Not committed.
   timestamp: 2026-11-18T16:24:46.133786+00:00
+- actor: claude-code
+  id: 01m7qqqpggze7z6dj93ct70hr8
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (e8454f4a); 1 finding — Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift:100 (swift/immutability). The 2 items of "Review Findings (2026-11-18 10:12)" are fixed: only `forgetRefusedMail` (the refused-mail catch of `hand`) and `sendQueued` remove an entry from `awaitingQueuedEvent`, and `apply(.cancelledOrLost)` does not. The new Registry tests fail when `sendDelivered` does not call `sendQueued`, and when `cancelledOrLost` removes the waiting event.
+    - next: replace the `var events` accumulator in the `messageEvents(after:)` test helper with one expression, then review again.
+  timestamp: 2026-11-18T16:27:13.808698+00:00
+- actor: claude-code
+  id: 01m7qqrb8p8ryvxytabp936ghb
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — RouterSessionDirectory.swift (forgetRefusedMail), RouterSessionDirectoryQueuedEventTests.swift (+3 tests, each shown to fail)
+    - test: green — swift test in the implement step, 2917 tests in 338 suites (+48, +19), 0 failures
+    - commit: e8454f4a
+    - review: findings — RouterSessionDirectoryQueuedEventTests.swift:100 (swift/immutability)
+  timestamp: 2026-11-18T16:27:35.062534+00:00
+- actor: claude-code
+  id: 01m7qqxqeqbzzt1czzwwteqxky
+  text: |-
+    ### implement — changed
+    - Finding swift/immutability (10:25): `messageEvents(after:)` now returns `await stream.compactMap(messageEvent(of:)).reduce(into: []) { $0.append($1) }`. There is no `var` accumulator and no nested `if let`. I did not use the `reduce(into:)` form with the `if let` in the closure, because that form keeps the hidden append. I checked the whole file: the other `var` items are the `inout` stream iterators and the `inout` registry. They are not loop accumulators, so they stay.
+    - evidence: Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift; `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryQueuedEventTests` 11 tests passed; full `swift test` exit 0: 2917 tests in 338 suites, 48 in 26, 19 in 3, all passed, 0 skipped, no compiler warnings.
+    - next: /review. Task stays in doing. Not committed.
+  timestamp: 2026-11-18T16:30:31.383783+00:00
 position_column: doing
 position_ordinal: '80'
 title: Send a directory event when a message goes into the ledger or the inbox before delivery (D199 follow-up)
@@ -94,3 +118,12 @@ Push when green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a.
 
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:204` `task/messageQueued-rule` — `Registry.apply(.cancelledOrLost)` removes the entry from `awaitingQueuedEvent`, and the session calls `apply` from its own fate report (`sessionDidReport`, through `observeMailFate`), not only from the refused-mail `catch` in `hand`. When the target cancels or loses the mail after the put succeeds and before `hand` calls `sendQueued(delivered.id)` (for example, a close or a cancel of the target during the send), the send keeps the message in the ledger and returns a `queued` receipt, but no `messageQueued` goes out. This breaks the rule "a `queued` receipt gives `messageQueued` at the send". The doc of `forgetDeliveries` ("the `messageQueued` event of a `queued` receipt goes out also when the target closes during the send") and of `awaitingQueuedEvent` ("A refused mail removes the message with no event") also do not agree with this path. Remove the entry only in the refused-mail `catch` of `hand`, and let `apply(.cancelledOrLost)` leave `awaitingQueuedEvent` alone, so that each `queued` receipt gives exactly one `messageQueued`. Correct the two doc comments to match.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:227` `task/order-tests-can-fail` — No test fails when the `sendQueued(id)` call in `Registry.sendDelivered` is removed. The held-turn tests stop the pump before `marker`, and the idle and started tests use `isQueued: false`, so no test reaches the path where the pump takes the mail before `hand` sends `messageQueued`. Without that call, this path gives `messageDelivered` before `messageQueued`. `Registry` is internal, so add a deterministic test in `RouterSessionDirectoryQueuedEventTests.swift` that puts one message in both `awaitingQueuedEvent` and `awaitingDelivery`, calls `sendDelivered`, and expects the fanout order `messageQueued` then `messageDelivered`, and then expects no second `messageQueued` from `sendQueued`. Also add a test for the fate path of the first item: a `cancelledOrLost` fate between the put and `sendQueued` still gives one `messageQueued`.
+
+## Review Findings (2026-11-18 10:25)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift:100` `swift/immutability` — The new helper builds the result with a mutable `var events` that a `for await` loop fills, and it hides the append behind a nested `if let`. The reader must read the whole loop to learn the final value. This is the accumulator shape the rule names. Replace the accumulator with one expression. Use `await stream.reduce(into: []) { events, event in if let message = messageEvent(of: event) { events.append(message) } }`, or collect the stream into an array first and then apply `compactMap(messageEvent(of:))`, as line 68 does.

@@ -97,13 +97,7 @@ struct RouterSessionDirectoryQueuedEventTests {
         _ = registry.fanout.add(continuation)
         steps(&registry)
         continuation.finish()
-        var events: [MessageEvent] = []
-        for await event in stream {
-            if let messageEvent = messageEvent(of: event) {
-                events.append(messageEvent)
-            }
-        }
-        return events
+        return await stream.compactMap(messageEvent(of:)).reduce(into: []) { $0.append($1) }
     }
 
     /// Puts `message` in the registry as a send of a `queued` receipt does
