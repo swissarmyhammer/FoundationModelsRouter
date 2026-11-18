@@ -75,23 +75,6 @@ struct RouterSessionDirectoryDeliveredEventTests {
         return await deliveries(through: &events)
     }
 
-    /// Reads the output of a session up to the first output of the answer
-    /// that delivers the mail `id`.
-    ///
-    /// - Parameters:
-    ///   - id: The id of a mail.
-    ///   - feed: The output feed of the session, opened before the send.
-    /// - Returns: The first output whose origin holds `id`, or `nil` when the
-    ///   feed ended first.
-    private static func firstOutput(
-        of id: MailID, in feed: inout AsyncStream<SessionOutput>.Iterator
-    ) async -> SessionOutput? {
-        while let output = await feed.next() {
-            if case .mail(let ids) = output.origin, ids.contains(id) { return output }
-        }
-        return nil
-    }
-
     /// A user message with ``text`` from the UI client and the source
     /// session `source` to the session `target`.
     ///
@@ -101,6 +84,21 @@ struct RouterSessionDirectoryDeliveredEventTests {
     /// - Returns: The message.
     private static func userMessage(from source: ULID, to target: SessionAddress) -> OutgoingSessionMessage {
         OutgoingSessionMessage(from: .user(clientID: clientID), to: target, text: text, sourceSession: source)
+    }
+
+    /// A new fixture over a scripted backend whose first call holds until a
+    /// latch opens.
+    ///
+    /// - Returns: The latch of the first call, the backend and the fixture.
+    /// - Throws: The errors of the fixture.
+    private static func makeHeldFixture() async throws -> (
+        latch: RunLatch, backend: RouterSessionDirectoryDeliveryTests.Backend, fixture: Fixture
+    ) {
+        let latch = RunLatch()
+        let backend = RouterSessionDirectoryDeliveryTests.Backend(script: [firstCall: .hold(latch)])
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture(
+            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend))
+        return (latch, backend, fixture)
     }
 
     // MARK: - Sender kinds
@@ -164,22 +162,29 @@ struct RouterSessionDirectoryDeliveredEventTests {
     // MARK: - Order
 
     /// The production change that makes this test fail: an event that the
-    /// directory sends after the session took the mail, so the first output
-    /// of the answer can come first.
+    /// directory sends after the first output of the model in the answer of
+    /// the message, for example at the first text or at the end of the
+    /// answer.
+    ///
+    /// The model call of the answer holds until its latch opens, so the model
+    /// makes no output before then. The test emits ``marker`` while the call
+    /// holds. Thus the event feed up to ``marker`` holds the event only when
+    /// the directory sent it before each output of the model.
     @Test("the event comes before the first output of the answer of the message")
     func theEventComesBeforeTheFirstOutput() async throws {
-        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let (latch, backend, fixture) = try await Self.makeHeldFixture()
         let source = fixture.makeSession()
         let target = fixture.makeSession()
         var events = fixture.directory.events().makeAsyncIterator()
-        var feed = await target.streamSessionEvents().makeAsyncIterator()
 
         let receipts = try await fixture.directory.send(Self.userMessage(from: source.id, to: .session(target.id)))
         let messageID = try #require(receipts.first?.messageID)
-        #expect(await Self.firstOutput(of: messageID, in: &feed) != nil)
+        try await backend.changes.wait(untilAtLeast: Self.firstCall) { backend.prompts.count }
         fixture.directory.emit(Self.marker)
+        let beforeTheModelOutput = await Self.deliveries(through: &events).map(\.id)
+        await latch.open()
 
-        #expect(await Self.deliveries(through: &events).map(\.id) == [messageID])
+        #expect(beforeTheModelOutput == [messageID])
         #expect(await target.awaitIdle())
         await fixture.close([source, target])
     }
@@ -212,10 +217,7 @@ struct RouterSessionDirectoryDeliveredEventTests {
     /// - Returns: The latch of the turn, the fixture and the working session.
     /// - Throws: The errors of the fixture and of the turn.
     private static func startHeldTurn() async throws -> HeldTurn {
-        let latch = RunLatch()
-        let backend = RouterSessionDirectoryDeliveryTests.Backend(script: [firstCall: .hold(latch)])
-        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture(
-            over: SessionMessagePumpTests.PumpProbeContainer(backend: backend))
+        let (latch, backend, fixture) = try await makeHeldFixture()
         let target = try await RouterSessionDirectoryDeliveryTests.startHeldTurn(in: fixture, on: backend)
         return HeldTurn(latch: latch, fixture: fixture, target: target)
     }

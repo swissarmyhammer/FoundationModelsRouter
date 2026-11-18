@@ -31,6 +31,41 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Session/MailFate.swift (new), Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveredEventTests.swift (new, 8 tests), Tests/FoundationModelsRouterTests/Helpers/RouterSessionDirectory+SendAndAwaitDelivery.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryInboxTests.swift. Full `swift test`: 2906 tests in 337 suites passed, plus 48 and 19; 0 failures, 0 warnings in the package sources.
     - next: /review
   timestamp: 2026-11-18T15:15:37.477508+00:00
+- actor: claude-code
+  id: 01m7qm00384ebnzw6en2nyrs3h
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (d66a0cc4): 1 finding (1 confirmed, 1 refuted). Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveredEventTests.swift:182 (`test-integrity/no-test-cheating`).
+    - hand check of the pump and cancellation invariants: no break found. `reportMailFate(of:)` is synchronous and adds no suspension point between a post and a take. The observer takes only the directory `state` Mutex for a short time, and no directory code calls the session while it holds that Mutex. Each `messageDelivered` event leaves `awaitingDelivery` under that Mutex, so a held, requeued or re-taken mail, or an inbox read and a take of the same mail, give one event only. A cancelled or lost mail removes its message with no event. The commit does not change the pump: it stays `Task.detached`.
+    - tests: `swift test --filter 'RouterSessionDirectoryDeliveredEventTests|RouterSessionDirectorySourceSessionTests/theNextOpenKeepsTheSourceSession'`: 9 tests in 2 suites passed. Test boxes 1 to 4 are ticked. Box 5 (order) stays open because of the finding.
+    - next: correct the order test so that it fails when the event comes after the first output, then run the review again.
+  timestamp: 2026-11-18T15:21:51.464402+00:00
+- actor: claude-code
+  id: 01m7qm0henz33tscq44323g152
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — MailFate.swift (new), RoutedSessionActor.swift, RoutedSessionActorGeneration.swift, RouterSessionDirectory.swift, 3 test files
+    - test: green — swift test in the implement step, 2906 tests in 337 suites (+48, +19), 0 failures
+    - commit: d66a0cc4
+    - review: findings — RouterSessionDirectoryDeliveredEventTests.swift:182 (the order test cannot fail). A check by hand of the pump and cancellation invariants found no break.
+  timestamp: 2026-11-18T15:22:09.237764+00:00
+- actor: claude-code
+  id: 01m7qm9gqzxnh7e4wvtp6bm74g
+  text: |-
+    Fix of the order-test finding:
+    - `theEventComesBeforeTheFirstOutput` now runs on a scripted backend whose first call holds on a latch (new helper `makeHeldFixture()`, which `startHeldTurn()` also uses). The test sends the message, waits until the held call has the prompt (`backend.changes`), emits the marker, and reads the event feed up to the marker. It opens the latch only after that. While the call holds, the model makes no output, so the event is in the feed up to the marker only when the directory sent it before each output of the model. The test has no sleep, no time limit and no retry.
+    - The helper `firstOutput(of:in:)` had no other caller and is deleted.
+    - What did not work: a check from two separate async streams (event feed and output feed) cannot see the order of two yields in the same synchronous job. No synchronous output hook exists, so the test uses the held model call as the point of order.
+    - Limit: the test checks the order against the model output (text, answer). It cannot see the order of the `mailDelivered` session output and the directory event, because both yields happen in one synchronous call of `emitSessionScopedEvent`.
+    - Proof of failure: a temporary change in `emitSessionScopedEvent` skipped `reportMailFate` for `.mailDelivered` and reported the delivered fate after the hub emitted a `.textDelta` or `.answered` with a mail origin. Result: the order test failed at `#expect(beforeTheModelOutput == [messageID])`, and the other 7 tests passed. The change was reverted (the source file is equal to HEAD).
+  timestamp: 2026-11-18T15:27:03.423642+00:00
+- actor: claude-code
+  id: 01m7qm9rmw01rrpf7tygcnjjdy
+  text: |-
+    ### implement — changed
+    - evidence: Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveredEventTests.swift (order test held on a latch; new `makeHeldFixture()`; dead `firstOutput(of:in:)` deleted). RED shown by a temporary change that sent the event after the first `.textDelta`/`.answered` output: the order test failed at `#expect(beforeTheModelOutput == [messageID])`, the other 7 passed. The change was reverted. `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryDeliveredEventTests`: 8 tests passed. Full `swift test` one time: 2906 tests in 337 suites passed, plus 48 in 26 and 19 in 3; 0 failures, exit 0. Finding flipped to [x], test box 5 ticked.
+    - next: /review
+  timestamp: 2026-11-18T15:27:11.516051+00:00
 depends_on:
 - 01M7NQMW44Y418E9RB7HQM8P4M
 - 01M7NQN675DJ1QW9MMPTY244ES
@@ -58,10 +93,19 @@ The Router already sends `messageDelivered` for each delivery (`Sources/Foundati
 
 ## Tests
 
-- [ ] A user message with a source session gives one `messageDelivered` event with the sender `user`, the source session, the target (`to`) and the text.
-- [ ] A session message gives one event with the sender session, the target and the text.
-- [ ] A queued message gives its event when it is delivered, not when it is queued.
-- [ ] A user message from the inbox scan gives its event with the source session.
-- [ ] The event comes before the first output of the turn of the message.
+- [x] A user message with a source session gives one `messageDelivered` event with the sender `user`, the source session, the target (`to`) and the text.
+- [x] A session message gives one event with the sender session, the target and the text.
+- [x] A queued message gives its event when it is delivered, not when it is queued.
+- [x] A user message from the inbox scan gives its event with the source session.
+- [x] The event comes before the first output of the turn of the message.
 
 #d199
+
+## Review Findings (2026-11-18 09:16)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryDeliveredEventTests.swift:182` `test-integrity/no-test-cheating` — The test named theEventComesBeforeTheFirstOutput does not prove the order it names. It waits for the first output (line 179), emits the marker (line 180), and then reads the event feed up to the marker (line 182). An event that the directory sends after the first output, but before the marker, still passes. The test cannot fail for the defect its doc comment names (an event sent after the session took the mail). Check the order at the moment the first output arrives. For example, read the event feed up to the marker before awaiting the output, or record the event and output positions in one shared sequence and assert that the event position is lower. Then the test fails when the event comes after the first output.
