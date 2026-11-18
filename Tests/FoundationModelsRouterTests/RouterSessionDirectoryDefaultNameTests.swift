@@ -290,14 +290,56 @@ import Testing
         defer { fixture.remove() }
         let launcher = await fixture.useLauncher()
 
-        let receipts = try await fixture.liveDirectory.send(
-            OutgoingSessionMessage(
-                from: Self.user, to: .agent(id: Self.agentID, folder: fixture.folder(Self.projectFolder)),
-                text: Self.firstMessage))
+        let receipts = try await Self.sendToAgentInProject(in: fixture)
         let target = try #require(receipts.first?.target)
 
         #expect(try await fixture.liveDirectory.summary(of: target)?.title == Self.baseName)
         await launcher.closeSessions()
+    }
+
+    /// The production change that makes this test fail: an agent address
+    /// that delivers to a live root session of the agent in the folder
+    /// (D199 (e)), here a renamed one.
+    @Test func anAgentAddressStartsANewSessionWhenARenamedSessionOfTheAgentIsLive() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let launcher = await fixture.useLauncher()
+        let renamed = fixture.vend(in: fixture.folder(Self.projectFolder), title: Self.renamedTitle)
+
+        let receipts = try await Self.sendToAgentInProject(in: fixture)
+
+        #expect(receipts.map(\.outcome) == [.started])
+        await renamed.close()
+        await launcher.closeSessions()
+    }
+
+    /// The production change that makes this test fail: an agent address
+    /// that delivers to the live session of the agent that has the default
+    /// name (D199 (e)). The client resolves the slug of a session, not the
+    /// directory. Thus the new session gets the next free name.
+    @Test func anAgentAddressStartsASessionWithTheNextNameWhenTheBaseNameIsLive() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let launcher = await fixture.useLauncher()
+        let first = fixture.vend(in: fixture.folder(Self.projectFolder))
+
+        let receipts = try await Self.sendToAgentInProject(in: fixture)
+        let target = try #require(receipts.first?.target)
+
+        #expect(try await fixture.liveDirectory.summary(of: target)?.title == Self.secondName)
+        await first.close()
+        await launcher.closeSessions()
+    }
+
+    /// Sends ``firstMessage`` from ``user`` to the agent ``agentID`` in the
+    /// folder ``projectFolder`` of `fixture`, through its live directory.
+    ///
+    /// - Parameter fixture: The fixture.
+    /// - Returns: The receipts of the send.
+    private static func sendToAgentInProject(in fixture: Fixture) async throws -> [SessionSendReceipt] {
+        try await fixture.liveDirectory.send(
+            OutgoingSessionMessage(
+                from: user, to: .agent(id: agentID, folder: fixture.folder(projectFolder)), text: firstMessage))
     }
 
     // MARK: - Constants

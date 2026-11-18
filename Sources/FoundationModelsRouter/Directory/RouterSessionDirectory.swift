@@ -1143,9 +1143,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   target reads it, and it is not in a queue. When a host opens the
     ///   session, the first scan of its inbox watcher delivers the file, and
     ///   the `messageDelivered` event follows.
-    /// - An agent with no live root session gets a new one through the
-    ///   launcher, with origin `message` and the message as its first
-    ///   message, and the receipt is `started`
+    /// - An agent address always gets a new root session through the
+    ///   launcher (D199 (e)), also when a session of the agent is live, with
+    ///   origin `message` and the message as its first message, and the
+    ///   receipt is `started`
     ///   (``startAgent(_:in:for:chainDepth:userHeader:)``).
     /// - A refusal of the resolver is a `refused` receipt with its reason
     ///   and target. An archived target is one: it gets no file.
@@ -1538,7 +1539,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         return SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)
     }
 
-    /// Starts a root session of the agent through the launcher with
+    /// Starts a new root session of the agent through the launcher with
     /// `message` as its first message, keeps the message in the ledger of
     /// the new session, and sends `messageDelivered`.
     ///

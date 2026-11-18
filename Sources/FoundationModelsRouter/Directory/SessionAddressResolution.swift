@@ -3,7 +3,7 @@ import FoundationModelsExtras
 
 /// What a send does with the address of a message (ROUTER-4): the live sessions that get the
 /// message, a recorded session that gets the message as a file in its inbox,
-/// an agent to start, or the reason and target of a refusal.
+/// a new session of an agent to start, or the reason and target of a refusal.
 ///
 /// ``FoundationModelsExtras/SessionAddress/resolution(from:among:recordedSummary:)``
 /// gives the decision. It is pure: it reads only the summaries it is given,
@@ -25,7 +25,7 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// delivers the file when a host opens the session.
     case sendToRecorded(ULID)
 
-    /// Start a root session of the agent, with the message as its first
+    /// Start a new root session of the agent, with the message as its first
     /// message. The folder is the folder of the address, else the folder of
     /// the sender session, else `nil` for a user sender with no folder.
     case startAgent(agentID: String, folder: URL?)
@@ -57,25 +57,6 @@ enum SessionAddressResolution: Sendable, Equatable {
         return target.isLive ? .deliver([target.id]) : .sendToRecorded(target.id)
     }
 
-    /// The decision for an agent address.
-    ///
-    /// - Parameters:
-    ///   - agentID: The agent of the address.
-    ///   - folder: The folder to look in, or `nil` for any folder.
-    ///   - live: The live sessions.
-    /// - Returns: A delivery to the newest live root session of the agent in
-    ///   the folder, else a start of the agent in the folder.
-    fileprivate static func reaching(
-        agent agentID: String,
-        in folder: URL?,
-        among live: [SessionSummary]
-    ) -> Self {
-        guard let target = newestRoot(among: live, agentID: agentID, in: folder) else {
-            return .startAgent(agentID: agentID, folder: folder)
-        }
-        return .deliver([target.id])
-    }
-
     /// The decision for a folder address.
     ///
     /// - Parameters:
@@ -85,7 +66,7 @@ enum SessionAddressResolution: Sendable, Equatable {
     ///   the folder, else refused with the hint to name an agent and no
     ///   target.
     fileprivate static func reaching(folder: URL, among live: [SessionSummary]) -> Self {
-        guard let target = newestRoot(among: live, agentID: nil, in: folder) else {
+        guard let target = newestRoot(among: live, in: folder) else {
             return .refused(reason: noRootSessionInTheFolderReason, target: nil)
         }
         return .deliver([target.id])
@@ -113,28 +94,19 @@ enum SessionAddressResolution: Sendable, Equatable {
         return .deliver(targets)
     }
 
-    /// The newest live root session, of the agent when it is given, in the
-    /// folder when it is given. A subagent or a fork never matches. Newest is
-    /// ULID order, as in `RouterSessionDirectory.sessions(matching:)`.
+    /// The newest live root session of any agent in the folder. A subagent
+    /// or a fork never matches. Newest is ULID order, as in
+    /// `RouterSessionDirectory.sessions(matching:)`.
     ///
     /// - Parameters:
     ///   - live: The live sessions.
-    ///   - agentID: The agent, or `nil` for any agent.
-    ///   - folder: The folder, or `nil` for any folder. It compares by
+    ///   - folder: The folder. It compares by
     ///     ``RouterSessionDirectory/comparablePath(of:)``.
     /// - Returns: The summary, or `nil` when none matches.
-    private static func newestRoot(
-        among live: [SessionSummary],
-        agentID: String?,
-        in folder: URL?
-    ) -> SessionSummary? {
-        let path = folder.map(RouterSessionDirectory.comparablePath(of:))
+    private static func newestRoot(among live: [SessionSummary], in folder: URL) -> SessionSummary? {
+        let path = RouterSessionDirectory.comparablePath(of: folder)
         return live
-            .filter { summary in
-                summary.kind == .root
-                    && (agentID.map { $0 == summary.agentID } ?? true)
-                    && (path.map { $0 == RouterSessionDirectory.comparablePath(of: summary.workingDirectory) } ?? true)
-            }
+            .filter { $0.kind == .root && RouterSessionDirectory.comparablePath(of: $0.workingDirectory) == path }
             .max { $0.id < $1.id }
     }
 }
@@ -148,16 +120,19 @@ extension SessionAddress {
     ///   it is recorded, a refusal with the session as its target when it is
     ///   archived, and throws when no session has it (section 9: the session
     ///   must exist).
-    /// - An agent gives its newest live root session in the folder of the
-    ///   address, else in the working folder of a session sender. A user
-    ///   sender has no folder, so an agent with no folder from a user matches
-    ///   in any folder. With no match, the agent is started.
+    /// - An agent always gives a start of a new root session of the agent
+    ///   (D199 (e)), also when a session of the agent is live. The client
+    ///   resolves the slug of a session before it sends to an agent, so the
+    ///   directory does not look for a live session of the agent. The folder
+    ///   of the start is the folder of the address, else the working folder
+    ///   of a session sender, else `nil` for a user sender.
     /// - A folder gives its newest live root session of any agent, else a
     ///   refusal with the hint "Name an agent: @agent:/path.".
     /// - A tag gives each live session with the tag but the sender, else one
     ///   refusal.
     ///
-    /// Folders compare with symbolic links resolved and no trailing `/`.
+    /// A folder address compares folders with symbolic links resolved and no
+    /// trailing `/`.
     ///
     /// - Parameters:
     ///   - sender: The sender of the message.
@@ -184,7 +159,7 @@ extension SessionAddress {
         case .session(let id):
             return .reaching(session: try knownSummary(of: id))
         case .agent(let agentID, let folder):
-            return .reaching(agent: agentID, in: folder ?? senderSummary?.workingDirectory, among: live)
+            return .startAgent(agentID: agentID, folder: folder ?? senderSummary?.workingDirectory)
         case .folder(let folder):
             return .reaching(folder: folder, among: live)
         case .tag(let tag):

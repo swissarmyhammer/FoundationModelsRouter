@@ -286,20 +286,22 @@ import Testing
 
     // MARK: - The decisions of the resolver
 
-    /// An agent address with a live root session of the agent delivers to it.
-    @Test func anAgentWithALiveRootDeliversToIt() async throws {
+    /// An agent address with a live root session of the agent in the folder
+    /// does not deliver to it: it starts a new root session through the
+    /// launcher (D199 (e)), and the receipt is `started`.
+    @Test func anAgentWithALiveRootStartsANewOne() async throws {
         let fixture = try await Self.makeFixture()
         let folder = fixture.directories.cacheDir
-        let target = fixture.makeSession(SessionConfiguration(workingDirectory: folder, agentID: Self.agentID))
+        let live = fixture.makeSession(SessionConfiguration(workingDirectory: folder, agentID: Self.agentID))
 
         let receipts = try await fixture.directory.sendAndAwaitDelivery(
             OutgoingSessionMessage(
                 from: .user(clientID: Self.clientID), to: .agent(id: Self.agentID, folder: folder), text: Self.text))
 
+        let started = try #require(fixture.launcher.sessions.first)
         let messageID = try Self.messageID(of: receipts)
-        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
-        #expect(fixture.launcher.requests.isEmpty)
-        await fixture.close([target])
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: started.id, outcome: .started)])
+        await fixture.close([live])
     }
 
     /// An agent address with no live session starts one through the

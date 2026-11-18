@@ -151,7 +151,7 @@ struct SessionAddressResolutionTests {
     static let helperFork = summary(starting: .helperFork, agentID: helper, in: nested, kind: .fork)
 
     /// A recorded session of the coder that is not live. It is the newest
-    /// session of the coder, and still no agent address may pick it.
+    /// root session in ``project``, and still no folder address may pick it.
     static let recorded = summary(starting: .recorded, agentID: coder, in: project, isLive: false)
 
     /// An archived session of the coder.
@@ -197,40 +197,31 @@ struct SessionAddressResolutionTests {
             sender: fromReviewer, address: .session(unknownID), expected: .failure(.unknownSession(unknownID))),
     ]
 
-    /// The rows of an agent address.
+    /// The rows of an agent address. An agent address always starts a new
+    /// root session of the agent (D199 (e)). It never delivers to a live
+    /// session of the agent, because the client resolves the slug of a
+    /// session before it sends to an agent.
     static let agentRows: [Row] = [
         Row(
-            name: "an agent with a folder gives its newest live root session in that folder",
+            name: "an agent with a folder is started there, also when it has a live root session there",
             sender: fromUser, address: .agent(id: coder, folder: project),
-            expected: .success(.deliver([newerCoder.id]))),
+            expected: .success(.startAgent(agentID: coder, folder: project))),
         Row(
-            name: "an agent with another folder gives its root session in that folder",
-            sender: fromReviewer, address: .agent(id: coder, folder: other),
-            expected: .success(.deliver([elsewhereCoder.id]))),
-        Row(
-            name: "an agent with no folder from a session looks in the folder of the sender",
-            sender: fromReviewer, address: .agent(id: coder, folder: nil),
-            expected: .success(.deliver([newerCoder.id]))),
-        Row(
-            name: "an agent with no folder from a user gives its newest live root session in any folder",
-            sender: fromUser, address: .agent(id: coder, folder: nil),
-            expected: .success(.deliver([elsewhereCoder.id]))),
-        Row(
-            name: "an agent with no live root session in the folder is started there",
+            name: "an agent with a folder where no session works is started there",
             sender: fromReviewer, address: .agent(id: coder, folder: empty),
             expected: .success(.startAgent(agentID: coder, folder: empty))),
         Row(
-            name: "an agent with no live session and no folder from a session is started in the folder of the sender",
-            sender: fromReviewer, address: .agent(id: absentAgent, folder: nil),
-            expected: .success(.startAgent(agentID: absentAgent, folder: project))),
+            name: "an agent with no folder from a session is started in the folder of the sender, also when it has a live root session there",
+            sender: fromReviewer, address: .agent(id: coder, folder: nil),
+            expected: .success(.startAgent(agentID: coder, folder: project))),
+        Row(
+            name: "an agent with no folder from a user is started with no folder, also when it has live root sessions",
+            sender: fromUser, address: .agent(id: coder, folder: nil),
+            expected: .success(.startAgent(agentID: coder, folder: nil))),
         Row(
             name: "an agent with no live session and no folder from a user is started with no folder",
             sender: fromUser, address: .agent(id: absentAgent, folder: nil),
             expected: .success(.startAgent(agentID: absentAgent, folder: nil))),
-        Row(
-            name: "an agent with only a subagent and a fork has no root session and is started",
-            sender: fromUser, address: .agent(id: helper, folder: nil),
-            expected: .success(.startAgent(agentID: helper, folder: nil))),
     ]
 
     /// The rows of a folder address.
@@ -362,34 +353,17 @@ struct SessionAddressResolutionTests {
         #expect(Self.resolve(row.address, from: row.sender) == row.expected)
     }
 
-    /// A folder address and an agent address match the session through a
-    /// symbolic link to its folder, and with a trailing `/`.
+    /// A folder address matches the session through a symbolic link to its
+    /// folder, and with a trailing `/`.
     @Test func aLinkAndATrailingSlashMatchTheSameFolder() throws {
         let linked = try LinkedFolder()
         defer { linked.remove() }
         let withSlash = URL(fileURLWithPath: linked.folder.path + "/")
         let session = Self.summary(starting: .olderCoder, agentID: Self.coder, in: linked.folder)
 
-        let addresses: [SessionAddress] = [
-            .folder(linked.link), .folder(withSlash), .agent(id: Self.coder, folder: linked.link),
-            .agent(id: Self.coder, folder: withSlash),
-        ]
+        let addresses: [SessionAddress] = [.folder(linked.link), .folder(withSlash)]
         let decisions = addresses.map { Self.resolve($0, from: Self.fromUser, among: [session]) }
 
         #expect(decisions == Array(repeating: .success(.deliver([session.id])), count: addresses.count))
-    }
-
-    /// An agent address with no folder from a session sender looks in the
-    /// folder of the sender through a link to it.
-    @Test func theFolderOfTheSenderMatchesThroughALink() throws {
-        let linked = try LinkedFolder()
-        defer { linked.remove() }
-        let target = Self.summary(starting: .olderCoder, agentID: Self.coder, in: linked.folder)
-        let sender = Self.summary(starting: .reviewer, agentID: Self.reviewerAgent, in: linked.link)
-
-        let decision = Self.resolve(
-            .agent(id: Self.coder, folder: nil), from: .session(sender.id), among: [target, sender])
-
-        #expect(decision == .success(.deliver([target.id])))
     }
 }
