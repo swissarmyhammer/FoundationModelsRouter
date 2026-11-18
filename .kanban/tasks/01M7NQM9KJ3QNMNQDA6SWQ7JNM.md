@@ -94,8 +94,24 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryDefaultNameTests.swift. `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryDefaultNameTests`: 13 tests passed (the parameterized test has 2 cases). Full `swift test` (one run): 2864 tests in 332 suites passed (one less because two tests became one), plus 48 and 19; 0 failures; only the known bundle "missing creator" warning.
     - next: review
   timestamp: 2026-11-18T14:22:49.742340+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7qgpjs0xph3ghez8m99tzep
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (48a28387). 0 findings (7 attempted, 0 failed). All 6 prior items are checked. The code shows each fix: the do/catch log in giveDefaultTitle, usageStoreRecordingRoots() shared by the two root paths, SessionDefaultTitle.given(request.title) in complete(facts:with:), the logSession helper for the log blocks, and one test with the arguments nil and "".
+    - next: task moved to done.
+  timestamp: 2026-11-18T14:24:17.184222+00:00
+- actor: claude-code
+  id: 01m7qgq904w41k7sz4w06qmjyp
+  text: |-
+    ### finish iteration 4 — clean
+    - implement: changed — RouterSessionDirectory.swift (logSession helper), RouterSessionDirectoryDefaultNameTests.swift (one test with nil and "")
+    - test: green — swift test, 2864 tests in 332 suites (+48, +19), 0 failures
+    - commit: 48a28387
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T14:24:39.940730+00:00
+position_column: done
+position_ordinal: ffffffffffa980
 title: Give each new session a default name from its agent (D199 (b))
 ---
 ## Goal
