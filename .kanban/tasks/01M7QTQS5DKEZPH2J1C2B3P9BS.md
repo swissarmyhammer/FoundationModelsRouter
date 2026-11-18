@@ -62,10 +62,27 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift. Suite filter `FoundationModelsRouterTests.RouterSessionDirectoryArchiveMailTests`: 8 tests passed. With a temporary scan defect, the two reopen tests FAILED in 0.05 s (no hang); defect reverted. Full `swift test`: 2959 tests in 342 suites passed, 49 in 26 passed, 19 in 3 passed; 0 failures; no compiler warnings.
     - next: /review
   timestamp: 2026-11-18T18:26:54.238073+00:00
+- actor: claude-code
+  id: 01m7qynd27fry83ak0bpas0rgv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (5fccf24b): 0 findings (7 attempted, 0 failed, 1 refuted). 1 file reviewed: Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift. 4 `.kanban/` files not reviewed (ignore rule). The prior finding at RouterSessionDirectoryArchiveMailTests.swift:110 is checked.
+    - bounded failure check: `reopen(_:awaiting:in:)` does not use `nextDelivery(of:)` now. Each wait in it has an end: `scanInbox(of:)` is awaited; `awaitIdle()` ends when the session has no work (with no delivered mail, no turn starts); `next(through: marker)` ends at the marker that the helper emits. Thus `theQueuedMessageReachesTheSessionWhenItOpens` and `anInboxFileStaysAndReachesTheSession` fail at `delivered?.text == Self.text` when the kept mail does not arrive. They do not hang. The implementer comment records the same result with a temporary defect (both tests failed in 0.05 s).
+    - next: none. Task moved to done.
+  timestamp: 2026-11-18T18:28:18.631541+00:00
+- actor: claude-code
+  id: 01m7qynyfcv13mesf24f34ngv3
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — RouterSessionDirectoryArchiveMailTests.swift (the reopen helper waits for idle and reads to a marker; a temporary defect made both tests fail in about 0.05 s)
+    - test: green — swift test in the implement step, 2959 tests in 342 suites (+49, +19), 0 failures
+    - commit: 5fccf24b
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T18:28:36.460613+00:00
 depends_on:
 - 01M7QTQCW62ZNN9CXFTVE3TV8Y
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffb280
 title: An archive keeps the waiting mail as unread inbox messages (D204)
 ---
 ## Goal
