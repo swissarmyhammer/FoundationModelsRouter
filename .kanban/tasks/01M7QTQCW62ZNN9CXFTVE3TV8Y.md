@@ -67,8 +67,25 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift (changeLiveEntry, sendArchiveChange; takeArchived, takeUnarchived, recordFactsChange, sendArchived, sendUnarchived use them). `swift build` has no warnings from the source. Full `swift test` one time with Extras at ec528ec: 2945 tests in 341 suites, 49 in 26, 19 in 3, all passed, exit 0. Both review findings are `- [x]`.
     - next: /review
   timestamp: 2026-11-18T17:52:38.306739+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7qwqbwpcydd0ege1zbxft56
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (0016aeae) — 0 findings (attempted 7, confirmed 0, refuted 0). The 2 items of "Review Findings (2026-11-18 11:41)" are checked and fixed: changeLiveEntry(of:_:announcing:) is the shared helper for takeArchived, takeUnarchived and recordFactsChange; sendArchiveChange is the shared helper for sendArchived and sendUnarchived.
+    - behavior: no change. The old takeArchived removed an entry with a nil session before it threw; the new helper does not. The only caller, archiveLive, holds the session strongly through the call, and Entry.session is weak, so that path cannot occur. The step order under the lock, the isLive values (false for archive, true for unarchive and a facts change) and the events are the same.
+    - next: done.
+  timestamp: 2026-11-18T17:54:25.814755+00:00
+- actor: claude-code
+  id: 01m7qwr1nqh4k0dcyrwzs803te
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — RouterSessionDirectory.swift (changeLiveEntry, sendArchiveChange; no behavior change)
+    - test: green — swift test in the implement step with Extras ec528ec, 2945 tests in 341 suites (+49, +19), 0 failures
+    - commit: 0016aeae
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T17:54:48.119066+00:00
+position_column: done
+position_ordinal: ffffffffffb180
 title: Unarchive a session in RouterSessionDirectory (D204)
 ---
 ## Goal
