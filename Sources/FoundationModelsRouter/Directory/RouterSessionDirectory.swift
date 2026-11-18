@@ -182,7 +182,11 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// (``RouterSessionDirectory/hand(_:userHeader:to:ledger:isQueued:)``).
         /// The send puts the message here before it puts the mail in the
         /// queue of the target, and sends the event when the put is done. A
-        /// refused mail removes the message with no event.
+        /// refused mail removes the message with no event
+        /// (``forgetRefusedMail(_:)``). Only the send removes a message from
+        /// this map, so a send that returns a `queued` receipt gives exactly
+        /// one `messageQueued`, also when the target cancels or loses the
+        /// mail during the send (``apply(_:)``).
         ///
         /// The pump of the target can take the mail before the send sends the
         /// event. Then ``sendDelivered(_:)`` sends `messageQueued` first, so
@@ -194,6 +198,12 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// and a mail that ended with no delivery removes its message with
         /// no event.
         ///
+        /// It does not remove a message from ``awaitingQueuedEvent``. The
+        /// target reports the fate of its mail on its own executor, so a
+        /// cancel or a loss can come after the put and before the send sends
+        /// `messageQueued`. The send then still returns a `queued` receipt,
+        /// and the event must go out.
+        ///
         /// - Parameter fate: The fate of one mail of a session.
         mutating func apply(_ fate: MailFate) {
             switch fate {
@@ -201,8 +211,18 @@ public actor RouterSessionDirectory: SessionDirectory {
                 sendDelivered(id)
             case .cancelledOrLost(let id):
                 awaitingDelivery.removeValue(forKey: id)
-                awaitingQueuedEvent.removeValue(forKey: id)
             }
+        }
+
+        /// Removes the message `id` from ``awaitingDelivery`` and from
+        /// ``awaitingQueuedEvent``, with no event, when the target refuses
+        /// its mail. The send then gives no `queued` receipt, so the message
+        /// gives no message event.
+        ///
+        /// - Parameter id: The id of a message.
+        mutating func forgetRefusedMail(_ id: MailID) {
+            awaitingDelivery.removeValue(forKey: id)
+            awaitingQueuedEvent.removeValue(forKey: id)
         }
 
         /// Removes the message `id` from ``awaitingQueuedEvent``, and sends
@@ -231,10 +251,12 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// Removes each message of ``awaitingDelivery`` to the session `id`,
         /// with no event, when the session leaves the live list.
         ///
-        /// It does not touch ``awaitingQueuedEvent``: the send that put a
-        /// message there removes it before the send returns, so the
-        /// `messageQueued` event of a `queued` receipt goes out also when the
-        /// target closes during the send.
+        /// It does not touch ``awaitingQueuedEvent``: only the send that put a
+        /// message there removes it, before the send returns. It sends the
+        /// event of a put that is done (``sendQueued(_:)``), and removes the
+        /// message of a refused mail with no event (``forgetRefusedMail(_:)``).
+        /// Thus the `messageQueued` event of a `queued` receipt goes out also
+        /// when the target closes during the send.
         ///
         /// - Parameter id: The session id.
         mutating func forgetDeliveries(to id: ULID) {
@@ -1611,7 +1633,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// returns. The step sets it up before the put too
     /// (``Registry/awaitingQueuedEvent``), so a pump that takes the mail at
     /// once sends it before `messageDelivered`. A refused mail gives no
-    /// event.
+    /// event (``Registry/forgetRefusedMail(_:)``). A cancel or a loss of the
+    /// mail after the put does not stop `messageQueued`: the send returns a
+    /// `queued` receipt, so the event goes out.
     ///
     /// The header of the sender in the mail is built from the live summary
     /// of the sender (``mail(id:carrying:from:inReplyTo:userHeader:)``). A
@@ -1644,7 +1668,7 @@ public actor RouterSessionDirectory: SessionDirectory {
                     id: delivered.id, carrying: delivered.text, from: delivered.from.sessionID,
                     inReplyTo: delivered.inReplyTo, userHeader: userHeader))
         } catch {
-            state.withLock { $0.apply(.cancelledOrLost(delivered.id)) }
+            state.withLock { $0.forgetRefusedMail(delivered.id) }
             throw error
         }
         keep(delivered, in: ledger)

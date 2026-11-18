@@ -65,16 +65,66 @@ struct RouterSessionDirectoryQueuedEventTests {
         through events: inout AsyncStream<SessionDirectoryEvent>.Iterator,
         upTo marker: SessionDirectoryEvent = marker
     ) async -> [MessageEvent] {
-        await events.next(through: marker).compactMap { event in
-            switch event {
-            case .messageQueued(let message):
-                .queued(message.id)
-            case .messageDelivered(let message):
-                .delivered(message.id)
-            case .started, .factsChanged, .stateChanged, .archived:
-                nil
+        await events.next(through: marker).compactMap(messageEvent(of:))
+    }
+
+    /// The message event of `event`.
+    ///
+    /// - Parameter event: An event of the feed.
+    /// - Returns: The message event, or `nil` for an event that is not a
+    ///   message event.
+    private static func messageEvent(of event: SessionDirectoryEvent) -> MessageEvent? {
+        switch event {
+        case .messageQueued(let message):
+            .queued(message.id)
+        case .messageDelivered(let message):
+            .delivered(message.id)
+        case .started, .factsChanged, .stateChanged, .archived:
+            nil
+        }
+    }
+
+    /// The message events that `steps` gives on a new registry with one open
+    /// stream, in stream order.
+    ///
+    /// - Parameter steps: The changes of the registry.
+    /// - Returns: The message events, with no other event.
+    private static func messageEvents(
+        after steps: (inout RouterSessionDirectory.Registry) -> Void
+    ) async -> [MessageEvent] {
+        var registry = RouterSessionDirectory.Registry()
+        let (stream, continuation) = SessionDirectoryEventFanout.makeStream()
+        _ = registry.fanout.add(continuation)
+        steps(&registry)
+        continuation.finish()
+        var events: [MessageEvent] = []
+        for await event in stream {
+            if let messageEvent = messageEvent(of: event) {
+                events.append(messageEvent)
             }
         }
+        return events
+    }
+
+    /// Puts `message` in the registry as a send of a `queued` receipt does
+    /// before the mail put (``RouterSessionDirectory/hand(_:userHeader:to:ledger:isQueued:)``):
+    /// it waits for its `messageQueued` event and for its delivery.
+    ///
+    /// - Parameters:
+    ///   - message: The message.
+    ///   - registry: The registry.
+    private static func wait(_ message: SessionMessage, in registry: inout RouterSessionDirectory.Registry) {
+        registry.awaitingQueuedEvent[message.id] = message
+        registry.awaitingDelivery[message.id] = message
+    }
+
+    /// A UI message with ``text`` to a new session id.
+    ///
+    /// - Returns: The message.
+    private static func waitingMessage() -> SessionMessage {
+        SessionMessage(
+            id: MailID(), from: .user(clientID: clientID), to: ULID.generate(), text: text, sentAt: Date(),
+            chainDepth: 0)
     }
 
     /// A session that works in a held turn, and the fixture of the test.
@@ -291,5 +341,58 @@ struct RouterSessionDirectoryQueuedEventTests {
         #expect(receipts.map(\.outcome) == [.refused])
         #expect(await Self.messageEvents(through: &events).isEmpty)
         await fixture.close([])
+    }
+
+    // MARK: - Registry
+
+    /// The production change that makes this test fail: a `sendDelivered`
+    /// that does not send the `messageQueued` event that waits, so a pump
+    /// that takes the mail before the send sends `messageQueued` gives
+    /// `messageDelivered` first.
+    @Test("a take of the mail before the queued event gives messageQueued, then messageDelivered")
+    func aTakeBeforeTheQueuedEventGivesMessageQueuedFirst() async {
+        let message = Self.waitingMessage()
+
+        let events = await Self.messageEvents { registry in
+            Self.wait(message, in: &registry)
+            registry.sendDelivered(message.id)
+            registry.sendQueued(message.id)
+        }
+
+        #expect(events == [.queued(message.id), .delivered(message.id)])
+    }
+
+    /// The production change that makes this test fail: a `cancelledOrLost`
+    /// fate that removes the `messageQueued` event that waits, so a target
+    /// that cancels or loses the mail during the send gives a `queued`
+    /// receipt with no `messageQueued`.
+    @Test("a cancelled or lost mail during the send still gives one messageQueued")
+    func aCancelledOrLostMailDuringTheSendGivesOneMessageQueued() async {
+        let message = Self.waitingMessage()
+
+        let events = await Self.messageEvents { registry in
+            Self.wait(message, in: &registry)
+            registry.apply(.cancelledOrLost(message.id))
+            registry.sendQueued(message.id)
+        }
+
+        #expect(events == [.queued(message.id)])
+    }
+
+    /// The production change that makes this test fail: a refused mail that
+    /// keeps the `messageQueued` event or the `messageDelivered` event of its
+    /// message.
+    @Test("a refused mail gives no message event")
+    func aRefusedMailGivesNoMessageEvent() async {
+        let message = Self.waitingMessage()
+
+        let events = await Self.messageEvents { registry in
+            Self.wait(message, in: &registry)
+            registry.forgetRefusedMail(message.id)
+            registry.sendDelivered(message.id)
+            registry.sendQueued(message.id)
+        }
+
+        #expect(events.isEmpty)
     }
 }
