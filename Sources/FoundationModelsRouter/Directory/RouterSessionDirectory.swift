@@ -88,8 +88,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     static let notLiveReason = "not live"
 
     /// The reason of the refused receipt of a message from a user sender
-    /// (a UI send) to a recorded session that is not live. The inbox file
-    /// cannot keep a client id, so such a message needs a live session.
+    /// (a UI send) with no source session to a recorded session that is not
+    /// live. Only a user message that names its source session goes to the
+    /// inbox of a recorded session (D199 (f)), so such a message needs a live
+    /// session.
     static let userNeedsLiveSessionReason = "a message from a user needs a live session"
 
     /// The chain depth of a message from a UI, from a user turn, or from a
@@ -1126,18 +1128,19 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   durable target gets a message from a session through a file in its
     ///   `inbox/` folder, and the scan of the inbox puts the mail in the
     ///   queue. A message from a user sender (a UI send) goes to the queue at
-    ///   once, with no file, so the ledger keeps the client id. The receipt
+    ///   once, with no file, and the ledger keeps the client id. The receipt
     ///   follows the delivery rules of ROUTER-5: `delivered` for an idle
     ///   target, whose mail starts a turn, and `queued` for a working target
     ///   or one that needs input, whose mail waits in its queue for the end
     ///   of the turn. The session's pump then carries every waiting message
     ///   in one turn. No delivery waits for a free slot: the number of
     ///   sessions that work at the same time has no limit (D72).
-    /// - A recorded target that is not live gets a message from a session as
+    /// - A recorded target that is not live gets a message from a session,
+    ///   and a message from a user sender that names its source session, as
     ///   a file in its `inbox/` folder, and nothing more
-    ///   (``sendToRecorded(_:chainDepth:to:)``). A message from a user sender
-    ///   is a `refused` receipt with ``userNeedsLiveSessionReason`` and no
-    ///   file, because the file cannot keep a client id.
+    ///   (``sendToRecorded(_:chainDepth:userHeader:to:)``). A message from a
+    ///   user sender with no source session is a `refused` receipt with
+    ///   ``userNeedsLiveSessionReason`` and no file.
     ///   The directory does not restore the session and does not call the
     ///   launcher. The receipt is `sent`: the message is written where the
     ///   target reads it, and it is not in a queue. When a host opens the
@@ -1165,7 +1168,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// source session (``UserMessageHeader``, D199 (f)): its title and its
     /// folder from its live summary, else from its recorded summary. The
     /// delivered message keeps the source session. A message from a user
-    /// sender with no source session gets no header.
+    /// sender with no source session gets no header. A recorded target gets
+    /// the header that the send makes: the file keeps the header line, and
+    /// the scan of the inbox at the next open starts the prompt with it. The
+    /// title and the folder in the header are thus the ones at the time of
+    /// the send.
     ///
     /// The turn of a session sender is the origin of the work that runs the
     /// send (``OriginContext/current``), read before the first `await`. The
@@ -1214,7 +1221,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         case .deliver(let targets):
             return try deliver(message, chainDepth: chainDepth, userHeader: userHeader, toEach: targets)
         case .sendToRecorded(let id):
-            return [try await sendToRecorded(message, chainDepth: chainDepth, to: id)]
+            return [try await sendToRecorded(message, chainDepth: chainDepth, userHeader: userHeader, to: id)]
         case .startAgent(let agentID, let folder):
             return [
                 try await startAgent(agentID, in: folder, for: message, chainDepth: chainDepth, userHeader: userHeader)
@@ -1346,8 +1353,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// A message from a user sender (a UI send) takes the direct path
     /// (``deliverDirectly(_:chainDepth:userHeader:to:outcome:)``) to a live session, a
     /// durable one too: the mail goes in the queue of the session and the
-    /// message in the ledger at once (``hand(_:userHeader:to:ledger:)``), and the ledger
-    /// keeps the client id, which the inbox file cannot keep. A memory-only
+    /// message in the ledger at once (``hand(_:userHeader:to:ledger:)``), so
+    /// the receipt can tell `delivered` from `queued`. A memory-only
     /// session has no folder, so each message to it takes the direct path.
     /// A session on the direct path that closed and takes no more mail is
     /// refused as not live.
@@ -1381,7 +1388,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             return try deliverDirectly(
                 message, chainDepth: chainDepth, userHeader: userHeader, to: session, outcome: outcome)
         }
-        let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
+        let messageID = try writeInboxFile(message, chainDepth: chainDepth, userHeader: nil, to: folder)
         if hasNoInboxWatcher(id) {
             scanInbox(of: id)
         }
@@ -1405,8 +1412,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// puts its mail in the mail queue of the session, keeps it in the
     /// ledger, and sends `messageDelivered`. This is the path of each message
     /// to a memory-only session, which has no inbox folder, and of a message
-    /// from a user sender to a durable session, whose ledger keeps the client
-    /// id that a file cannot keep.
+    /// from a user sender to a live durable session.
     ///
     /// - Parameters:
     ///   - message: The message.
@@ -1434,21 +1440,25 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Writes `message` as a new file in the `inbox/` folder of a durable
-    /// session. The file carries the sender, the reply id and the chain depth
-    /// of the message, and a new message id.
+    /// session. The file carries the sender, the reply id, the chain depth
+    /// and the source session of the message, the header line of `userHeader`,
+    /// and a new message id.
     ///
     /// - Parameters:
     ///   - message: The message.
     ///   - chainDepth: The chain depth of the message.
+    ///   - userHeader: The header of a user message that names its source
+    ///     session, or `nil`.
     ///   - folder: The session folder of the target.
     /// - Returns: The id of the message, which is also the name of the file.
     /// - Throws: ``SessionInboxFileError`` when the file format refuses the
-    ///   message (for example, a UI sender with an empty client id), or the
-    ///   error of the write.
-    private func writeInboxFile(_ message: OutgoingSessionMessage, chainDepth: Int, to folder: URL) throws -> MailID {
+    ///   message, or the error of the write.
+    private func writeInboxFile(
+        _ message: OutgoingSessionMessage, chainDepth: Int, userHeader: UserMessageHeader?, to folder: URL
+    ) throws -> MailID {
         let file = SessionInboxMessage(
             id: MailID(), from: message.from, inReplyTo: message.inReplyTo, chainDepth: chainDepth,
-            text: message.text)
+            text: message.text, sourceSession: message.sourceSession, userHeader: userHeader?.line)
         try SessionInboxFile.write(file, to: folder, maxMessageBytes: limits.maxMessageBytes)
         return file.id
     }
@@ -1510,32 +1520,38 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// and the first scan of the watcher delivers the file
     /// (``scanInbox(of:)``), where its mail starts a turn.
     ///
-    /// The file cannot keep a client id, so a message from a user sender (a
-    /// UI send) is refused: it needs a live session, which takes the direct
-    /// path (``deliverDirectly(_:chainDepth:userHeader:to:outcome:)``).
+    /// A message from a user sender (a UI send) that names its source
+    /// session also goes to the file (D199 (f)). The file keeps the client
+    /// id, the source session and the header line of `userHeader`, and the
+    /// scan delivers it as a user message whose prompt starts with that line.
+    /// A message from a user sender with no source session is refused: it
+    /// needs a live session, which takes the direct path
+    /// (``deliverDirectly(_:chainDepth:userHeader:to:outcome:)``).
     ///
     /// - Parameters:
     ///   - message: The message.
     ///   - chainDepth: The chain depth of the message.
+    ///   - userHeader: The header of a user message that names its source
+    ///     session, or `nil`.
     ///   - id: The session id of the recorded target.
     /// - Returns: The `sent` receipt, with the id of the message and the
     ///   target: the file is written, and the message is not in a queue. The
     ///   `messageDelivered` event reports the delivery later. A `refused`
-    ///   receipt with ``userNeedsLiveSessionReason`` for a user sender, and
-    ///   no file.
+    ///   receipt with ``userNeedsLiveSessionReason`` for a user sender with
+    ///   no source session, and no file.
     /// - Throws: `SessionDirectoryError.unknownSession(_:)` when no recording
     ///   root holds the folder of the session, or the errors of
-    ///   ``writeInboxFile(_:chainDepth:to:)``.
+    ///   ``writeInboxFile(_:chainDepth:userHeader:to:)``.
     private func sendToRecorded(
-        _ message: OutgoingSessionMessage, chainDepth: Int, to id: ULID
+        _ message: OutgoingSessionMessage, chainDepth: Int, userHeader: UserMessageHeader?, to id: ULID
     ) async throws -> SessionSendReceipt {
-        guard message.from.sessionID != nil else {
+        guard message.from.sessionID != nil || message.sourceSession != nil else {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.userNeedsLiveSessionReason)
         }
         guard let folder = try await recordedFolder(of: id) else {
             throw SessionDirectoryError.unknownSession(id)
         }
-        let messageID = try writeInboxFile(message, chainDepth: chainDepth, to: folder)
+        let messageID = try writeInboxFile(message, chainDepth: chainDepth, userHeader: userHeader, to: folder)
         return SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)
     }
 
@@ -1681,7 +1697,9 @@ public actor RouterSessionDirectory: SessionDirectory {
         do {
             let ledger = try ledger(of: session.id, in: folder)
             if ledger.message(message.id) == nil {
-                try hand(Self.delivered(message, to: session.id), userHeader: nil, to: session, ledger: ledger)
+                try hand(
+                    Self.delivered(message, to: session.id), userHeader: userHeader(of: message), to: session,
+                    ledger: ledger)
             }
         } catch MailRefusal.duplicateID(let duplicate) {
             logInboxDuplicate(duplicate, session: session.id, file: file)
@@ -1802,8 +1820,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// The record of an inbox message as the directory delivers it to
-    /// `target` now. The id, the sender, the reply id and the chain depth are
-    /// the ones of the file.
+    /// `target` now. The id, the sender, the reply id, the source session and
+    /// the chain depth are the ones of the file.
     ///
     /// - Parameters:
     ///   - message: The message of the file.
@@ -1812,8 +1830,30 @@ public actor RouterSessionDirectory: SessionDirectory {
     private static func delivered(_ message: SessionInboxMessage, to target: ULID) -> SessionMessage {
         delivered(
             OutgoingSessionMessage(
-                from: message.from, to: .session(target), text: message.text, inReplyTo: message.inReplyTo),
+                from: message.from, to: .session(target), text: message.text, inReplyTo: message.inReplyTo,
+                sourceSession: message.sourceSession),
             id: message.id, chainDepth: message.chainDepth, to: target)
+    }
+
+    /// The header of an inbox message from a user sender that names its
+    /// source session (``UserMessageHeader``, D199 (f)).
+    ///
+    /// The header line of the file is the one that the send made, so the
+    /// title and the folder are the ones at the time of the send. A file with
+    /// no header line (a file that a hand wrote) gets a header from the live
+    /// summary of the source session now. The scan has no suspension point,
+    /// so it does not read the recorded summaries: a source session that is
+    /// not live gives the header with its id only.
+    ///
+    /// - Parameter message: The message of the file.
+    /// - Returns: The header, or `nil` for a message from a session or a
+    ///   message with no source session.
+    private nonisolated func userHeader(of message: SessionInboxMessage) -> UserMessageHeader? {
+        guard case .user = message.from, let source = message.sourceSession else { return nil }
+        guard let line = message.userHeader else {
+            return UserMessageHeader(source: source, summary: liveSummary(of: source))
+        }
+        return UserMessageHeader(line: line)
     }
 
     /// See `SessionDirectory.inbox(of:markRead:)`. Reads the ledger of the

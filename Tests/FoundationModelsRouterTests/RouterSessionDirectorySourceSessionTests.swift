@@ -185,6 +185,138 @@ struct RouterSessionDirectorySourceSessionTests {
         await fixture.close([target])
     }
 
+    // MARK: - Recorded target
+
+    /// Sends a user message with ``text`` and the source session `source` to
+    /// the recorded session `target`, which is not live. No delivery follows
+    /// the send, so the send does not wait.
+    ///
+    /// - Parameters:
+    ///   - target: A recorded session that is not live.
+    ///   - source: The source session of the message.
+    ///   - fixture: The fixture of the test.
+    /// - Returns: The receipts of the send.
+    private static func send(
+        toRecorded target: ULID, from source: ULID, in fixture: Fixture
+    ) async throws -> [SessionSendReceipt] {
+        try await fixture.directory.send(
+            OutgoingSessionMessage(
+                from: .user(clientID: clientID), to: .session(target), text: text, sourceSession: source))
+    }
+
+    /// Reads the directory events until the delivery of the message `id`.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the message.
+    ///   - events: The iterator of a stream of ``RouterSessionDirectory/events()``
+    ///     that was open before the delivery.
+    /// - Returns: The delivered message, or `nil` when the stream ended first.
+    private static func awaitDelivery(
+        of id: MailID, reading events: inout AsyncStream<SessionDirectoryEvent>.Iterator
+    ) async -> SessionMessage? {
+        while let event = await events.next() {
+            if case .messageDelivered(let message) = event, message.id == id { return message }
+        }
+        return nil
+    }
+
+    /// The production change that makes this test fail: a send to a recorded
+    /// session that refuses a user message with a source session, or that
+    /// gives a receipt other than `sent`.
+    @Test("a user message from a source session to a recorded session gives the receipt sent")
+    func aRecordedTargetGivesTheReceiptSent() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let source = fixture.makeSession()
+        let target = try await fixture.recordClosedSession()
+
+        let receipts = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target, outcome: .sent)])
+        await fixture.close([source])
+    }
+
+    /// The production change that makes this test fail: an inbox file that
+    /// does not keep the user sender or the source session.
+    @Test("a user message from a source session to a recorded session is one inbox file with the user sender and the source session")
+    func aRecordedTargetGetsOneInboxFileWithTheSourceSession() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let source = fixture.makeSession()
+        let (target, folder) = try await fixture.recordClosedSessionWithFolder()
+
+        _ = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+
+        let files = try SessionInboxFile.pending(in: folder)
+        let limit = SessionMessageLimits().maxMessageBytes
+        let written = try files.map { try SessionInboxFile.read($0, maxMessageBytes: limit) }
+        #expect(written.map(\.from) == [.user(clientID: Self.clientID)])
+        #expect(written.map(\.sourceSession) == [source.id])
+        await fixture.close([source])
+    }
+
+    /// The production change that makes this test fail: a scan of the inbox
+    /// that delivers the file with no header, or as a body other than a user
+    /// message.
+    @Test("the scan at the next open delivers the message with the header of the source session")
+    func theNextOpenDeliversTheMessageWithTheHeader() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let source = fixture.makeSession()
+        let target = try await fixture.recordClosedSession()
+        let expected = try await Self.prompt(namingSource: source.id, in: fixture)
+        var events = fixture.directory.events().makeAsyncIterator()
+        let receipts = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+        let messageID = try #require(receipts.first?.messageID)
+
+        let opened = try await fixture.profile.standard.restoreSession(id: target).session
+
+        #expect(await Self.awaitDelivery(of: messageID, reading: &events) != nil)
+        #expect(await opened.awaitIdle())
+        #expect(await opened.transcript.promptTexts == [expected])
+        await fixture.close([opened, source])
+    }
+
+    /// The production change that makes this test fail: a scan that drops
+    /// the source session or the client id of the delivered record.
+    @Test("the message that the next open delivers keeps the source session and the client id")
+    func theNextOpenKeepsTheSourceSession() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let source = fixture.makeSession()
+        let target = try await fixture.recordClosedSession()
+        var events = fixture.directory.events().makeAsyncIterator()
+        let receipts = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+        let messageID = try #require(receipts.first?.messageID)
+
+        let opened = try await fixture.profile.standard.restoreSession(id: target).session
+
+        let delivered = try #require(await Self.awaitDelivery(of: messageID, reading: &events))
+        #expect(delivered.sourceSession == source.id)
+        #expect(delivered.from == .user(clientID: Self.clientID))
+        await fixture.close([opened, source])
+    }
+
+    /// The production change that makes this test fail: a scan that gives no
+    /// header to a hand-written file that names a source session and no
+    /// header line.
+    @Test("a hand-written inbox file with a source session and no header line gets the header of the live source")
+    func aHandWrittenFileWithASourceSessionGetsTheHeader() async throws {
+        let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
+        let source = fixture.makeSession()
+        let target = fixture.makeSession()
+        let expected = try await Self.prompt(namingSource: source.id, in: fixture)
+        var file = SessionInboxMessage(
+            id: MailID(), from: .user(clientID: SessionInboxFile.defaultUserClientID), inReplyTo: nil,
+            chainDepth: RouterSessionDirectory.firstChainDepth, text: Self.text)
+        file.sourceSession = source.id
+        try SessionInboxFile.write(
+            file, to: target.recordingDirectory, maxMessageBytes: SessionMessageLimits().maxMessageBytes)
+
+        await fixture.directory.scanInbox(of: target.id)
+
+        #expect(await target.awaitIdle())
+        #expect(await target.transcript.promptTexts == [expected])
+        await fixture.close([source, target])
+    }
+
     // MARK: - Agent start and archived target
 
     /// The production change that makes this test fail: a first message of

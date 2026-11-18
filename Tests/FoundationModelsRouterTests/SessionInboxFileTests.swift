@@ -20,6 +20,12 @@ import Testing
     /// A text longer than ``lowLimit`` bytes.
     private static let longText = "This text is longer than the low limit."
 
+    /// The UI client of a user sender with a client id.
+    private static let clientID = "client-a"
+
+    /// The header line of a user message that names its source session.
+    private static let userHeader = "From the user, in Release notes (/tmp/project)"
+
     /// A message with every field filled, unless a parameter says otherwise.
     ///
     /// - Parameters:
@@ -186,20 +192,49 @@ import Testing
         #expect(try SessionInboxFile.read(file, maxMessageBytes: Self.wideLimit) == message)
     }
 
-    /// A user sender with a client id is not written, because the file has no
-    /// form for a client id. The Router sends such a message to a live session
-    /// directly. The inbox stays empty.
+    /// A user sender with a client id other than the default round trips:
+    /// the file keeps the client id in the `clientID` key.
     @Test(arguments: ["client-a", ""])
-    func aUserSenderWithAClientIDIsNotWritten(clientID: String) throws {
+    func aUserSenderWithAClientIDRoundTrips(clientID: String) throws {
         let directory = Self.makeSessionDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let message = Self.makeMessage(from: .user(clientID: clientID))
-        let file = SessionInboxFile.url(of: message.id, in: directory)
 
-        #expect(throws: SessionInboxFileError.userSenderNotWritten(file: file, clientID: clientID)) {
-            try SessionInboxFile.write(message, to: directory, maxMessageBytes: Self.wideLimit)
-        }
-        #expect(try SessionInboxFile.pending(in: directory).isEmpty)
+        try SessionInboxFile.write(message, to: directory, maxMessageBytes: Self.wideLimit)
+
+        let file = SessionInboxFile.url(of: message.id, in: directory)
+        #expect(try SessionInboxFile.read(file, maxMessageBytes: Self.wideLimit) == message)
+    }
+
+    /// A user message that names its source session round trips with the
+    /// source session and the header line (D199 (f)).
+    @Test func aUserMessageWithASourceSessionRoundTrips() throws {
+        let directory = Self.makeSessionDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var message = Self.makeMessage(from: .user(clientID: Self.clientID))
+        message.sourceSession = ULID.generate()
+        message.userHeader = Self.userHeader
+
+        try SessionInboxFile.write(message, to: directory, maxMessageBytes: Self.wideLimit)
+
+        let file = SessionInboxFile.url(of: message.id, in: directory)
+        #expect(try SessionInboxFile.read(file, maxMessageBytes: Self.wideLimit) == message)
+    }
+
+    /// A file of the old format, with a session sender and no source session,
+    /// no client id and no header line, still reads as a session message.
+    @Test func anOldFormatFileReadsAsASessionMessage() throws {
+        let directory = Self.makeSessionDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionID = ULID.generate()
+        let id = MailID()
+        let file = try Self.writeRaw(
+            "---\nid: \(id)\nfrom: session:\(sessionID)\nchainDepth: \(Self.chainDepth)\n---\nHello",
+            named: "\(id).md", in: directory)
+
+        let expected = SessionInboxMessage(
+            id: id, from: .session(sessionID), inReplyTo: nil, chainDepth: Self.chainDepth, text: "Hello")
+        #expect(try SessionInboxFile.read(file, maxMessageBytes: Self.wideLimit) == expected)
     }
 
     /// The sender `session:<ULID>` of a hand-written file is a session.

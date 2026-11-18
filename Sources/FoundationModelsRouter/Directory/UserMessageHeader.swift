@@ -41,6 +41,16 @@ struct UserMessageHeader: Sendable, Equatable {
         line = "From the user, in \(Self.name(of: summary)) (\(summary.workingDirectory.path))"
     }
 
+    /// Makes the header of a header line that a send made before. The inbox
+    /// file of a recorded session keeps the line
+    /// (``SessionInboxMessage/userHeader``), and the scan of the inbox gives
+    /// it back here.
+    ///
+    /// - Parameter line: The header line.
+    init(line: String) {
+        self.line = line
+    }
+
     /// The prompt of the message: the header line, a blank line and `text`.
     ///
     /// - Parameter text: The text of the message.

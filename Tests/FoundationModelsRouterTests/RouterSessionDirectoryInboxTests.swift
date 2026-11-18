@@ -31,8 +31,8 @@ struct RouterSessionDirectoryInboxTests {
     private static let clientID = "client-a"
 
     /// The sender of each file that ``writeFile(to:id:chainDepth:unknownKeys:)``
-    /// writes: the default user sender, the only user sender that a file can
-    /// keep.
+    /// writes: the default user sender, which is the sender of a file with no
+    /// `clientID` key.
     private static let fileSender = SessionMessageSender.user(clientID: SessionInboxFile.defaultUserClientID)
 
     /// The chain depth of a file that a hand wrote after a chain of two
@@ -433,7 +433,7 @@ struct RouterSessionDirectoryInboxTests {
     }
 
     /// The production change that makes this test fail: a send from a UI
-    /// sender that goes through a file, which cannot keep the client id, or
+    /// sender to a live durable session that goes through a file, or
     /// that does not send `messageDelivered`.
     @Test("a send from a UI sender to a live durable session is delivered at once, and the client id survives")
     func aSendFromAUISenderToALiveDurableSessionIsDirect() async throws {
@@ -563,9 +563,10 @@ struct RouterSessionDirectoryInboxTests {
     }
 
     /// The production change that makes this test fail: a send from a UI
-    /// sender to a recorded session that writes a file, which cannot keep the
-    /// client id, or that does not refuse.
-    @Test("a send from a UI sender to a recorded session that is not live is refused, and writes no file")
+    /// sender with no source session to a recorded session that writes a
+    /// file, or that does not refuse. Only a user message that names its
+    /// source session goes to the inbox of a recorded session (D199 (f)).
+    @Test("a send from a UI sender with no source session to a recorded session that is not live is refused, and writes no file")
     func aUISenderIsRefusedForARecordedSession() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let (id, folder) = try await fixture.recordClosedSessionWithFolder()

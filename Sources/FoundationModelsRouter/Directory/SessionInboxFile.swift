@@ -22,11 +22,6 @@ enum SessionInboxFileError: Error, Equatable, LocalizedError {
     /// The `from` of `file` is not `session:<ULID>` or `user`.
     case invalidSender(file: URL, value: String)
 
-    /// The message for `file` is from a user sender with the client id
-    /// `clientID`, which is not the default client id. The file has no form
-    /// for a client id, so the writer refuses the message.
-    case userSenderNotWritten(file: URL, clientID: String)
-
     /// The `chainDepth` of `file` is less than
     /// ``SessionInboxFile/lowestChainDepth``.
     case invalidChainDepth(file: URL, value: Int)
@@ -53,9 +48,6 @@ enum SessionInboxFileError: Error, Equatable, LocalizedError {
         case .invalidSender(let file, let value):
             return
                 "The sender \"\(value)\" of inbox file \(file.path) is not session:<ULID> or user."
-        case .userSenderNotWritten(let file, let clientID):
-            return
-                "The message for inbox file \(file.path) is from the user client \"\(clientID)\". The file format has no form for a client id."
         case .invalidChainDepth(let file, let value):
             return
                 "The chain depth \(value) of inbox file \(file.path) is less than \(SessionInboxFile.lowestChainDepth)."
@@ -88,6 +80,14 @@ struct SessionInboxMessage: Equatable, Sendable {
 
     /// The frontmatter keys that the format does not know, with their values.
     var unknownKeys: [String: JSONValue] = [:]
+
+    /// The session in which the user wrote the message, or `nil`. Only a
+    /// message from a user sender names one (D199 (f)).
+    var sourceSession: ULID? = nil
+
+    /// The header line of a user message that names its source session
+    /// (``UserMessageHeader/line``), as the send made it, or `nil`.
+    var userHeader: String? = nil
 }
 
 /// The file format of one message in the `inbox/` folder of a session
@@ -95,7 +95,8 @@ struct SessionInboxMessage: Equatable, Sendable {
 ///
 /// The folder is `<session folder>/inbox/`, and a message is one file in it:
 /// `<ULID>.md`, YAML frontmatter and then the text of the message. The
-/// frontmatter keys are `id`, `from`, `inReplyTo` and `chainDepth`. A key
+/// frontmatter keys are `id`, `from`, `clientID`, `inReplyTo`, `chainDepth`,
+/// `sourceSession` and `userHeader`. A key
 /// that is not one of them is kept in ``SessionInboxMessage/unknownKeys``, so
 /// a new header needs no change of the schema. A file that does not parse
 /// moves to `inbox/rejected/`. The format uses the Extras `FrontmatterDocument`,
@@ -107,17 +108,23 @@ struct SessionInboxMessage: Equatable, Sendable {
 /// The sort of the names is the order of arrival, because a ULID sorts by
 /// time.
 ///
-/// The `from` key has two forms:
+/// The `from` key is the kind of the sender, and it has two forms:
 /// - `session:<ULID>` is ``SessionMessageSender/session(_:)``. Sessions talk
-///   to each other through the inbox, so the Router writes this form.
-/// - `user` is the default of a hand-written file, and also the value of a
-///   file with no `from`. It is ``SessionMessageSender/user(clientID:)`` with
-///   ``defaultUserClientID``.
+///   to each other through the inbox, so the Router writes this form. A file
+///   of the format before D199 (f) has this form and none of the keys
+///   `clientID`, `sourceSession` and `userHeader`, so it reads as a message
+///   from a session, as before.
+/// - `user` is ``SessionMessageSender/user(clientID:)``. It is the default of
+///   a hand-written file, and also the value of a file with no `from`. The
+///   `clientID` key holds the client id. A file with no `clientID` key has
+///   ``defaultUserClientID``, and the writer writes the key only for another
+///   client id. A value such as `user:<clientID>` does not parse.
 ///
-/// The file has no form for a client id. A value such as `user:<clientID>`
-/// does not parse, and the writer refuses a user sender with another client
-/// id. A message from a UI sender goes to a live session by the direct path
-/// of ``RouterSessionDirectory/send(_:)``, which writes no file.
+/// The Router writes a user message to the inbox of a recorded session that
+/// is not live, when the message names its source session (D199 (f)). The
+/// `sourceSession` key holds that session, and the `userHeader` key holds the
+/// header line that the send made (``UserMessageHeader``). The scan of the
+/// inbox starts the prompt of the message with that line.
 ///
 /// A `from` is not authenticated: the trust boundary is the user account that
 /// owns the folder.
@@ -189,19 +196,17 @@ enum SessionInboxFile {
     ///     belongs to, the same value as for the read.
     /// - Throws: ``SessionInboxFileError`` when the text is longer than
     ///   `maxMessageBytes`, the chain depth is less than ``lowestChainDepth``,
-    ///   the sender is a user with a client id other than
-    ///   ``defaultUserClientID``, or an unknown key has the name of a known
-    ///   key. Also `FrontmatterDocumentSaveError` when the
+    ///   or an unknown key has the name of a known key. Also `FrontmatterDocumentSaveError` when the
     ///   frontmatter does not encode or the temporary file does not save, or
     ///   the error of the folder make or of the rename. A write that fails
     ///   removes its temporary file.
     static func write(_ message: SessionInboxMessage, to sessionDirectory: URL, maxMessageBytes: Int) throws {
         let file = url(of: message.id, in: sessionDirectory)
-        let from = try checkedSender(of: message, file: file, maxMessageBytes: maxMessageBytes)
+        try check(message, file: file, maxMessageBytes: maxMessageBytes)
         let temporary = file.deletingLastPathComponent()
             .appendingPathComponent(temporaryPrefix + file.lastPathComponent + temporarySuffix, isDirectory: false)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FrontmatterDocument(metadata: Header(message, from: from), content: message.text).save(to: temporary)
+        try FrontmatterDocument(metadata: Header(message), content: message.text).save(to: temporary)
         do {
             try FileManager.default.moveItem(at: temporary, to: file)
         } catch {
@@ -316,7 +321,7 @@ enum SessionInboxFile {
         let from = try sender(of: header, in: file)
         return SessionInboxMessage(
             id: id, from: from, inReplyTo: header.inReplyTo, chainDepth: chainDepth, text: body,
-            unknownKeys: header.unknownKeys)
+            unknownKeys: header.unknownKeys, sourceSession: header.sourceSession, userHeader: header.userHeader)
     }
 
     /// Checks the length of a text. The read and the write both call this, so
@@ -348,26 +353,20 @@ enum SessionInboxFile {
         }
     }
 
-    /// Checks a message before the write, with the checks of the read, and
-    /// gives the `from` text of its sender.
+    /// Checks a message before the write, with the checks of the read.
     ///
     /// - Parameters:
     ///   - message: The message.
     ///   - file: The file the write makes, for the error.
     ///   - maxMessageBytes: The longest text, in UTF-8 bytes.
-    /// - Returns: The `from` text of the sender.
     /// - Throws: ``SessionInboxFileError`` when the read of the file would
-    ///   reject the message, or would not give back its unknown keys, or when
-    ///   the sender is a user with a client id the file cannot keep.
-    private static func checkedSender(
-        of message: SessionInboxMessage, file: URL, maxMessageBytes: Int
-    ) throws -> String {
+    ///   reject the message, or would not give back its unknown keys.
+    private static func check(_ message: SessionInboxMessage, file: URL, maxMessageBytes: Int) throws {
         try checkBodyLength(message.text, file: file, maxMessageBytes: maxMessageBytes)
         try checkChainDepth(message.chainDepth, file: file)
         if let reserved = message.unknownKeys.keys.sorted().first(where: Header.isKnownKey) {
             throw SessionInboxFileError.reservedUnknownKey(file: file, key: reserved)
         }
-        return try message.from.inboxText(for: file)
     }
 
     /// The sender of a header.
@@ -375,13 +374,15 @@ enum SessionInboxFile {
     /// - Parameters:
     ///   - header: The decoded frontmatter.
     ///   - file: The file, for the error.
-    /// - Returns: The sender of the `from` key, or the default user sender
-    ///   when the header has no `from`.
+    /// - Returns: The sender of the `from` key, or a user sender when the
+    ///   header has no `from`. A user sender has the client id of the
+    ///   `clientID` key, else ``defaultUserClientID``.
     /// - Throws: ``SessionInboxFileError/invalidSender(file:value:)`` when the
     ///   `from` is not one of the two forms.
     private static func sender(of header: Header, in file: URL) throws -> SessionMessageSender {
-        guard let value = header.from else { return .user(clientID: defaultUserClientID) }
-        guard let sender = SessionMessageSender(inboxText: value) else {
+        let user = SessionMessageSender.user(clientID: header.clientID ?? defaultUserClientID)
+        guard let value = header.from else { return user }
+        guard let sender = SessionMessageSender(inboxText: value, user: user) else {
             throw SessionInboxFileError.invalidSender(file: file, value: value)
         }
         return sender
@@ -403,7 +404,7 @@ enum SessionInboxFile {
     private struct Header: Codable {
         /// The key names the format knows.
         private enum KnownKey: String {
-            case id, from, inReplyTo, chainDepth
+            case id, from, clientID, inReplyTo, chainDepth, sourceSession, userHeader
         }
 
         /// A key by name, for a mapping that has any key. A mapping has no
@@ -423,8 +424,12 @@ enum SessionInboxFile {
         /// The `id` key.
         var id: MailID?
 
-        /// The `from` key, in the text form of ``SessionMessageSender/inboxText(for:)``.
+        /// The `from` key, in the text form of ``SessionMessageSender/inboxText``.
         var from: String?
+
+        /// The `clientID` key: the client id of a user sender, or `nil` for
+        /// ``SessionInboxFile/defaultUserClientID``.
+        var clientID: String?
 
         /// The `inReplyTo` key.
         var inReplyTo: MailID?
@@ -432,28 +437,40 @@ enum SessionInboxFile {
         /// The `chainDepth` key.
         var chainDepth: Int?
 
+        /// The `sourceSession` key: the session in which the user wrote the
+        /// message.
+        var sourceSession: ULID?
+
+        /// The `userHeader` key: the header line of a user message that names
+        /// its source session.
+        var userHeader: String?
+
         /// The keys that are not one of the known keys.
         var unknownKeys: [String: JSONValue]
 
         /// Whether a name is the name of a known key.
         ///
         /// - Parameter name: A key name.
-        /// - Returns: `true` for `id`, `from`, `inReplyTo` and `chainDepth`.
+        /// - Returns: `true` for `id`, `from`, `clientID`, `inReplyTo`,
+        ///   `chainDepth`, `sourceSession` and `userHeader`.
         static func isKnownKey(_ name: String) -> Bool {
             KnownKey(rawValue: name) != nil
         }
 
-        /// Makes the header of a message: each known key but `inReplyTo` has
-        /// a value.
+        /// Makes the header of a message. The keys `id`, `from` and
+        /// `chainDepth` always have a value. `clientID` has a value only for
+        /// a user sender with a client id other than
+        /// ``SessionInboxFile/defaultUserClientID``.
         ///
-        /// - Parameters:
-        ///   - message: The message.
-        ///   - from: The `from` text of the sender of the message.
-        init(_ message: SessionInboxMessage, from: String) {
+        /// - Parameter message: The message.
+        init(_ message: SessionInboxMessage) {
             id = message.id
-            self.from = from
+            from = message.from.inboxText
+            clientID = message.from.inboxClientID
             inReplyTo = message.inReplyTo
             chainDepth = message.chainDepth
+            sourceSession = message.sourceSession
+            userHeader = message.userHeader
             unknownKeys = message.unknownKeys
         }
 
@@ -465,8 +482,11 @@ enum SessionInboxFile {
             let container = try decoder.container(keyedBy: AnyKey.self)
             id = try container.decodeIfPresent(MailID.self, forKey: AnyKey(.id))
             from = try container.decodeIfPresent(String.self, forKey: AnyKey(.from))
+            clientID = try container.decodeIfPresent(String.self, forKey: AnyKey(.clientID))
             inReplyTo = try container.decodeIfPresent(MailID.self, forKey: AnyKey(.inReplyTo))
             chainDepth = try container.decodeIfPresent(Int.self, forKey: AnyKey(.chainDepth))
+            sourceSession = try container.decodeIfPresent(ULID.self, forKey: AnyKey(.sourceSession))
+            userHeader = try container.decodeIfPresent(String.self, forKey: AnyKey(.userHeader))
             unknownKeys = [:]
             for key in container.allKeys where KnownKey(rawValue: key.stringValue) == nil {
                 unknownKeys[key.stringValue] = try container.decode(JSONValue.self, forKey: key)
@@ -484,8 +504,11 @@ enum SessionInboxFile {
             var container = encoder.container(keyedBy: AnyKey.self)
             try container.encodeIfPresent(id, forKey: AnyKey(.id))
             try container.encodeIfPresent(from, forKey: AnyKey(.from))
+            try container.encodeIfPresent(clientID, forKey: AnyKey(.clientID))
             try container.encodeIfPresent(inReplyTo, forKey: AnyKey(.inReplyTo))
             try container.encodeIfPresent(chainDepth, forKey: AnyKey(.chainDepth))
+            try container.encodeIfPresent(sourceSession, forKey: AnyKey(.sourceSession))
+            try container.encodeIfPresent(userHeader, forKey: AnyKey(.userHeader))
             for (name, value) in unknownKeys where KnownKey(rawValue: name) == nil {
                 try container.encode(value, forKey: AnyKey(stringValue: name))
             }
@@ -498,34 +521,37 @@ extension SessionMessageSender {
     /// The start of the text of a session sender.
     fileprivate static let sessionPrefix = "session:"
 
-    /// The text of a user sender with no client id.
+    /// The text of a user sender.
     fileprivate static let userText = "user"
 
-    /// The `from` text of the sender: `session:<ULID>`, or `user` for the
-    /// default client id of ``SessionInboxFile``.
-    ///
-    /// - Parameter file: The file the write makes, for the error.
-    /// - Returns: The `from` text.
-    /// - Throws: ``SessionInboxFileError/userSenderNotWritten(file:clientID:)``
-    ///   for a user with another client id, because the file has no form for
-    ///   it.
-    fileprivate func inboxText(for file: URL) throws -> String {
+    /// The `from` text of the sender: `session:<ULID>`, or `user` for each
+    /// user sender. The client id goes to the `clientID` key
+    /// (``inboxClientID``).
+    fileprivate var inboxText: String {
         switch self {
         case .session(let id):
             return Self.sessionPrefix + id.ulidString
-        case .user(let clientID) where clientID == SessionInboxFile.defaultUserClientID:
+        case .user:
             return Self.userText
-        case .user(let clientID):
-            throw SessionInboxFileError.userSenderNotWritten(file: file, clientID: clientID)
         }
+    }
+
+    /// The `clientID` key of the sender: the client id of a user sender, or
+    /// `nil` for a session sender and for ``SessionInboxFile/defaultUserClientID``.
+    fileprivate var inboxClientID: String? {
+        guard case .user(let clientID) = self, clientID != SessionInboxFile.defaultUserClientID else { return nil }
+        return clientID
     }
 
     /// Makes the sender of a `from` text.
     ///
-    /// - Parameter inboxText: `session:<ULID>` or `user`.
-    fileprivate init?(inboxText: String) {
+    /// - Parameters:
+    ///   - inboxText: `session:<ULID>` or `user`.
+    ///   - user: The user sender of the file, with its client id, for the
+    ///     text `user`.
+    fileprivate init?(inboxText: String, user: SessionMessageSender) {
         if inboxText == Self.userText {
-            self = .user(clientID: SessionInboxFile.defaultUserClientID)
+            self = user
         } else if inboxText.hasPrefix(Self.sessionPrefix),
             let id = ULID(String(inboxText.dropFirst(Self.sessionPrefix.count)))
         {
