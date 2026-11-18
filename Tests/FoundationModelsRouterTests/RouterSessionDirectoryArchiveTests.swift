@@ -10,8 +10,8 @@ import Testing
 /// ``RouterSessionDirectory/archive(_:by:)`` stops a running turn, takes the
 /// session off the live list, writes `archivedAt` to its `index.md`, and
 /// sends one `archived`. A second archive gives the summary and sends no
-/// event. An archived session takes no message and is never restored, also
-/// after a restart.
+/// event. A message to an archived session goes to its inbox (D204), and
+/// the session is never restored, also after a restart.
 ///
 /// The recording router holds the live sessions, over a backend whose first
 /// call a latch holds open, so a test archives while the session works. The
@@ -141,12 +141,15 @@ struct RouterSessionDirectoryArchiveTests {
         try await directory.send(OutgoingSessionMessage(from: archiver, to: .session(id), text: text))
     }
 
-    /// The `refused` receipt of a message to the archived session `id`.
+    /// The `sent` receipt of a message to the archived session `id`, with
+    /// the note "archived".
     ///
-    /// - Parameter id: The session id.
+    /// - Parameters:
+    ///   - messageID: The id of the message.
+    ///   - id: The session id.
     /// - Returns: The receipt.
-    private static func archivedRefusal(of id: ULID) -> SessionSendReceipt {
-        SessionSendReceipt(target: id, outcome: .refused, reason: SessionAddressResolution.archivedReason)
+    private static func archivedReceipt(of messageID: MailID?, to id: ULID) -> SessionSendReceipt {
+        SessionSendReceipt(messageID: messageID, target: id, outcome: .sent, reason: RouterSessionDirectory.archivedNote)
     }
 
     // MARK: - Live
@@ -231,8 +234,8 @@ struct RouterSessionDirectoryArchiveTests {
     /// The production change that makes this test fail: a live summary
     /// that reads its state from the work tracking alone, so a send
     /// delivers to a live session whose record holds `archivedAt`.
-    @Test("a live session whose record holds archivedAt reads archived, and a send to it is refused")
-    func aLiveSessionWithArchivedAtIsRefused() async throws {
+    @Test("a live session whose record holds archivedAt reads archived, and a send to it goes to its inbox")
+    func aLiveSessionWithArchivedAtGetsTheMessageInItsInbox() async throws {
         let fixture = try await Self.makeFixture()
         let session = await fixture.makeLiveRoot()
         let actor = try #require(session as? RoutedSessionActor)
@@ -240,7 +243,7 @@ struct RouterSessionDirectoryArchiveTests {
 
         let receipts = try await Self.send(to: session.id, through: fixture.liveDirectory)
 
-        #expect(receipts == [Self.archivedRefusal(of: session.id)])
+        #expect(receipts == [Self.archivedReceipt(of: receipts.first?.messageID, to: session.id)])
         #expect(try await fixture.liveDirectory.summary(of: session.id)?.state == .archived)
         #expect(await session.pendingMessages().isEmpty)
         await fixture.close(session)
@@ -351,16 +354,18 @@ struct RouterSessionDirectoryArchiveTests {
     }
 
     /// The production change that makes this test fail: a send after a
-    /// restart that restores the archived session through the launcher.
-    @Test("after a restart a send to an archived session is refused as archived, and the launcher gets no call")
-    func afterARestartASendIsRefusedAndNotRestored() async throws {
+    /// restart that refuses the archived session, or restores it through
+    /// the launcher.
+    @Test("after a restart a send to an archived session is sent with the note archived, and the launcher gets no call")
+    func afterARestartASendIsSentAndNotRestored() async throws {
         let fixture = try await Self.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.archiver)
 
         let receipts = try await Self.send(to: session.id, through: fixture.readingDirectory)
 
-        #expect(receipts == [Self.archivedRefusal(of: session.id)])
+        #expect(receipts == [Self.archivedReceipt(of: receipts.first?.messageID, to: session.id)])
+        #expect(receipts.first?.messageID != nil)
         #expect(fixture.launcher.restoredIDs.isEmpty)
         #expect(fixture.launcher.requests.isEmpty)
         await fixture.close(session)

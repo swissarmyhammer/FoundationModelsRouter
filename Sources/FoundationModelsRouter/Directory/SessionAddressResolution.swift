@@ -2,8 +2,8 @@ import Foundation
 import FoundationModelsExtras
 
 /// What a send does with the address of a message (ROUTER-4): the live sessions that get the
-/// message, a recorded session that gets the message as a file in its inbox,
-/// a new session of an agent to start, or the reason and target of a refusal.
+/// message, a recorded or archived session that gets the message as a file in
+/// its inbox, a new session of an agent to start, or the reason and target of a refusal.
 ///
 /// ``FoundationModelsExtras/SessionAddress/resolution(from:among:recordedSummary:)``
 /// gives the decision. It is pure: it reads only the summaries it is given,
@@ -21,8 +21,10 @@ enum SessionAddressResolution: Sendable, Equatable {
     case deliver([ULID])
 
     /// Write the message as a file in the `inbox/` folder of this recorded
-    /// session that is not live, and restore nothing. The scan of the inbox
-    /// delivers the file when a host opens the session.
+    /// session that is not live, or of this archived session, live or not,
+    /// and restore nothing. The scan of the inbox delivers the file when a
+    /// host opens the session, and for an archived session only after its
+    /// unarchive (D204).
     case sendToRecorded(ULID)
 
     /// Start a new root session of the agent, with the message as its first
@@ -36,9 +38,6 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// `nil` when no session matched it.
     case refused(reason: String, target: ULID?)
 
-    /// The reason for a session id of an archived session.
-    static let archivedReason = "archived"
-
     /// The reason for a folder with no live root session: a folder alone does
     /// not name an agent (D61).
     static let noRootSessionInTheFolderReason = "Name an agent: @agent:/path."
@@ -50,11 +49,12 @@ enum SessionAddressResolution: Sendable, Equatable {
     ///
     /// - Parameter target: The summary of the session with the id, live or
     ///   recorded.
-    /// - Returns: Refused as archived with the session as its target, a
-    ///   delivery to a live session, or an inbox file for a recorded one.
+    /// - Returns: An inbox file for an archived session, live or not, as for
+    ///   a recorded one (D204), a delivery to a live session, or an inbox
+    ///   file for a recorded one.
     fileprivate static func reaching(session target: SessionSummary) -> Self {
-        guard target.state != .archived else { return .refused(reason: archivedReason, target: target.id) }
-        return target.isLive ? .deliver([target.id]) : .sendToRecorded(target.id)
+        guard target.isLive, target.state != .archived else { return .sendToRecorded(target.id) }
+        return .deliver([target.id])
     }
 
     /// The decision for a folder address.
@@ -117,9 +117,10 @@ extension SessionAddress {
     /// - A session sender must be a live or recorded session, for each
     ///   address: an unknown one throws, and is never read as a user.
     /// - A session id gives that session when it is live, an inbox file when
-    ///   it is recorded, a refusal with the session as its target when it is
-    ///   archived, and throws when no session has it (section 9: the session
-    ///   must exist).
+    ///   it is recorded or archived (D204), and throws when no session has it
+    ///   (section 9: the session must exist). An archived session that a
+    ///   client opened is live, and it still gets an inbox file, so the
+    ///   message starts no turn.
     /// - An agent always gives a start of a new root session of the agent
     ///   (D199 (e)), also when a session of the agent is live. The client
     ///   resolves the slug of a session before it sends to an agent, so the

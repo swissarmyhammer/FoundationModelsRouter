@@ -76,7 +76,8 @@ import Synchronization
 /// live list, writes `archivedAt` to its `index.md`, and sends `archived`.
 /// An archive is not final (D204): ``unarchive(_:by:)`` removes `archivedAt`
 /// again, and the session is a recorded session that a host can open. The
-/// session then takes the messages of its inbox. A root session
+/// session then takes the messages of its inbox. A message to an archived
+/// session goes to its inbox, and the session stays archived. A root session
 /// with no title gets a default name from its agent (D199 (b),
 /// ``SessionDefaultTitle``) when it registers, and a recorded root session
 /// with no title gets one when a read finds it. Only ``setTitle(_:of:)``
@@ -102,6 +103,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// inbox of a recorded session (D199 (f)), so such a message needs a live
     /// session.
     static let userNeedsLiveSessionReason = "a message from a user needs a live session"
+
+    /// The note in the `reason` of the `sent` receipt of a message to an
+    /// archived session (D204). The message is in the inbox of the session,
+    /// and the session stays archived.
+    static let archivedNote = "archived"
 
     /// The chain depth of a message from a UI, from a user turn, or from a
     /// session outside a turn: the first message of a chain. A message that
@@ -625,7 +631,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// The state is the tracked work state, or `archived` when the facts of
     /// the session hold `archivedAt`: a live session whose record says it is
-    /// archived reads as archived, so the resolver refuses a message to it.
+    /// archived reads as archived, so the resolver sends a message to it to
+    /// its inbox, and the message starts no turn (D204).
     /// ``SessionSummary/archivedAt`` is the `archivedAt` of the facts.
     /// The pin and the last use come from `usage` (``use(usageStore:)``).
     ///
@@ -1347,7 +1354,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - A recorded target that is not live gets a message from a session,
     ///   and a message from a user sender that names its source session, as
     ///   a file in its `inbox/` folder, and nothing more
-    ///   (``sendToRecorded(_:chainDepth:userHeader:to:)``). A message from a
+    ///   (``sendToRecorded(_:chainDepth:userHeader:isArchived:to:)``). A message from a
     ///   user sender with no source session is a `refused` receipt with
     ///   ``userNeedsLiveSessionReason`` and no file.
     ///   The directory does not restore the session and does not call the
@@ -1360,8 +1367,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   origin `message` and the message as its first message, and the
     ///   receipt is `started`
     ///   (``startAgent(_:in:for:chainDepth:userHeader:)``).
+    /// - An archived target, live or not, gets the message as a file in its
+    ///   `inbox/` folder, as a recorded target does, and the session stays
+    ///   archived (D204). The receipt is `sent` with the note
+    ///   ``archivedNote`` in its reason, and the directory sends
+    ///   `messageQueued`. A message from a user sender with no source session
+    ///   gets the file too, as the FoundationModelsExtras contract says for
+    ///   an archived target: the archive is not final, so the message must
+    ///   not be lost. The message starts no turn: the scan of the inbox does
+    ///   not deliver a file to an archived session (``scanInbox(of:)``), and
+    ///   ``unarchive(_:by:)`` of a live session scans its inbox.
     /// - A refusal of the resolver is a `refused` receipt with its reason
-    ///   and target. An archived target is one: it gets no file.
+    ///   and target.
     ///
     /// The loop guards of ``SessionMessageLimits`` apply to each sender
     /// (ROUTER-5). A text longer than the limit throws before the address is
@@ -1425,7 +1442,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             throw SessionDirectoryError.messageTooLong(limit: limits.maxMessageBytes)
         }
         let recorded = try await recordedSummaries()
-        let resolution = try message.to.resolution(from: message.from, among: liveSummaries()) { id in
+        let live = liveSummaries()
+        let resolution = try message.to.resolution(from: message.from, among: live) { id in
             recorded.first { $0.id == id }
         }
         let chainDepth = try await chainDepth(of: message.from, in: turn)
@@ -1437,7 +1455,11 @@ public actor RouterSessionDirectory: SessionDirectory {
         case .deliver(let targets):
             return try deliver(message, chainDepth: chainDepth, userHeader: userHeader, toEach: targets)
         case .sendToRecorded(let id):
-            return [try await sendToRecorded(message, chainDepth: chainDepth, userHeader: userHeader, to: id)]
+            let isArchived = (live.first { $0.id == id } ?? recorded.first { $0.id == id })?.state == .archived
+            return [
+                try await sendToRecorded(
+                    message, chainDepth: chainDepth, userHeader: userHeader, isArchived: isArchived, to: id)
+            ]
         case .startAgent(let agentID, let folder):
             return [
                 try await startAgent(agentID, in: folder, for: message, chainDepth: chainDepth, userHeader: userHeader)
@@ -1828,48 +1850,78 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Writes `message` as a file in the `inbox/` folder of the recorded
-    /// session `id`, which is not live, and stops. The directory restores
-    /// nothing and does not call the launcher. The file waits until a host
-    /// opens the session: the registration starts the watcher of the inbox,
-    /// and the first scan of the watcher delivers the file
-    /// (``scanInbox(of:)``), where its mail starts a turn.
+    /// session `id`, which is not live, or of the archived session `id`, live
+    /// or not, and stops. The directory restores nothing and does not call
+    /// the launcher. The file waits until a host opens the session: the
+    /// registration starts the watcher of the inbox, and the first scan of
+    /// the watcher delivers the file (``scanInbox(of:)``), where its mail
+    /// starts a turn.
     ///
     /// A message from a user sender (a UI send) that names its source
     /// session also goes to the file (D199 (f)). The file keeps the client
     /// id, the source session and the header line of `userHeader`, and the
     /// scan delivers it as a user message whose prompt starts with that line.
-    /// A message from a user sender with no source session is refused: it
-    /// needs a live session, which takes the direct path
-    /// (``deliverDirectly(_:chainDepth:userHeader:to:outcome:)``).
+    /// A message from a user sender with no source session to a recorded
+    /// session is refused: it needs a live session, which takes the direct
+    /// path (``deliverDirectly(_:chainDepth:userHeader:to:outcome:)``).
+    ///
+    /// An archived target gets each message as a file, also a message from a
+    /// user sender with no source session, and the receipt has the note
+    /// ``archivedNote`` (D204). The session stays archived. The scan does not
+    /// deliver a file to an archived session, also when a client opened it
+    /// with `session/load`, so the file waits for the unarchive
+    /// (``unarchive(_:by:)``). The file of a live archived session goes to
+    /// the folder of the live session, and a recorded one to the folder that
+    /// a recording root holds.
     ///
     /// - Parameters:
     ///   - message: The message.
     ///   - chainDepth: The chain depth of the message.
     ///   - userHeader: The header of a user message that names its source
     ///     session, or `nil`.
-    ///   - id: The session id of the recorded target.
+    ///   - isArchived: True when the target is archived.
+    ///   - id: The session id of the recorded or archived target.
     /// - Returns: The `sent` receipt, with the id of the message and the
-    ///   target: the file is written, and the message is not in a queue. The
+    ///   target, and with the note ``archivedNote`` for an archived target:
+    ///   the file is written, and the message is not in a queue. The
     ///   send gives `messageQueued` before it returns
     ///   (``sendQueued(_:to:)``), and the `messageDelivered` event reports
     ///   the delivery later. A `refused`
     ///   receipt with ``userNeedsLiveSessionReason`` for a user sender with
-    ///   no source session, and no file.
-    /// - Throws: `SessionDirectoryError.unknownSession(_:)` when no recording
-    ///   root holds the folder of the session, or the errors of
+    ///   no source session to a recorded target that is not archived, and no
+    ///   file.
+    /// - Throws: `SessionDirectoryError.unknownSession(_:)` when the session
+    ///   has no folder: no recording root holds the folder of a recorded
+    ///   session, or a live archived session is memory-only. Or the errors of
     ///   ``writeInboxFile(_:chainDepth:userHeader:to:)``.
     private func sendToRecorded(
-        _ message: OutgoingSessionMessage, chainDepth: Int, userHeader: UserMessageHeader?, to id: ULID
+        _ message: OutgoingSessionMessage, chainDepth: Int, userHeader: UserMessageHeader?, isArchived: Bool,
+        to id: ULID
     ) async throws -> SessionSendReceipt {
-        guard message.from.sessionID != nil || message.sourceSession != nil else {
+        guard isArchived || message.from.sessionID != nil || message.sourceSession != nil else {
             return SessionSendReceipt(target: id, outcome: .refused, reason: Self.userNeedsLiveSessionReason)
         }
-        guard let folder = try await recordedFolder(of: id) else {
+        guard let folder = try await inboxFolder(of: id) else {
             throw SessionDirectoryError.unknownSession(id)
         }
         let file = try writeInboxFile(message, chainDepth: chainDepth, userHeader: userHeader, to: folder)
         sendQueued(file, to: id)
-        return SessionSendReceipt(messageID: file.id, target: id, outcome: .sent)
+        return SessionSendReceipt(
+            messageID: file.id, target: id, outcome: .sent, reason: isArchived ? Self.archivedNote : nil)
+    }
+
+    /// The session folder that holds the `inbox/` folder of the session
+    /// `id`: the recording directory of a live durable session, else the
+    /// folder that a recording root holds (``recordedFolder(of:)``).
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The folder, or `nil` when the session has none.
+    /// - Throws: The error of the recording roots of the host.
+    private func inboxFolder(of id: ULID) async throws -> URL? {
+        if let live = session(id: id), let folder = Self.ledgerDirectory(of: live) {
+            return folder
+        }
+        return try await recordedFolder(of: id)
     }
 
     /// Starts a new root session of the agent through the launcher, and
@@ -1981,11 +2033,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// or when an archive kept the message there and no read marked it read
     /// (``SessionMessageLedger/awaitsDelivery(of:)``, D204). A session that
     /// an archive stops now is not scanned (``isArchiving(_:)``): its files
-    /// stay in `inbox/`, so no mail goes into its queue after the stop.
+    /// stay in `inbox/`, so no mail goes into its queue after the stop. A
+    /// live session whose record holds `archivedAt` (a client opened an
+    /// archived session with `session/load`) is not scanned too: it stays
+    /// archived and starts no turn, and its files wait for
+    /// ``unarchive(_:by:)``, which scans the inbox.
     ///
     /// - Parameter id: The session id.
     func scanInbox(of id: ULID) {
-        guard let session = session(id: id), !isArchiving(id), let folder = Self.ledgerDirectory(of: session) else {
+        guard let session = session(id: id), session.facts.archivedAt == nil, !isArchiving(id),
+            let folder = Self.ledgerDirectory(of: session)
+        else {
             return
         }
         let files: [URL]
@@ -2842,8 +2900,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// See `SessionDirectory.archive(_:by:)` (ROUTER-11, D68, D204): hides
     /// the session `id`. An archive is not final:
     /// ``unarchive(_:by:)`` is the inverse. While the session is archived,
-    /// it takes no message: the resolver refuses each send to it with the
-    /// reason "archived", and the directory does not restore it.
+    /// a send to it writes the message to its inbox with the note
+    /// ``archivedNote``, the message starts no turn, and the directory does
+    /// not restore it.
     ///
     /// - A live session stops its work (``archiveLive(_:by:)``): its running
     ///   turn ends cancelled. Each message that waits in its queue leaves the
@@ -2880,7 +2939,7 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Archives a live session. The stop of its work and the write of
     /// `archivedAt` come with no suspension between them, so a message that
-    /// a send sends after the call began is refused as archived.
+    /// a send sends after the call began goes to the inbox as archived.
     ///
     /// An archive keeps the mail (D204):
     ///
@@ -3141,8 +3200,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// ``RoutedSessionActor/updateRecord(_:)`` removes `archivedAt` and the
     /// session saves its `index.md`, the tracked state is not archived now
     /// (``takeUnarchived(_:)``), and ``sendUnarchived(_:by:)`` sends the
-    /// events. A record with no `archivedAt` is not written, and no event
-    /// goes out.
+    /// events. Then the scan of the inbox delivers the files that waited
+    /// while the session was archived (``scanInbox(of:)``), because no new
+    /// file starts the watcher. A record with no `archivedAt` is not written,
+    /// and no event goes out.
     ///
     /// - Parameters:
     ///   - session: The live session.
@@ -3158,6 +3219,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         actor.updateRecord { $0.facts.archivedAt = nil }
         let summary = try takeUnarchived(session.id)
         sendUnarchived(summary, by: unarchiver)
+        scanInbox(of: session.id)
         return summary
     }
 

@@ -370,17 +370,20 @@ struct RouterSessionDirectoryDeliveryTests {
     // MARK: - Archived
 
     /// The production change that makes this test fail: a send that
-    /// restores an archived session.
-    @Test("a send to an archived session is refused as archived, and the launcher gets no call")
-    func anArchivedSessionIsRefusedAndNotRestored() async throws {
+    /// refuses or restores an archived session (D204).
+    @Test("a send to an archived session is sent with the note archived, and the launcher gets no call")
+    func anArchivedSessionGetsTheMessageAndIsNotRestored() async throws {
         let fixture = try await Self.makeFixture()
         let id = try await fixture.recordClosedSession { $0.archivedAt = Date() }
 
         let receipts = try await Self.send(to: id, in: fixture)
 
+        let messageID = try #require(receipts.first?.messageID)
         #expect(
-            receipts == [SessionSendReceipt(target: id, outcome: .refused, reason: SessionAddressResolution.archivedReason)]
-        )
+            receipts == [
+                SessionSendReceipt(
+                    messageID: messageID, target: id, outcome: .sent, reason: RouterSessionDirectory.archivedNote)
+            ])
         #expect(fixture.launcher.restoredIDs.isEmpty)
         #expect(fixture.launcher.requests.isEmpty)
         await fixture.close([])

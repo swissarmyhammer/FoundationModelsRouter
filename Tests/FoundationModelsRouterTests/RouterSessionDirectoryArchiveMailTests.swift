@@ -72,7 +72,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     ///   - session: A durable session.
     /// - Returns: The message of the file.
     /// - Throws: The error of the read of the file.
-    private static func inboxFile(_ id: MailID, of session: any RoutedSession) throws -> SessionInboxMessage {
+    static func inboxFile(_ id: MailID, of session: any RoutedSession) throws -> SessionInboxMessage {
         try SessionInboxFile.read(
             SessionInboxFile.url(of: id, in: session.recordingDirectory),
             maxMessageBytes: SessionMessageLimits().maxMessageBytes)
@@ -96,7 +96,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     ///   - events: The events a test read.
     /// - Returns: The delivered message, or `nil` when `events` holds no
     ///   `messageDelivered` of `id`.
-    private static func delivery(of id: MailID, in events: [SessionDirectoryEvent]) -> SessionMessage? {
+    static func delivery(of id: MailID, in events: [SessionDirectoryEvent]) -> SessionMessage? {
         for event in events {
             if case .messageDelivered(let message) = event, message.id == id { return message }
         }
@@ -124,7 +124,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     ///   message, or `nil` when no `messageDelivered` of `messageID` came
     ///   before the session was idle.
     /// - Throws: The error of the unarchive or of the restore.
-    private static func reopen(_ id: ULID, awaiting messageID: MailID, in fixture: Fixture) async throws
+    static func reopen(_ id: ULID, awaiting messageID: MailID, in fixture: Fixture) async throws
         -> (launcher: FakeSessionLauncher, opened: any RoutedSession, delivered: SessionMessage?)
     {
         let launcher = FakeSessionLauncher(profile: fixture.pair.recordingProfile)

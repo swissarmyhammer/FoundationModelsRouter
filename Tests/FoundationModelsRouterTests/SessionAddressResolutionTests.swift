@@ -189,9 +189,8 @@ struct SessionAddressResolutionTests {
             name: "a recorded session id that is not live gets the message in its inbox, with no restore",
             sender: fromUser, address: .session(recorded.id), expected: .success(.sendToRecorded(recorded.id))),
         Row(
-            name: "an archived session id is refused as archived, with the archived session as the target",
-            sender: fromReviewer, address: .session(archived.id),
-            expected: .success(.refused(reason: "archived", target: archived.id))),
+            name: "an archived session id gets the message in its inbox, as a recorded one, with no restore",
+            sender: fromReviewer, address: .session(archived.id), expected: .success(.sendToRecorded(archived.id))),
         Row(
             name: "an unknown session id throws unknownSession with the id",
             sender: fromReviewer, address: .session(unknownID), expected: .failure(.unknownSession(unknownID))),
@@ -351,6 +350,29 @@ struct SessionAddressResolutionTests {
     @Test(arguments: rows)
     func eachRowOfTheAddressingTableGivesItsDecision(_ row: Row) {
         #expect(Self.resolve(row.address, from: row.sender) == row.expected)
+    }
+
+    /// The production change that makes this test fail: a resolver that
+    /// delivers to a live session whose record holds `archivedAt`, so the
+    /// message starts a turn of an archived session.
+    @Test func aLiveArchivedSessionIDGetsTheMessageInItsInbox() {
+        let liveArchived = Self.summary(starting: .archived, agentID: Self.coder, in: Self.project, state: .archived)
+
+        let decision = Self.resolve(.session(liveArchived.id), from: Self.fromUser, among: [liveArchived])
+
+        #expect(decision == .success(.sendToRecorded(liveArchived.id)))
+    }
+
+    /// The production change that makes this test fail: a resolver that
+    /// sends an agent address to a live archived session of the agent (D199
+    /// (e)).
+    @Test func anAgentWhoseOnlySessionIsArchivedIsStarted() {
+        let liveArchived = Self.summary(starting: .archived, agentID: Self.coder, in: Self.project, state: .archived)
+
+        let decision = Self.resolve(
+            .agent(id: Self.coder, folder: Self.project), from: Self.fromUser, among: [liveArchived])
+
+        #expect(decision == .success(.startAgent(agentID: Self.coder, folder: Self.project)))
     }
 
     /// A folder address matches the session through a symbolic link to its

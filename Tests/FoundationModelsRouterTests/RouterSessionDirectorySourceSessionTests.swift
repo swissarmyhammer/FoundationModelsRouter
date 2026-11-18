@@ -307,19 +307,21 @@ struct RouterSessionDirectorySourceSessionTests {
         await fixture.close([source])
     }
 
-    /// The production change that makes this test fail: a source session
-    /// that lets a user message reach an archived target.
-    @Test("a user message from a source session to an archived session is refused as archived")
-    func anArchivedTargetIsRefused() async throws {
+    /// The production change that makes this test fail: a user message
+    /// from a source session that an archived target refuses (D204).
+    @Test("a user message from a source session to an archived session goes to its inbox with the note archived")
+    func anArchivedTargetGetsTheMessageInItsInbox() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let source = fixture.makeSession()
         let target = try await fixture.recordClosedSession { $0.archivedAt = Date() }
 
-        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture)
+        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
 
+        let messageID = try #require(receipts.first?.messageID)
         #expect(
             receipts == [
-                SessionSendReceipt(target: target, outcome: .refused, reason: SessionAddressResolution.archivedReason)
+                SessionSendReceipt(
+                    messageID: messageID, target: target, outcome: .sent, reason: RouterSessionDirectory.archivedNote)
             ])
         await fixture.close([source])
     }

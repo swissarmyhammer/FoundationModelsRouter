@@ -7,7 +7,7 @@ import Testing
 
 /// The `messageQueued` event of ``RouterSessionDirectory`` (D199
 /// follow-up): a send whose receipt is `queued` (a working target, whose
-/// ledger keeps the message) or `sent` (a recorded target, whose inbox file
+/// ledger keeps the message) or `sent` (a recorded or archived target, whose inbox file
 /// keeps it) gives `messageQueued` at the send, before the send returns its
 /// receipt. `messageDelivered` of the same message comes later, one time,
 /// when the target takes the message. A `delivered` or a `started` receipt
@@ -303,12 +303,11 @@ struct RouterSessionDirectoryQueuedEventTests {
         await fixture.close([])
     }
 
-    // MARK: - Refused
-
-    /// The production change that makes this test fail: a refused send to an
-    /// archived session that gives a message event.
-    @Test("a message to an archived session is refused and gives no message event")
-    func aRefusedMessageGivesNoEvent() async throws {
+    /// The production change that makes this test fail: a send to an
+    /// archived session that refuses the message, or gives no
+    /// `messageQueued` for its inbox file (D204).
+    @Test("a message to an archived session gives only messageQueued")
+    func aMessageToAnArchivedSessionGivesOnlyMessageQueued() async throws {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let id = try await fixture.recordClosedSession { $0.archivedAt = Date() }
         var events = fixture.directory.events().makeAsyncIterator()
@@ -316,10 +315,12 @@ struct RouterSessionDirectoryQueuedEventTests {
         let receipts = try await fixture.directory.send(Self.userMessage(to: id))
         fixture.directory.emit(Self.marker)
 
-        #expect(receipts.map(\.outcome) == [.refused])
-        #expect(await Self.messageEvents(through: &events).isEmpty)
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(await Self.messageEvents(through: &events) == [.queued(messageID)])
         await fixture.close([])
     }
+
+    // MARK: - Refused
 
     /// The production change that makes this test fail: a UI message with no
     /// source session to a recorded session, which the directory refuses,
