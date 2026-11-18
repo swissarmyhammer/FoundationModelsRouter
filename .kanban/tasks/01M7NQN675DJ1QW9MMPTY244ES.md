@@ -66,10 +66,26 @@ comments:
     - evidence: 3 files — Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryInboxTests.swift, Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift. Focused run (`FoundationModelsRouterTests.RouterSessionDirectorySourceSessionTests|FoundationModelsRouterTests.RouterSessionDirectoryInboxTests`): 40 tests in 2 suites passed. Full `swift test`: 2898 tests in 336 suites, 48 tests in 26 suites, 19 tests in 3 suites passed, 0 failures, no compiler warnings (one SwiftPM build-system line about the mlx-swift_Cmlx.bundle node, not from source).
     - next: review
   timestamp: 2026-11-18T14:59:20.324317+00:00
+- actor: claude-code
+  id: 01m7qjrygy94kpk40py7j9m5se
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (01b18b89), 0 findings (7 attempted, 0 failed). The 2 items of "Review Findings (2026-11-18 08:53)" are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-11-18T15:00:31.902525+00:00
+- actor: claude-code
+  id: 01m7qjsg7c8cnmf8cn1dbhnv1e
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — RouterSessionDirectorySourceSessionTests.swift, RouterSessionDirectoryInboxTests.swift, Helpers/SessionDirectoryEventReads.swift
+    - test: green — swift test in the implement step, 2898 tests in 336 suites (+48, +19), 0 failures
+    - commit: 01b18b89
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T15:00:50.028366+00:00
 depends_on:
 - 01M7NQMW44Y418E9RB7HQM8P4M
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffad80
 title: Put a user message with a source session in the inbox of a recorded target (D199 (f))
 ---
 ## Goal
