@@ -1,6 +1,18 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7qw623h9dywdx97a80r0rfk
+  text: |-
+    Extras D205 is on origin/main at ec528ec (code commit 912d9b0; it also has D204). API:
+    - `SessionForkCut`: `.lastCompletedTurn`, `.callingToolCall`, `.historyPosition(Int)`.
+    - `SessionForkRequest`: `sourceID`, `cut`, `firstPrompt: String?`, `requestedByClient: String?`, `forker: SessionMessageSender`.
+    - `SessionDirectory.fork(_:) async throws -> SessionSummary`, with a default that throws `SessionDirectoryError.forkUnsupported` (the Router compiles before this task).
+    - New errors: `archivedSession(ULID)`, `forkCutOutOfRange(SessionForkCut)`, `forkUnsupported`.
+    - `SessionName.fork(sourceName:usedNames:)`: `<slug>-fork`, then `-fork-2`, `-fork-3`. Pass the source slug and the names of the sessions in the folder that are not archived.
+    - A fork: kind `.fork`, origin `.fork`, `parentID` = source, the same folder and agent, a `started` event; a first prompt starts its first turn.
+  timestamp: 2026-11-18T17:44:58.737391+00:00
 position_column: todo
 position_ordinal: '8380'
 title: Fork a live session at a cut point in RouterSessionDirectory (D205)

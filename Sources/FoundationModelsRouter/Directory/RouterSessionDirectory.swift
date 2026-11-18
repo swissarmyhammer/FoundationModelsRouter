@@ -1134,11 +1134,52 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameter id: The session id.
     private nonisolated func recordFactsChange(of id: ULID) {
-        state.withLock { registry in
-            guard var entry = registry.entries[id], let session = entry.session else { return }
+        _ = try? changeLiveEntry(
+            of: id, announcing: { registry, summary in registry.fanout.send(.factsChanged(summary)) })
+    }
+
+    /// Changes the live entry of the session `id` under the lock of the
+    /// registry, and gives its new summary.
+    ///
+    /// In one hold of the lock, the call:
+    /// 1. finds the entry and its session,
+    /// 2. applies `change` to the registry and to a copy of the entry,
+    /// 3. stamps the time of the change of the entry,
+    /// 4. puts the entry back, but only when `change` did not take it off
+    ///    the registry,
+    /// 5. makes the summary of the session, which is not live when `change`
+    ///    took the entry off,
+    /// 6. gives that summary to `announce`, so an event that tells the
+    ///    change goes out under the same lock.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - change: The change to the registry and to the entry. It can take
+    ///     the entry off the registry.
+    ///   - announce: The step that reads the new summary under the same
+    ///     lock. It changes nothing by default.
+    /// - Returns: The summary of the session, changed now.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live session
+    ///   has the id.
+    private nonisolated func changeLiveEntry(
+        of id: ULID,
+        _ change: (inout Registry, inout Entry) -> Void = { _, _ in },
+        announcing announce: (inout Registry, SessionSummary) -> Void = { _, _ in }
+    ) throws -> SessionSummary {
+        try state.withLock { registry in
+            guard var entry = registry.entries[id], let session = entry.session else {
+                throw SessionDirectoryError.unknownSession(id)
+            }
+            change(&registry, &entry)
             entry.updatedAt = Date()
-            registry.entries[id] = entry
-            registry.fanout.send(.factsChanged(Self.summary(of: session, in: entry, usage: registry.usage(of: id))))
+            let isLive = registry.entries[id] != nil
+            if isLive {
+                registry.entries[id] = entry
+            }
+            var summary = Self.summary(of: session, in: entry, usage: registry.usage(of: id))
+            summary.isLive = isLive
+            announce(&registry, summary)
+            return summary
         }
     }
 
@@ -2866,17 +2907,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: `SessionDirectoryError.unknownSession` when the session left
     ///   the directory.
     private nonisolated func takeArchived(_ id: ULID) throws -> SessionSummary {
-        try state.withLock { registry in
-            guard var entry = registry.entries.removeValue(forKey: id), let session = entry.session else {
-                throw SessionDirectoryError.unknownSession(id)
-            }
+        try changeLiveEntry(of: id) { registry, entry in
+            registry.entries[id] = nil
             entry.cancelFeeds()
             registry.forgetDeliveries(to: id)
             entry.tracking.archive()
-            entry.updatedAt = Date()
-            var summary = Self.summary(of: session, in: entry, usage: registry.usage(of: id))
-            summary.isLive = false
-            return summary
         }
     }
 
@@ -2888,11 +2923,31 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The id of the archived session.
     ///   - archiver: The session or the user that archived it.
     private nonisolated func sendArchived(_ id: ULID, by archiver: SessionMessageSender) {
-        emit(.stateChanged(id: id, state: .archived, lastSummary: nil))
-        emit(.archived(id: id))
-        Self.logSession(
-            .notice, "a session was archived", session: id,
-            metadata: [RouterTelemetry.LogMetadataKey.archivedBy: "\(archiver)"])
+        sendArchiveChange(
+            of: id, state: .archived, lastSummary: nil, event: .archived(id: id),
+            log: "a session was archived", actorKey: RouterTelemetry.LogMetadataKey.archivedBy, actor: archiver)
+    }
+
+    /// Sends `stateChanged` with `state` and `lastSummary` for the session
+    /// `id`, then `event`, and writes the audit record of the change to the
+    /// log: the session id and the session or the user that made the change.
+    /// ``sendArchived(_:by:)`` and ``sendUnarchived(_:by:)`` call it.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - state: The new state of the session.
+    ///   - lastSummary: The last summary that `stateChanged` carries.
+    ///   - event: The event of the change (`archived` or `unarchived`).
+    ///   - message: The log message.
+    ///   - actorKey: The log metadata key of `actor`.
+    ///   - actor: The session or the user that made the change.
+    private nonisolated func sendArchiveChange(
+        of id: ULID, state: SessionState, lastSummary: String?, event: SessionDirectoryEvent,
+        log message: String, actorKey: String, actor: SessionMessageSender
+    ) {
+        emit(.stateChanged(id: id, state: state, lastSummary: lastSummary))
+        emit(event)
+        Self.logSession(.notice, message, session: id, metadata: [actorKey: "\(actor)"])
     }
 
     // MARK: - Unarchive
@@ -2985,15 +3040,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: `SessionDirectoryError.unknownSession` when the session left
     ///   the directory.
     private nonisolated func takeUnarchived(_ id: ULID) throws -> SessionSummary {
-        try state.withLock { registry in
-            guard var entry = registry.entries[id], let session = entry.session else {
-                throw SessionDirectoryError.unknownSession(id)
-            }
-            entry.tracking.unarchive()
-            entry.updatedAt = Date()
-            registry.entries[id] = entry
-            return Self.summary(of: session, in: entry, usage: registry.usage(of: id))
-        }
+        try changeLiveEntry(of: id) { _, entry in entry.tracking.unarchive() }
     }
 
     /// Sends `stateChanged` with the state of `summary` and then
@@ -3007,11 +3054,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - unarchiver: The session or the user that unarchived it.
     private nonisolated func sendUnarchived(_ summary: SessionSummary, by unarchiver: SessionMessageSender) {
         let lastSummary = summary.state == .idle ? summary.lastSummary : nil
-        emit(.stateChanged(id: summary.id, state: summary.state, lastSummary: lastSummary))
-        emit(.unarchived(id: summary.id))
-        Self.logSession(
-            .notice, "a session was unarchived", session: summary.id,
-            metadata: [RouterTelemetry.LogMetadataKey.unarchivedBy: "\(unarchiver)"])
+        sendArchiveChange(
+            of: summary.id, state: summary.state, lastSummary: lastSummary, event: .unarchived(id: summary.id),
+            log: "a session was unarchived", actorKey: RouterTelemetry.LogMetadataKey.unarchivedBy,
+            actor: unarchiver)
     }
 
     // MARK: - Events

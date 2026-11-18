@@ -33,6 +33,40 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Directory/SessionStateTracking.swift, Directory/RecordedSessions.swift, Tracing/RouterTelemetry.swift; Tests/FoundationModelsRouterTests/RouterSessionDirectoryUnarchiveTests.swift (new, 15 tests), SessionStateTrackingTests.swift (+3 tests), RouterSessionDirectoryArchiveTests.swift (makeFixture not private), RouterSessionDirectoryQueuedEventTests.swift (.unarchived case). New tests RED with a stub, then GREEN (18 of 18). Full `swift test`: 2945 tests in 341 suites, 49 in 26, 19 in 3, all passed; build has no warnings.
     - next: /review
   timestamp: 2026-11-18T17:41:00.406006+00:00
+- actor: claude-code
+  id: 01m7qw92q602w95kes32mp5n9e
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (18bbe4da); 2 findings (2 confirmed, 3 refuted) — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:2987, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:3008
+    - next: implement the two reuse/reuse findings in a follow-up commit, then review again.
+  timestamp: 2026-11-18T17:46:37.670271+00:00
+- actor: claude-code
+  id: 01m7qw9vm6kp67htczf59qcvsf
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — RouterSessionDirectory.swift, SessionStateTracking.swift, RecordedSessions.swift, RouterTelemetry.swift, 4 test files
+    - test: green — swift test in the implement step, 2945 tests in 341 suites (+49, +19), 0 failures
+    - commit: 18bbe4da (pushed before the review, because the Router did not compile against Extras 4c521cb and the Multitool CI was red)
+    - review: findings — RouterSessionDirectory.swift:2987 (takeUnarchived copies takeArchived), RouterSessionDirectory.swift:3008 (sendUnarchived copies sendArchived)
+  timestamp: 2026-11-18T17:47:03.174081+00:00
+- actor: claude-code
+  id: 01m7qwm0gjfn3x5ax27pak6b7r
+  text: |-
+    Review findings fixed in RouterSessionDirectory.swift. No behavior change.
+    - New private helper `changeLiveEntry(of:_:announcing:)`. In one hold of the lock, it finds the entry and the session, applies the change closure (inout Registry, inout Entry), stamps `updatedAt`, puts the entry back only when the change did not remove it, makes the summary (`isLive` is false when the change removed the entry), and gives the summary to `announce` under the same lock.
+    - `takeArchived` and `takeUnarchived` call it. The closure of `takeArchived` removes the entry, cancels the feeds, forgets the deliveries and archives the tracking. The closure of `takeUnarchived` unarchives the tracking.
+    - Same cause in the file: `recordFactsChange(of:)` had the same lock, lookup, timestamp and summary steps. It now calls the helper with `announcing:` to send `factsChanged` under the lock, and `try?` keeps "no live session changes nothing".
+    - New private helper `sendArchiveChange(of:state:lastSummary:event:log:actorKey:actor:)` sends `stateChanged`, then the event, then the audit log line. `sendArchived` and `sendUnarchived` call it.
+    - Note: the old `takeArchived` removed an entry whose weak session was nil before it threw `unknownSession`. The helper throws and does not remove it. The caller (`archiveLive`) holds a strong reference to the session, so that path cannot occur.
+    - Discovery: a single unlabeled trailing closure binds to the first closure parameter (`change`), so `recordFactsChange` must use the label `announcing:`.
+  timestamp: 2026-11-18T17:52:35.858934+00:00
+- actor: claude-code
+  id: 01m7qwm2x2c4jbr6zfx1xecacz
+  text: |-
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift (changeLiveEntry, sendArchiveChange; takeArchived, takeUnarchived, recordFactsChange, sendArchived, sendUnarchived use them). `swift build` has no warnings from the source. Full `swift test` one time with Extras at ec528ec: 2945 tests in 341 suites, 49 in 26, 19 in 3, all passed, exit 0. Both review findings are `- [x]`.
+    - next: /review
+  timestamp: 2026-11-18T17:52:38.306739+00:00
 position_column: doing
 position_ordinal: '80'
 title: Unarchive a session in RouterSessionDirectory (D204)
@@ -75,3 +109,13 @@ FoundationModelsExtras (`extras-brief.md`): the protocol operation `unarchive(_:
 ## After
 
 Push when green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a. #d204
+
+## Review Findings (2026-11-18 11:41)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 16 not reviewed.
+
+> 16 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 16 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:2987` `reuse/reuse` — takeUnarchived repeats the lock, lookup, timestamp and summary skeleton of takeArchived. The two functions differ only in whether the registry entry is removed and whether feeds are cancelled. Keeping two copies of the skeleton risks the lookup or the summary building diverging. Extract the shared lookup, tracking change, timestamp and summary steps into one private helper that takes the tracking change as a closure. takeArchived keeps its removeValue and cancelFeeds steps, and takeUnarchived keeps its own. Alternatively, accept the duplication and note why the two differ.
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:3008` `reuse/reuse` — sendUnarchived repeats the shape of sendArchived. Both emit stateChanged, then a session event, then write an audit log line with a metadata key for the actor. Only the state value, the lastSummary rule, the event case and the log key differ. A second copy of the emit and log sequence can drift from the first. Extend sendArchived into one private helper that takes the state, the lastSummary value, the event and the log message and metadata key as parameters. Call it from both sendArchived and sendUnarchived.
