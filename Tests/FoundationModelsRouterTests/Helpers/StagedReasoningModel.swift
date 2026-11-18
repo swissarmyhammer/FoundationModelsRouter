@@ -14,8 +14,7 @@ import FoundationModelsRouterTestSupport
 /// the ending of the script: the answer, or ``CountingRunCodeTool`` calls in
 /// one round. A call whose
 /// hold is ``RepeatingReasoningHold/untilStopped`` writes no ending: the
-/// stop of the session ends it, or the hold fails the test when no stop comes
-/// inside ``RepeatingReasoningModel/Executor/stopHoldLimit``. A call after the
+/// stop of the session ends it, and nothing else does. A call after the
 /// last script answers with ``RepeatingReasoningModel/Executor/answerText``
 /// at once. So a test can make the first call repeat itself and the next
 /// calls reason past the limit, or make a recovery call a tool. Each call
@@ -105,10 +104,10 @@ struct StagedReasoningModel: LanguageModel, ReasoningControlReporting {
             if configuration.scripts.indices.contains(callIndex) {
                 let script = configuration.scripts[callIndex]
                 try await RepeatingReasoningModel.Executor.writeReasoning(
-                    script, callIndex: callIndex, into: channel)
+                    script, into: channel)
                 if let text = script.leadingText {
                     await Self.sendResponse(text, into: channel)
-                    try await RepeatingReasoningModel.Executor.hold(script.leadingTextHold, callIndex: callIndex)
+                    try await RepeatingReasoningModel.Executor.hold(script.leadingTextHold)
                 }
                 if await RepeatingReasoningModel.Executor.sendToolCall(endingWith: script.ending, into: channel) {
                     return

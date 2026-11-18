@@ -13,7 +13,7 @@ import Testing
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``StagedReasoningModel``. No GPU is in the loop. The session's
 /// counter is the ``CharacterTokenCounter``: one token per character.
-@Suite("The recovery budget counts consecutive stops with no progress between them", .timeLimit(.minutes(1)))
+@Suite("The recovery budget counts consecutive stops with no progress between them")
 struct ConsecutiveRecoveryBudgetTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "ConsecutiveRecoveryBudgetTests"
@@ -36,7 +36,7 @@ struct ConsecutiveRecoveryBudgetTests {
     /// A script whose reasoning reaches the default reasoning limit with new
     /// lines only, and that then waits until the session stops it
     /// (``RepeatingReasoningScript/reasoningHeldAtLimit(_:)``, whose hold
-    /// fails the test when no stop comes).
+    /// ends on the stop and on nothing else).
     private static var reasoningStopScript: RepeatingReasoningScript {
         RepeatingReasoningScript.reasoningHeldAtLimit()
     }

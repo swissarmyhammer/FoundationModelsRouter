@@ -58,17 +58,15 @@ final class AnswerLimitsScript: Sendable {
 
     /// Takes the next step, or counts a call that found none.
     ///
-    /// - Returns: The index of the call among the calls of the model, from
-    ///   zero, and the next step, or `nil` when no step waits.
-    func takeNextStep() -> (callIndex: Int, step: AnswerLimitsStep?) {
+    /// - Returns: The next step, or `nil` when no step waits.
+    func takeNextStep() -> AnswerLimitsStep? {
         state.withLock { state in
-            let callIndex = state.calls
             state.calls += 1
             guard !state.steps.isEmpty else {
                 state.unscriptedCalls += 1
-                return (callIndex, nil)
+                return nil
             }
-            return (callIndex, state.steps.removeFirst())
+            return state.steps.removeFirst()
         }
     }
 
@@ -214,7 +212,7 @@ struct AnswerLimitsModel: LanguageModel {
                 await Self.send(Self.summaryText, usage: AnswerLimitsModel.smallUsage, into: channel)
                 return
             }
-            let (callIndex, step) = configuration.script.takeNextStep()
+            let step = configuration.script.takeNextStep()
             switch step {
             case .ceilingStopThatCompacts:
                 await Self.send(AnswerLimitsModel.longCutText, usage: AnswerLimitsModel.ceilingStopUsage, into: channel)
@@ -224,7 +222,7 @@ struct AnswerLimitsModel: LanguageModel {
                 // The hold of the script waits until the watch stops the
                 // call, so this call always throws and writes no answer.
                 try await RepeatingReasoningModel.Executor.writeReasoning(
-                    AnswerLimitsModel.repeatingScript, callIndex: callIndex, into: channel)
+                    AnswerLimitsModel.repeatingScript, into: channel)
             case .answer:
                 await Self.send(AnswerLimitsModel.answerText, usage: AnswerLimitsModel.smallUsage, into: channel)
             case nil:
