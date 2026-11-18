@@ -18,10 +18,26 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Directory/SessionAddressResolution.swift, Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/SessionAddressResolutionTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryDefaultNameTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryMessageTests.swift. Full `swift test`: exit 0, 2891 tests in 336 suites pass, plus 48 tests in 26 suites and 19 tests in 3 suites; no compiler warnings.
     - next: /review
   timestamp: 2026-11-18T14:42:57.920650+00:00
+- actor: claude-code
+  id: 01m7qhvt358vwatvcyz2eq1ykz
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (b1ad24e6) — 0 findings, 0 confirmed, 0 refuted; 5 files reviewed, 2 .kanban files not reviewed (.reviewignore).
+    - next: none. The task is in done.
+  timestamp: 2026-11-18T14:44:37.093881+00:00
+- actor: claude-code
+  id: 01m7qhw420xnkmjec52z3xbe0d
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — SessionAddressResolution.swift, RouterSessionDirectory.swift, 3 test files
+    - test: green — swift test in the implement step, 2891 tests in 336 suites (+48, +19), 0 failures, 0 warnings
+    - commit: b1ad24e6
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T14:44:47.296413+00:00
 depends_on:
 - 01M7NQM9KJ3QNMNQDA6SWQ7JNM
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffac80
 title: An agent address always starts a new session (D199 (e))
 ---
 ## Goal
