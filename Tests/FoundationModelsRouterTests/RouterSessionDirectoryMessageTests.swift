@@ -137,7 +137,7 @@ import Testing
         await fixture.closeSessions([sender, target])
         let mail = try Self.queuedMail(messageID, of: target, in: fixture)
         let header = AgentMessageHeader(
-            sender: sender.id, agentID: senderSummary.agentID, agentName: nil, title: nil,
+            sender: sender.id, agentID: senderSummary.agentID, agentName: nil, title: senderSummary.title,
             folder: senderSummary.workingDirectory.path, inReplyTo: nil)
         let content = AgentMessageContent(header: header, text: Self.text).encoded
         #expect(mail == Mail(id: messageID, sender: .session(sender.id), body: .agentMessage(from: sender.id, content: content)))

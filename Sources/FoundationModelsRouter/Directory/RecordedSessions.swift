@@ -38,7 +38,16 @@ struct RecordedSessions {
     /// - Throws: The error of a listing of a root that exists, or the read
     ///   error of an `index.md` that exists (``SessionIndexFile/read(in:)``).
     func records() throws -> [SessionRecord] {
-        try readEntries(depth: .direct).map(\.record)
+        try entries().map(\.record)
+    }
+
+    /// The root sessions recorded under ``roots``, each with its record and
+    /// its folder. The same walk as ``records()``.
+    ///
+    /// - Returns: One entry for each recorded root session, newest first.
+    /// - Throws: What ``records()`` throws.
+    func entries() throws -> [Entry] {
+        try readEntries(depth: .direct)
     }
 
     /// The records of the sessions recorded under ``roots`` at any depth: the

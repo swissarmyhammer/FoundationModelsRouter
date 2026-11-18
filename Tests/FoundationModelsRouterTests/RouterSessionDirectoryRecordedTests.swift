@@ -265,6 +265,10 @@ import Testing
     /// milliseconds: 2100-01-01.
     private static let futureSecondSince1970: TimeInterval = 4_102_444_800
 
+    /// The default name of a recorded session with no agent name and no
+    /// agent id: the fallback name of `SessionName`.
+    private static let noAgentDefaultName = "session"
+
     /// A recorded summary carries the working folder and the facts of the
     /// record, and a root kind.
     @Test func aRecordedSummaryCarriesTheRecordFolderAndTheFacts() async throws {
@@ -293,7 +297,8 @@ import Testing
     }
 
     /// A record with no fact fields gives the default agent id and origin,
-    /// no tags, no title, and an idle state.
+    /// no tags, the default name of a session with no agent, and an idle
+    /// state.
     @Test func aRecordWithNoFactFieldsGivesTheDefaultAgentAndOrigin() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
@@ -308,7 +313,7 @@ import Testing
         #expect(summary.agentID == RouterSessionDirectory.defaultAgentID)
         #expect(summary.origin == RouterSessionDirectory.defaultOrigin)
         #expect(summary.tags.isEmpty)
-        #expect(summary.title == nil)
+        #expect(summary.title == Self.noAgentDefaultName)
         #expect(summary.state == .idle)
     }
 
@@ -360,8 +365,9 @@ import Testing
         #expect(summary.title == SessionFactsFixtures.title)
     }
 
-    /// An empty title in the facts of the record counts as no title.
-    @Test func anEmptyFactsTitleGivesNoTitle() async throws {
+    /// An empty title in the facts of the record counts as no title, thus
+    /// the read gives the default name of a session with no agent.
+    @Test func anEmptyFactsTitleGivesTheDefaultName() async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot()
@@ -371,7 +377,7 @@ import Testing
         let summary = try await SessionDirectorySummaries.summary(
             of: recorded.id, in: fixture.directory, matching: SessionQuery(includesRecorded: true))
 
-        #expect(summary.title == nil)
+        #expect(summary.title == Self.noAgentDefaultName)
     }
 
     /// The `updatedAt` of a recorded summary is the `updatedAt` of the

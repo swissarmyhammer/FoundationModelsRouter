@@ -67,7 +67,11 @@ import Synchronization
 /// ``recordedSessions(in:)`` lists the records of a recording root with no
 /// router. ``archive(_:by:)`` ends a live or recorded session (ROUTER-11):
 /// it stops a running turn, takes the session off the live list, writes
-/// `archivedAt` to its `index.md`, and sends `archived`.
+/// `archivedAt` to its `index.md`, and sends `archived`. A root session
+/// with no title gets a default name from its agent (D199 (b),
+/// ``SessionDefaultTitle``) when it registers, and a recorded root session
+/// with no title gets one when a read finds it. Only ``setTitle(_:of:)``
+/// changes the name after that.
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -188,6 +192,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// ``unregister(_:)`` need no `await`.
     private let state = Mutex<Registry>(Registry())
 
+    /// Makes the default naming of a session (``SessionDefaultTitle``) one
+    /// step at a time: the naming and the registration of a new root session
+    /// (``register(_:kind:parentID:requestedByClient:)``), and the naming of
+    /// the recorded sessions that a read finds with no title
+    /// (``recordedSummaries()``). Thus two sessions in one folder never get
+    /// the same default name. The lock is held across the read and the write
+    /// of `index.md` files. It is always taken before the lock of ``state``,
+    /// never under it, thus the lock of ``state`` never waits on the file
+    /// system.
+    private let naming = Mutex<Void>(())
+
     /// The count of the inbox watchers that are open. Only a test reads it
     /// (``openInboxWatcherCount``).
     private let openInboxWatchers = SessionInboxWatcherCount()
@@ -261,6 +276,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// onto another model. The new object gets its own `started`, its own
     /// feed task and its own watcher, and the id is no more suspended.
     ///
+    /// A root session with no title gets its default name before the lock
+    /// (``giveDefaultTitle(to:)``, D199 (b)), thus its `started` holds the
+    /// name. This covers each start of a root session: `session/new` of a
+    /// client, ``start(_:)`` and the start of an agent address, and also a
+    /// restored root session with no title.
+    ///
     /// - Parameters:
     ///   - session: The live session.
     ///   - kind: The kind of the session.
@@ -274,23 +295,28 @@ public actor RouterSessionDirectory: SessionDirectory {
     ) {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
         let watcher = openInboxWatcher(of: session)
-        let isNew = state.withLock { registry in
-            if let live = registry.entries[session.id], live.session === session {
-                entry.updatedAt = live.updatedAt
-                entry.tracking = live.tracking
-                entry.stateFeed = live.stateFeed
-                entry.inboxWatcher = live.inboxWatcher
-                registry.entries[session.id] = entry
-                return false
+        let isNew = naming.withLock { _ in
+            if kind == .root {
+                giveDefaultTitle(to: session)
             }
-            registry.entries[session.id]?.cancelFeeds()
-            registry.suspendedIDs.remove(session.id)
-            entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
-            entry.inboxWatcher = watcher
-            registry.entries[session.id] = entry
-            let summary = Self.summary(of: session, in: entry, usage: registry.usage(of: session.id))
-            registry.fanout.send(.started(summary, requestedByClient: requestedByClient))
-            return true
+            return state.withLock { registry in
+                if let live = registry.entries[session.id], live.session === session {
+                    entry.updatedAt = live.updatedAt
+                    entry.tracking = live.tracking
+                    entry.stateFeed = live.stateFeed
+                    entry.inboxWatcher = live.inboxWatcher
+                    registry.entries[session.id] = entry
+                    return false
+                }
+                registry.entries[session.id]?.cancelFeeds()
+                registry.suspendedIDs.remove(session.id)
+                entry.stateFeed = followState(of: session, reading: Self.makeEventFeed(of: session))
+                entry.inboxWatcher = watcher
+                registry.entries[session.id] = entry
+                let summary = Self.summary(of: session, in: entry, usage: registry.usage(of: session.id))
+                registry.fanout.send(.started(summary, requestedByClient: requestedByClient))
+                return true
+            }
         }
         if isNew {
             watcher?.start()
@@ -318,6 +344,51 @@ public actor RouterSessionDirectory: SessionDirectory {
         } catch {
             logInboxFailure("the inbox folder of a session did not open for watching", error, session: id, file: nil)
             return nil
+        }
+    }
+
+    /// Gives a root session with no title its default name
+    /// (``SessionDefaultTitle``), through its facts, which writes the name to
+    /// its `index.md`. A session with a title keeps it. The caller holds the
+    /// lock of ``naming``.
+    ///
+    /// The used names come from the live sessions and from the sessions
+    /// recorded in the recording root of the session and in the recording
+    /// roots of the usage store (``recordedSummaries(besides:)``). The
+    /// recording roots of the host need an `await`, and a registration does
+    /// not wait, thus a session that only a root of the host holds does not
+    /// count.
+    ///
+    /// - Parameter session: The root session to register.
+    private nonisolated func giveDefaultTitle(to session: any RoutedSession) {
+        guard SessionDefaultTitle.isMissing(in: session.facts), let actor = try? Self.recordOwner(of: session) else {
+            return
+        }
+        let title = SessionDefaultTitle.make(
+            for: session.facts, of: session.id, in: session.workingDirectory,
+            among: liveSummaries() + recordedSummaries(besides: session))
+        actor.updateFacts { $0.title = title }
+    }
+
+    /// The summaries of the root sessions recorded in the recording root of
+    /// `session` and in the recording roots of the usage store, with no
+    /// `await`. A root that does not read is logged and gives no summary,
+    /// because the default name of a new session must not stop its
+    /// registration.
+    ///
+    /// - Parameter session: A root session that registers.
+    /// - Returns: The recorded summaries, in no order.
+    private nonisolated func recordedSummaries(besides session: any RoutedSession) -> [SessionSummary] {
+        let storeRoots = currentUsageStore()?.usages().values.compactMap(\.recordingRoot) ?? []
+        let roots = [session.recordingDirectory.deletingLastPathComponent()] + storeRoots
+        do {
+            return try RecordedSessions(roots: roots).summaries()
+        } catch {
+            RouterTelemetry.makeLogger(.sessionDirectory).error(
+                "the recorded sessions did not read for the default name of a new session; only the live sessions count",
+                metadata: RouterTelemetry.errorMetadata(error).merging(
+                    [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"], uniquingKeysWith: { first, _ in first }))
+            return []
         }
     }
 
@@ -525,15 +596,54 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The summaries of the root sessions on disk under the recording roots
     /// of the host (``useRecordingRoots(_:)``) and of the usage store
     /// (``allRecordingRoots()``), each with the pin and the last use of the
-    /// usage store.
+    /// usage store. A recorded root session with no title gets its default
+    /// name here (``namingUntitled(_:)``).
     ///
     /// - Returns: One summary for each recorded root session, in no order.
     /// - Throws: The error of the recording roots of the host, or of a read
     ///   of the record of past sessions.
     private func recordedSummaries() async throws -> [SessionSummary] {
         let usages = currentUsageStore()?.usages() ?? [:]
-        return try RecordedSessions(roots: try await allRecordingRoots()).summaries()
+        let entries = try RecordedSessions(roots: try await allRecordingRoots()).entries()
+        return naming.withLock { _ in namingUntitled(entries) }
             .map { Self.withUsage($0, usages[$0.id]) }
+    }
+
+    /// The summaries of recorded root sessions. Each root session with no
+    /// title that is not live gets its default name (``SessionDefaultTitle``,
+    /// D199 (b)), and the name is written to its `index.md`, thus the next
+    /// read gives the same name. A save that fails is logged, and the summary
+    /// holds the name all the same. The oldest session is named first, and
+    /// each name counts for the next. A live session got its name when it
+    /// registered. The caller holds the lock of ``naming``.
+    ///
+    /// - Parameter entries: The recorded root sessions, newest first.
+    /// - Returns: One summary for each entry, in the order of `entries`.
+    private nonisolated func namingUntitled(_ entries: [RecordedSessions.Entry]) -> [SessionSummary] {
+        let live = liveSummaries()
+        let liveIDs = Set(live.map(\.id))
+        var recorded = entries.map { RecordedSessions.summary(of: $0.record) }
+        for index in recorded.indices.reversed() where Self.needsDefaultTitle(recorded[index], liveIDs: liveIDs) {
+            var record = entries[index].record
+            let title = SessionDefaultTitle.make(
+                for: record.facts, of: record.sessionId, in: record.workingDirectory,
+                among: Self.merging(live: live, recorded: recorded))
+            record.facts.title = title
+            SessionIndexFile.saveLoggingFailure(record, in: entries[index].folder)
+            recorded[index].title = title
+        }
+        return recorded
+    }
+
+    /// Tells whether a read gives a recorded session its default name: it is
+    /// a root session, it is not live, and it has no title.
+    ///
+    /// - Parameters:
+    ///   - summary: The recorded summary of the session.
+    ///   - liveIDs: The ids of the live sessions.
+    /// - Returns: `true` when the read names the session.
+    private static func needsDefaultTitle(_ summary: SessionSummary, liveIDs: Set<ULID>) -> Bool {
+        summary.kind == .root && summary.title == nil && !liveIDs.contains(summary.id)
     }
 
     /// The summary of a recorded session, made from its record, with the pin
@@ -919,16 +1029,21 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Adds each fact of `request` that `facts` lacks: the tags of the
-    /// request join the tags, and the title, `startedBy` and the origin of
-    /// the request fill a fact that is `nil`. A fact that `facts` holds
-    /// stays.
+    /// request join the tags, and `startedBy` and the origin of the request
+    /// fill a fact that is `nil`. A fact that `facts` holds stays.
+    ///
+    /// The title of the request is the one exception: it replaces the title
+    /// of `facts`. The session is new, thus its title is the title of the
+    /// request or the default name that its registration gave
+    /// (``giveDefaultTitle(to:)``), and a request with a title keeps its
+    /// title. A request with no title keeps the default name.
     ///
     /// - Parameters:
     ///   - facts: The facts of a session.
     ///   - request: The start request of the session.
     private static func complete(facts: inout SessionFacts, with request: SessionStartRequest) {
         facts.tags.formUnion(request.tags)
-        facts.title = facts.title ?? request.title
+        facts.title = request.title ?? facts.title
         facts.startedBy = facts.startedBy ?? request.startedBy
         facts.origin = facts.origin ?? request.origin
     }
@@ -1840,7 +1955,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// reads the `index.md` of its folder, changes the record, and saves it
     /// back when the change altered it. A failed save throws, because no
     /// session goes on to hold the change. The call sends no event; the
-    /// caller sends the one its change calls for.
+    /// caller sends the one its change calls for. A record with no title
+    /// gets its default name first (``recordedSummaries()``), thus the
+    /// change starts from the named record.
     ///
     /// - Parameters:
     ///   - id: The session id.
@@ -1855,9 +1972,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     private func changeRecordedRecord(
         of id: ULID, _ change: (inout SessionRecord) -> Void
     ) async throws -> (summary: SessionSummary, changed: Bool) {
-        guard let folder = try await recordedFolder(of: id),
-            let stored = try SessionIndexFile.read(in: folder)
-        else {
+        guard let folder = try await recordedFolder(of: id) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        if let untitled = try SessionIndexFile.read(in: folder), SessionDefaultTitle.isMissing(in: untitled.facts) {
+            _ = try await recordedSummaries()
+        }
+        guard let stored = try SessionIndexFile.read(in: folder) else {
             throw SessionDirectoryError.unknownSession(id)
         }
         var record = stored

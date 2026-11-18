@@ -28,6 +28,10 @@ import Testing
     /// record moves between them.
     private static let clockStep: Duration = .milliseconds(5)
 
+    /// The default name of a root session with no agent name and no agent
+    /// id: the fallback name of `SessionName`.
+    private static let noAgentDefaultName = "session"
+
     /// Runs `body` with a resolved profile over a durable recording root.
     ///
     /// - Parameter body: The work to run with the resolved profile.
@@ -157,15 +161,17 @@ import Testing
         }
     }
 
-    /// A session vended with no fact field writes empty facts.
-    @Test func aSessionWithNoFactFieldWritesEmptyFacts() async throws {
+    /// A root session vended with no fact field writes empty facts, except
+    /// the default name that its directory gives it: the fallback name of a
+    /// session with no agent (D199 (b)).
+    @Test func aSessionWithNoFactFieldWritesEmptyFactsAndTheDefaultName() async throws {
         try await Self.withProfile { profile in
             let session = profile.standard.makeSession(configuration: SessionConfiguration())
 
             let written = try #require(try SessionIndexFile.read(in: session.recordingDirectory)).facts
 
-            #expect(written == SessionFacts())
-            #expect(session.facts == SessionFacts())
+            #expect(written == SessionFacts(title: Self.noAgentDefaultName))
+            #expect(session.facts == SessionFacts(title: Self.noAgentDefaultName))
             await session.close()
         }
     }
