@@ -35,6 +35,37 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionInboxFile.swift, Sources/FoundationModelsRouter/Directory/UserMessageHeader.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift, Tests/FoundationModelsRouterTests/SessionInboxFileTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryInboxTests.swift. Focused run: 69 tests in 3 suites passed. Full `swift test`: 2898 tests in 336 suites, 48 tests in 26 suites, 19 tests in 3 suites passed, 0 issues, no build warnings.
     - next: review
   timestamp: 2026-11-18T14:53:10.800376+00:00
+- actor: claude-code
+  id: 01m7qjhf1spkpey7w0nv1asmbk
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (e0c7e105); 2 findings, 2 confirmed, 0 refuted — Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift:199, Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift:214
+    - next: implement the 2 reuse findings in the `## Review Findings (2026-11-18 08:53)` section, then review again.
+  timestamp: 2026-11-18T14:56:26.681960+00:00
+- actor: claude-code
+  id: 01m7qjhy3t9f6cqf63tv7acqak
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — RouterSessionDirectory.swift, SessionInboxFile.swift, UserMessageHeader.swift, 3 test files
+    - test: green — swift test in the implement step, 2898 tests in 336 suites (+48, +19), 0 issues, 0 warnings
+    - commit: e0c7e105
+    - review: findings — RouterSessionDirectorySourceSessionTests.swift:199, RouterSessionDirectorySourceSessionTests.swift:214
+  timestamp: 2026-11-18T14:56:42.106180+00:00
+- actor: claude-code
+  id: 01m7qjpngpqss81pnkh02hj68c
+  text: |-
+    Review findings fixed.
+    - Finding 1 (reuse, `send(toRecorded:from:in:)`): removed. The existing `send(to:from:in:)` now has the parameter `awaitingDelivery: Bool = true`. It builds the message one time, and calls `sendAndAwaitDelivery` or `send`. The 4 recorded-target tests call `send(to: .session(target), ..., awaitingDelivery: false)`.
+    - Finding 2 (reuse, `awaitDelivery`): both private copies removed (SourceSession suite and Inbox suite). One shared helper `nextDelivery(of:) -> SessionMessage?` is now in the existing iterator extension in `Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift`, beside `next(count:)` and `next(through:)`. The Inbox suite calls `events.nextDelivery(of: id) != nil` (8 calls).
+    - Note: `sendAndAwaitDelivery` waits only for `delivered` and `queued` receipts, so a `sent` receipt does not wait. The flag makes the intent clear at the call.
+  timestamp: 2026-11-18T14:59:17.142192+00:00
+- actor: claude-code
+  id: 01m7qjprm4d9n7dg381gsffpkw
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryInboxTests.swift, Tests/FoundationModelsRouterTests/Helpers/SessionDirectoryEventReads.swift. Focused run (`FoundationModelsRouterTests.RouterSessionDirectorySourceSessionTests|FoundationModelsRouterTests.RouterSessionDirectoryInboxTests`): 40 tests in 2 suites passed. Full `swift test`: 2898 tests in 336 suites, 48 tests in 26 suites, 19 tests in 3 suites passed, 0 failures, no compiler warnings (one SwiftPM build-system line about the mlx-swift_Cmlx.bundle node, not from source).
+    - next: review
+  timestamp: 2026-11-18T14:59:20.324317+00:00
 depends_on:
 - 01M7NQMW44Y418E9RB7HQM8P4M
 position_column: doing
@@ -64,3 +95,13 @@ A user message with a source session reaches a recorded target that is not live,
 - [x] A user message with no source session to a recorded target is still refused with `userNeedsLiveSessionReason`.
 - [x] To an archived target: refused with the reason `archived`.
 - [x] An inbox file of the old format still reads as a session message. #d199
+
+## Review Findings (2026-11-18 08:53)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift:199` `reuse/reuse` — The new send(toRecorded:from:in:) is a near-match of the existing send(to:from:in:) at line 71 that was not extended. Both build the same OutgoingSessionMessage (from: .user(clientID:), text, sourceSession). The new helper differs only in calling directory.send instead of sendAndAwaitDelivery and in taking a ULID target. Parameterizing the await step, or reusing the existing helper, would avoid a parallel copy of the message construction. Generalize the existing send to take the target and an await flag (or a delivery closure), and call it from the recorded-target tests instead of defining send(toRecorded:from:in:).
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectorySourceSessionTests.swift:214` `reuse/reuse` — The new awaitDelivery reimplements the existing awaitDelivery in RouterSessionDirectoryInboxTests instead of sharing it. Both loop over the same AsyncStream<SessionDirectoryEvent>.Iterator and match messageDelivered by id; only the return type differs (SessionMessage? here, Bool there). A fix to the wait logic must then be made in two places and the copies can drift apart. Move one awaitDelivery into a shared test helper (for example beside RouterSessionDirectory+SendAndAwaitDelivery.swift) that returns the delivered SessionMessage?, and have both suites call it; or make the Inbox version return the message and derive its Bool from it.

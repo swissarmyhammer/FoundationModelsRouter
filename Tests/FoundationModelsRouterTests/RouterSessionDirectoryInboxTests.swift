@@ -421,7 +421,7 @@ struct RouterSessionDirectoryInboxTests {
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
-        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        #expect(await events.nextDelivery(of: messageID) != nil)
         let kept = try #require(try await fixture.directory.message(messageID, to: target.id))
         #expect(kept.from == .session(sender.id))
         #expect(kept.chainDepth == RouterSessionDirectory.firstChainDepth)
@@ -445,7 +445,7 @@ struct RouterSessionDirectoryInboxTests {
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
-        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        #expect(await events.nextDelivery(of: messageID) != nil)
         let kept = try #require(try await fixture.directory.message(messageID, to: target.id))
         #expect(kept.from == .user(clientID: Self.clientID))
         #expect(kept.chainDepth == RouterSessionDirectory.firstChainDepth)
@@ -511,7 +511,7 @@ struct RouterSessionDirectoryInboxTests {
         let receipts = try await Self.send(to: target.id, through: fixture.directory)
 
         let messageID = try #require(receipts.first?.messageID)
-        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        #expect(await events.nextDelivery(of: messageID) != nil)
         #expect(try await fixture.directory.message(messageID, to: target.id)?.text == Self.text)
         await fixture.close([target])
     }
@@ -555,7 +555,7 @@ struct RouterSessionDirectoryInboxTests {
 
         let opened = try await fixture.profile.standard.restoreSession(id: id).session
 
-        #expect(await Self.awaitDelivery(of: messageID, reading: &events))
+        #expect(await events.nextDelivery(of: messageID) != nil)
         #expect(await opened.awaitIdle())
         #expect(await opened.transcript.promptTexts.map { $0.contains(Self.text) } == [true])
         #expect(try Self.waitingNames(of: opened).isEmpty)
@@ -596,7 +596,7 @@ struct RouterSessionDirectoryInboxTests {
 
         let id = try Self.writeFile(to: target, chainDepth: Self.fileChainDepth)
 
-        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(await events.nextDelivery(of: id) != nil)
         #expect(await target.awaitIdle())
         #expect(await target.transcript.promptTexts == [Self.text])
         #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.id) == [id])
@@ -617,7 +617,7 @@ struct RouterSessionDirectoryInboxTests {
 
         fixture.directory.register(target, kind: .root, parentID: nil)
 
-        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(await events.nextDelivery(of: id) != nil)
         #expect(await target.awaitIdle())
         #expect(await target.transcript.promptTexts == [Self.text])
         #expect(try Self.waitingNames(of: target).isEmpty)
@@ -640,7 +640,7 @@ struct RouterSessionDirectoryInboxTests {
 
         let id = try Self.writeFile(to: target)
 
-        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(await events.nextDelivery(of: id) != nil)
         #expect(try await fixture.directory.inbox(of: target.id, markRead: false).map(\.id) == [id])
         #expect(try Self.names(in: inbox) == Self.ignoredNames.sorted())
         #expect(Self.rejectedNames(of: target).isEmpty)
@@ -699,7 +699,7 @@ struct RouterSessionDirectoryInboxTests {
         let id = try Self.writeFile(to: target)
 
         #expect(fixture.directory.openInboxWatcherCount == 1)
-        #expect(await Self.awaitDelivery(of: id, reading: &events))
+        #expect(await events.nextDelivery(of: id) != nil)
         fixture.directory.emit(Self.marker)
         let afterwards = await events.next(through: Self.marker)
         #expect(!afterwards.contains { if case .messageDelivered = $0 { true } else { false } })
@@ -758,23 +758,6 @@ struct RouterSessionDirectoryInboxTests {
     }
 
     // MARK: - Helpers of the watcher
-
-    /// Reads the directory events until the delivery of the message `id`.
-    ///
-    /// - Parameters:
-    ///   - id: The id of the message.
-    ///   - events: The iterator of a stream of ``RouterSessionDirectory/events()``
-    ///     that was open before the file came.
-    /// - Returns: `true` when `messageDelivered` of the message came, `false`
-    ///   when the stream ended first.
-    private static func awaitDelivery(
-        of id: MailID, reading events: inout AsyncStream<SessionDirectoryEvent>.Iterator
-    ) async -> Bool {
-        while let event = await events.next() {
-            if case .messageDelivered(let message) = event, message.id == id { return true }
-        }
-        return false
-    }
 
     /// The names of the files in the inbox folder. The `rejected/` folder is
     /// not in the result.

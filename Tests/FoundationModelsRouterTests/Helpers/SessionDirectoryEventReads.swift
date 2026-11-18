@@ -14,6 +14,18 @@ extension AsyncStream.Iterator where Element == SessionDirectoryEvent {
         return events
     }
 
+    /// Reads events until the `messageDelivered` event of the message `id`.
+    /// Open the stream before the delivery, or the event is not in it.
+    ///
+    /// - Parameter id: The id of the message.
+    /// - Returns: The delivered message, or `nil` when the stream ended first.
+    mutating func nextDelivery(of id: MailID) async -> SessionMessage? {
+        while let event = await next() {
+            if case .messageDelivered(let message) = event, message.id == id { return message }
+        }
+        return nil
+    }
+
     /// Reads events up to and including `marker`, and leaves out each
     /// `stateChanged`: the turn that a start mails sends them at times the
     /// test does not control. A stream that ends first gives what it had.

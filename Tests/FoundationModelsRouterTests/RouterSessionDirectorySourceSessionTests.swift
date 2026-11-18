@@ -61,19 +61,23 @@ struct RouterSessionDirectorySourceSessionTests {
     }
 
     /// Sends a user message with ``text`` and the source session `source` to
-    /// `address`, and waits until the directory delivered it.
+    /// `address`. When `awaitingDelivery` is `true`, waits until the
+    /// directory delivered it.
     ///
     /// - Parameters:
     ///   - address: The target of the message.
     ///   - source: The source session of the message.
     ///   - fixture: The fixture of the test.
+    ///   - awaitingDelivery: `true` to wait for the delivery. Use `false` for a
+    ///     recorded target that is not live: no delivery follows that send.
     /// - Returns: The receipts of the send.
     private static func send(
-        to address: SessionAddress, from source: ULID, in fixture: Fixture
+        to address: SessionAddress, from source: ULID, in fixture: Fixture, awaitingDelivery: Bool = true
     ) async throws -> [SessionSendReceipt] {
-        try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(
-                from: .user(clientID: clientID), to: address, text: text, sourceSession: source))
+        let message = OutgoingSessionMessage(
+            from: .user(clientID: clientID), to: address, text: text, sourceSession: source)
+        if awaitingDelivery { return try await fixture.directory.sendAndAwaitDelivery(message) }
+        return try await fixture.directory.send(message)
     }
 
     /// Sends a user message from `source` to the idle live session `target`,
@@ -187,39 +191,6 @@ struct RouterSessionDirectorySourceSessionTests {
 
     // MARK: - Recorded target
 
-    /// Sends a user message with ``text`` and the source session `source` to
-    /// the recorded session `target`, which is not live. No delivery follows
-    /// the send, so the send does not wait.
-    ///
-    /// - Parameters:
-    ///   - target: A recorded session that is not live.
-    ///   - source: The source session of the message.
-    ///   - fixture: The fixture of the test.
-    /// - Returns: The receipts of the send.
-    private static func send(
-        toRecorded target: ULID, from source: ULID, in fixture: Fixture
-    ) async throws -> [SessionSendReceipt] {
-        try await fixture.directory.send(
-            OutgoingSessionMessage(
-                from: .user(clientID: clientID), to: .session(target), text: text, sourceSession: source))
-    }
-
-    /// Reads the directory events until the delivery of the message `id`.
-    ///
-    /// - Parameters:
-    ///   - id: The id of the message.
-    ///   - events: The iterator of a stream of ``RouterSessionDirectory/events()``
-    ///     that was open before the delivery.
-    /// - Returns: The delivered message, or `nil` when the stream ended first.
-    private static func awaitDelivery(
-        of id: MailID, reading events: inout AsyncStream<SessionDirectoryEvent>.Iterator
-    ) async -> SessionMessage? {
-        while let event = await events.next() {
-            if case .messageDelivered(let message) = event, message.id == id { return message }
-        }
-        return nil
-    }
-
     /// The production change that makes this test fail: a send to a recorded
     /// session that refuses a user message with a source session, or that
     /// gives a receipt other than `sent`.
@@ -229,7 +200,7 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let target = try await fixture.recordClosedSession()
 
-        let receipts = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target, outcome: .sent)])
@@ -244,7 +215,7 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let (target, folder) = try await fixture.recordClosedSessionWithFolder()
 
-        _ = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+        _ = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
 
         let files = try SessionInboxFile.pending(in: folder)
         let limit = SessionMessageLimits().maxMessageBytes
@@ -264,12 +235,12 @@ struct RouterSessionDirectorySourceSessionTests {
         let target = try await fixture.recordClosedSession()
         let expected = try await Self.prompt(namingSource: source.id, in: fixture)
         var events = fixture.directory.events().makeAsyncIterator()
-        let receipts = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
         let messageID = try #require(receipts.first?.messageID)
 
         let opened = try await fixture.profile.standard.restoreSession(id: target).session
 
-        #expect(await Self.awaitDelivery(of: messageID, reading: &events) != nil)
+        #expect(await events.nextDelivery(of: messageID) != nil)
         #expect(await opened.awaitIdle())
         #expect(await opened.transcript.promptTexts == [expected])
         await fixture.close([opened, source])
@@ -283,12 +254,12 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let target = try await fixture.recordClosedSession()
         var events = fixture.directory.events().makeAsyncIterator()
-        let receipts = try await Self.send(toRecorded: target, from: source.id, in: fixture)
+        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
         let messageID = try #require(receipts.first?.messageID)
 
         let opened = try await fixture.profile.standard.restoreSession(id: target).session
 
-        let delivered = try #require(await Self.awaitDelivery(of: messageID, reading: &events))
+        let delivered = try #require(await events.nextDelivery(of: messageID))
         #expect(delivered.sourceSession == source.id)
         #expect(delivered.from == .user(clientID: Self.clientID))
         await fixture.close([opened, source])
