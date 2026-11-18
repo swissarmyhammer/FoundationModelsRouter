@@ -1,0 +1,59 @@
+---
+assignees:
+- claude-code
+comments:
+- actor: claude-code
+  id: 01m7qmha1afpgzwkn8r8054wdg
+  text: |-
+    Extras decision (foundationmodelsextras-9e): a new case `SessionDirectoryEvent.messageQueued(SessionMessage)`, Extras task 01M7QMGTGYYBZ80QWHK54DPM0P. Not factsChanged (SessionSummary has no unread count).
+    Rule: a send with the receipt `queued` (working target, ledger) or `sent` (recorded target, inbox) gives `messageQueued` at the send. `messageDelivered` comes later, when the target takes the message. A `delivered` receipt (idle target) gives no `messageQueued`, only `messageDelivered`; this replaces test item 3. A `started` receipt (agent start) also gives no `messageQueued`.
+    Also: add the new case to each exhaustive `switch` on `SessionDirectoryEvent` in Sources and Tests.
+  timestamp: 2026-11-18T15:31:18.698728+00:00
+- actor: claude-code
+  id: 01m7qpv1qn9a1dj6n7jw58qf22
+  text: |-
+    Research: Extras 951149c has `SessionDirectoryEvent.messageQueued`. No exhaustive `switch` on `SessionDirectoryEvent` exists in Router Sources or Tests (the build had no errors), so no switch needed the new case. The sends that give a `queued` or `sent` receipt are: `deliver` (inbox-file path of a session sender to a live durable target, outcome from `deliveryOutcome`), `deliverDirectly` (UI sender or memory-only target, through `hand`) and `sendToRecorded` (`sent`). `startAgent` gives `started` and the inbox scan gives no receipt, so they send no `messageQueued`.
+    Implementation: (1) `Registry.awaitingQueuedEvent` + `sendQueued(_:)`. `hand(...isQueued:)` puts the message there before the mail put, and sends `messageQueued` after `keep` (ledger write). A refused mail removes it with no event (`apply(.cancelledOrLost)`). When the pump takes the mail before the send sends the event, `Registry.sendDelivered` sends `messageQueued` first, so the order is always queued then delivered. `forgetDeliveries` does not touch the map, because the send always removes its entry. (2) `writeInboxFile` returns the `SessionInboxMessage`. `deliver` (outcome `.queued`) and `sendToRecorded` call the new `sendQueued(_:to:)` after the write, before the scan and before the receipt. The `sentAt` of the queued event is the time of the send; the scan gives the delivered message the time of the scan (same id).
+    Tests: new `RouterSessionDirectoryQueuedEventTests` (8 tests). Order is checked with marker events that the test emits after the send returns, and a held turn latch. Idle target order: one `messageDelivered`, no `messageQueued` (rule of the comment, replaces test item 3). 4 tests failed before the change (RED) and pass after.
+  timestamp: 2026-11-18T16:11:35.029057+00:00
+- actor: claude-code
+  id: 01m7qpvd5qgbk4fr26w3rhd1x6
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift (new, 8 tests). `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryQueuedEventTests`: 8 passed (4 failed before the change). Full `swift test`: 2914 tests in 338 suites passed, 48 in 26 passed, 19 in 3 passed; 0 issues; no source warnings.
+    - next: review. Not committed; the push and the sha message to foundationmodelsmultitool-89 and testudoapp-9a come after commit.
+  timestamp: 2026-11-18T16:11:46.743976+00:00
+position_column: doing
+position_ordinal: '80'
+title: Send a directory event when a message goes into the ledger or the inbox before delivery (D199 follow-up)
+---
+## Goal
+
+Multitool shows `unreadCount` of a session. Since 709d82c5 (^jf3j3v5), `messageDelivered` comes only when the target takes the message. Thus no directory event comes when a message goes into the ledger of a working target, or into the inbox file of a recorded target. `unreadCount` changes, but the change feed has no entry until the turn or the next open. Request from TestudoApp (testudoapp-9a), found by Multitool.
+
+## Depends on
+
+FoundationModelsExtras: an event for this case. TestudoApp asked Extras for it: an existing case (for example `factsChanged`) if it fits, else a new case. Do not start before Extras sends the sha. Then update the Extras pin with `swift package --manifest-cache local update FoundationModelsExtras` (first stop a `sourcekit-lsp` whose cwd is this repo).
+
+## Current behavior
+
+`Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift`:
+- `hand(` (~:1560) puts the message on `awaitingDelivery` (~:1606) and writes the ledger (`ledger.record(delivered)`, ~:1734) before the target takes it. No event comes at that time.
+- `writeInboxFile(` (~:1525) writes the inbox file of a recorded target. No event comes until a host opens the target.
+
+## Change
+
+- Send the Extras event at each place that writes the ledger or an inbox file for a message that is not delivered yet: a queued message of a working target, and a stored message of a recorded target.
+- Find all such places (grep `ledger.record` and `writeInboxFile`). Do not miss one.
+- Do not change `messageDelivered`: it still comes one time, when the target takes the message.
+
+## Tests
+
+- [x] A message to a working target gives the new event at the send, and `messageDelivered` only when its turn starts.
+- [x] A message to a recorded target gives the new event at the send, and no `messageDelivered` until a host opens the target.
+- [x] A message to an idle target gives the correct events (the new event if the ledger write comes before the take, and one `messageDelivered`). Write down the order that the test expects.
+- [x] A refused message gives no event.
+
+## After
+
+Push when green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a. #d199

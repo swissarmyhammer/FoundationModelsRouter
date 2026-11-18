@@ -58,7 +58,9 @@ import Synchronization
 /// ROUTER-4) with its chain depth, and sends `messageDelivered` when the
 /// target gets the message (D199 (f)): when its pump takes the mail, before
 /// the first output of that answer, or when an inbox read reads the message
-/// while its mail waits. Each send
+/// while its mail waits. A message that the target does not take at once
+/// (a `queued` or a `sent` receipt) also gives `messageQueued` at the send,
+/// before the send returns. Each send
 /// passes the loop guards of ``SessionMessageLimits`` first (ROUTER-5): the
 /// chain depth, the sends of one turn, the targets of one tag send and the
 /// length of the text. No guard limits the sessions that work at the same
@@ -175,6 +177,18 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// this map as delivered.
         var awaitingDelivery: [MailID: SessionMessage] = [:]
 
+        /// Each message of a `queued` receipt whose `messageQueued` event
+        /// did not go out yet, by the id of the message
+        /// (``RouterSessionDirectory/hand(_:userHeader:to:ledger:isQueued:)``).
+        /// The send puts the message here before it puts the mail in the
+        /// queue of the target, and sends the event when the put is done. A
+        /// refused mail removes the message with no event.
+        ///
+        /// The pump of the target can take the mail before the send sends the
+        /// event. Then ``sendDelivered(_:)`` sends `messageQueued` first, so
+        /// `messageQueued` always comes before `messageDelivered`.
+        var awaitingQueuedEvent: [MailID: SessionMessage] = [:]
+
         /// Applies `fate` to ``awaitingDelivery``: a delivered mail sends the
         /// `messageDelivered` event of its message (``sendDelivered(_:)``),
         /// and a mail that ended with no delivery removes its message with
@@ -187,21 +201,40 @@ public actor RouterSessionDirectory: SessionDirectory {
                 sendDelivered(id)
             case .cancelledOrLost(let id):
                 awaitingDelivery.removeValue(forKey: id)
+                awaitingQueuedEvent.removeValue(forKey: id)
             }
+        }
+
+        /// Removes the message `id` from ``awaitingQueuedEvent``, and sends
+        /// its `messageQueued` event. An id that does not wait changes
+        /// nothing, so each message gives one event at most.
+        ///
+        /// - Parameter id: The id of a message.
+        mutating func sendQueued(_ id: MailID) {
+            guard let queued = awaitingQueuedEvent.removeValue(forKey: id) else { return }
+            fanout.send(.messageQueued(queued))
         }
 
         /// Removes the message `id` from ``awaitingDelivery``, and sends its
         /// `messageDelivered` event. An id that does not wait changes
-        /// nothing, so each message gives one event at most.
+        /// nothing, so each message gives one event at most. A
+        /// `messageQueued` event of the message that did not go out yet goes
+        /// out first (``sendQueued(_:)``).
         ///
         /// - Parameter id: The id of a message.
         mutating func sendDelivered(_ id: MailID) {
             guard let delivered = awaitingDelivery.removeValue(forKey: id) else { return }
+            sendQueued(id)
             fanout.send(.messageDelivered(delivered))
         }
 
         /// Removes each message of ``awaitingDelivery`` to the session `id`,
         /// with no event, when the session leaves the live list.
+        ///
+        /// It does not touch ``awaitingQueuedEvent``: the send that put a
+        /// message there removes it before the send returns, so the
+        /// `messageQueued` event of a `queued` receipt goes out also when the
+        /// target closes during the send.
         ///
         /// - Parameter id: The session id.
         mutating func forgetDeliveries(to id: ULID) {
@@ -1422,7 +1455,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// A message from a user sender (a UI send) takes the direct path
     /// (``deliverDirectly(_:chainDepth:userHeader:to:outcome:)``) to a live session, a
     /// durable one too: the mail goes in the queue of the session and the
-    /// message in the ledger at once (``hand(_:userHeader:to:ledger:)``), so
+    /// message in the ledger at once (``hand(_:userHeader:to:ledger:isQueued:)``), so
     /// the receipt can tell `delivered` from `queued`. A memory-only
     /// session has no folder, so each message to it takes the direct path.
     /// A session on the direct path that closed and takes no more mail is
@@ -1434,6 +1467,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// idle, so the mail starts a turn, else `queued`, because the mail
     /// waits for the end of the turn that runs. A session that left the
     /// directory since the resolve is refused as not live.
+    ///
+    /// A `queued` receipt gives `messageQueued` before the send returns: on
+    /// the inbox path after the write of the file (``sendQueued(_:to:)``),
+    /// and on the direct path after the put
+    /// (``hand(_:userHeader:to:ledger:isQueued:)``). A `delivered` receipt
+    /// gives none.
     ///
     /// - Parameters:
     ///   - message: The message.
@@ -1457,11 +1496,14 @@ public actor RouterSessionDirectory: SessionDirectory {
             return try deliverDirectly(
                 message, chainDepth: chainDepth, userHeader: userHeader, to: session, outcome: outcome)
         }
-        let messageID = try writeInboxFile(message, chainDepth: chainDepth, userHeader: nil, to: folder)
+        let file = try writeInboxFile(message, chainDepth: chainDepth, userHeader: nil, to: folder)
+        if outcome == .queued {
+            sendQueued(file, to: id)
+        }
         if hasNoInboxWatcher(id) {
             scanInbox(of: id)
         }
-        return SessionSendReceipt(messageID: messageID, target: id, outcome: outcome)
+        return SessionSendReceipt(messageID: file.id, target: id, outcome: outcome)
     }
 
     /// Whether the registry holds a durable session that has no inbox
@@ -1479,7 +1521,7 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Delivers `message` to the live session `session` with no inbox file:
     /// puts its mail in the mail queue of the session, and keeps it in the
-    /// ledger (``hand(_:userHeader:to:ledger:)``). This is the path of each message
+    /// ledger (``hand(_:userHeader:to:ledger:isQueued:)``). This is the path of each message
     /// to a memory-only session, which has no inbox folder, and of a message
     /// from a user sender to a live durable session.
     ///
@@ -1501,7 +1543,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         let ledger = try ledger(of: session.id, in: Self.ledgerDirectory(of: session))
         let delivered = Self.delivered(message, chainDepth: chainDepth, to: session.id)
         do {
-            try hand(delivered, userHeader: userHeader, to: session, ledger: ledger)
+            try hand(delivered, userHeader: userHeader, to: session, ledger: ledger, isQueued: outcome == .queued)
         } catch MailRefusal.closed {
             return SessionSendReceipt(target: session.id, outcome: .refused, reason: Self.notLiveReason)
         }
@@ -1519,17 +1561,37 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - userHeader: The header of a user message that names its source
     ///     session, or `nil`.
     ///   - folder: The session folder of the target.
-    /// - Returns: The id of the message, which is also the name of the file.
+    /// - Returns: The message of the file. Its id is also the name of the
+    ///   file.
     /// - Throws: ``SessionInboxFileError`` when the file format refuses the
     ///   message, or the error of the write.
     private func writeInboxFile(
         _ message: OutgoingSessionMessage, chainDepth: Int, userHeader: UserMessageHeader?, to folder: URL
-    ) throws -> MailID {
+    ) throws -> SessionInboxMessage {
         let file = SessionInboxMessage(
             id: MailID(), from: message.from, inReplyTo: message.inReplyTo, chainDepth: chainDepth,
             text: message.text, sourceSession: message.sourceSession, userHeader: userHeader?.line)
         try SessionInboxFile.write(file, to: folder, maxMessageBytes: limits.maxMessageBytes)
-        return file.id
+        return file
+    }
+
+    /// Sends the `messageQueued` event of the inbox file `file` of the
+    /// session `id`: the target did not take the message yet. The send
+    /// calls this after the write of the file and before it returns its
+    /// receipt.
+    ///
+    /// The file of a live target waits for the scan of the inbox, which runs
+    /// on this actor. The send has no suspension point between the write and
+    /// this event, so the event comes before the scan and before the
+    /// `messageDelivered` event of the take. The time of the message in
+    /// the event is the time of the send. The scan gives the message the
+    /// time of the scan (``delivered(_:to:)``).
+    ///
+    /// - Parameters:
+    ///   - file: The message of the inbox file.
+    ///   - id: The session id of the target.
+    private nonisolated func sendQueued(_ file: SessionInboxMessage, to id: ULID) {
+        emit(.messageQueued(Self.delivered(file, to: id)))
     }
 
     /// Puts the mail of `delivered` in the mail queue of `session`, and then
@@ -1544,6 +1606,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// because the pump of the session can take the mail at once. A refused
     /// mail takes it down again, with no event.
     ///
+    /// A message of a `queued` receipt (`isQueued`) also gives the
+    /// `messageQueued` event, after the ledger keeps it and before the send
+    /// returns. The step sets it up before the put too
+    /// (``Registry/awaitingQueuedEvent``), so a pump that takes the mail at
+    /// once sends it before `messageDelivered`. A refused mail gives no
+    /// event.
+    ///
     /// The header of the sender in the mail is built from the live summary
     /// of the sender (``mail(id:carrying:from:inReplyTo:userHeader:)``). A
     /// user message that names its source session gets `userHeader`.
@@ -1555,12 +1624,19 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - session: The live target session of `delivered`.
     ///   - ledger: The ledger of the target. Nothing is kept in it when the
     ///     mail is refused.
+    ///   - isQueued: `true` when the receipt of the send is `queued`, so the
+    ///     step sends `messageQueued`. The default is `false`: a scan of an
+    ///     inbox file and the first mail of a started session give no
+    ///     `messageQueued` here.
     /// - Throws: The refusal of the mail, for example `MailRefusal.closed`
     ///   for a session that takes no more mail.
     private func hand(
         _ delivered: SessionMessage, userHeader: UserMessageHeader?, to session: any RoutedSession,
-        ledger: SessionMessageLedger
+        ledger: SessionMessageLedger, isQueued: Bool = false
     ) throws {
+        if isQueued {
+            state.withLock { $0.awaitingQueuedEvent[delivered.id] = delivered }
+        }
         let isObserved = sendWhenDelivered(delivered, to: session)
         do {
             _ = try session.mail(
@@ -1572,6 +1648,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             throw error
         }
         keep(delivered, in: ledger)
+        state.withLock { $0.sendQueued(delivered.id) }
         if !isObserved {
             emit(.messageDelivered(delivered))
         }
@@ -1650,7 +1727,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The session id of the recorded target.
     /// - Returns: The `sent` receipt, with the id of the message and the
     ///   target: the file is written, and the message is not in a queue. The
-    ///   `messageDelivered` event reports the delivery later. A `refused`
+    ///   send gives `messageQueued` before it returns
+    ///   (``sendQueued(_:to:)``), and the `messageDelivered` event reports
+    ///   the delivery later. A `refused`
     ///   receipt with ``userNeedsLiveSessionReason`` for a user sender with
     ///   no source session, and no file.
     /// - Throws: `SessionDirectoryError.unknownSession(_:)` when no recording
@@ -1665,13 +1744,14 @@ public actor RouterSessionDirectory: SessionDirectory {
         guard let folder = try await recordedFolder(of: id) else {
             throw SessionDirectoryError.unknownSession(id)
         }
-        let messageID = try writeInboxFile(message, chainDepth: chainDepth, userHeader: userHeader, to: folder)
-        return SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)
+        let file = try writeInboxFile(message, chainDepth: chainDepth, userHeader: userHeader, to: folder)
+        sendQueued(file, to: id)
+        return SessionSendReceipt(messageID: file.id, target: id, outcome: .sent)
     }
 
     /// Starts a new root session of the agent through the launcher, and
     /// hands it `message` as its first message
-    /// (``hand(_:userHeader:to:ledger:)``): the ledger of the new session
+    /// (``hand(_:userHeader:to:ledger:isQueued:)``): the ledger of the new session
     /// keeps the message, and `messageDelivered` goes out when the pump of
     /// the session takes it.
     ///
@@ -1748,7 +1828,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// host must not run two live copies of one session.
     ///
     /// A file goes through the same delivery as a send
-    /// (``hand(_:userHeader:to:ledger:)``): its mail goes into the mail queue of the
+    /// (``hand(_:userHeader:to:ledger:isQueued:)``): its mail goes into the mail queue of the
     /// session, the ledger keeps the message with the `chainDepth` of the
     /// file, and `messageDelivered` follows when the pump takes the mail.
     /// Then the file is removed. The
@@ -2816,7 +2896,7 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Gives `event` to each open stream of ``events()``, under the lock of
     /// the registry. ``archive(_:by:)`` sends `archived` through it, and
-    /// ``hand(_:userHeader:to:ledger:)`` sends `messageDelivered` through it
+    /// ``hand(_:userHeader:to:ledger:isQueued:)`` sends `messageDelivered` through it
     /// for a session that reports no fate of its mail. Each other
     /// `messageDelivered` event goes out under the same lock
     /// (``Registry/sendDelivered(_:)``).
