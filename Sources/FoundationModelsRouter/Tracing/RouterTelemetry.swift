@@ -482,6 +482,11 @@ enum RouterTelemetry {
         /// client id, for the audit.
         static let archivedBy = prefix + "session.archived_by"
 
+        /// The session or the UI client that unarchived a session
+        /// (``RouterSessionDirectory/unarchive(_:by:)``): a session id or a
+        /// client id, for the audit.
+        static let unarchivedBy = prefix + "session.unarchived_by"
+
         /// The id of a transcript entry.
         static let entryId = prefix + "entry.id"
 

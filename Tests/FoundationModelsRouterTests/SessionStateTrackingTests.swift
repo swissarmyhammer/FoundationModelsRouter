@@ -370,4 +370,41 @@ struct SessionStateTrackingTests {
         #expect(tracking.state == .archived)
         #expect(tracking.lastSummary == Self.reply)
     }
+
+    /// The production change that makes this test fail: an unarchive that
+    /// leaves the state archived, or that gives a state other than idle.
+    @Test("an unarchive of an archived tracking gives idle")
+    func anUnarchiveGivesIdle() {
+        var tracking = Self.tracking(after: [.workStarted, Self.answered(with: Self.reply)])
+        tracking.archive()
+
+        tracking.unarchive()
+
+        #expect(tracking.state == .idle)
+    }
+
+    /// The production change that makes this test fail: an unarchive that
+    /// keeps the tracking closed to the events, so a later turn reads idle.
+    @Test("after an unarchive the events change the state again")
+    func afterAnUnarchiveTheEventsChangeTheState() {
+        var tracking = Self.tracking(after: [])
+        tracking.archive()
+        tracking.unarchive()
+
+        tracking.apply(event: .workStarted)
+
+        #expect(tracking.state == .working)
+    }
+
+    /// The production change that makes this test fail: an unarchive that
+    /// sets idle on a tracking that is not archived, so a working session
+    /// reads idle while its turn runs.
+    @Test("an unarchive of a tracking that is not archived keeps its state")
+    func anUnarchiveOfATrackingThatIsNotArchivedKeepsItsState() {
+        var tracking = Self.tracking(after: [.workStarted])
+
+        tracking.unarchive()
+
+        #expect(tracking.state == .working)
+    }
 }

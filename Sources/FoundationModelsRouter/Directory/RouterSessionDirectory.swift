@@ -70,9 +70,11 @@ import Synchronization
 /// ``setTitle(_:of:)`` and ``setAdditionalDirectories(to:for:)`` change the
 /// ``SessionRecord`` of a live or recorded session (ROUTER-2, ROUTER-3), and
 /// ``recordedSessions(in:)`` lists the records of a recording root with no
-/// router. ``archive(_:by:)`` ends a live or recorded session (ROUTER-11):
+/// router. ``archive(_:by:)`` hides a live or recorded session (ROUTER-11):
 /// it stops a running turn, takes the session off the live list, writes
-/// `archivedAt` to its `index.md`, and sends `archived`. A root session
+/// `archivedAt` to its `index.md`, and sends `archived`. An archive is not
+/// final (D204): ``unarchive(_:by:)`` removes `archivedAt` again, and the
+/// session is a recorded session that a host can open. A root session
 /// with no title gets a default name from its agent (D199 (b),
 /// ``SessionDefaultTitle``) when it registers, and a recorded root session
 /// with no title gets one when a read finds it. Only ``setTitle(_:of:)``
@@ -576,6 +578,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The state is the tracked work state, or `archived` when the facts of
     /// the session hold `archivedAt`: a live session whose record says it is
     /// archived reads as archived, so the resolver refuses a message to it.
+    /// ``SessionSummary/archivedAt`` is the `archivedAt` of the facts.
     /// The pin and the last use come from `usage` (``use(usageStore:)``).
     ///
     /// - Parameters:
@@ -605,7 +608,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             lastSummary: entry.tracking.lastSummary,
             isLive: true,
             pinnedAt: usage?.pinnedAt,
-            lastUsedAt: usage?.lastUsedAt)
+            lastUsedAt: usage?.lastUsedAt,
+            archivedAt: facts.archivedAt)
     }
 
     // MARK: - Query
@@ -2731,10 +2735,11 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     // MARK: - Archive
 
-    /// See `SessionDirectory.archive(_:by:)` (ROUTER-11, D68): ends the
-    /// session `id`. An archived session takes no message: the resolver
-    /// refuses each send to it with the reason "archived", and the directory
-    /// never restores it.
+    /// See `SessionDirectory.archive(_:by:)` (ROUTER-11, D68, D204): hides
+    /// the session `id`. An archive is not final:
+    /// ``unarchive(_:by:)`` is the inverse. While the session is archived,
+    /// it takes no message: the resolver refuses each send to it with the
+    /// reason "archived", and the directory does not restore it.
     ///
     /// - A live session stops its work (``archiveLive(_:by:)``): its running
     ///   turn ends cancelled and its waiting mail is dropped, not delivered.
@@ -2888,6 +2893,125 @@ public actor RouterSessionDirectory: SessionDirectory {
         Self.logSession(
             .notice, "a session was archived", session: id,
             metadata: [RouterTelemetry.LogMetadataKey.archivedBy: "\(archiver)"])
+    }
+
+    // MARK: - Unarchive
+
+    /// See `SessionDirectory.unarchive(_:by:)` (D204): removes `archivedAt`
+    /// from the record of the session `id`. This is the inverse of
+    /// ``archive(_:by:)``.
+    ///
+    /// - A recorded session that is not live loses `archivedAt` from the
+    ///   `index.md` of its folder (``unarchiveRecorded(_:by:)``). It stays
+    ///   recorded and not live, with the state `idle`, and the launcher gets
+    ///   no call. A host opens it as it opens each recorded session, and the
+    ///   session then reads its inbox.
+    /// - A live session whose record holds `archivedAt` (a client opened it
+    ///   with `session/load`) loses `archivedAt` from its record and its
+    ///   `index.md`, and its tracked state is not archived now
+    ///   (``unarchiveLive(_:by:)``). It stays live.
+    /// - Then `stateChanged` with the new state, then `unarchived`, go out.
+    /// - A session that is not archived gives its summary, writes nothing,
+    ///   and sends no event.
+    ///
+    /// `unarchiver` goes to the log with the session id, for the audit. It
+    /// is not a fact of the session. Router puts no limit on an unarchive.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - unarchiver: The session or the user that unarchives it.
+    /// - Returns: The summary of the session after the call.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the id, or when the live session is not a
+    ///   ``RoutedSessionActor``; the error of the recording roots of the
+    ///   host; or the error of the read or the save of the `index.md` of a
+    ///   recorded session.
+    @discardableResult
+    public func unarchive(_ id: ULID, by unarchiver: SessionMessageSender) async throws -> SessionSummary {
+        guard let session = session(id: id) else {
+            return try await unarchiveRecorded(id, by: unarchiver)
+        }
+        return try unarchiveLive(session, by: unarchiver)
+    }
+
+    /// Unarchives a live session whose record holds `archivedAt`:
+    /// ``RoutedSessionActor/updateRecord(_:)`` removes `archivedAt` and the
+    /// session saves its `index.md`, the tracked state is not archived now
+    /// (``takeUnarchived(_:)``), and ``sendUnarchived(_:by:)`` sends the
+    /// events. A record with no `archivedAt` is not written, and no event
+    /// goes out.
+    ///
+    /// - Parameters:
+    ///   - session: The live session.
+    ///   - unarchiver: The session or the user that unarchives it.
+    /// - Returns: The live summary of the session after the call.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session is
+    ///   not a ``RoutedSessionActor``, or when it left the directory.
+    private func unarchiveLive(_ session: any RoutedSession, by unarchiver: SessionMessageSender) throws
+        -> SessionSummary
+    {
+        guard session.facts.archivedAt != nil else { return try requireLiveSummary(of: session.id) }
+        let actor = try Self.recordOwner(of: session)
+        actor.updateRecord { $0.facts.archivedAt = nil }
+        let summary = try takeUnarchived(session.id)
+        sendUnarchived(summary, by: unarchiver)
+        return summary
+    }
+
+    /// Unarchives a recorded session that is not live: removes `archivedAt`
+    /// from the `index.md` of its folder (``changeRecordedRecord(of:_:)``)
+    /// and sends the events (``sendUnarchived(_:by:)``). A record with no
+    /// `archivedAt` is not written, and no event goes out.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - unarchiver: The session or the user that unarchives it.
+    /// - Returns: The recorded summary of the session after the call.
+    /// - Throws: What ``changeRecordedRecord(of:_:)`` throws.
+    private func unarchiveRecorded(_ id: ULID, by unarchiver: SessionMessageSender) async throws -> SessionSummary {
+        let (summary, changed) = try await changeRecordedRecord(of: id) { $0.facts.archivedAt = nil }
+        if changed {
+            sendUnarchived(summary, by: unarchiver)
+        }
+        return summary
+    }
+
+    /// Gives the live session `id` a tracked state that is not archived,
+    /// under the lock of the registry (``SessionStateTracking/unarchive()``),
+    /// and stamps the time of the change of its entry.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The live summary of the session, changed now.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session left
+    ///   the directory.
+    private nonisolated func takeUnarchived(_ id: ULID) throws -> SessionSummary {
+        try state.withLock { registry in
+            guard var entry = registry.entries[id], let session = entry.session else {
+                throw SessionDirectoryError.unknownSession(id)
+            }
+            entry.tracking.unarchive()
+            entry.updatedAt = Date()
+            registry.entries[id] = entry
+            return Self.summary(of: session, in: entry, usage: registry.usage(of: id))
+        }
+    }
+
+    /// Sends `stateChanged` with the state of `summary` and then
+    /// `unarchived` for the session of `summary`, and writes the audit record
+    /// of the unarchive to the log: the session id and `unarchiver`. The
+    /// `stateChanged` carries the last summary only with `idle`, as the
+    /// `SessionDirectory` port documents.
+    ///
+    /// - Parameters:
+    ///   - summary: The summary of the unarchived session.
+    ///   - unarchiver: The session or the user that unarchived it.
+    private nonisolated func sendUnarchived(_ summary: SessionSummary, by unarchiver: SessionMessageSender) {
+        let lastSummary = summary.state == .idle ? summary.lastSummary : nil
+        emit(.stateChanged(id: summary.id, state: summary.state, lastSummary: lastSummary))
+        emit(.unarchived(id: summary.id))
+        Self.logSession(
+            .notice, "a session was unarchived", session: summary.id,
+            metadata: [RouterTelemetry.LogMetadataKey.unarchivedBy: "\(unarchiver)"])
     }
 
     // MARK: - Events

@@ -1,0 +1,1 @@
+{"id":"01M7QV7KRRBFJCBC32BEW1DBSM","timestamp":"2026-11-18T17:28:21.016697Z","op":"create","item_id":"01M7QV7KRRQW5VW4RPQAPKFDT5","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 0075ca\n+tag_name: optional\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 0075ca\n-tag_name: optional\n","transaction_id":null}

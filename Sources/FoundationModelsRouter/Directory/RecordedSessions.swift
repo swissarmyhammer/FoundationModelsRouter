@@ -94,7 +94,8 @@ struct RecordedSessions {
     /// The summary of a recorded session, made from its record alone.
     ///
     /// - Parameter record: The record of the session.
-    /// - Returns: The summary. It is never live.
+    /// - Returns: The summary. It is never live. Its
+    ///   ``SessionSummary/archivedAt`` is the `archivedAt` of the facts.
     static func summary(of record: SessionRecord) -> SessionSummary {
         let facts = record.facts
         let spawn = record.agentSpawn
@@ -112,7 +113,8 @@ struct RecordedSessions {
             origin: facts.origin ?? RouterSessionDirectory.defaultOrigin,
             createdAt: record.sessionId.timestamp,
             updatedAt: record.updatedAt,
-            isLive: false)
+            isLive: false,
+            archivedAt: facts.archivedAt)
     }
 
     /// How deep a listing looks for the folder of a session under a root.

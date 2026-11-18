@@ -79,7 +79,7 @@ struct RouterSessionDirectoryQueuedEventTests {
             .queued(message.id)
         case .messageDelivered(let message):
             .delivered(message.id)
-        case .started, .factsChanged, .stateChanged, .archived:
+        case .started, .factsChanged, .stateChanged, .archived, .unarchived:
             nil
         }
     }

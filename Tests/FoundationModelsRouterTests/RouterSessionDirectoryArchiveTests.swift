@@ -110,7 +110,7 @@ struct RouterSessionDirectoryArchiveTests {
 
     /// Makes the two routers, with a held backend for the recording router
     /// and a launcher for the reading router.
-    private static func makeFixture() async throws -> Fixture {
+    static func makeFixture() async throws -> Fixture {
         let latch = RunLatch()
         let backend = Backend(script: [firstCall: .hold(latch)])
         let pair = try await SessionDirectoryRouterPair.make(

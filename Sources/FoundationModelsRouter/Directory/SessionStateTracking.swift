@@ -24,7 +24,8 @@ import FoundationModelsExtras
 ///   works, else `idle`.
 /// - ``SessionEvent/answered(_:)`` keeps the reply, cut to
 ///   ``lastSummaryLength`` characters, as ``lastSummary``. The state stays.
-/// - ``archive()`` gives `archived`, and no later event changes it.
+/// - ``archive()`` gives `archived`, and no later event changes it until
+///   ``unarchive()`` gives `idle` again.
 ///
 /// A `stateChanged` carries ``idleSummary``: the last summary with idle, and
 /// `nil` with any other state, as the `SessionDirectory` port documents.
@@ -64,7 +65,7 @@ struct SessionStateTracking: Sendable {
     private var openQuestions: Set<ULID> = []
 
     /// Applies one event of the session. After ``archive()`` no event
-    /// changes the tracking.
+    /// changes the tracking, until ``unarchive()``.
     ///
     /// - Parameter event: The event.
     mutating func apply(event: SessionEvent) {
@@ -112,6 +113,19 @@ struct SessionStateTracking: Sendable {
     /// stays. The last summary stays as it was.
     mutating func archive() {
         state = .archived
+    }
+
+    /// Unarchives the session (D204). This is the inverse of ``archive()``:
+    /// the state of an archived tracking becomes `idle`, and the next events
+    /// change it again. The tracking read no event while it was archived, so
+    /// the work and the open questions from before the archive are not
+    /// correct now, and the call clears them. A tracking that is not
+    /// archived stays as it is. The last summary stays as it was.
+    mutating func unarchive() {
+        guard state == .archived else { return }
+        state = .idle
+        hasWork = false
+        openQuestions = []
     }
 
     /// Closes the question `id`. With no question open after that, the state
