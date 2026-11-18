@@ -103,7 +103,7 @@ struct RecordedSessions {
             agentID: facts.agentID ?? RouterSessionDirectory.defaultAgentID,
             agentName: facts.agentName,
             workingDirectory: record.workingDirectory,
-            title: facts.title.flatMap { $0.isEmpty ? nil : $0 },
+            title: SessionDefaultTitle.given(facts.title),
             tags: facts.tags,
             kind: spawn == nil ? .root : .subagent,
             state: facts.archivedAt == nil ? .idle : .archived,

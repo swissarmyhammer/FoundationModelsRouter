@@ -359,9 +359,20 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// not wait, thus a session that only a root of the host holds does not
     /// count.
     ///
+    /// A session that cannot change its facts gets no default name. The
+    /// failure is logged, and the registration goes on.
+    ///
     /// - Parameter session: The root session to register.
     private nonisolated func giveDefaultTitle(to session: any RoutedSession) {
-        guard SessionDefaultTitle.isMissing(in: session.facts), let actor = try? Self.recordOwner(of: session) else {
+        guard SessionDefaultTitle.isMissing(in: session.facts) else { return }
+        let actor: RoutedSessionActor
+        do {
+            actor = try Self.recordOwner(of: session)
+        } catch {
+            RouterTelemetry.makeLogger(.sessionDirectory).error(
+                "a new session did not get its default name because it cannot change its facts; it registers with no title",
+                metadata: RouterTelemetry.errorMetadata(error).merging(
+                    [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"], uniquingKeysWith: { first, _ in first }))
             return
         }
         let title = SessionDefaultTitle.make(
@@ -379,8 +390,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameter session: A root session that registers.
     /// - Returns: The recorded summaries, in no order.
     private nonisolated func recordedSummaries(besides session: any RoutedSession) -> [SessionSummary] {
-        let storeRoots = currentUsageStore()?.usages().values.compactMap(\.recordingRoot) ?? []
-        let roots = [session.recordingDirectory.deletingLastPathComponent()] + storeRoots
+        let roots = [session.recordingDirectory.deletingLastPathComponent()] + usageStoreRecordingRoots()
         do {
             return try RecordedSessions(roots: roots).summaries()
         } catch {
@@ -461,7 +471,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             agentID: facts.agentID ?? defaultAgentID,
             agentName: facts.agentName,
             workingDirectory: session.workingDirectory,
-            title: facts.title,
+            title: SessionDefaultTitle.given(facts.title),
             tags: facts.tags,
             kind: entry.kind,
             state: facts.archivedAt == nil ? entry.tracking.state : .archived,
@@ -741,10 +751,21 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: The error of the recording roots of the host.
     private func allRecordingRoots() async throws -> [URL] {
         let hostRoots = try await recordingRoots()
-        let storeRoots = (currentUsageStore()?.usages().values.compactMap(\.recordingRoot) ?? [])
-            .map(Self.comparablePath(of:))
+        let storeRoots = usageStoreRecordingRoots().map(Self.comparablePath(of:))
         let addedRoots = Set(storeRoots).subtracting(hostRoots.map(Self.comparablePath(of:)))
         return hostRoots + addedRoots.sorted().map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    /// The recording root of each usage in the usage store
+    /// (``SessionUsage/recordingRoot``), with no `await`. A usage with no
+    /// recording root gives none. ``allRecordingRoots()`` and
+    /// ``recordedSummaries(besides:)`` read the roots of the store through
+    /// this call.
+    ///
+    /// - Returns: The recording roots of the usage store, in no order. With
+    ///   no usage store, none.
+    private nonisolated func usageStoreRecordingRoots() -> [URL] {
+        currentUsageStore()?.usages().values.compactMap(\.recordingRoot) ?? []
     }
 
     // MARK: - Usage store
@@ -1036,14 +1057,15 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// of `facts`. The session is new, thus its title is the title of the
     /// request or the default name that its registration gave
     /// (``giveDefaultTitle(to:)``), and a request with a title keeps its
-    /// title. A request with no title keeps the default name.
+    /// title. A request with no title, or with an empty title, keeps the
+    /// default name (``SessionDefaultTitle/given(_:)``).
     ///
     /// - Parameters:
     ///   - facts: The facts of a session.
     ///   - request: The start request of the session.
     private static func complete(facts: inout SessionFacts, with request: SessionStartRequest) {
         facts.tags.formUnion(request.tags)
-        facts.title = request.title ?? facts.title
+        facts.title = SessionDefaultTitle.given(request.title) ?? facts.title
         facts.startedBy = facts.startedBy ?? request.startedBy
         facts.origin = facts.origin ?? request.origin
     }

@@ -278,6 +278,22 @@ import Testing
         await launcher.closeSessions()
     }
 
+    /// The production change that makes this test fail: a start that puts
+    /// the empty title of its request in place of the default name.
+    @Test func aStartWithAnEmptyTitleGivesTheDefaultName() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { fixture.remove() }
+        let launcher = await fixture.useLauncher()
+
+        let summary = try await fixture.liveDirectory.start(
+            SessionStartRequest(
+                agentID: Self.agentID, workingDirectory: fixture.folder(Self.projectFolder),
+                firstMessage: Self.firstMessage, title: "", origin: .tool))
+
+        #expect(summary.title == Self.baseName)
+        await launcher.closeSessions()
+    }
+
     /// The production change that makes this test fail: `startAgent`, which
     /// starts the session of an agent address, with no default name.
     @Test func anAgentAddressStartsASessionWithTheDefaultName() async throws {

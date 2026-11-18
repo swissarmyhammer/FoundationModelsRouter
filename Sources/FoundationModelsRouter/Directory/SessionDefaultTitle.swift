@@ -16,7 +16,17 @@ enum SessionDefaultTitle {
     /// - Parameter facts: The facts of a session.
     /// - Returns: `true` when the session has no title.
     static func isMissing(in facts: SessionFacts) -> Bool {
-        facts.title?.isEmpty ?? true
+        given(facts.title) == nil
+    }
+
+    /// A title as a session holds it: an empty title counts as no title.
+    /// The facts of a new session, a live summary and a recorded summary
+    /// read a title through this call, thus they agree on an empty title.
+    ///
+    /// - Parameter title: A title, or `nil`.
+    /// - Returns: `title`, or `nil` when `title` is `nil` or empty.
+    static func given(_ title: String?) -> String? {
+        title.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The default name of the session `id`.
