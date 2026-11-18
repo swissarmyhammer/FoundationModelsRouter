@@ -73,6 +73,45 @@ struct RouterSessionDirectoryArchiveTests {
             return (session, prompt)
         }
 
+        /// Sends one message with `text` from `sender` to the session `id`
+        /// through `directory`. The archive suites use this one send.
+        ///
+        /// - Parameters:
+        ///   - text: The text of the message.
+        ///   - id: The session id of the target.
+        ///   - sender: The session or the user that sends the message.
+        ///   - source: The source session of a user message, or `nil`.
+        ///   - directory: The directory to send through.
+        /// - Returns: The receipts of the send.
+        /// - Throws: The error of the send.
+        static func send(
+            _ text: String, to id: ULID, from sender: SessionMessageSender, sourceSession source: ULID? = nil,
+            through directory: RouterSessionDirectory
+        ) async throws -> [SessionSendReceipt] {
+            try await directory.send(
+                OutgoingSessionMessage(from: sender, to: .session(id), text: text, sourceSession: source))
+        }
+
+        /// Sends one message through ``liveDirectory`` as
+        /// ``send(_:to:from:sourceSession:through:)`` does, and gives the id
+        /// of the message.
+        ///
+        /// - Parameters:
+        ///   - text: The text of the message.
+        ///   - id: The session id of the target.
+        ///   - sender: The session or the user that sends the message.
+        ///   - source: The source session of a user message, or `nil`.
+        /// - Returns: The id of the message.
+        /// - Throws: The error of the send, or the `#require` failure when
+        ///   the receipt has no message id.
+        func sendMessage(
+            _ text: String, to id: ULID, from sender: SessionMessageSender, sourceSession source: ULID? = nil
+        ) async throws -> MailID {
+            let receipts = try await Self.send(
+                text, to: id, from: sender, sourceSession: source, through: liveDirectory)
+            return try #require(receipts.first?.messageID)
+        }
+
         /// Opens the latch, closes `session`, and removes the folders of
         /// the test.
         ///
@@ -129,18 +168,6 @@ struct RouterSessionDirectoryArchiveTests {
         try #require(try SessionIndexFile.read(in: session.recordingDirectory))
     }
 
-    /// Sends one UI message to the session `id` through `directory`.
-    ///
-    /// - Parameters:
-    ///   - id: The session id of the target.
-    ///   - directory: The directory to send through.
-    /// - Returns: The receipts of the send.
-    private static func send(to id: ULID, through directory: RouterSessionDirectory) async throws
-        -> [SessionSendReceipt]
-    {
-        try await directory.send(OutgoingSessionMessage(from: archiver, to: .session(id), text: text))
-    }
-
     /// The `sent` receipt of a message to the archived session `id`, with
     /// the note "archived".
     ///
@@ -148,7 +175,7 @@ struct RouterSessionDirectoryArchiveTests {
     ///   - messageID: The id of the message.
     ///   - id: The session id.
     /// - Returns: The receipt.
-    private static func archivedReceipt(of messageID: MailID?, to id: ULID) -> SessionSendReceipt {
+    private static func archivedReceipt(of messageID: MailID, to id: ULID) -> SessionSendReceipt {
         SessionSendReceipt(messageID: messageID, target: id, outcome: .sent, reason: RouterSessionDirectory.archivedNote)
     }
 
@@ -199,8 +226,7 @@ struct RouterSessionDirectoryArchiveTests {
     func aWaitingMessageOfAnArchivedSessionLeavesItsQueue() async throws {
         let fixture = try await Self.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
-        let receipts = try await Self.send(to: session.id, through: fixture.liveDirectory)
-        let waiting = try #require(receipts.first?.messageID)
+        let waiting = try await fixture.sendMessage(Self.text, to: session.id, from: Self.archiver)
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.archiver)
 
@@ -233,7 +259,8 @@ struct RouterSessionDirectoryArchiveTests {
 
     /// The production change that makes this test fail: a live summary
     /// that reads its state from the work tracking alone, so a send
-    /// delivers to a live session whose record holds `archivedAt`.
+    /// delivers to a live session whose record holds `archivedAt`, or a send
+    /// that writes no file in the `inbox/` folder of the session.
     @Test("a live session whose record holds archivedAt reads archived, and a send to it goes to its inbox")
     func aLiveSessionWithArchivedAtGetsTheMessageInItsInbox() async throws {
         let fixture = try await Self.makeFixture()
@@ -241,9 +268,12 @@ struct RouterSessionDirectoryArchiveTests {
         let actor = try #require(session as? RoutedSessionActor)
         actor.updateFacts { $0.archivedAt = Date() }
 
-        let receipts = try await Self.send(to: session.id, through: fixture.liveDirectory)
+        let receipts = try await Fixture.send(
+            Self.text, to: session.id, from: Self.archiver, through: fixture.liveDirectory)
 
-        #expect(receipts == [Self.archivedReceipt(of: receipts.first?.messageID, to: session.id)])
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [Self.archivedReceipt(of: messageID, to: session.id)])
+        #expect(try RouterSessionDirectoryArchiveMailTests.inboxFile(messageID, of: session).text == Self.text)
         #expect(try await fixture.liveDirectory.summary(of: session.id)?.state == .archived)
         #expect(await session.pendingMessages().isEmpty)
         await fixture.close(session)
@@ -354,18 +384,20 @@ struct RouterSessionDirectoryArchiveTests {
     }
 
     /// The production change that makes this test fail: a send after a
-    /// restart that refuses the archived session, or restores it through
-    /// the launcher.
+    /// restart that refuses the archived session, writes no file in its
+    /// `inbox/` folder, or restores it through the launcher.
     @Test("after a restart a send to an archived session is sent with the note archived, and the launcher gets no call")
     func afterARestartASendIsSentAndNotRestored() async throws {
         let fixture = try await Self.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.archiver)
 
-        let receipts = try await Self.send(to: session.id, through: fixture.readingDirectory)
+        let receipts = try await Fixture.send(
+            Self.text, to: session.id, from: Self.archiver, through: fixture.readingDirectory)
 
-        #expect(receipts == [Self.archivedReceipt(of: receipts.first?.messageID, to: session.id)])
-        #expect(receipts.first?.messageID != nil)
+        let messageID = try #require(receipts.first?.messageID)
+        #expect(receipts == [Self.archivedReceipt(of: messageID, to: session.id)])
+        #expect(try RouterSessionDirectoryArchiveMailTests.inboxFile(messageID, of: session).text == Self.text)
         #expect(fixture.launcher.restoredIDs.isEmpty)
         #expect(fixture.launcher.requests.isEmpty)
         await fixture.close(session)

@@ -47,24 +47,6 @@ struct RouterSessionDirectoryArchiveMailTests {
 
     // MARK: - Helpers
 
-    /// Sends one UI message to the session `id` through the live directory
-    /// of `fixture`, and gives the id of the message.
-    ///
-    /// - Parameters:
-    ///   - id: The session id of the target.
-    ///   - source: The source session of the message, or `nil`.
-    ///   - fixture: The fixture of the test.
-    /// - Returns: The id of the message.
-    /// - Throws: The error of the send, or the `#require` failure when the
-    ///   receipt has no message id.
-    private static func sendMessage(to id: ULID, from source: ULID? = nil, in fixture: Fixture) async throws
-        -> MailID
-    {
-        let receipts = try await fixture.liveDirectory.send(
-            OutgoingSessionMessage(from: user, to: .session(id), text: text, sourceSession: source))
-        return try #require(receipts.first?.messageID)
-    }
-
     /// The message of the inbox file `id` of `session`.
     ///
     /// - Parameters:
@@ -145,7 +127,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     func aQueuedMessageStaysAsAnInboxFile() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
-        let messageID = try await Self.sendMessage(to: session.id, in: fixture)
+        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
 
@@ -163,7 +145,8 @@ struct RouterSessionDirectoryArchiveMailTests {
         let (session, _) = try await fixture.startHeldTurn()
         let source = await fixture.makeLiveRoot()
         let sourceSummary = try await fixture.liveDirectory.summary(of: source.id)
-        let messageID = try await Self.sendMessage(to: session.id, from: source.id, in: fixture)
+        let messageID = try await fixture.sendMessage(
+            Self.text, to: session.id, from: Self.user, sourceSession: source.id)
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
 
@@ -181,7 +164,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     func anArchiveSendsNoDeliveryForAKeptMessage() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
-        _ = try await Self.sendMessage(to: session.id, in: fixture)
+        _ = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
@@ -198,7 +181,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     func theQueuedMessageReachesTheSessionWhenItOpens() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let (session, prompt) = try await fixture.startHeldTurn()
-        let messageID = try await Self.sendMessage(to: session.id, in: fixture)
+        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
         let unread = try await fixture.readingDirectory.inbox(of: session.id, markRead: false)
 
@@ -297,8 +280,8 @@ struct RouterSessionDirectoryArchiveMailTests {
         let session = profile.standard.makeSession(configuration: SessionConfiguration())
         _ = try session.send("first question")
         try await backend.changes.wait(untilAtLeast: 1) { backend.prompts.count }
-        let receipts = try await router.sessionDirectory.send(
-            OutgoingSessionMessage(from: Self.user, to: .session(session.id), text: Self.text))
+        let receipts = try await Fixture.send(
+            Self.text, to: session.id, from: Self.user, through: router.sessionDirectory)
         let waiting = try #require(receipts.first?.messageID)
         var events = router.sessionDirectory.events().makeAsyncIterator()
 

@@ -24,6 +24,38 @@ comments:
     - full suite, run 3 (no code change after run 2; I ran it because run 2 gave no result): 2969 tests in 343 suites passed, plus 49 and 19; exit 0. This does NOT prove the suite is green: the run-1 timeouts and the run-2 hang are not deterministic. New task ^szyxq9z records them.
     - next: /review
   timestamp: 2026-11-18T23:49:48.109828+00:00
+- actor: claude-code
+  id: 01m7rhajzs2ns0hhtnvv22v0h6
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (1e1fd9ac): 2 findings (2 confirmed, 1 refuted). Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:238, Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchivedTargetTests.swift:75.
+    - additional checks (pass): (1) Each wait in the new tests ends. `next(through:)` stops at a marker that the test sends after the iterator exists. `awaitIdle()` returns when no turn starts, and the latch is open. (2) The scan guard does not stop delivery after an unarchive. `updateRecord` writes `archivedAt = nil` under the record lock before `scanInbox(of:)` reads `session.facts`. (3) `messageQueued` comes once for an archived target. `sendToRecorded` sends it one time. The scan after the unarchive calls `hand(...)` with `isQueued` false, so it sends no second event.
+    - next: implement the 2 findings, then review again.
+  timestamp: 2026-11-18T23:54:27.193300+00:00
+- actor: claude-code
+  id: 01m7rhb2yp3pc333xh2yynz63e
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — SessionAddressResolution.swift, RouterSessionDirectory.swift, 7 test files
+    - test: red then unclear — run 1: 2 own failures (fixed) and 15 unrelated 60 s wait timeouts; run 2: hung; run 3 (no change): 2969 tests passed. The unrelated tests are on ^szyxq9z.
+    - commit: 1e1fd9ac
+    - review: findings — RouterSessionDirectoryArchiveTests.swift:238 (the inbox file is not read back), RouterSessionDirectoryArchivedTargetTests.swift:75 (copied send helper)
+  timestamp: 2026-11-18T23:54:43.542528+00:00
+- actor: claude-code
+  id: 01m7rhjz3h5ndwppb405dag79d
+  text: |-
+    Review findings, implement pass 2.
+    - Finding 1: the live archivedAt test and the restart test now read the inbox file back with `RouterSessionDirectoryArchiveMailTests.inboxFile(_:of:)` and check the text. `archivedReceipt(of:to:)` takes a `MailID` (not optional), because both tests now get the id with `#require`. The check can fail: with the `SessionInboxFile.write` line in `writeInboxFile` removed for a moment, both tests failed with "no such file" (NSCocoaErrorDomain 260), and the 9 other tests of the suite passed. I put the line back (file copy from a backup; `git diff Sources/` is empty).
+    - Finding 2: one send on `RouterSessionDirectoryArchiveTests.Fixture`: `static send(_:to:from:sourceSession:through:)` (sender and directory are parameters) and `sendMessage(_:to:from:sourceSession:)` (through liveDirectory, gives the message id). The private send helpers of the archive suite, the archived-target suite and the archive-mail suite (also a copy) are removed, and all three suites call the Fixture helpers. The memory-only test of the archive-mail suite also uses `Fixture.send`.
+    - Filtered run: Archive, ArchivedTarget, ArchiveMail suites: 27 tests in 3 suites passed.
+  timestamp: 2026-11-18T23:59:01.745770+00:00
+- actor: claude-code
+  id: 01m7rhkvt5ncnwdk27b8zsmb9p
+  text: |-
+    ### implement — changed
+    - evidence: Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift, RouterSessionDirectoryArchivedTargetTests.swift, RouterSessionDirectoryArchiveMailTests.swift. Check 1 shown to fail: with the `SessionInboxFile.write` line in `writeInboxFile` removed, the 2 changed tests failed ("no such file"); line put back, `git diff Sources/` empty. Filtered: 27 tests in 3 suites passed. Full `swift test` (one run): 2969 tests in 343 suites passed, plus 49 and 19; exit 0; no warnings.
+    - next: /review
+  timestamp: 2026-11-18T23:59:31.141091+00:00
 depends_on:
 - 01M7QTQCW62ZNN9CXFTVE3TV8Y
 position_column: doing
@@ -60,3 +92,13 @@ The resolver refuses a session id of an archived session with the reason `archiv
 ## After
 
 Push when green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a. #d204
+
+## Review Findings (2026-11-18 17:50)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 9 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:238` `completeness/inverse-operation-coverage` — The test named 'a live session whose record holds archivedAt reads archived, and a send to it goes to its inbox' never checks the inbox. It asserts the receipt, the archived state and that pendingMessages is empty, but it does not read the inbox file back. The write side of the new behaviour is therefore unproven: a send could return the archivedNote receipt and still write no file, and the test would pass. After the send, read the file back with the message id (`SessionInboxFile.url(of:in:)` and `SessionInboxFile.read`, or the existing inbox-file helper) and assert that it exists and holds the sent text. Apply the same check to the restart test.
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchivedTargetTests.swift:75` `reuse/reuse` — The new private helper `send(to:in:)` repeats the send helper of the archive suite. That helper sends the same kind of UI message to a session id. It is private to another suite, so this suite cannot call it, and the two copies can drift apart. Move the send helper to a shared place, such as a static on `RouterSessionDirectoryArchiveTests.Fixture` or an internal helper, and take the sender as a parameter. Then both suites call one copy. If the sender difference is kept, pass it in rather than writing a parallel copy.
