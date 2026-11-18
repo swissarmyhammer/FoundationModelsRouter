@@ -58,10 +58,26 @@ comments:
     - evidence: Tests/FoundationModelsRouterPublicSurfaceTests/ProfileFitEstimatePublicSurfaceTests.swift, Tests/FoundationModelsRouterTests/Helpers/QwenRepoFixtures.swift, Tests/FoundationModelsRouterTests/Helpers/GGUFHeaderFixtures.swift. Full `swift test` (one run): 2927 tests in 340 suites, 49 in 26, 19 in 3, all passed, exit 0, no compiler warning (only the SwiftPM "missing creator for mutated node" build note of the mlx bundle, which was there before).
     - next: /review
   timestamp: 2026-11-18T17:00:37.755802+00:00
+- actor: claude-code
+  id: 01m7qsr4jz4t5bdrwpz1g1mrjy
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (2c950acb) gives 0 findings (3 files reviewed, 7 attempts, 1 refuted, 0 confirmed). All 14 items of "## Review Findings (2026-11-18 10:51)" are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-11-18T17:02:25.375498+00:00
+- actor: claude-code
+  id: 01m7qsrgpf9mphsde3f0m7t2sd
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — ProfileFitEstimatePublicSurfaceTests.swift (test shown to fail with a minimum of 1), QwenRepoFixtures.swift, GGUFHeaderFixtures.swift (named constants)
+    - test: green — swift test in the implement step, 2927 tests in 340 suites (+49, +19), 0 failures
+    - commit: 2c950acb
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-18T17:02:37.775266+00:00
 depends_on:
 - 01M7QMG7QQEHJX5BW7VGFNSTE0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffb080
 title: 'ROUTER-13: a profile fits only with a window of 32K tokens or more, and the fit estimate gives the window (D203)'
 ---
 ## Goal
