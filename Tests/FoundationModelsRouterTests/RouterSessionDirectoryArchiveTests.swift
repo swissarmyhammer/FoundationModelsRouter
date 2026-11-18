@@ -190,9 +190,10 @@ struct RouterSessionDirectoryArchiveTests {
 
     /// The production change that makes this test fail: an archive that
     /// leaves the waiting mail of the session in its queue, so the mail
-    /// starts a turn when the stopped turn ends.
-    @Test("a message that waits for the turn of an archived session is dropped, not delivered")
-    func aWaitingMessageOfAnArchivedSessionIsDropped() async throws {
+    /// starts a turn when the stopped turn ends. The inbox keeps the message
+    /// (``RouterSessionDirectoryArchiveMailTests``).
+    @Test("a message that waits for the turn of an archived session leaves its queue, not delivered")
+    func aWaitingMessageOfAnArchivedSessionLeavesItsQueue() async throws {
         let fixture = try await Self.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
         let receipts = try await Self.send(to: session.id, through: fixture.liveDirectory)

@@ -71,10 +71,12 @@ import Synchronization
 /// ``SessionRecord`` of a live or recorded session (ROUTER-2, ROUTER-3), and
 /// ``recordedSessions(in:)`` lists the records of a recording root with no
 /// router. ``archive(_:by:)`` hides a live or recorded session (ROUTER-11):
-/// it stops a running turn, takes the session off the live list, writes
-/// `archivedAt` to its `index.md`, and sends `archived`. An archive is not
-/// final (D204): ``unarchive(_:by:)`` removes `archivedAt` again, and the
-/// session is a recorded session that a host can open. A root session
+/// it stops a running turn, keeps each message that waits in the queue of
+/// the session as an unread message of its inbox, takes the session off the
+/// live list, writes `archivedAt` to its `index.md`, and sends `archived`.
+/// An archive is not final (D204): ``unarchive(_:by:)`` removes `archivedAt`
+/// again, and the session is a recorded session that a host can open. The
+/// session then takes the messages of its inbox. A root session
 /// with no title gets a default name from its agent (D199 (b),
 /// ``SessionDefaultTitle``) when it registers, and a recorded root session
 /// with no title gets one when a read finds it. Only ``setTitle(_:of:)``
@@ -162,6 +164,19 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
     }
 
+    /// A message whose mail waits in the queue of its target for the
+    /// delivery (``Registry/awaitingDelivery``), with the header line that
+    /// starts its prompt. An archive writes both to the inbox file of the
+    /// message when it keeps the message (D204).
+    struct AwaitedDelivery {
+        /// The delivered message, as the ledger of its target keeps it.
+        let message: SessionMessage
+
+        /// The header of a user message that names its source session
+        /// (``UserMessageHeader``), or `nil`.
+        let userHeader: UserMessageHeader?
+    }
+
     /// What the directory keeps under its one lock: the live registry and
     /// the open event streams. One lock keeps both, so an event that a change
     /// of the registry sends reaches each stream in the order of the changes.
@@ -174,10 +189,16 @@ public actor RouterSessionDirectory: SessionDirectory {
 
         /// Each message whose mail waits in the queue of its target for the
         /// delivery, by the id of the message
-        /// (``RouterSessionDirectory/sendWhenDelivered(_:to:)``). The
-        /// `messageDelivered` event of the message goes out when it leaves
-        /// this map as delivered.
-        var awaitingDelivery: [MailID: SessionMessage] = [:]
+        /// (``RouterSessionDirectory/sendWhenDelivered(_:userHeader:to:)``).
+        /// The `messageDelivered` event of the message goes out when it
+        /// leaves this map as delivered.
+        var awaitingDelivery: [MailID: AwaitedDelivery] = [:]
+
+        /// Each session that an archive stops now, with each message whose
+        /// mail the stop took out of the queue of the session with no
+        /// delivery (``apply(_:)``). The archive keeps these messages in the
+        /// inbox of the session (``takeKeptMail(of:)``, D204).
+        var keptMail: [ULID: [AwaitedDelivery]] = [:]
 
         /// Each message of a `queued` receipt whose `messageQueued` event
         /// did not go out yet, by the id of the message
@@ -198,7 +219,8 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// Applies `fate` to ``awaitingDelivery``: a delivered mail sends the
         /// `messageDelivered` event of its message (``sendDelivered(_:)``),
         /// and a mail that ended with no delivery removes its message with
-        /// no event.
+        /// no event. When an archive stops the target, that message goes to
+        /// ``keptMail``.
         ///
         /// It does not remove a message from ``awaitingQueuedEvent``. The
         /// target reports the fate of its mail on its own executor, so a
@@ -212,8 +234,32 @@ public actor RouterSessionDirectory: SessionDirectory {
             case .delivered(let id):
                 sendDelivered(id)
             case .cancelledOrLost(let id):
-                awaitingDelivery.removeValue(forKey: id)
+                guard let awaited = awaitingDelivery.removeValue(forKey: id) else { return }
+                keptMail[awaited.message.to]?.append(awaited)
             }
+        }
+
+        /// Starts to keep the mail of the session `id` that ends with no
+        /// delivery (``keptMail``): an archive of the session begins.
+        ///
+        /// - Parameter id: The session id.
+        mutating func startKeepingMail(of id: ULID) {
+            keptMail[id] = []
+        }
+
+        /// Ends the keep of the mail of the session `id`, and takes each
+        /// message to it whose mail ended with no delivery since
+        /// ``startKeepingMail(of:)``, and each message to it whose mail still
+        /// waits for its delivery. These messages leave ``awaitingDelivery``
+        /// with no event.
+        ///
+        /// - Parameter id: The session id.
+        /// - Returns: The kept messages.
+        mutating func takeKeptMail(of id: ULID) -> [AwaitedDelivery] {
+            let kept = keptMail[id] ?? []
+            let waiting = awaitingDelivery.values.filter { $0.message.to == id }
+            forgetDeliveries(to: id)
+            return kept + waiting
         }
 
         /// Removes the message `id` from ``awaitingDelivery`` and from
@@ -247,11 +293,12 @@ public actor RouterSessionDirectory: SessionDirectory {
         mutating func sendDelivered(_ id: MailID) {
             guard let delivered = awaitingDelivery.removeValue(forKey: id) else { return }
             sendQueued(id)
-            fanout.send(.messageDelivered(delivered))
+            fanout.send(.messageDelivered(delivered.message))
         }
 
         /// Removes each message of ``awaitingDelivery`` to the session `id`,
-        /// with no event, when the session leaves the live list.
+        /// with no event, when the session leaves the live list, and ends
+        /// the keep of its mail (``keptMail``).
         ///
         /// It does not touch ``awaitingQueuedEvent``: only the send that put a
         /// message there removes it, before the send returns. It sends the
@@ -262,7 +309,8 @@ public actor RouterSessionDirectory: SessionDirectory {
         ///
         /// - Parameter id: The session id.
         mutating func forgetDeliveries(to id: ULID) {
-            awaitingDelivery = awaitingDelivery.filter { $0.value.to != id }
+            awaitingDelivery = awaitingDelivery.filter { $0.value.message.to != id }
+            keptMail[id] = nil
         }
 
         /// The ids of the sessions that this process saw suspended
@@ -1345,7 +1393,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``SessionMessageLedger``) with its chain depth when its mail goes in
     /// the queue. Its one `messageDelivered` event (D199 (f)) comes when the
     /// target gets the message: when the pump of the target takes the mail,
-    /// before the first output of that answer (``sendWhenDelivered(_:to:)``).
+    /// before the first output of that answer (``sendWhenDelivered(_:userHeader:to:)``).
     /// Thus a message to an idle target gives its event when its turn
     /// starts, and a message to a working target when the turn ends. A
     /// message that ``inbox(of:markRead:)`` reads while its mail waits gives
@@ -1669,7 +1717,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// the directory runs between the mail and the ledger.
     ///
     /// The `messageDelivered` event of `delivered` waits for the delivery
-    /// (``sendWhenDelivered(_:to:)``): the step sets it up before the put,
+    /// (``sendWhenDelivered(_:userHeader:to:)``): the step sets it up before the put,
     /// because the pump of the session can take the mail at once. A refused
     /// mail takes it down again, with no event.
     ///
@@ -1706,7 +1754,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         if isQueued {
             state.withLock { $0.awaitingQueuedEvent[delivered.id] = delivered }
         }
-        let isObserved = sendWhenDelivered(delivered, to: session)
+        let isObserved = sendWhenDelivered(delivered, userHeader: userHeader, to: session)
         do {
             _ = try session.mail(
                 mail(
@@ -1737,10 +1785,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - Parameters:
     ///   - delivered: The message to deliver.
+    ///   - userHeader: The header of a user message that names its source
+    ///     session, or `nil`. An archive keeps it with the message.
     ///   - session: The live target of `delivered`.
     /// - Returns: `true` when the event waits for the delivery, `false` when
     ///   the caller sends it after the put.
-    private nonisolated func sendWhenDelivered(_ delivered: SessionMessage, to session: any RoutedSession) -> Bool {
+    private nonisolated func sendWhenDelivered(
+        _ delivered: SessionMessage, userHeader: UserMessageHeader?, to session: any RoutedSession
+    ) -> Bool {
         guard session is RoutedSessionActor else {
             assertionFailure("a live session reports no fate of its mail")
             Self.logSession(
@@ -1749,7 +1801,9 @@ public actor RouterSessionDirectory: SessionDirectory {
                 session: session.id)
             return false
         }
-        state.withLock { $0.awaitingDelivery[delivered.id] = delivered }
+        state.withLock {
+            $0.awaitingDelivery[delivered.id] = AwaitedDelivery(message: delivered, userHeader: userHeader)
+        }
         return true
     }
 
@@ -1905,9 +1959,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// - A file that does not parse moves to `inbox/rejected/`, and the scan
     ///   goes on with the next file.
-    /// - A file whose id the ledger holds already is removed with no second
-    ///   delivery. This is the state after a crash between the ledger write
-    ///   and the removal of the file.
+    /// - A file whose id the ledger holds already, with no kept mark of an
+    ///   archive, is removed with no second delivery. This is the state
+    ///   after a crash between the ledger write and the removal of the file.
+    ///   A kept message that a read marked read is removed too.
     /// - A file whose id the queue or an open answer of the session holds,
     ///   and the ledger does not (`MailRefusal.duplicateID`), is removed and
     ///   logged as a warning, and the scan goes on with the next file. The
@@ -1922,9 +1977,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// no other scan or send runs between the check of the ledger and
     /// ``keep(_:in:)``. Two scans thus deliver one file one time.
     ///
+    /// The scan delivers a file when the ledger has no message with its id,
+    /// or when an archive kept the message there and no read marked it read
+    /// (``SessionMessageLedger/awaitsDelivery(of:)``, D204). A session that
+    /// an archive stops now is not scanned (``isArchiving(_:)``): its files
+    /// stay in `inbox/`, so no mail goes into its queue after the stop.
+    ///
     /// - Parameter id: The session id.
     func scanInbox(of id: ULID) {
-        guard let session = session(id: id), let folder = Self.ledgerDirectory(of: session) else { return }
+        guard let session = session(id: id), !isArchiving(id), let folder = Self.ledgerDirectory(of: session) else {
+            return
+        }
         let files: [URL]
         do {
             files = try SessionInboxFile.pending(in: folder)
@@ -1958,7 +2021,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
         do {
             let ledger = try ledger(of: session.id, in: folder)
-            if ledger.message(message.id) == nil {
+            if ledger.awaitsDelivery(of: message.id) {
                 try hand(
                     Self.delivered(message, to: session.id), userHeader: userHeader(of: message), to: session,
                     ledger: ledger)
@@ -2783,10 +2846,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// reason "archived", and the directory does not restore it.
     ///
     /// - A live session stops its work (``archiveLive(_:by:)``): its running
-    ///   turn ends cancelled and its waiting mail is dropped, not delivered.
-    ///   Its `index.md` gets `archivedAt`, it leaves the live list and
-    ///   closes, and the directory sends `stateChanged` with `archived` and
-    ///   then `archived`.
+    ///   turn ends cancelled. Each message that waits in its queue leaves the
+    ///   queue with no delivery and no `messageDelivered`, and stays an
+    ///   unread message of its inbox: a file in its `inbox/` folder. The
+    ///   files of the `inbox/` folder stay. Its `index.md` gets `archivedAt`,
+    ///   it leaves the live list and closes, and the directory sends
+    ///   `stateChanged` with `archived` and then `archived`.
     /// - A recorded session that is not live gets `archivedAt` in the
     ///   `index.md` of its folder, and the same two events
     ///   (``archiveRecorded(_:by:)``). The launcher gets no call.
@@ -2817,17 +2882,22 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// `archivedAt` come with no suspension between them, so a message that
     /// a send sends after the call began is refused as archived.
     ///
-    /// 1. ``scanInbox(of:)`` puts each file that waits in the `inbox/` folder
-    ///    in the mail queue, because a send to a durable session is a file
-    ///    that the watcher has not scanned yet. Then
-    ///    ``RoutedSession/cancelAll()`` stops the running turn, as a cancel
-    ///    does, and drops each waiting mail, also the mail of a message
-    ///    that waits for the end of the turn.
+    /// An archive keeps the mail (D204):
+    ///
+    /// 1. The directory starts to keep the mail of the session
+    ///    (``Registry/startKeepingMail(of:)``), and no scan of its inbox
+    ///    runs from now on (``isArchiving(_:)``): the files of its `inbox/`
+    ///    folder stay there. Then ``RoutedSession/cancelAll()`` stops the
+    ///    running turn, as a cancel does, and takes each waiting mail out of
+    ///    the queue, also the mail of a message that waits for the end of
+    ///    the turn. Each such mail ends with no delivery, so the directory
+    ///    keeps its message and sends no `messageDelivered`.
     /// 2. ``RoutedSessionActor/updateRecord(_:)`` writes `archivedAt`, and
     ///    the session saves its `index.md`.
     /// 3. The call waits for the end of the cancel (``awaitEnd(of:in:)``).
     /// 4. The session leaves the live list with its work state `archived`
-    ///    (``takeArchived(_:)``), and closes.
+    ///    (``takeArchived(_:)``), and the kept messages go to its inbox
+    ///    (``keepInInbox(_:of:)``). Then the session closes.
     /// 5. `stateChanged` with `archived`, then `archived`, go out.
     ///
     /// - Parameters:
@@ -2842,12 +2912,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     {
         guard session.facts.archivedAt == nil else { return try requireLiveSummary(of: session.id) }
         let actor = try Self.recordOwner(of: session)
-        scanInbox(of: session.id)
+        state.withLock { $0.startKeepingMail(of: session.id) }
         let stop = session.cancelAll()
         let archivedAt = MillisecondDate.rounded(Date())
         actor.updateRecord { $0.facts.archivedAt = archivedAt }
         await Self.awaitEnd(of: stop, in: session)
-        let summary = try takeArchived(session.id)
+        let (summary, kept) = try takeArchived(session.id)
+        keepInInbox(kept, of: session)
         await session.close()
         sendArchived(session.id, by: archiver)
         return summary
@@ -2899,19 +2970,96 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// of the registry: its entry leaves, the task that follows its state
     /// ends, and its work state becomes `archived`
     /// (``SessionStateTracking/archive()``), so no later event of the
-    /// session changes it. Each message to it that waits for its delivery
-    /// gives no event (``Registry/forgetDeliveries(to:)``).
+    /// session changes it. The keep of its mail ends: each message to it
+    /// whose mail the archive took out of its queue, and each message to it
+    /// that still waits for its delivery, leaves with no event
+    /// (``Registry/takeKeptMail(of:)``).
     ///
     /// - Parameter id: The session id.
-    /// - Returns: The summary of the archived session, not live, changed now.
+    /// - Returns: The summary of the archived session, not live, changed
+    ///   now, and the kept messages.
     /// - Throws: `SessionDirectoryError.unknownSession` when the session left
-    ///   the directory.
-    private nonisolated func takeArchived(_ id: ULID) throws -> SessionSummary {
-        try changeLiveEntry(of: id) { registry, entry in
+    ///   the directory. Its unregistration then ended the keep of its mail.
+    private nonisolated func takeArchived(_ id: ULID) throws -> (summary: SessionSummary, kept: [AwaitedDelivery]) {
+        var kept: [AwaitedDelivery] = []
+        let summary = try changeLiveEntry(of: id) { registry, entry in
             registry.entries[id] = nil
             entry.cancelFeeds()
-            registry.forgetDeliveries(to: id)
+            kept = registry.takeKeptMail(of: id)
             entry.tracking.archive()
+        }
+        return (summary, kept)
+    }
+
+    /// Whether an archive of the session `id` stops it now
+    /// (``Registry/keptMail``): from the start of the archive of a live
+    /// session until it leaves the live list.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: `true` while the archive keeps the mail of the session.
+    private nonisolated func isArchiving(_ id: ULID) -> Bool {
+        state.withLock { $0.keptMail[id] != nil }
+    }
+
+    /// Keeps each message of `kept` as an unread message of the inbox of the
+    /// archived durable session `session` (D204). The ledger of the session
+    /// marks the message kept (``SessionMessageLedger/markKept(_:)``), and
+    /// the message goes back to a file in its `inbox/` folder, with the same
+    /// id (``writeKeptFile(_:to:session:)``). The ledger already holds the
+    /// message as unread, so ``inbox(of:markRead:)`` reads it. When a host
+    /// opens the session after an unarchive, the scan of its inbox delivers
+    /// the file, and `messageDelivered` comes then.
+    ///
+    /// A memory-only session has no `inbox/` folder, and it cannot open
+    /// again after its archive. Its kept messages get no file: their mail
+    /// ended cancelled, and no `messageDelivered` ever comes for them.
+    ///
+    /// The mark comes before the file, so a crash between the two leaves an
+    /// unread message with no file, never a file that the scan removes as
+    /// delivered. A failure of the ledger or of a file is logged, and the
+    /// message stays unread in the ledger with no file.
+    ///
+    /// - Parameters:
+    ///   - kept: The kept messages of the session.
+    ///   - session: The archived session.
+    private func keepInInbox(_ kept: [AwaitedDelivery], of session: any RoutedSession) {
+        guard !kept.isEmpty, let folder = Self.ledgerDirectory(of: session) else { return }
+        var ledger: SessionMessageLedger
+        do {
+            ledger = try self.ledger(of: session.id, in: folder)
+        } catch {
+            logInboxFailure(
+                "the ledger of an archived session did not read; its kept messages get no inbox file", error,
+                session: session.id, file: nil)
+            return
+        }
+        for awaited in kept {
+            ledger.markKept(awaited.message.id)
+            writeKeptFile(awaited, to: folder, session: session.id)
+        }
+        ledgers[session.id] = ledger
+    }
+
+    /// Writes the kept message `awaited` as a file in the `inbox/` folder of
+    /// a session folder, with the id, the sender (with its client id), the
+    /// reply id, the chain depth and the source session of the message, and
+    /// the header line of its prompt. A write that fails is logged.
+    ///
+    /// - Parameters:
+    ///   - awaited: The kept message.
+    ///   - folder: The session folder.
+    ///   - id: The session id.
+    private func writeKeptFile(_ awaited: AwaitedDelivery, to folder: URL, session id: ULID) {
+        let message = awaited.message
+        let file = SessionInboxMessage(
+            id: message.id, from: message.from, inReplyTo: message.inReplyTo, chainDepth: message.chainDepth,
+            text: message.text, sourceSession: message.sourceSession, userHeader: awaited.userHeader?.line)
+        do {
+            try SessionInboxFile.write(file, to: folder, maxMessageBytes: limits.maxMessageBytes)
+        } catch {
+            logInboxFailure(
+                "a kept message of an archived session did not write to the inbox; it stays unread in the ledger",
+                error, session: id, file: SessionInboxFile.url(of: message.id, in: folder))
         }
     }
 

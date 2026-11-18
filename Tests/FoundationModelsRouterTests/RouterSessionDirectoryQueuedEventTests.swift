@@ -109,7 +109,8 @@ struct RouterSessionDirectoryQueuedEventTests {
     ///   - registry: The registry.
     private static func wait(_ message: SessionMessage, in registry: inout RouterSessionDirectory.Registry) {
         registry.awaitingQueuedEvent[message.id] = message
-        registry.awaitingDelivery[message.id] = message
+        registry.awaitingDelivery[message.id] = RouterSessionDirectory.AwaitedDelivery(
+            message: message, userHeader: nil)
     }
 
     /// A UI message with ``text`` to a new session id.

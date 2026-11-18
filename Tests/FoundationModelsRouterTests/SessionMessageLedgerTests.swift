@@ -159,12 +159,90 @@ import Testing
 
     // MARK: - Lookup
 
+    /// The production change that makes this test fail: a scan rule that
+    /// delivers no file whose id the ledger does not hold.
+    @Test func anUnknownIdAwaitsADelivery() throws {
+        let ledger = try SessionMessageLedger.load(from: nil)
+
+        #expect(ledger.awaitsDelivery(of: MailID()))
+    }
+
     /// A lookup of an id the ledger does not hold gives `nil`.
     @Test func aLookupOfAnUnknownIdGivesNil() throws {
         var ledger = try SessionMessageLedger.load(from: nil)
         ledger.record(Self.message("first"))
 
         #expect(ledger.message(MailID()) == nil)
+    }
+
+    // MARK: - Kept in the inbox (D204)
+
+    /// The production change that makes this test fail: a scan rule that
+    /// reads only the presence of the id, so the file that an archive keeps
+    /// is removed with no delivery.
+    @Test func aKeptMessageAwaitsADeliveryAfterANewLoad() throws {
+        let directory = RouterTestFixtures.makeTempDir(prefix: "SessionMessageLedgerTests")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = Self.message("kept")
+        var ledger = try SessionMessageLedger.load(from: directory)
+        ledger.record(kept)
+
+        ledger.markKept(kept.id)
+
+        #expect(try SessionMessageLedger.load(from: directory).awaitsDelivery(of: kept.id))
+    }
+
+    /// The production change that makes this test fail: a rule that
+    /// delivers each file whose id the ledger holds, so a file that a crash
+    /// left after its delivery is delivered a second time.
+    @Test func aDeliveredMessageDoesNotAwaitADelivery() throws {
+        var ledger = try SessionMessageLedger.load(from: nil)
+        let delivered = Self.message("delivered")
+
+        ledger.record(delivered)
+
+        #expect(!ledger.awaitsDelivery(of: delivered.id))
+    }
+
+    /// The production change that makes this test fail: a kept message that
+    /// a read marked read, and that the scan still delivers.
+    @Test func aReadKeptMessageDoesNotAwaitADelivery() throws {
+        var ledger = try SessionMessageLedger.load(from: nil)
+        let kept = Self.message("kept")
+        ledger.record(kept)
+        ledger.markKept(kept.id)
+
+        ledger.markRead([kept.id])
+
+        #expect(!ledger.awaitsDelivery(of: kept.id))
+    }
+
+    /// The production change that makes this test fail: a second delivery
+    /// of a kept message that adds a second message with the same id.
+    @Test func aSecondDeliveryOfAKeptMessageReplacesIt() throws {
+        let directory = RouterTestFixtures.makeTempDir(prefix: "SessionMessageLedgerTests")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = Self.message("kept")
+        var ledger = try SessionMessageLedger.load(from: directory)
+        ledger.record(kept)
+        ledger.markKept(kept.id)
+
+        ledger.record(kept)
+
+        #expect(try SessionMessageLedger.load(from: directory).unread == [kept])
+    }
+
+    /// The production change that makes this test fail: a second delivery
+    /// that leaves the kept mark, so a later scan delivers the message again.
+    @Test func aSecondDeliveryOfAKeptMessageEndsTheMark() throws {
+        var ledger = try SessionMessageLedger.load(from: nil)
+        let kept = Self.message("kept")
+        ledger.record(kept)
+        ledger.markKept(kept.id)
+
+        ledger.record(kept)
+
+        #expect(!ledger.awaitsDelivery(of: kept.id))
     }
 
     // MARK: - Damage

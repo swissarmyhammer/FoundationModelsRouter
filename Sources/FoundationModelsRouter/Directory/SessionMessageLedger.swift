@@ -4,7 +4,8 @@ import Logging
 
 /// The record of the messages that ``RouterSessionDirectory`` delivered to
 /// one session (ROUTER-4): each ``SessionMessage`` with the sender, the
-/// `inReplyTo`, the chain depth and the read flag.
+/// `inReplyTo`, the chain depth and the read flag, and the kept mark of each
+/// message whose mail an archive took back to the `inbox/` folder (D204).
 ///
 /// `Mail` has only an id, a sender and a body, and ``MailSender/user`` holds
 /// no client id, so the ledger, not the mail, keeps what the message adds. The
@@ -14,7 +15,8 @@ import Logging
 /// A durable session keeps its ledger in `messages.jsonl` in its recording
 /// directory, so its inbox outlives a restore. The file is append-only and
 /// goes through the Extras `JSONLFile` (``JSONLAppend``): one line for each
-/// delivered message, and one later line for each read mark. A write is best
+/// delivered message, and one later line for each read mark and each kept
+/// mark. A write is best
 /// effort, as each JSONL sink of the module is
 /// (``JSONLAppend/appendDroppingFailure(_:to:through:logger:failureMessage:failureMetadata:)``):
 /// a failure is logged and the line dropped. A memory-only session writes
@@ -30,6 +32,12 @@ struct SessionMessageLedger: Sendable {
 
         /// The session read the message with this id.
         case read(id: MailID)
+
+        /// An archive took the mail of the message with this id out of the
+        /// queue of the session, with no delivery, and wrote the message as
+        /// a file in the `inbox/` folder of the session (D204). The scan of
+        /// the inbox delivers the file again (``awaitsDelivery(of:)``).
+        case kept(id: MailID)
     }
 
     /// `date` at the precision a line of the ledger keeps: the ISO 8601 date
@@ -47,6 +55,10 @@ struct SessionMessageLedger: Sendable {
     /// The messages to the session, in the order of their delivery, each with
     /// its read flag.
     private var messages: [SessionMessage]
+
+    /// The ids of the messages that an archive kept in the `inbox/` folder
+    /// and that no later delivery took (``markKept(_:)``).
+    private var keptIDs: Set<MailID> = []
 
     /// The recording directory that holds `messages.jsonl`, or `nil` for a
     /// memory-only ledger.
@@ -99,11 +111,40 @@ struct SessionMessageLedger: Sendable {
         messages.first { $0.id == id }
     }
 
-    /// Records a delivered message, and appends its line to the file.
+    /// Whether the scan of the `inbox/` folder delivers the file of the
+    /// message `id`: the ledger holds no message with the id, or an archive
+    /// kept the message and no read marked it read. A file of a message that
+    /// the ledger holds with no kept mark is the state after a crash between
+    /// the ledger write and the removal of the file, so the scan removes it
+    /// with no second delivery. A read mark withdraws a kept message, as it
+    /// withdraws the mail that waits in a queue.
+    ///
+    /// - Parameter id: The id of the message of an inbox file.
+    /// - Returns: `true` when the scan delivers the file.
+    func awaitsDelivery(of id: MailID) -> Bool {
+        guard let message = message(id) else { return true }
+        return keptIDs.contains(id) && !message.isRead
+    }
+
+    /// Records a delivered message, and appends its line to the file. A
+    /// message with the id of a message that the ledger holds replaces it,
+    /// and ends its kept mark: the scan of the inbox delivered the file that
+    /// an archive kept.
     ///
     /// - Parameter message: The delivered message.
     mutating func record(_ message: SessionMessage) {
         write(.delivered(message: message))
+    }
+
+    /// Marks the message `id` kept in the `inbox/` folder by an archive, and
+    /// appends its line to the file.
+    ///
+    /// - Parameter id: The id of the message. An id the ledger does not
+    ///   hold, and the id of a message that is read or kept already, change
+    ///   nothing and write no line.
+    mutating func markKept(_ id: MailID) {
+        guard message(id)?.isRead == false, !keptIDs.contains(id) else { return }
+        write(.kept(id: id))
     }
 
     /// Marks messages read, and appends one line to the file for each.
@@ -132,18 +173,35 @@ struct SessionMessageLedger: Sendable {
             failureMetadata: [RouterTelemetry.LogMetadataKey.filePath: "\(file.path)"])
     }
 
-    /// Applies `line` to the messages: a delivery adds its message, and a
-    /// read mark sets the read flag of its message.
+    /// Applies `line` to the messages: a delivery adds its message, or
+    /// replaces the message with its id and ends its kept mark; a read mark
+    /// sets the read flag of its message; a kept mark marks its message kept.
     ///
     /// - Parameter line: A line of the ledger.
     private mutating func apply(_ line: Line) {
         switch line {
         case .delivered(let message):
-            messages.append(message)
+            add(message)
         case .read(let id):
             guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
             messages[index].isRead = true
+        case .kept(let id):
+            guard message(id) != nil else { return }
+            keptIDs.insert(id)
         }
+    }
+
+    /// Adds `message` at the end of the messages, or puts it in the place of
+    /// the message with its id, and ends the kept mark of the id.
+    ///
+    /// - Parameter message: A delivered message.
+    private mutating func add(_ message: SessionMessage) {
+        keptIDs.remove(message.id)
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else {
+            messages.append(message)
+            return
+        }
+        messages[index] = message
     }
 
     /// The file of a durable ledger, or `nil` for a memory-only ledger.

@@ -1,10 +1,39 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7qx1959mjed7hfmprqfsaka
+  text: |-
+    Research (implement):
+    - The ledger (`messages.jsonl`) keeps each directory message as delivered and unread when its mail goes in the queue. The pump take does not mark it read. So a kept message is already unread in `inbox(of:)`. The gap: the scan of `inbox/` removes a file whose id the ledger holds, with no delivery (crash rule). A file with the same id thus needs a ledger mark. Plan: a new ledger line `kept(id:)`; the scan delivers a file when the ledger has no message with the id, or the message is kept and not read. A second `delivered` line of the same id replaces the message and clears the mark.
+    - The waiting mail is read with no change to the session actor: `cancelAll()` reports `MailFate.cancelledOrLost` for each waiting mail before `signalDone`. While a session archives, `Registry.apply(_:)` moves such a message from `awaitingDelivery` to a kept list instead of a drop. `takeArchived` takes the kept list and the rest of `awaitingDelivery` of the session. `awaitingDelivery` must also hold the user header line, so its value becomes a small struct.
+    - `archiveLive` no longer calls `scanInbox(of:)`: the files of `inbox/` stay as they are. A watcher scan during the archive skips the session (else a mail put after the cancel signal could start an answer).
+    - Memory-only session: no folder, so no inbox file; it cannot open again after the archive. Its waiting mail ends cancelled, with no `messageDelivered` (decision, to document and test).
+    - Reference: Extras `InMemorySessionDirectoryState.archive` sets `isQueued = false` on the deliveries, no `messageDelivered`.
+  timestamp: 2026-11-18T17:59:50.697851+00:00
+- actor: claude-code
+  id: 01m7qxxmafdx2qa0eeaknecybx
+  text: |-
+    Implementation landed (not committed).
+    - `SessionMessageLedger`: new line `kept(id:)`, `markKept(_:)`, `awaitsDelivery(of:)`. A second `delivered` line of a kept id replaces the message and ends the mark. A read kept message is not delivered again (a read mark withdraws it, as it withdraws mail in a queue).
+    - `RouterSessionDirectory`: `Registry.awaitingDelivery` now holds `AwaitedDelivery` (message + user header). New `Registry.keptMail`, `startKeepingMail(of:)`, `takeKeptMail(of:)`; `apply(.cancelledOrLost)` moves a message of an archiving session to `keptMail`. `archiveLive` no longer calls `scanInbox(of:)`; `scanInbox` skips a session while it archives (`isArchiving`). `takeArchived` returns the kept messages; `keepInInbox(_:of:)` marks each one kept in the ledger first, then writes `inbox/<id>.md` with sender, client id, reply id, chain depth, source session and header line. No change to the session actor code.
+    - Decision, memory-only session: no `inbox/` folder and it cannot open again after the archive, so its waiting mail ends cancelled with no file and no `messageDelivered`. Documented on `keepInInbox` and tested.
+    - Fixture note: the reading router of `SessionDirectoryRouterPair` has another router id, so its launcher cannot restore a session of the recording router (`TranscriptTreeError.sessionNotFound`). The reopen tests use a `FakeSessionLauncher` over `recordingProfile` and the live directory; the inbox read goes through the reading directory (disk).
+    - Renamed `aWaitingMessageOfAnArchivedSessionIsDropped` to `aWaitingMessageOfAnArchivedSessionLeavesItsQueue` (its name said "dropped").
+    - Two tests passed at once at RED (no `messageDelivered` at the archive; memory-only ends cancelled): the old code also gave no event. They guard the new code.
+  timestamp: 2026-11-18T18:15:19.631284+00:00
+- actor: claude-code
+  id: 01m7qxxq3exc6nxfp06tkg1nrb
+  text: |-
+    ### implement — changed
+    - evidence: 6 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionMessageLedger.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift (new, 8 tests), Tests/FoundationModelsRouterTests/SessionMessageLedgerTests.swift (+6 tests), Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift (rename), Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift (AwaitedDelivery). Full `swift test`: 2959 tests in 342 suites passed, 49 in 26 passed, 19 in 3 passed; 0 failures; 0 warnings on a forced rebuild of the changed files.
+    - next: /review
+  timestamp: 2026-11-18T18:15:22.478326+00:00
 depends_on:
 - 01M7QTQCW62ZNN9CXFTVE3TV8Y
-position_column: todo
-position_ordinal: '8180'
+position_column: doing
+position_ordinal: '80'
 title: An archive keeps the waiting mail as unread inbox messages (D204)
 ---
 ## Goal
@@ -31,9 +60,9 @@ FoundationModelsExtras (the D204 change, see the unarchive task). The dependency
 
 ## Tests
 
-- [ ] Live session with a running turn and one queued message: archive, then unarchive, then restore with the launcher. The turn ended cancelled, and the queued message is in the inbox as unread and reaches the session when it opens.
-- [ ] Inbox files that wait at the archive stay, and reach the session when it opens after an unarchive.
-- [ ] No `messageDelivered` at the archive for a kept message.
+- [x] Live session with a running turn and one queued message: archive, then unarchive, then restore with the launcher. The turn ended cancelled, and the queued message is in the inbox as unread and reaches the session when it opens.
+- [x] Inbox files that wait at the archive stay, and reach the session when it opens after an unarchive.
+- [x] No `messageDelivered` at the archive for a kept message.
 
 ## After
 
