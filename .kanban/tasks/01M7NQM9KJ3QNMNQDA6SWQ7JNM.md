@@ -64,6 +64,36 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionDefaultTitle.swift, Sources/FoundationModelsRouter/Directory/RecordedSessions.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryDefaultNameTests.swift (+1 test). `RouterSessionDirectoryDefaultNameTests`: 14 tests passed. Full `swift test` (one run): 2865 tests in 332 suites, 1 test failed with 2 issues (`ConsecutiveRecoveryBudgetTests/keyReorderedRepeatIsNoProgress`: "call 4 held for a stop, and no stop of the session came inside 10.0 seconds"); +48 and +19 passed; only the known bundle "missing creator" warning. That suite alone passed (6 tests, 0.087 s). The test waits on a 10-second time limit and does not touch the default name; recorded as ^jrcr4ge.
     - next: test, then review
   timestamp: 2026-11-18T14:09:41.444258+00:00
+- actor: claude-code
+  id: 01m7qg95ak18ydgn8c19y2c5jy
+  text: |-
+    ### review — findings
+    - evidence: review sha 40391155..dc87bbf7 — 3 findings (3 confirmed, 1 refuted). The 3 items of 2026-11-18 07:59 are checked. New items: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:372 (duplication/duplication), Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:372 (reuse/reuse), Tests/FoundationModelsRouterTests/RouterSessionDirectoryDefaultNameTests.swift:283 (reuse/reuse).
+    - next: Put the logger call and metadata merge in one private helper that giveDefaultTitle and recordedSummaries both call. Make one parameterized test over the titles nil and "", or one shared helper for the two tests. The task stays in review.
+  timestamp: 2026-11-18T14:16:57.427165+00:00
+- actor: claude-code
+  id: 01m7qg9tyva6ed0f5z6hp8hhxk
+  text: |-
+    ### finish iteration 3 — findings
+    - implement: changed — RouterSessionDirectory.swift, SessionDefaultTitle.swift, RecordedSessions.swift, RouterSessionDirectoryDefaultNameTests.swift (+1 test)
+    - test: green — swift test, 2865 tests in 332 suites (+48, +19), 0 failures (after the fix of ^jrcr4ge, commit fe50197d)
+    - commit: dc87bbf7
+    - review: findings — RouterSessionDirectory.swift:372 (x2, one cause), RouterSessionDirectoryDefaultNameTests.swift:283
+  timestamp: 2026-11-18T14:17:19.579386+00:00
+- actor: claude-code
+  id: 01m7qgktzazpze8tb7a3psf48v
+  text: |-
+    Review findings (2026-11-18 08:14), implement pass:
+    - Findings 1 and 2 (:372, one cause): new `private static func logSession(_ level:_ message:session:error:metadata:)` in RouterSessionDirectory.swift. It is the one place that makes the logger of the session directory, merges the error metadata, and adds the session id. `giveDefaultTitle` and `recordedSummaries(besides:)` call it with their own messages. All other copies of the pattern in the file call it too: `writeMissingFacts`, `recordOwner`, `awaitEnd` (debug), `sendArchived` (notice, with `archivedBy`), and `logInbox` (which now only adds the file path, and takes `error:` in place of a prebuilt error metadata). No `makeLogger` or `errorMetadata` call stays in the file outside the helper.
+    - Finding 3 (test :283): `aStartWithNoTitleGivesTheDefaultName` is now `@Test(arguments: [nil, ""] as [String?])` with a `title` parameter; `aStartWithAnEmptyTitleGivesTheDefaultName` is removed. The comment names the production change of each case.
+  timestamp: 2026-11-18T14:22:47.274245+00:00
+- actor: claude-code
+  id: 01m7qgkxcedzjcca3w3br2gp3n
+  text: |-
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryDefaultNameTests.swift. `swift test --filter FoundationModelsRouterTests.RouterSessionDirectoryDefaultNameTests`: 13 tests passed (the parameterized test has 2 cases). Full `swift test` (one run): 2864 tests in 332 suites passed (one less because two tests became one), plus 48 and 19; 0 failures; only the known bundle "missing creator" warning.
+    - next: review
+  timestamp: 2026-11-18T14:22:49.742340+00:00
 position_column: doing
 position_ordinal: '80'
 title: Give each new session a default name from its agent (D199 (b))
@@ -108,3 +138,14 @@ FoundationModelsExtras: `SessionName.default(agentName:usedNames:)`. Do not star
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:364` `completeness/public-output-contract` — In `giveDefaultTitle(to:)`, `try? Self.recordOwner(of: session)` discards the error and returns with no log. A root session that is not a `RoutedSessionActor` therefore registers with no default name, and no operator sees why. The sibling path in `recordedSummaries` logs its failure, so this site is inconsistent with the handling the change adds elsewhere. Replace `try?` with a `do`/`catch` that logs through `RouterTelemetry.makeLogger(.sessionDirectory)` with the session id, the same way `recordedSummaries` does, and then returns. The registration must still go on.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:382` `reuse/reuse` — recordedSummaries(besides:) rebuilds the usage-store recording-root list inline (`currentUsageStore()?.usages().values.compactMap(\.recordingRoot)`). That is the same gathering that allRecordingRoots() already does for the usage store. A second copy can drift from the first, for example if the root rule changes, and only one of the two copies gets fixed. Pull the usage-store root extraction out of allRecordingRoots() into a small non-async helper, for example `usageStoreRecordingRoots()`, and call it from both allRecordingRoots() and recordedSummaries(besides:). The sync and async paths then share one rule.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:1046` `completeness/invariant-propagation` — The title rule in `complete(facts:with:)` takes `request.title ?? facts.title`. An empty request title (`""`) is not `nil`, so it replaces the default name that `giveDefaultTitle(to:)` gave at registration. The live facts then hold an empty title. `SessionDefaultTitle.isMissing(in:)` treats an empty title as no title, so the empty-title rule is applied at that site but not at this one. A live session can end with an empty title, while a recorded read of the same session names it. Treat an empty request title as no title in `complete(facts:with:)`, for example `if let title = request.title, !title.isEmpty { facts.title = title }`. Add one test that starts a session with `title: ""` and asserts the live summary title is the default name `claude-code`.
+
+## Review Findings (2026-11-18 08:14)
+
+> Scope: `review sha 40391155..dc87bbf7` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:372` `duplication/duplication` — The new error-log block in giveDefaultTitle copies the log block of recordedSummaries. Both call RouterTelemetry.makeLogger(.sessionDirectory).error and merge RouterTelemetry.errorMetadata(error) with the session id key. Only the message text differs. A later change to the log key or metadata shape must be made in both places, or they drift apart. Extract one private helper, for example logDefaultNameFailure(_ message: String, _ error: Error, session: any RoutedSession), that makes the logger and builds the metadata. Call it from giveDefaultTitle with the new message, and from recordedSummaries with its existing message. Keep the two messages as parameters.
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:372` `reuse/reuse` — The new error log in `giveDefaultTitle` rebuilds the same logger call and metadata merge (`makeLogger(.sessionDirectory).error(...)`, `errorMetadata(error).merging([sessionId: ...])`) that already exists unchanged in `recordedSummaries`. This is a parallel copy of a near-match, not an extension of a shared helper, so the two copies can drift apart. Extract one private helper, for example `logSessionFailure(_ message: String, _ error: any Error, session: any RoutedSession)`, that holds the logger call and the metadata merge. Have `giveDefaultTitle` (line 372) and `recordedSummaries` (line 397) both call it with their own message.
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryDefaultNameTests.swift:283` `reuse/reuse` — The new test `aStartWithAnEmptyTitleGivesTheDefaultName` repeats the body of the existing `aStartWithNoTitleGivesTheDefaultName`. The only difference is `title: ""` in the request. A near-match was copied instead of being extended, so the fixture setup, the start call and the assertion now exist twice. Parameterize the existing test over the title (for example with a `arguments:` list of `nil` and `""`), or move the shared start-and-assert steps into a private helper that both tests call. Keep the production change that each case guards documented in the comment.

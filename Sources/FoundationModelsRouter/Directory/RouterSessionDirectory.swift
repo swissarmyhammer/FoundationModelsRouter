@@ -369,10 +369,10 @@ public actor RouterSessionDirectory: SessionDirectory {
         do {
             actor = try Self.recordOwner(of: session)
         } catch {
-            RouterTelemetry.makeLogger(.sessionDirectory).error(
+            Self.logSession(
+                .error,
                 "a new session did not get its default name because it cannot change its facts; it registers with no title",
-                metadata: RouterTelemetry.errorMetadata(error).merging(
-                    [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"], uniquingKeysWith: { first, _ in first }))
+                session: session.id, error: error)
             return
         }
         let title = SessionDefaultTitle.make(
@@ -394,10 +394,10 @@ public actor RouterSessionDirectory: SessionDirectory {
         do {
             return try RecordedSessions(roots: roots).summaries()
         } catch {
-            RouterTelemetry.makeLogger(.sessionDirectory).error(
+            Self.logSession(
+                .error,
                 "the recorded sessions did not read for the default name of a new session; only the live sessions count",
-                metadata: RouterTelemetry.errorMetadata(error).merging(
-                    [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"], uniquingKeysWith: { first, _ in first }))
+                session: session.id, error: error)
             return []
         }
     }
@@ -1040,9 +1040,10 @@ public actor RouterSessionDirectory: SessionDirectory {
         guard completed != session.facts else { return false }
         guard let actor = session as? RoutedSessionActor else {
             assertionFailure("a launcher returned a session that lacks the facts of its request and cannot change them")
-            RouterTelemetry.makeLogger(.sessionDirectory).error(
+            logSession(
+                .error,
                 "a launcher returned a session that lacks the facts of its request and cannot change them; the facts stay as the session holds them",
-                metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
+                session: session.id)
             return false
         }
         actor.updateFacts { complete(facts: &$0, with: request) }
@@ -1678,7 +1679,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - id: The session id.
     ///   - file: The inbox file, or `nil` for a failure of the folder.
     private nonisolated func logInboxFailure(_ what: String, _ error: any Error, session id: ULID, file: URL?) {
-        logInbox(.error, what, session: id, file: file, metadata: RouterTelemetry.errorMetadata(error))
+        logInbox(.error, what, session: id, file: file, error: error)
     }
 
     /// Logs a warning for an inbox file whose mail id the session holds
@@ -1695,24 +1696,49 @@ public actor RouterSessionDirectory: SessionDirectory {
             metadata: [RouterTelemetry.LogMetadataKey.messageId: "\(message.description)"])
     }
 
-    /// Logs an event of the inbox scan. The one place that adds the session id
-    /// and the file path to the metadata.
+    /// Logs an event of the inbox scan. The one place that adds the file path
+    /// to the metadata.
     ///
     /// - Parameters:
     ///   - level: The log level.
     ///   - what: What happened, and what happens to the file.
     ///   - id: The session id.
     ///   - file: The inbox file, or `nil` for an event of the folder.
+    ///   - error: The error of a failure, or `nil` for an event that is not
+    ///     a failure.
     ///   - metadata: The metadata that is specific to the event.
     private nonisolated func logInbox(
-        _ level: Logger.Level, _ what: String, session id: ULID, file: URL?, metadata: Logger.Metadata
+        _ level: Logger.Level, _ what: String, session id: ULID, file: URL?,
+        error: (any Error)? = nil, metadata: Logger.Metadata = [:]
     ) {
         var metadata = metadata
-        metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(id.description)"
         if let file {
             metadata[RouterTelemetry.LogMetadataKey.filePath] = "\(file.path)"
         }
-        RouterTelemetry.makeLogger(.sessionDirectory).log(level: level, "\(what)", metadata: metadata)
+        Self.logSession(level, what, session: id, error: error, metadata: metadata)
+    }
+
+    /// Logs an event of the session `id` through the logger of the session
+    /// directory. The one place that adds the session id, and the metadata of
+    /// `error`, to the metadata of a log of one session.
+    ///
+    /// - Parameters:
+    ///   - level: The log level.
+    ///   - message: What happened, and what the directory does next.
+    ///   - id: The session id.
+    ///   - error: The error of a failure, or `nil` for an event that is not
+    ///     a failure.
+    ///   - metadata: The metadata that is specific to the event.
+    private static func logSession(
+        _ level: Logger.Level, _ message: String, session id: ULID,
+        error: (any Error)? = nil, metadata: Logger.Metadata = [:]
+    ) {
+        var metadata = metadata
+        if let error {
+            metadata.merge(RouterTelemetry.errorMetadata(error)) { specific, _ in specific }
+        }
+        metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(id.description)"
+        RouterTelemetry.makeLogger(.sessionDirectory).log(level: level, "\(message)", metadata: metadata)
     }
 
     /// The record of an inbox message as the directory delivers it to
@@ -2052,9 +2078,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     private static func recordOwner(of session: any RoutedSession) throws -> RoutedSessionActor {
         guard let actor = session as? RoutedSessionActor else {
             assertionFailure("a live session that cannot change its record")
-            RouterTelemetry.makeLogger(.sessionDirectory).error(
-                "a live session cannot change its record; the record stays as the session holds it",
-                metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(session.id)"])
+            logSession(
+                .error, "a live session cannot change its record; the record stays as the session holds it",
+                session: session.id)
             throw SessionDirectoryError.unknownSession(session.id)
         }
         return actor
@@ -2479,11 +2505,9 @@ public actor RouterSessionDirectory: SessionDirectory {
         do {
             _ = try await session.awaitTerminal(of: stop)
         } catch {
-            var metadata = RouterTelemetry.errorMetadata(error)
-            metadata[RouterTelemetry.LogMetadataKey.sessionId] = "\(session.id)"
-            RouterTelemetry.makeLogger(.sessionDirectory).debug(
-                "the archive did not wait for the cancel of the session; its close ends the work",
-                metadata: metadata)
+            logSession(
+                .debug, "the archive did not wait for the cancel of the session; its close ends the work",
+                session: session.id, error: error)
         }
     }
 
@@ -2521,12 +2545,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     private nonisolated func sendArchived(_ id: ULID, by archiver: SessionMessageSender) {
         emit(.stateChanged(id: id, state: .archived, lastSummary: nil))
         emit(.archived(id: id))
-        RouterTelemetry.makeLogger(.sessionDirectory).notice(
-            "a session was archived",
-            metadata: [
-                RouterTelemetry.LogMetadataKey.sessionId: "\(id)",
-                RouterTelemetry.LogMetadataKey.archivedBy: "\(archiver)",
-            ])
+        Self.logSession(
+            .notice, "a session was archived", session: id,
+            metadata: [RouterTelemetry.LogMetadataKey.archivedBy: "\(archiver)"])
     }
 
     // MARK: - Events

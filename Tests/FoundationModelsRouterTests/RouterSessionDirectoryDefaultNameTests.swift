@@ -262,9 +262,14 @@ import Testing
 
     // MARK: - Starts
 
-    /// The production change that makes this test fail: a start that keeps
-    /// the `nil` title of its request.
-    @Test func aStartWithNoTitleGivesTheDefaultName() async throws {
+    /// The production changes that make this test fail: a start that keeps
+    /// the `nil` title of its request (argument `nil`), and a start that puts
+    /// the empty title of its request in place of the default name
+    /// (argument `""`).
+    ///
+    /// - Parameter title: The title of the start request, which is no title.
+    @Test(arguments: [nil, ""] as [String?])
+    func aStartWithNoTitleGivesTheDefaultName(title: String?) async throws {
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let launcher = await fixture.useLauncher()
@@ -272,23 +277,7 @@ import Testing
         let summary = try await fixture.liveDirectory.start(
             SessionStartRequest(
                 agentID: Self.agentID, workingDirectory: fixture.folder(Self.projectFolder),
-                firstMessage: Self.firstMessage, origin: .tool))
-
-        #expect(summary.title == Self.baseName)
-        await launcher.closeSessions()
-    }
-
-    /// The production change that makes this test fail: a start that puts
-    /// the empty title of its request in place of the default name.
-    @Test func aStartWithAnEmptyTitleGivesTheDefaultName() async throws {
-        let fixture = try await Self.makeFixture()
-        defer { fixture.remove() }
-        let launcher = await fixture.useLauncher()
-
-        let summary = try await fixture.liveDirectory.start(
-            SessionStartRequest(
-                agentID: Self.agentID, workingDirectory: fixture.folder(Self.projectFolder),
-                firstMessage: Self.firstMessage, title: "", origin: .tool))
+                firstMessage: Self.firstMessage, title: title, origin: .tool))
 
         #expect(summary.title == Self.baseName)
         await launcher.closeSessions()
