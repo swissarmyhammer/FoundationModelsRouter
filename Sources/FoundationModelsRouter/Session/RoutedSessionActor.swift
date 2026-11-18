@@ -589,6 +589,10 @@ actor RoutedSessionActor: RoutedSession {
     /// ledger of the terminal events. See ``emitSessionScopedEvent(_:)``.
     nonisolated let outputHub = SessionOutputHub()
 
+    /// The observer of the fate of each mail of this session, or `nil` when
+    /// nothing observes it. See ``observeMailFate(_:)``.
+    nonisolated let mailFateObserver = Mutex<MailFateObserver?>(nil)
+
     /// The serial chain that writes the mail records of this session in the
     /// order of the calls (``recordMail(_:)``). See
     /// `RoutedSessionActorMailRecords.swift`.

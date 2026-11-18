@@ -369,6 +369,10 @@ extension RoutedSessionActor {
     /// (``reportWorkStartIfBusy()``): an output while the registry has work
     /// never comes before the work-start event of that work.
     ///
+    /// The observer of the mail (``observeMailFate(_:)``) learns the fate of
+    /// a mail that `event` tells before any reader gets `event`
+    /// (``reportMailFate(of:)``).
+    ///
     /// - Parameters:
     ///   - event: The event to send.
     ///   - error: The error that ended a failed answer, when `event` is its
@@ -383,6 +387,7 @@ extension RoutedSessionActor {
         if event != .workStarted, event != .workEnded {
             reportWorkStartIfBusy()
         }
+        reportMailFate(of: event)
         let ended = outputHub.emit(
             SessionOutput(origin: OriginContext.current, event: event), failure: error, audience: audience)
         let records = Self.terminalRecords(of: event, ending: ended)

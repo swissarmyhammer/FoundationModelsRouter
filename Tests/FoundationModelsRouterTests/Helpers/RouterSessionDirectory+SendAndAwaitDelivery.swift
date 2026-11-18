@@ -4,15 +4,18 @@ import FoundationModelsExtras
 
 extension RouterSessionDirectory {
     /// Sends `message`, and then reads the directory events until each
-    /// message of the receipts that a session received is delivered.
+    /// message of a `delivered` or a `started` receipt is delivered.
     ///
     /// A send from a session to a durable session writes an inbox file, and
     /// the scan of the inbox puts the mail in the queue of the session and the
-    /// message in its ledger after the send returns (``send(_:)``). A send
-    /// from a UI sender to a live session delivers at once, and the event is
-    /// ready in the feed. The `messageDelivered` event marks that point, so a
-    /// test that reads the ledger or the queue of the target waits for it, and
-    /// never for the clock.
+    /// message in its ledger after the send returns (``send(_:)``). The
+    /// `messageDelivered` event comes when the pump of the target takes the
+    /// mail, after the ledger holds the message, so a test that reads the
+    /// ledger of the target waits for it, and never for the clock.
+    ///
+    /// A `queued` receipt gets no wait: its event comes only when the turn of
+    /// the target ends, and a test that holds that turn open would wait
+    /// forever.
     ///
     /// - Parameter message: The message to send.
     /// - Returns: The receipts of the send.
@@ -21,7 +24,7 @@ extension RouterSessionDirectory {
         var feed = events().makeAsyncIterator()
         let receipts = try await send(message)
         var waiting = Set(
-            receipts.filter { $0.outcome == .delivered || $0.outcome == .queued }.compactMap(\.messageID))
+            receipts.filter { $0.outcome == .delivered || $0.outcome == .started }.compactMap(\.messageID))
         while !waiting.isEmpty, let event = await feed.next() {
             if case .messageDelivered(let delivered) = event {
                 waiting.remove(delivered.id)

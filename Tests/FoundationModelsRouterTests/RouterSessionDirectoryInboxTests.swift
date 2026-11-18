@@ -733,11 +733,9 @@ struct RouterSessionDirectoryInboxTests {
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(fixture.directory.openInboxWatcherCount == 0)
-        fixture.directory.emit(Self.marker)
-        let received = await events.next(through: Self.marker)
-        #expect(received.contains { if case .messageDelivered(let message) = $0 { message.id == messageID } else { false } })
         #expect(try await fixture.directory.message(messageID, to: target.id)?.text == Self.text)
         #expect(try Self.waitingNames(of: target).isEmpty)
+        #expect(await events.nextDelivery(of: messageID) != nil)
         await fixture.close([target])
     }
 
