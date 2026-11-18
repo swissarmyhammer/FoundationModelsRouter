@@ -89,25 +89,52 @@ struct RouterSessionDirectoryArchiveMailTests {
         }
     }
 
+    /// The message `id` of the `messageDelivered` events in `events`.
+    ///
+    /// - Parameters:
+    ///   - id: The id of a message.
+    ///   - events: The events a test read.
+    /// - Returns: The delivered message, or `nil` when `events` holds no
+    ///   `messageDelivered` of `id`.
+    private static func delivery(of id: MailID, in events: [SessionDirectoryEvent]) -> SessionMessage? {
+        for event in events {
+            if case .messageDelivered(let message) = event, message.id == id { return message }
+        }
+        return nil
+    }
+
     /// Unarchives the session `id` through the live directory, opens it with
     /// a launcher of the recording router, and gives the message `messageID`
     /// when the directory delivered it to the opened session.
+    ///
+    /// Each read has an end, also when the message does not reach the
+    /// session. The helper scans the inbox of the opened session itself,
+    /// because the first scan of the watcher runs in a task that the test
+    /// does not wait for. Then it waits until the opened session is idle:
+    /// the turn of the delivered message is over, or no turn started. Then
+    /// it emits a marker and reads the events through the marker. The
+    /// `messageDelivered` of a message that reached the session comes before
+    /// the end of its turn, thus before the marker.
     ///
     /// - Parameters:
     ///   - id: The session id of an archived session.
     ///   - messageID: The id of a message in its inbox.
     ///   - fixture: The fixture of the test.
-    /// - Returns: The launcher, which holds the opened session, and the
-    ///   delivered message, or `nil` when the event stream ended first.
+    /// - Returns: The launcher, the opened session, and the delivered
+    ///   message, or `nil` when no `messageDelivered` of `messageID` came
+    ///   before the session was idle.
     /// - Throws: The error of the unarchive or of the restore.
     private static func reopen(_ id: ULID, awaiting messageID: MailID, in fixture: Fixture) async throws
-        -> (launcher: FakeSessionLauncher, delivered: SessionMessage?)
+        -> (launcher: FakeSessionLauncher, opened: any RoutedSession, delivered: SessionMessage?)
     {
         let launcher = FakeSessionLauncher(profile: fixture.pair.recordingProfile)
         _ = try await fixture.liveDirectory.unarchive(id, by: user)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
-        _ = try await launcher.restoreSession(id: id)
-        return (launcher, await events.nextDelivery(of: messageID))
+        let opened = try await launcher.restoreSession(id: id)
+        await fixture.liveDirectory.scanInbox(of: id)
+        await opened.awaitIdle()
+        fixture.liveDirectory.emit(marker)
+        return (launcher, opened, delivery(of: messageID, in: await events.next(through: marker)))
     }
 
     // MARK: - The queued message
@@ -175,14 +202,12 @@ struct RouterSessionDirectoryArchiveMailTests {
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
         let unread = try await fixture.readingDirectory.inbox(of: session.id, markRead: false)
 
-        let (launcher, delivered) = try await Self.reopen(session.id, awaiting: messageID, in: fixture)
+        let (launcher, opened, delivered) = try await Self.reopen(session.id, awaiting: messageID, in: fixture)
 
         let turnEnd = try await session.awaitTerminal(of: prompt)
         #expect(turnEnd == .answerFailed(AnswerFailure(mailIds: [prompt], reason: .cancelled)))
         #expect(unread.map(\.id) == [messageID])
         #expect(delivered?.text == Self.text)
-        let opened = try #require(launcher.sessions.first)
-        #expect(await opened.awaitIdle())
         #expect(await opened.transcript.promptTexts.contains { $0.contains(Self.text) })
         await launcher.closeSessions()
         await fixture.close(session)
@@ -205,7 +230,7 @@ struct RouterSessionDirectoryArchiveMailTests {
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
         let kept = try Self.inboxFile(file.id, of: session)
 
-        let (launcher, delivered) = try await Self.reopen(session.id, awaiting: file.id, in: fixture)
+        let (launcher, _, delivered) = try await Self.reopen(session.id, awaiting: file.id, in: fixture)
 
         #expect(kept == file)
         #expect(delivered?.text == Self.text)

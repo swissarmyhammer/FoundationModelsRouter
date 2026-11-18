@@ -13,6 +13,29 @@ comments:
     - `SessionName.fork(sourceName:usedNames:)`: `<slug>-fork`, then `-fork-2`, `-fork-3`. Pass the source slug and the names of the sessions in the folder that are not archived.
     - A fork: kind `.fork`, origin `.fork`, `parentID` = source, the same folder and agent, a `started` event; a first prompt starts its first turn.
   timestamp: 2026-11-18T17:44:58.737391+00:00
+- actor: claude-code
+  id: 01m7qy6e7shme53dt3f6gtep21
+  text: |-
+    Decision (TestudoApp, for the cut of Fork from Here; the Router rule is mine): the cut is in turn units. Extras adds `SessionForkCut.afterTurn(Int)` and `SessionForkCut.beforeTurn(Int)` (TestudoApp asks Extras). ACPAgent maps an ACP message id to a turn index from its own history.
+    Router rule for the mapping:
+    - A turn is one `prompt` entry in the recorded history of the source and all entries up to the next `prompt` entry. A `prompt` entry is a user message, or a delivered mail that starts an answer.
+    - The index is 0-based: turn 0 is the first `prompt` entry after the instructions.
+    - `.beforeTurn(n)`: the history position just before the `prompt` entry of turn n.
+    - `.afterTurn(n)`: the history position at the end of turn n (just before the `prompt` entry of turn n+1, or the end of the history when turn n is the last completed turn).
+    - A turn index that does not exist, or `.afterTurn(n)` of a turn that still runs, gives `forkCutOutOfRange`.
+    - After a compaction, count the turns in the history that the source has now (the same history that a fork copies).
+    - Add tests for both cases, for a mail turn, and for an index out of range.
+  timestamp: 2026-11-18T18:20:08.313283+00:00
+- actor: claude-code
+  id: 01m7qy7d9pt9b8kdc4hfsqcjny
+  text: |-
+    Final turn rule (replaces the compaction line of the earlier comment), agreed with foundationmodelsacpagent-9e:
+    - The turn index counts EVERY `prompt` entry ever recorded for the source, also the turns that a compaction folded. This is the same count as the client transcript. 0-based from the first prompt.
+    - A cut after the last compaction (`.beforeTurn(n)` or `.afterTurn(n)` with turn n after the compaction summary): the fork gets the compacted context (the summary) plus the turns after it up to the cut.
+    - A cut inside the folded range (before or at a turn that the last compaction folded): refused with `forkCutOutOfRange`. Reason: the summary also covers turns after the cut, so a fork from it would know the future. Write this in the doc.
+    - An index that does not exist, or `.afterTurn(n)` of a turn that still runs: `forkCutOutOfRange`.
+    - Tests: a cut before and after a compaction; a cut in the folded range is refused.
+  timestamp: 2026-11-18T18:20:40.118785+00:00
 position_column: todo
 position_ordinal: '8380'
 title: Fork a live session at a cut point in RouterSessionDirectory (D205)

@@ -30,6 +30,38 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift, Sources/FoundationModelsRouter/Directory/SessionMessageLedger.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift (new, 8 tests), Tests/FoundationModelsRouterTests/SessionMessageLedgerTests.swift (+6 tests), Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift (rename), Tests/FoundationModelsRouterTests/RouterSessionDirectoryQueuedEventTests.swift (AwaitedDelivery). Full `swift test`: 2959 tests in 342 suites passed, 49 in 26 passed, 19 in 3 passed; 0 failures; 0 warnings on a forced rebuild of the changed files.
     - next: /review
   timestamp: 2026-11-18T18:15:22.478326+00:00
+- actor: claude-code
+  id: 01m7qy82mz6qhw0246712ggqcv
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD`: engine 0 findings (14 attempted, 0 failed). Orchestrator check: 1 finding at Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift:110 (the reopen helper waits for messageDelivered with no end, so the reopen test hangs and does not fail against the defect that it names).
+    - checked with no finding: the "kept" ledger line (a kept message is delivered one time at the next open and the delivery ends the mark; a read kept message is removed with no delivery; a ledger with no "kept" line reads as before, because the synthesized Codable of `Line` keeps the old cases and `add` appends when the id is new). No change in `Sources/FoundationModelsRouter/Session/`; the reopen test still expects the running turn to end cancelled.
+    - next: implement the finding, then review again.
+  timestamp: 2026-11-18T18:21:01.983718+00:00
+- actor: claude-code
+  id: 01m7qy8jw9hstkyce66mn941v3
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — RouterSessionDirectory.swift, SessionMessageLedger.swift, 4 test files
+    - test: green — swift test in the implement step, 2959 tests in 342 suites (+49, +19), 0 failures
+    - commit: f558037e
+    - review: findings — RouterSessionDirectoryArchiveMailTests.swift:110 (the reopen helper waits with no end, so the tests hang and do not fail)
+  timestamp: 2026-11-18T18:21:18.601946+00:00
+- actor: claude-code
+  id: 01m7qyjr59dzbabk1g4r8cggaw
+  text: |-
+    Finding fixed (bounded-failure, RouterSessionDirectoryArchiveMailTests.swift).
+    - `reopen(_:awaiting:in:)` no longer uses `nextDelivery(of:)`. After the restore it calls `scanInbox(of:)` of the live directory itself (the first scan of the watcher runs in a task the test does not wait for, so with no direct scan the idle wait could end before the mail is in the queue). Then it waits for `awaitIdle()` of the opened session, emits the marker, reads with `next(through:)`, and finds the `messageDelivered` of the message in those events (new helper `delivery(of:in:)`). It now also gives the opened session; the separate `awaitIdle` expectation in the first reopen test is gone, because the helper already waits for idle.
+    - No other read in the file can wait with no end: each other event read goes through the marker, and each `awaitTerminal` is on a session that the archive closes.
+    - Proof (temporary defect, reverted): defect 1 — the scan removed a kept file with no delivery (`awaitsDelivery(...) && false`). `theQueuedMessageReachesTheSessionWhenItOpens` FAILED at the delivered expectation; `anInboxFileStaysAndReachesTheSession` failed earlier (the watcher scan before the archive removed the file), so it did not reach the reopen. Defect 2 — `scanInbox` skips every file (`for file in files where files.isEmpty`): both tests FAILED at `delivered?.text == Self.text` after 0.05 s, no hang. Source reverted from a backup; `git status` shows no change in Sources.
+  timestamp: 2026-11-18T18:26:51.689180+00:00
+- actor: claude-code
+  id: 01m7qyjtmycancvq0jmcr2xk6p
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift. Suite filter `FoundationModelsRouterTests.RouterSessionDirectoryArchiveMailTests`: 8 tests passed. With a temporary scan defect, the two reopen tests FAILED in 0.05 s (no hang); defect reverted. Full `swift test`: 2959 tests in 342 suites passed, 49 in 26 passed, 19 in 3 passed; 0 failures; no compiler warnings.
+    - next: /review
+  timestamp: 2026-11-18T18:26:54.238073+00:00
 depends_on:
 - 01M7QTQCW62ZNN9CXFTVE3TV8Y
 position_column: doing
@@ -67,3 +99,12 @@ FoundationModelsExtras (the D204 change, see the unarchive task). The dependency
 ## After
 
 Push when green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a. #d204
+
+## Review Findings (2026-11-18 12:15)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift:110` `orchestrator/bounded-failure` — The helper `reopen(_:awaiting:in:)` waits for the `messageDelivered` event with `nextDelivery(of:)`, and that read has no end: the event stream of the live directory does not end in the test. When the defect that `theQueuedMessageReachesTheSessionWhenItOpens` (line 171) names is present (the old archive drops the queued mail, or the scan removes the kept file with no delivery), no `messageDelivered` comes and the test hangs. It does not fail. The same helper makes `anInboxFileStaysAndReachesTheSession` (line 197) hang when the scan does not deliver the kept file. Make the read bounded with no time limit: after the restore, wait until the opened session is idle, then `emit` a marker and read with `next(through:)`, and expect the `messageDelivered` of the message in those events. Then make the test fail against the old archive code (it must fail, not hang) before it passes against the new code.
