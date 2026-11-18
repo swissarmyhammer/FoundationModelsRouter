@@ -159,7 +159,7 @@ public struct ProjectStore: Sendable {
     public func projects() throws -> [ProjectRecord] {
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
         let entries = try FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            at: directory, includingPropertiesForKeys: nil)
         return entries.filter(Self.isProjectFile)
             .compactMap(listedRecord(at:))
             .filter(Self.isLive)
@@ -193,12 +193,15 @@ public struct ProjectStore: Sendable {
     }
 
     /// Whether `file` is a project file: its extension is `md`, in any case,
-    /// as the file system of the host matches names.
+    /// as the file system of the host matches names, and its name does not
+    /// start with a dot. The listing skips dotfiles by name, not with
+    /// `.skipsHiddenFiles`, which also drops each file with the macOS hidden
+    /// flag, and iCloud sets that flag on every file of a synced folder.
     ///
     /// - Parameter file: An entry of the folder.
-    /// - Returns: `true` for a `.md` file.
+    /// - Returns: `true` for a `.md` file that is not a dotfile.
     private static func isProjectFile(_ file: URL) -> Bool {
-        file.pathExtension.lowercased() == fileExtension
+        !file.lastPathComponent.hasPrefix(".") && file.pathExtension.lowercased() == fileExtension
     }
 
     /// Whether the path of `record` is still a directory.

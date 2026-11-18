@@ -257,6 +257,35 @@ import Testing
             try fixture.store.projects().map(\.path) == [earlier, later].map(\.standardizedFileURL.path))
     }
 
+    /// A project file with the macOS hidden flag, which iCloud sets on each
+    /// file of a synced folder, is still listed.
+    @Test func aFileWithTheHiddenFlagIsListed() throws {
+        let fixture = Fixture()
+        let alpha = try fixture.makeProjectDirectory(named: "alpha")
+        try fixture.store.register(workingDirectory: alpha, at: Self.firstVisit)
+        var flagged = fixture.file(of: alpha)
+        var values = URLResourceValues()
+        values.isHidden = true
+        try flagged.setResourceValues(values)
+
+        #expect(try fixture.store.projects().map(\.path) == [alpha.standardizedFileURL.path])
+    }
+
+    /// A dotfile, such as the `._` AppleDouble file of a copy, is not a
+    /// project file even when its extension is `.md`: the listing ignores it
+    /// and writes no warning.
+    @Test func aDotfileIsIgnoredWithNoWarning() async throws {
+        let fixture = Fixture()
+        let alpha = try fixture.makeProjectDirectory(named: "alpha")
+        try fixture.store.register(workingDirectory: alpha, at: Self.firstVisit)
+        try fixture.writeStoreFile("not a project", named: "._\(ProjectStore.fileName(forWorkingDirectory: alpha))")
+
+        let (paths, warnings) = try await Self.listing(of: fixture.store, forbidding: [alpha])
+
+        #expect(paths == [alpha.standardizedFileURL.path])
+        #expect(warnings == 0)
+    }
+
     /// A file that is not `.md` is not a project file: the listing ignores
     /// it and writes no warning.
     @Test func aFileThatIsNotMarkdownIsIgnoredWithNoWarning() async throws {
