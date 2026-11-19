@@ -89,8 +89,24 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift. `swift test --filter FoundationModelsRouterTests.ModelSwitchRestoreTests`: 24 tests, 0 failures. Full `swift test` once (exit 0): 3061 tests in 349 suites passed, plus 49 and 19; 0 failures; log at /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-swift-test.log. The 3 findings of 2026-11-18 21:06 are `- [x]`.
     - next: /review
   timestamp: 2026-11-19T03:17:15.218693+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7rx0wqdhqvp46gdf0mezhm9
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (206ca77b): 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 1 file reviewed (ModelSwitchRestoreTests.swift). All items of the two prior Review Findings sections are checked. The 3 items of the 2026-11-18 21:06 section are fixed.
+    - next: none. The task is in done.
+  timestamp: 2026-11-19T03:18:52.397908+00:00
+- actor: claude-code
+  id: 01m7rx1k5sq7m5ej20bbgs6xn3
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — ModelSwitchRestoreTests.swift (two setup helpers)
+    - test: green — one full swift test run, 3061 tests in 349 suites (+49, +19), 0 failures
+    - commit: 206ca77b
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T03:19:15.385622+00:00
+position_column: done
+position_ordinal: ffffffffffb680
 title: A restore of a root session by id must not make a second instance of a live recorded fork
 ---
 ## Problem
