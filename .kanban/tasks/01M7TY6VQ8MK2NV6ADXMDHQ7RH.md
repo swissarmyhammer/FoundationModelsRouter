@@ -30,6 +30,37 @@ comments:
     - evidence: `public func recordSession(from transcript: Transcript, configuration: SessionConfiguration) async throws -> ULID` on `RoutedModel where Container == any LoadedLLMContainer` (RoutedLLM), with `public enum SessionRecordingWriteError { noDurableRecording, eventsNotWritten(expected:written:) }`. Files: Sources/FoundationModelsRouter/Recording/TranscriptSessionWriter.swift (new), Sources/FoundationModelsRouter/Recording/TranscriptFileDiscovery.swift (skips hidden folders), Tests/FoundationModelsRouterTests/RecordSessionFromTranscriptTests.swift (new, 9 tests), Tests/FoundationModelsRouterPublicSurfaceTests/RecordSessionPublicSurfaceTests.swift (new, 1 test), Tests/FoundationModelsRouterTestSupport/PlainImportResolveStubs.swift (new), Tests/FoundationModelsRouterPublicSurfaceTests/ResolutionProgressPublicSurfaceTests.swift (uses the shared stubs). RED seen for each new test (a stub writer, two mutation runs, the discovery test before the change). Filtered: RecordSessionFromTranscriptTests 9 passed; RecordSessionPublicSurfaceTests 1 + ResolutionProgressPublicSurfaceTests 4 passed. Full `swift test` once: 3211 tests in 363 suites passed, 52 in 28 and 19 in 3 passed, exit 0, no compiler warnings (output in scratchpad/full-suite.txt). Origin stays a configuration parameter; part 2 (^0hdvn00) adds `.import`, `importedFrom` and the directory operation.
     - next: /review
   timestamp: 2026-11-19T22:36:05.967443+00:00
+- actor: claude-code
+  id: 01m7tzspatyyb6j62g5zwwh7y7
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD, engine counts findings 1, confirmed 1, refuted 0; 1 more finding from the coordinator checks. Tests/FoundationModelsRouterTests/RecordSessionFromTranscriptTests.swift:127, Sources/FoundationModelsRouter/Recording/TranscriptSessionWriter.swift:176
+    - checks with no finding: the folder write is atomic (a hidden temporary folder in the same root, then a rename; a failure removes it; the direct listing keeps only ULID names). The size on the last response is read only by TranscriptReconstruction.restoredUsageState; the usage store, promptCacheUsage, SessionObserver and telemetry do not read recorded tokensIn, so there is no double count. No producer makes a hidden folder or file below a recording root, so skipsHiddenFiles hides no session. The compaction test can fail: with no size stamp the restored usage is unknown, the start-of-answer check does not fire, and the tool-result yield does not occur with no tool call.
+    - next: implement the two findings, then review again.
+  timestamp: 2026-11-19T22:45:51.066452+00:00
+- actor: claude-code
+  id: 01m7tztd7a89c1akgfdxvs905e
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — TranscriptSessionWriter.swift (new), TranscriptFileDiscovery.swift; RecordSessionFromTranscriptTests (new, 9), RecordSessionPublicSurfaceTests (new, 1), PlainImportResolveStubs (new), ResolutionProgressPublicSurfaceTests
+    - test: green — one full swift test run, 3211 tests in 363 suites (+52, +19), 0 failures
+    - commit: 2b8bf366
+    - review: findings — RecordSessionFromTranscriptTests.swift:127 (no round trip with a tool call and a tool output), TranscriptSessionWriter.swift:176 (the session event and the entry events leave out `grammar`, which a live session writes)
+  timestamp: 2026-11-19T22:46:14.506020+00:00
+- actor: claude-code
+  id: 01m7v046z44wh741prf9e7w4kt
+  text: |-
+    Review findings fixed (not committed):
+    - Finding 1 (tool round trip): new test `aWrittenRecordingWithToolEntriesRestoresToTheGivenTranscript` writes instructions, a prompt, a `.toolCalls` entry (arguments built from properties, the live form), a `.toolOutput` entry and the response, restores, and compares the transcript. It passed at once on the code of HEAD, because the writer already maps tool entries. To prove that it can fail, a temporary mutation removed the `.toolCalls` and `.toolOutput` events from the writer: the test failed (`restored == Self.toolTranscript`). The mutation was removed; the writer file was again equal to HEAD before the fix.
+    - Finding 2 (grammar): new test `aWrittenGuidedRecordingStampsTheGrammarOnEachEvent` writes with `grammar: .jsonSchema(...)` and expects `Set(events.map(\.grammar)) == [source]`. RED on HEAD (the expectation failed). Fix: the body of the actor method `makePartialEvent` moved to a new value type `TranscriptEventSource` (Sources/FoundationModelsRouter/Recording/TranscriptEventSource.swift, method `partialEvent(kind:grammar:text:since:entry:tokensIn:tokensCached:tokensOut:callTiming:callDuration:agentSpawn:)`). The actor now has `nonisolated var eventSource`, and each of its 13 call sites calls `eventSource.partialEvent(...)` (the actor method is deleted, so there is no forward that copies the parameter list). The writer builds its `session` event and each entry event through the same source with `configuration.grammar`, as `recordSessionMetaIfNeeded` and `recordTranscriptDelta` do. GREEN: RecordSessionFromTranscriptTests 11 passed.
+  timestamp: 2026-11-19T22:51:35.780450+00:00
+- actor: claude-code
+  id: 01m7v04s7k5yvgyhmxb4a13n08
+  text: |-
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Recording/TranscriptEventSource.swift (new, shared event builder), Sources/FoundationModelsRouter/Recording/TranscriptSessionWriter.swift (session and entry events through the source with `configuration.grammar`), Sources/FoundationModelsRouter/Session/RoutedSessionActor{Recording,MailRecords,AnswerExecution,GenerationCalls,Compaction,RepetitionWatch,RunJournal}.swift (`makePartialEvent` -> `eventSource.partialEvent`), Tests/FoundationModelsRouterTests/RecordSessionFromTranscriptTests.swift (2 new tests). RED: grammar test failed on HEAD; tool round-trip test failed under a mutation that dropped tool events from the writer (it passes on HEAD because tool entries were already mapped). Filtered `FoundationModelsRouterTests.RecordSessionFromTranscriptTests`: 11 passed. Full `swift test` once: 3213 tests in 363 suites, 52 in 28, 19 in 3 passed, exit 0, no Swift warnings (scratchpad/full-suite-r2.txt). Both review findings checked. No package pin changed.
+    - next: /review
+  timestamp: 2026-11-19T22:51:54.483298+00:00
 position_column: doing
 position_ordinal: '80'
 title: A public writer makes a new session recording from a given model transcript, with no live session (D209 (h), part 1)
@@ -66,3 +97,13 @@ Read `routed-session-cancellation-invariants` and `sdk-transcript-read-between-p
 ## After
 
 Push when green. Send the name, the signature and the sha to foundationmodelsacpagent-9e and testudoapp-9a. #d209
+
+## Review Findings (2026-11-19 16:36)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RecordSessionFromTranscriptTests.swift:127` `completeness/inverse-operation-coverage` — The write maps every transcript entry kind through TranscriptDiffer.partials and the restore reads them back through the normal path, but the round-trip test only feeds instructions, prompt and response entries. Tool-call and tool-output entries are never written and read back, so a recording that loses or misreads them would pass this suite. The test name, 'restores to the given transcript', promises the full transcript. Add one round-trip test whose transcript includes a tool-call entry and a tool-output entry, and assert that the restored transcript equals the written one. This is a single added test, not a matrix.
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptSessionWriter.swift:176` `coordinator-check/live-session-form` — The written file is not the form that a live session writes. A live root session writes the `session` event and each entry event with `grammar: grammar?.source` (`RoutedSessionActorRecording.recordSessionMetaIfNeeded` and `recordTranscriptDelta`, through `makePartialEvent(kind:grammar:...)`). The writer makes the `session` event (line 176) and the entry events from `TranscriptDiffer.partials` (line 179) with no `grammar`. When `configuration.grammar` is set, each line of `transcript.jsonl` is different from the line of a live session. Set `grammar: configuration.grammar?.source` on the `session` event and on each entry event, and add a test that writes with a grammar and compares the `grammar` field of each event with the grammar of the configuration.

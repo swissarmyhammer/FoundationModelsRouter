@@ -288,7 +288,7 @@ extension RoutedSessionActor: OperationEventJournal {
             )
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
-        return makePartialEvent(
+        return eventSource.partialEvent(
             kind: kind,
             text: events.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n"),
             entry: payload)

@@ -727,7 +727,8 @@ extension RoutedSessionActor {
             slot: slot,
             model: model
         ).map { diffPartial in
-            makePartialEvent(kind: diffPartial.kind, grammar: grammar, text: diffPartial.text, entry: diffPartial.entry)
+            eventSource.partialEvent(
+                kind: diffPartial.kind, grammar: grammar, text: diffPartial.text, entry: diffPartial.entry)
         }
 
         // Swap the inner session in place: same actor, same nonisolated

@@ -60,14 +60,50 @@ struct RecordSessionFromTranscriptTests {
                 ]
             })
 
+    /// The name of the tool of ``toolTranscript``.
+    private static let toolName = "search"
+
+    /// The id of the tool call of ``toolTranscript``.
+    private static let toolCallID = "call-1"
+
+    /// The grammar source of a guided written session.
+    private static let grammarSource = #"{"type":"object"}"#
+
+    /// A transcript of one turn with a tool: the instructions, a prompt, a
+    /// tool-call entry, a tool-output entry and the response after them.
+    ///
+    /// The arguments of the call are built from properties, the form of the
+    /// arguments of a live call, so a restored call compares equal.
+    private static let toolTranscript = Transcript(
+        entries: [
+            .instructions(
+                Transcript.Instructions(
+                    segments: [.text(Transcript.TextSegment(content: instructions))], toolDefinitions: [])),
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "what is the weather"))])),
+            .toolCalls(
+                Transcript.ToolCalls([
+                    Transcript.ToolCall(
+                        id: toolCallID, toolName: toolName,
+                        arguments: GeneratedContent(properties: ["query": "weather"]))
+                ])),
+            .toolOutput(
+                Transcript.ToolOutput(
+                    id: toolCallID, toolName: toolName,
+                    segments: [.text(Transcript.TextSegment(content: "sunny, 72F"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "it is sunny"))])),
+        ])
+
     /// The configuration of each written session of the suite.
     ///
-    /// - Parameter budget: The compaction budget, or `nil` for none.
+    /// - Parameters:
+    ///   - budget: The compaction budget, or `nil` for none.
+    ///   - grammar: The grammar of the session, or `nil` for none.
     /// - Returns: The configuration.
-    private static func configuration(budget: TokenBudget? = nil) -> SessionConfiguration {
+    private static func configuration(budget: TokenBudget? = nil, grammar: Grammar? = nil) -> SessionConfiguration {
         SessionConfiguration(
             instructions: instructions,
             compaction: CompactionSettings(budget: budget),
+            grammar: grammar,
             agentID: agentID,
             title: title,
             origin: .client)
@@ -132,6 +168,35 @@ struct RecordSessionFromTranscriptTests {
             let restored = try await Self.withRestored(id, over: profile) { await $0.transcript }
 
             #expect(restored == Self.threeTurnTranscript)
+        }
+    }
+
+    @Test("a written recording with a tool call and a tool output restores to the given transcript")
+    func aWrittenRecordingWithToolEntriesRestoresToTheGivenTranscript() async throws {
+        try await SessionFactsFixtures.withRecordingProfile(prefix: Self.tempDirPrefix) { profile in
+            let id = try await profile.standard.recordSession(
+                from: Self.toolTranscript, configuration: Self.configuration())
+
+            let restored = try await Self.withRestored(id, over: profile) { await $0.transcript }
+
+            #expect(restored == Self.toolTranscript)
+        }
+    }
+
+    @Test("a written recording of a guided session stamps the grammar on each event, as a live session does")
+    func aWrittenGuidedRecordingStampsTheGrammarOnEachEvent() async throws {
+        try await SessionFactsFixtures.withRecordingProfile(prefix: Self.tempDirPrefix) { profile in
+            let handle = profile.standard
+            let id = try await handle.recordSession(
+                from: Self.threeTurnTranscript,
+                configuration: Self.configuration(grammar: .jsonSchema(Self.grammarSource)))
+
+            let events = try JSONLFile(
+                url: handle.recordingDirectory(forSessionId: id)
+                    .appendingPathComponent(transcriptFileName, isDirectory: false)
+            ).records(as: TranscriptEvent.self)
+
+            #expect(Set(events.map(\.grammar)) == [Self.grammarSource])
         }
     }
 

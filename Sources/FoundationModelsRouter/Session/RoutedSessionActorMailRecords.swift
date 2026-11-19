@@ -83,7 +83,7 @@ extension RoutedSessionActor {
     private func appendMailRecords(_ records: [MailRecord]) async {
         await recordSessionMetaIfNeeded()
         await appendToRecorder(
-            makePartialEvent(
+            eventSource.partialEvent(
                 kind: .mail, grammar: grammar, text: records.map(\.summary).joined(separator: "\n"),
                 entry: MailRecordSegment.eventPayload(of: records)))
     }

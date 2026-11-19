@@ -403,7 +403,7 @@ extension RoutedSessionActor {
     /// - Parameter usage: The usage of the call that ended.
     func report(generationCall usage: GenerationCallUsage) async {
         await append(
-            partial: makePartialEvent(
+            partial: eventSource.partialEvent(
                 kind: .generationCall, grammar: grammar, text: usage.description,
                 tokensIn: usage.tokensIn, tokensCached: usage.tokensCached, tokensOut: usage.tokensOut,
                 callTiming: usage.timing, callDuration: usage.callDuration))

@@ -761,7 +761,7 @@ extension RoutedSessionActor {
         guard !diffIncludedResponse else { return }
         let close = TranscriptEntryMapper.event(from: .response(Transcript.Response(segments: [])))
         await append(
-            partial: makePartialEvent(
+            partial: eventSource.partialEvent(
                 kind: .response,
                 grammar: grammar,
                 since: started,

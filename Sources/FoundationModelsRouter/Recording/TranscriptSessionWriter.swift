@@ -105,7 +105,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let folder = recordingDirectory(forSessionId: id, recordingRoot: configuration.recordingRoot)
         let record = newRootRecord(
             id: id, folder: folder, transcript: transcript, configuration: configuration, indexWriter: indexWriter)
-        let events = try recordedEvents(of: transcript, sessionId: id, agentSpawn: configuration.agentSpawn)
+        let events = try recordedEvents(
+            of: transcript, sessionId: id, grammar: configuration.grammar, agentSpawn: configuration.agentSpawn)
         try await writeAtomically(record, events: events, into: folder)
         return id
     }
@@ -161,24 +162,30 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// history `transcript`: the `session` event, then one event for each
     /// entry, mapped as a live session maps it
     /// (``TranscriptDiffer/partials(baseline:current:divergence:routerId:sessionId:parentId:slot:model:)``).
-    /// The last `.response` event carries the size of `transcript` as its
-    /// usage.
+    /// Each event is built through the event source of the session
+    /// (``TranscriptEventSource``) with `grammar`, as a live session builds
+    /// it. The last `.response` event carries the size of `transcript` as
+    /// its usage.
     ///
     /// - Parameters:
     ///   - transcript: The history of the session.
     ///   - sessionId: The id of the session.
+    ///   - grammar: The grammar of the session, or `nil`.
     ///   - agentSpawn: The spawn of the session, or `nil`.
     /// - Returns: The events, in order, with no `seq` and no `ts`.
     /// - Throws: The error of the token counter of this model.
     private func recordedEvents(
-        of transcript: Transcript, sessionId: ULID, agentSpawn: SessionRecord.AgentSpawn?
+        of transcript: Transcript, sessionId: ULID, grammar: Grammar?, agentSpawn: SessionRecord.AgentSpawn?
     ) throws -> [TranscriptEvent.Partial] {
-        let meta = TranscriptEvent.Partial(
-            routerId: routerId, sessionId: sessionId, slot: slot, model: chosen, kind: .session,
-            agentSpawn: agentSpawn)
+        let source = TranscriptEventSource(
+            routerId: routerId, sessionId: sessionId, parentId: nil, slot: slot, model: chosen)
+        let meta = source.partialEvent(kind: .session, grammar: grammar, agentSpawn: agentSpawn)
         var entries = TranscriptDiffer.partials(
             baseline: TranscriptDiffer.Baseline(transcript: Transcript()), current: transcript, divergence: nil,
-            routerId: routerId, sessionId: sessionId, parentId: nil, slot: slot, model: chosen)
+            routerId: routerId, sessionId: sessionId, parentId: nil, slot: slot, model: chosen
+        ).map { entry in
+            source.partialEvent(kind: entry.kind, grammar: grammar, text: entry.text, entry: entry.entry)
+        }
         if let lastResponse = entries.lastIndex(where: { $0.kind == .response }) {
             let size = try container.tokenCounter.count(transcript)
             entries[lastResponse] = entries[lastResponse].stampingUsage(tokensIn: size, tokensOut: 0)

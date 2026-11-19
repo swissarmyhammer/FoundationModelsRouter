@@ -328,7 +328,7 @@ extension RoutedSessionActor {
             let stampSince = (since != nil && isSubmissionClose) ? since : nil
             let stampUsage = (usage != nil && isSubmissionClose) ? usage : nil
             await append(
-                partial: makePartialEvent(
+                partial: eventSource.partialEvent(
                     kind: recordedPartial.kind,
                     grammar: grammar,
                     text: recordedPartial.text,
@@ -376,7 +376,8 @@ extension RoutedSessionActor {
                 RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
                 RouterTelemetry.LogMetadataKey.divergence: "\(divergence.description)",
             ])
-        await append(partial: makePartialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
+        await append(
+            partial: eventSource.partialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
     }
 
     /// Appends one ``MailRecord/mailDelivered(_:)`` record
@@ -515,7 +516,7 @@ extension RoutedSessionActor {
             id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString,
             correlationID: correlationID)
         await append(
-            partial: makePartialEvent(
+            partial: eventSource.partialEvent(
                 kind: .toolCallStarted,
                 entry: TranscriptEntryPayload(entryId: Self.startedEntryIDPrefix + call.id, toolCalls: [payload])))
     }
@@ -544,7 +545,8 @@ extension RoutedSessionActor {
         guard !userMail.isEmpty else { return }
         let marker = OpenPrompts.marker(of: userMail)
         await append(
-            partial: makePartialEvent(kind: .promptStarted, grammar: grammar, text: marker.text, entry: marker.entry))
+            partial: eventSource.partialEvent(
+                kind: .promptStarted, grammar: grammar, text: marker.text, entry: marker.entry))
     }
 
     /// Announces the SDK tool call `call` to the host when the call starts:
@@ -621,7 +623,7 @@ extension RoutedSessionActor {
     func recordSessionMetaIfNeeded() async {
         guard !didRecordSessionMeta else { return }
         didRecordSessionMeta = true
-        await append(partial: makePartialEvent(kind: .session, grammar: grammar, agentSpawn: agentSpawn))
+        await append(partial: eventSource.partialEvent(kind: .session, grammar: grammar, agentSpawn: agentSpawn))
     }
 
     /// Appends a partial event through the recorder into this session's
@@ -649,64 +651,10 @@ extension RoutedSessionActor {
         await recorder.append(partial, to: recordingDirectory)
     }
 
-    /// The number of milliseconds in one second, the scale of ``TranscriptEvent/ms``.
-    private static let millisecondsPerSecond: Double = 1_000
-
-    /// Builds an event of the given kind stamped with this session's provenance.
-    ///
-    /// - Parameters:
-    ///   - kind: The event kind.
-    ///   - grammar: The guided-generation grammar in force, or `nil`.
-    ///   - text: The event's flattened body text, or `nil`.
-    ///   - since: The start instant of the submission used to stamp `ms`, or `nil`.
-    ///   - entry: The structural payload that mirrors `Transcript.Entry`, or `nil`.
-    ///   - tokensIn: The input token delta of the submission, or `nil`.
-    ///   - tokensCached: The part of `tokensIn` the prompt cache reused, or
-    ///     `nil`. Only the `.generationCall` kind carries one.
-    ///   - tokensOut: The output token delta of the submission, or `nil`.
-    ///   - callTiming: The prefill and the decode time of one generation
-    ///     call, or `nil`. Only the `.generationCall` kind carries one. Its
-    ///     presence also stamps whether the session saw the first token of
-    ///     the call (``TranscriptEvent/firstTokenSeen``) and whether its
-    ///     output was buffered (``TranscriptEvent/outputBuffered``).
-    ///   - callDuration: The whole time of one generation call, or `nil`.
-    ///     Only the `.generationCall` kind carries one.
-    ///   - agentSpawn: The spawn context to stamp, or `nil`. Only the
-    ///     `.session` kind carries one.
-    /// - Returns: The partial event for the recorder to stamp and append.
-    func makePartialEvent(
-        kind: TranscriptEvent.Kind,
-        grammar: Grammar? = nil,
-        text: String? = nil,
-        since: Date? = nil,
-        entry: TranscriptEntryPayload? = nil,
-        tokensIn: Int? = nil,
-        tokensCached: Int? = nil,
-        tokensOut: Int? = nil,
-        callTiming: GenerationCallTiming? = nil,
-        callDuration: Duration? = nil,
-        agentSpawn: SessionRecord.AgentSpawn? = nil
-    ) -> TranscriptEvent.Partial {
-        TranscriptEvent.Partial(
-            routerId: routerId,
-            sessionId: id,
-            parentId: parentId,
-            slot: slot,
-            model: model,
-            kind: kind,
-            grammar: grammar?.source,
-            text: text,
-            tokensIn: tokensIn,
-            tokensCached: tokensCached,
-            tokensOut: tokensOut,
-            ms: since.map { Int(Date().timeIntervalSince($0) * Self.millisecondsPerSecond) },
-            timeToFirstTokenMs: callTiming?.timeToFirstToken?.wholeMilliseconds,
-            decodeMs: callTiming?.decodeTime?.wholeMilliseconds,
-            callMs: callDuration?.wholeMilliseconds,
-            firstTokenSeen: callTiming.map { $0.timeToFirstToken != nil },
-            outputBuffered: callTiming?.outputBuffered,
-            entry: entry,
-            agentSpawn: agentSpawn
-        )
+    /// The source of the events of this session: the identity that each
+    /// event it records carries. Each event of the session is built through
+    /// ``TranscriptEventSource/partialEvent(kind:grammar:text:since:entry:tokensIn:tokensCached:tokensOut:callTiming:callDuration:agentSpawn:)``.
+    nonisolated var eventSource: TranscriptEventSource {
+        TranscriptEventSource(routerId: routerId, sessionId: id, parentId: parentId, slot: slot, model: model)
     }
 }

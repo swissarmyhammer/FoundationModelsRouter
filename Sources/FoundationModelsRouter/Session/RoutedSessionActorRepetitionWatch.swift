@@ -718,7 +718,7 @@ extension RoutedSessionActor {
         guard change.changesRender else { return }
         let segment = RepeatedPartRemovalSegment(content: change)
         await append(
-            partial: makePartialEvent(
+            partial: eventSource.partialEvent(
                 kind: .repeatedPartRemoval, grammar: grammar, text: segment.description, entry: segment.eventPayload))
     }
 
@@ -732,7 +732,7 @@ extension RoutedSessionActor {
     func recordWatchStop(_ report: WatchStopReport, grammar: Grammar?) async {
         let segment = WatchStopSegment(content: report.summary)
         await append(
-            partial: makePartialEvent(
+            partial: eventSource.partialEvent(
                 kind: .watchStop, grammar: grammar, text: report.summary.description, entry: segment.eventPayload))
     }
 
