@@ -31,6 +31,9 @@ struct PromptCacheCopyCall: Sendable, Equatable {
     /// The count of the passes with the `.session` scope of
     /// ``targetSessionID`` that started before the copy.
     let targetPassesBefore: Int
+
+    /// The outcome that the model gave for the copy.
+    let outcome: PromptCacheCopyOutcome
 }
 
 /// The passes, the cache releases and the cache copies of one
@@ -48,41 +51,49 @@ final class PromptCacheScopeLog: Sendable {
     /// The copies so far, in order.
     private let copies = Mutex<[PromptCacheCopyCall]>([])
 
-    /// The usage that ``promptCacheUsage`` reports after the first copy.
+    /// The usage that ``promptCacheUsage`` reports after the first copy
+    /// with the `.copied` outcome.
     private let usageAfterCopy: PromptCacheUsage
 
     /// Makes a log.
     ///
     /// - Parameter usageAfterCopy: The usage that ``promptCacheUsage``
-    ///   reports after the first copy. The default is no usage.
+    ///   reports after the first copy with the `.copied` outcome. The
+    ///   default is no usage.
     init(usageAfterCopy: PromptCacheUsage = .zero) {
         self.usageAfterCopy = usageAfterCopy
     }
 
     /// Records one copy of the cache of `sourceSessionID` to
-    /// `targetSessionID`, with the count of the passes of the target so far.
+    /// `targetSessionID`, with the count of the passes of the target so far
+    /// and the outcome of the copy.
     ///
     /// - Parameters:
     ///   - sourceSessionID: The session id whose cache the copy reads.
     ///   - targetSessionID: The session id that the copy writes.
-    func recordCopy(from sourceSessionID: String, to targetSessionID: String) {
+    ///   - outcome: The outcome that the model gives for the copy.
+    func recordCopy(
+        from sourceSessionID: String, to targetSessionID: String, outcome: PromptCacheCopyOutcome
+    ) {
         let targetPasses = recordedPasses.filter { $0.scope == .session(targetSessionID) }.count
         copies.withLock {
             $0.append(
                 PromptCacheCopyCall(
                     sourceSessionID: sourceSessionID, targetSessionID: targetSessionID,
-                    targetPassesBefore: targetPasses))
+                    targetPassesBefore: targetPasses, outcome: outcome))
         }
     }
 
     /// Every copy so far, in order.
     var recordedCopies: [PromptCacheCopyCall] { copies.withLock { $0 } }
 
-    /// The prompt-cache usage of the model: no usage before the first copy,
-    /// and the usage of the initializer after it. A loader reports it
+    /// The prompt-cache usage of the model: no usage before the first copy
+    /// with the `.copied` outcome, and the usage of the initializer after
+    /// it. A copy with the `.sourceNotFound` or the `.sourceInUse` outcome
+    /// copies nothing, so it does not change the usage. A loader reports it
     /// (``PromptCacheLogLoader``), so a budget shows the copy.
     var promptCacheUsage: PromptCacheUsage {
-        recordedCopies.isEmpty ? .zero : usageAfterCopy
+        recordedCopies.contains { $0.outcome == .copied } ? usageAfterCopy : .zero
     }
 
     /// Records one pass.
@@ -216,7 +227,7 @@ struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasin
     func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
         -> PromptCacheCopyOutcome
     {
-        log.recordCopy(from: sourceSessionID, to: targetSessionID)
+        log.recordCopy(from: sourceSessionID, to: targetSessionID, outcome: copyOutcome)
         return copyOutcome
     }
 

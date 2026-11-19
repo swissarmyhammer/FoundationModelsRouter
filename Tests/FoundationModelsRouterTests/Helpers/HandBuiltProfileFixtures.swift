@@ -36,12 +36,16 @@ enum HandBuiltProfileFixtures {
     ///   - container: The one container both generation handles wrap.
     ///   - router: The router the profile reports its residency to. Nothing is
     ///     resolved through it, so it owns no residency for this profile.
+    ///   - promptCacheBudgetSender: The operation that both generation
+    ///     handles call to send the prompt-cache budget again, or `nil` (the
+    ///     default) for handles that send no budget.
     /// - Returns: The hand-built profile.
     static func makeProfile(
         definitionName: String,
         chosen: ModelRef,
         container: any LoadedLLMContainer,
-        router: Router
+        router: Router,
+        promptCacheBudgetSender: (@Sendable () async -> Void)? = nil
     ) -> LanguageModelProfile {
         let recorder = InMemoryRecorder()
         return LanguageModelProfile(
@@ -51,14 +55,16 @@ enum HandBuiltProfileFixtures {
                 chosen: chosen,
                 container: container,
                 router: router,
-                recorder: recorder
+                recorder: recorder,
+                promptCacheBudgetSender: promptCacheBudgetSender
             ),
             flash: makeGenerationHandle(
                 slot: .flash,
                 chosen: chosen,
                 container: container,
                 router: router,
-                recorder: recorder
+                recorder: recorder,
+                promptCacheBudgetSender: promptCacheBudgetSender
             ),
             embedding: makeEmbedder(
                 chosen: chosen,
@@ -154,13 +160,16 @@ enum HandBuiltProfileFixtures {
     ///   - container: The container the handle wraps.
     ///   - router: The router the handle stamps its recording root from.
     ///   - recorder: The recorder a vended session is born holding.
+    ///   - promptCacheBudgetSender: The operation that the handle calls to
+    ///     send the prompt-cache budget again, or `nil` for no budget.
     /// - Returns: The generation handle.
     private static func makeGenerationHandle(
         slot: ModelSlot,
         chosen: ModelRef,
         container: any LoadedLLMContainer,
         router: Router,
-        recorder: any TranscriptRecorder
+        recorder: any TranscriptRecorder,
+        promptCacheBudgetSender: (@Sendable () async -> Void)?
     ) -> RoutedLLM {
         RoutedLLM(
             slot: slot,
@@ -169,7 +178,8 @@ enum HandBuiltProfileFixtures {
             resolution: slotResolution(slot: slot, chosen: chosen),
             container: container,
             routerId: router.id,
-            recorder: recorder
+            recorder: recorder,
+            promptCacheBudgetSender: promptCacheBudgetSender
         )
     }
 }

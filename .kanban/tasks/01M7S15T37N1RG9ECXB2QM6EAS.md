@@ -24,6 +24,34 @@ comments:
     - full `swift test` once: 3093 tests in 352 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx bundle warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-swift-test.txt
     - next: /review. Not committed or pushed (orders of this run).
   timestamp: 2026-11-19T04:45:48.889042+00:00
+- actor: claude-code
+  id: 01m7s2c90pgstp02z5c80cjbs8
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD; engine counts: 1 finding, 1 confirmed, 1 refuted. Driver check: 1 more finding. Tests/FoundationModelsRouterTests/Helpers/PromptCacheScopeRecordingModel.swift:85, Tests/FoundationModelsRouterTests/ForkPromptCacheCopyTests.swift:178
+    - next: /implement the 2 open items in "Review Findings (2026-11-18 22:46)", then /review again.
+  timestamp: 2026-11-19T04:52:28.310528+00:00
+- actor: claude-code
+  id: 01m7s2d86gd720pjpjkgfz3wjn
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 10 source files, 5 test files (new ForkPromptCacheCopyTests with 11 tests)
+    - test: green — one full swift test run, 3093 tests in 352 suites (+50, +19), 0 failures
+    - commit: 0244b600
+    - review: findings — PromptCacheScopeRecordingModel.swift:85 (the fake reports usage after a copy that did not copy), ForkPromptCacheCopyTests.swift:178 (the two no-copy tests and the copied-only budget guard are not tested)
+  timestamp: 2026-11-19T04:53:00.240605+00:00
+- actor: claude-code
+  id: 01m7s2pspdj3e5d1j7wgydqf9c
+  text: |-
+    ### implement — changed
+    - evidence: the 2 items of "Review Findings (2026-11-18 22:46)" are done and flipped to [x]. No production change.
+    - files: Tests/FoundationModelsRouterTests/Helpers/PromptCacheScopeRecordingModel.swift (`PromptCacheCopyCall.outcome`; `recordCopy(from:to:outcome:)`; `promptCacheUsage` changes only after a recorded `.copied` copy), Tests/FoundationModelsRouterTests/ForkPromptCacheCopyTests.swift (`copyBeforeTheFirstPass(of:to:outcome:)`; the two no-copy tests expect one copy from the source id to the fork id with their outcome; new parameterized test `theBudgetIsSentAgainOnlyAfterACopyThatCopied` with `.copied` -> 1 send, `.sourceNotFound` -> 0, `.sourceInUse` -> 0), Tests/FoundationModelsRouterTests/Helpers/HandBuiltProfileFixtures.swift (optional `promptCacheBudgetSender` on `makeProfile`, default nil).
+    - why a counting sender and not a budget value: after the fix of item 1, a send after a non-copied outcome reads the same usage, so the budget value is the same with or without the guard. The count of the budgets of the loader is not usable, because the footprints task of the router sends budgets at times the test does not control. So the new test forks through a hand-built handle whose budget sender counts its calls (the existing `RunCount`).
+    - RED: with `guard outcome == .copied else { return }` removed from `takePromptCacheCopy(of:through:)`, the `.sourceNotFound` and `.sourceInUse` cases failed (`budgetSends.value → 1`, expected 0). Then the guard was put back with `git checkout` of that file; `git status` shows no Sources change.
+    - filtered: FoundationModelsRouterTests.ForkPromptCacheCopyTests, 12 tests passed (the new test has 3 cases).
+    - full `swift test` once: 3094 tests in 352 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx bundle warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-swift-test-findings.txt
+    - next: /review. Not committed (orders of this run). Task stays in doing.
+  timestamp: 2026-11-19T04:58:13.069692+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'A fork copies the prompt cache of its source: the protocol, the copy at the fork, and the budget (D205 (f), part 1)'
@@ -55,3 +83,15 @@ Read `routed-session-cancellation-invariants` in the memory folder before a chan
 ## After
 
 Push when green. Send the sha to testudoapp-9a. #d205
+
+## Review Findings (2026-11-18 22:46)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 15 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/PromptCacheScopeRecordingModel.swift:85` `completeness/invariant-propagation` — The copy outcome is handled at one site only. copyPromptCache (lines 216-221) records a copy and returns copyOutcome, which can be .sourceNotFound or .sourceInUse. promptCacheUsage (line 85) ignores that outcome and treats any recorded copy as a copy that changed the cache, so usageAfterCopy is reported after a copy that did not copy. A later test that combines a non-copied outcome with a budget check would see a budget change that the model never made. Record the outcome with the copy (for example, store the outcome in PromptCacheCopyCall or in the log) and have promptCacheUsage change only when the recorded outcome is .copied. Alternatively, document in the doc comment that any copy call changes usage, and keep the behaviour explicit.
+- [x] `Tests/FoundationModelsRouterTests/ForkPromptCacheCopyTests.swift:178` `driver-check/tests-guard-real-behavior` — The tests `aForkWhoseSourceHasNoCacheAnswers` (line 178) and `aForkWhoseSourceCacheIsInUseAnswers` (line 191) do not make sure that the copy ran and gave the non-copied outcome. They passed before the code existed, and they pass now if the fork does not copy. Also, no test guards `guard outcome == .copied` in `takePromptCacheCopy(of:through:)` (`Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptCache.swift:78`): if the fork sends the budget again after `sourceNotFound` or `sourceInUse`, all tests pass. In each of the two tests, expect `fixture.log.recordedCopies == [Self.copyBeforeTheFirstPass(of: source, to: fork)]`. Add an expectation that a non-copied outcome sends no new budget (this needs the fix of the finding above, so that the fake usage changes only for `.copied`).
+
+Driver checks with no finding: (1) the copy ends before `fork(_:)` mails the first prompt on the default path and on the launcher path, because both build through `ForkBuild` and `launchFork` returns before the mail. (2) The new `await` in `makeFork(id:seed:tools:)` reads no state of the source after the suspension, and it does not use the generation queue or a lock. The copy goes from `source.promptCacheSessionID` to the id of the fork, and the fork backend is over the same raw model (`container.makeSession` of the source handle). (3) Only the Router holds `PromptCacheSizing` strongly, and `footprintsTask` captures the resizer and not the sizing, so the weak sender sends no budget after the router is gone. (4) A launcher that throws after the copy, or a build that ends after the close, goes to `ForkBuild.discard(_:)`, which calls `close()` of the fork, and `close()` calls `releasePromptCache()` with no condition, so the copy is released. (5) `aBackendOverAModelThatDoesNotCopyGivesNoOutcome`, `aClosedForkReleasesOnlyItsOwnKey` and `aClosedSourceDoesNotReleaseTheKeyOfTheFork` guard real behavior of the spec; the other two of the 5 tests have the finding above.

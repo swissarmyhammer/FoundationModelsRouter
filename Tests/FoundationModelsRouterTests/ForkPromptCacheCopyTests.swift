@@ -69,17 +69,20 @@ import Testing
     }
 
     /// The copy of the cache of `source` to `fork` before any pass of the
-    /// fork.
+    /// fork, with the outcome `outcome`.
     ///
     /// - Parameters:
     ///   - source: The source.
     ///   - fork: The fork.
+    ///   - outcome: The outcome that the model gave for the copy. The
+    ///     default is `.copied`.
     /// - Returns: The copy call.
     private static func copyBeforeTheFirstPass(
-        of source: any RoutedSession, to fork: any RoutedSession
+        of source: any RoutedSession, to fork: any RoutedSession, outcome: PromptCacheCopyOutcome = .copied
     ) -> PromptCacheCopyCall {
         PromptCacheCopyCall(
-            sourceSessionID: source.id.description, targetSessionID: fork.id.description, targetPassesBefore: 0)
+            sourceSessionID: source.id.description, targetSessionID: fork.id.description, targetPassesBefore: 0,
+            outcome: outcome)
     }
 
     /// Makes a fork of `source` through `handle`, not through the
@@ -173,8 +176,8 @@ import Testing
 
     // MARK: - A copy that does not copy
 
-    /// The production change that makes this test fail: a fork that fails
-    /// or stops when its source has no cache.
+    /// The production change that makes this test fail: a fork that asks
+    /// for no copy, or that fails or stops when its source has no cache.
     @Test func aForkWhoseSourceHasNoCacheAnswers() async throws {
         let fixture = try await Self.makeFixture(copyOutcome: .sourceNotFound)
         let source = try await Self.makeSource(in: fixture)
@@ -182,12 +185,15 @@ import Testing
 
         let answer = try await fork.respond(to: Self.forkPrompt)
 
+        #expect(
+            fixture.log.recordedCopies == [Self.copyBeforeTheFirstPass(of: source, to: fork, outcome: .sourceNotFound)])
         #expect(answer == PromptCacheScopeRecordingModel.answer)
         await fixture.forks.end([source, fork])
     }
 
-    /// The production change that makes this test fail: a fork that fails
-    /// or stops when a pass of its source holds the cache.
+    /// The production change that makes this test fail: a fork that asks
+    /// for no copy, or that fails or stops when a pass of its source holds
+    /// the cache.
     @Test func aForkWhoseSourceCacheIsInUseAnswers() async throws {
         let fixture = try await Self.makeFixture(copyOutcome: .sourceInUse)
         let source = try await Self.makeSource(in: fixture)
@@ -195,6 +201,8 @@ import Testing
 
         let answer = try await fork.respond(to: Self.forkPrompt)
 
+        #expect(
+            fixture.log.recordedCopies == [Self.copyBeforeTheFirstPass(of: source, to: fork, outcome: .sourceInUse)])
         #expect(answer == PromptCacheScopeRecordingModel.answer)
         await fixture.forks.end([source, fork])
     }
@@ -212,6 +220,38 @@ import Testing
         let fork = try await fixture.forks.fork(source, at: .lastCompletedTurn)
 
         #expect(fixture.loader.memoryBudgets.last == budgetBefore - Self.spillingBytesAfterCopy)
+        await fixture.forks.end([source, fork])
+    }
+
+    /// Each copy outcome, with the count of the budget sends that the fork
+    /// makes after a copy with that outcome: one after a copy that copied,
+    /// and none after a copy that copied nothing.
+    private static let budgetSendsAfterEachOutcome: [(PromptCacheCopyOutcome, Int)] = [
+        (.copied, 1), (.sourceNotFound, 0), (.sourceInUse, 0),
+    ]
+
+    /// The production change that makes this test fail: a fork that sends
+    /// the budget again after a copy with the `.sourceNotFound` or the
+    /// `.sourceInUse` outcome, or that sends no budget after a copy with the
+    /// `.copied` outcome.
+    ///
+    /// The fork goes through a hand-built handle whose budget sender counts
+    /// its calls, so the count does not include a budget that the footprints
+    /// task of the router sends.
+    @Test(arguments: budgetSendsAfterEachOutcome)
+    func theBudgetIsSentAgainOnlyAfterACopyThatCopied(
+        outcome: PromptCacheCopyOutcome, expectedBudgetSends: Int
+    ) async throws {
+        let fixture = try await Self.makeFixture(copyOutcome: outcome)
+        let source = try await Self.makeSource(in: fixture)
+        let budgetSends = RunCount()
+        let counting = HandBuiltProfileFixtures.makeProfile(
+            definitionName: "counting-budget-sender", chosen: source.model, container: fixture.forks.container,
+            router: fixture.forks.router, promptCacheBudgetSender: { budgetSends.increment() })
+
+        let fork = await Self.forkDirectly(source, through: counting.standard)
+
+        #expect(budgetSends.value == expectedBudgetSends)
         await fixture.forks.end([source, fork])
     }
 
