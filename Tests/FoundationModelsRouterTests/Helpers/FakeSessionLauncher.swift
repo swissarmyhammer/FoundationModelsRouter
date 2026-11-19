@@ -90,6 +90,19 @@ final class FakeSessionLauncher: SessionLauncher {
         return session
     }
 
+    /// Gives the `.standard` slot of the profile as the model of an imported
+    /// session, with a configuration that holds the agent of `request`, else
+    /// the default agent, and no other value: the directory sets the facts
+    /// of the import.
+    ///
+    /// - Parameter request: The import request, as the directory gives it.
+    /// - Returns: The model and the configuration of the import.
+    func importTarget(for request: SessionImportRequest) async throws -> SessionImportTarget {
+        SessionImportTarget(
+            model: profile.standard,
+            configuration: SessionConfiguration(agentID: request.agentID ?? RouterSessionDirectory.defaultAgentID))
+    }
+
     /// Closes each session the launcher vended or restored.
     func closeSessions() async {
         for session in sessions {

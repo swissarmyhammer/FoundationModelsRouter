@@ -32,6 +32,22 @@ import Testing
     /// from before D206 does not hold.
     private static let recapKeys = ["lastSummary", "recap", "recapAt"]
 
+    /// The provenance of every made record (D209 (h)). Its dates are
+    /// ``firstActivityAt`` and ``updatedAt``, inside a second.
+    private static var provenance: SessionImportProvenance {
+        SessionImportProvenance(
+            agent: "claude-code", sourceID: "source-session-1",
+            sourcePath: "/Users/dev/.claude/projects/example/source-session-1.jsonl",
+            sourceLastDate: firstActivityAt, importedAt: updatedAt, skippedRecordCount: 2)
+    }
+
+    /// The key of the provenance in the frontmatter.
+    private static let importedFromKey = "importedFrom"
+
+    /// The key of the time of the import, inside the value of
+    /// ``importedFromKey``.
+    private static let importedAtKey = "importedAt"
+
     /// The milliseconds that ``firstActivityAt`` comes before ``updatedAt``.
     private static let firstActivityLeadMilliseconds: Int64 = 60_000
 
@@ -77,7 +93,8 @@ import Testing
             archivedAt: updatedAt,
             lastSummary: lastSummary,
             recap: recap,
-            recapAt: updatedAt)
+            recapAt: updatedAt,
+            importedFrom: provenance)
     }
 
     /// A record with every field filled: a fork with a spawn, a profile and
@@ -229,6 +246,67 @@ import Testing
         #expect(read.facts.lastSummary == nil)
         #expect(read.facts.recap == nil)
         #expect(read.facts.recapAt == nil)
+    }
+
+    /// The production change that makes this test fail: an encode that
+    /// writes no provenance (D209 (h)), so the read gives `nil`.
+    @Test func theImportProvenanceSurvivesASaveAndARead() throws {
+        let directory = try Self.makeSessionDirectory()
+
+        try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
+        let read = try #require(try SessionIndexFile.read(in: directory))
+
+        #expect(read.facts.importedFrom == Self.provenance)
+    }
+
+    /// The production change that makes this test fail: an encode that
+    /// writes the provenance under another key than the flat
+    /// `importedFrom`, or its dates as other text than milliseconds.
+    @Test func theImportProvenanceIsAFlatKeyWithMillisecondDates() throws {
+        let directory = try Self.makeSessionDirectory()
+
+        try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
+        let lines = try Self.indexText(in: directory).split(separator: "\n")
+
+        #expect(lines.contains("\(Self.importedFromKey):"))
+        #expect(
+            lines.contains { $0.hasPrefix(" ") && $0.contains(Self.importedAtKey) && $0.contains(Self.updatedAtText) })
+    }
+
+    /// The production change that makes this test fail: a decode that
+    /// requires the `importedFrom` key. A record from before D209 (h) does
+    /// not hold it, and it reads as `nil`.
+    @Test func aRecordWithNoImportedFromKeyReadsItAsNil() throws {
+        let directory = try Self.makeSessionDirectory()
+        try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
+        let lines = try Self.indexText(in: directory).split(separator: "\n", omittingEmptySubsequences: false)
+        let old = Self.removingKey(Self.importedFromKey, from: lines)
+        try old.joined(separator: "\n").write(
+            to: SessionIndexFile.url(in: directory), atomically: true, encoding: .utf8)
+
+        let read = try #require(try SessionIndexFile.read(in: directory))
+
+        #expect(read.facts.importedFrom == nil)
+    }
+
+    /// The lines of a frontmatter with no top-level `key`: the line of the
+    /// key and each indented line of its value are gone.
+    ///
+    /// - Parameters:
+    ///   - key: A top-level key.
+    ///   - lines: The lines of an `index.md`.
+    /// - Returns: The other lines, in order.
+    private static func removingKey(_ key: String, from lines: [Substring]) -> [Substring] {
+        var isInValue = false
+        return lines.filter { line in
+            if line.hasPrefix("\(key):") {
+                isInValue = true
+                return false
+            }
+            if isInValue && line.hasPrefix(" ") { return false }
+            isInValue = false
+            return true
+        }
     }
 
     /// A date with whole seconds only is not the text Router writes, so the

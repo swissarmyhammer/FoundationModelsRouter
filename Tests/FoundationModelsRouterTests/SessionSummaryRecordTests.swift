@@ -22,6 +22,11 @@ import Testing
     /// The recap in the facts of the session with a recap.
     private static let recap = "You reviewed the login change and found one bug."
 
+    /// The provenance of an imported session (D209 (h)).
+    private static let provenance = SessionImportProvenance(
+        agent: "codex", sourceID: "source-7", sourcePath: "/Users/dev/.codex/sessions/source-7.jsonl",
+        importedAt: Date(timeIntervalSince1970: 0))
+
     /// The number of characters of the short id of a session.
     private static let shortIDLength = 7
 
@@ -183,6 +188,17 @@ import Testing
         let expected = try await fixture.directorySummary(of: fork)
 
         #expect(SessionSummary(record: fork) == expected)
+    }
+
+    /// The production change that makes this test fail: a summary that
+    /// does not give the provenance of the facts (D209 (h)).
+    @Test func anImportedSessionGivesItsProvenance() {
+        var record = SessionRecordFixtures.record(in: URL(fileURLWithPath: "/unused", isDirectory: true))
+        record.facts.importedFrom = Self.provenance
+
+        let summary = SessionSummary(record: record)
+
+        #expect(summary.importedFrom == Self.provenance)
     }
 
     /// A session with no title has the 7-character short id as its slug.

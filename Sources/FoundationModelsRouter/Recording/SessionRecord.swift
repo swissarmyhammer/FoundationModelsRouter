@@ -8,7 +8,8 @@ import FoundationModelsExtras
 ///
 /// - **The facts** (ROUTER-1): ``facts``, written flat at the top level of
 ///   the frontmatter: `agentID`, `agentName`, `origin`, `startedBy`, `tags`,
-///   `title`, `archivedAt`, `endedAt` and `endReason`.
+///   `title`, `archivedAt`, `endedAt`, `endReason`, `lastSummary`, `recap`,
+///   `recapAt` and `importedFrom` (``RecordedImportProvenance``).
 /// - **The listing data**: ``sessionId`` (the name of the folder),
 ///   ``workingDirectory`` (the key `cwd`, a path), ``updatedAt``,
 ///   ``additionalDirectories``, the fork parent and its cut
@@ -264,7 +265,7 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         case updatedAt, firstActivityAt, additionalDirectories
         case forkParentId, forkedAtEntryCount, forkedAtHistoryOrdinal
         case agentID, agentName, origin, startedBy, tags, title, archivedAt, endedAt, endReason
-        case lastSummary, recap, recapAt
+        case lastSummary, recap, recapAt, importedFrom
         case slot, model, context, instructions, grammar, recordingLevel, agentSpawn, routerId
         case compactionCount, profile, configuration, schemaVersion
     }
@@ -321,7 +322,9 @@ public struct SessionRecord: Codable, Sendable, Equatable {
             endReason: try container.decodeIfPresent(SessionEndReason.self, forKey: .endReason),
             lastSummary: try container.decodeIfPresent(String.self, forKey: .lastSummary),
             recap: try container.decodeIfPresent(String.self, forKey: .recap),
-            recapAt: try container.decodeMillisecondDateIfPresent(forKey: .recapAt))
+            recapAt: try container.decodeMillisecondDateIfPresent(forKey: .recapAt),
+            importedFrom: try container.decodeIfPresent(RecordedImportProvenance.self, forKey: .importedFrom)?
+                .provenance)
     }
 
     /// Encodes the record as its frontmatter: the facts flat, the folders as
@@ -372,6 +375,7 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         try container.encodeIfPresent(facts.lastSummary, forKey: .lastSummary)
         try container.encodeIfPresent(facts.recap, forKey: .recap)
         try container.encodeIfPresent(facts.recapAt.map(MillisecondDate.text(of:)), forKey: .recapAt)
+        try container.encodeIfPresent(facts.importedFrom.map(RecordedImportProvenance.init), forKey: .importedFrom)
     }
 
     /// The path a folder is written as: the path with no percent encoding,

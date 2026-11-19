@@ -1,16 +1,18 @@
 import Foundation
 import FoundationModelsExtras
 
-/// The default name of a root session with no title (D199 (b)), and of a
-/// fork with no title (D205): ``RouterSessionDirectory`` gives it when it
-/// registers a new root session or a new fork, and when it reads a recorded
-/// root session.
+/// The default name of a root session with no title (D199 (b)), of a fork
+/// with no title (D205), and the name of an imported session (D209 (h)):
+/// ``RouterSessionDirectory`` gives it when it registers a new root session
+/// or a new fork, when it reads a recorded root session, and when it imports
+/// a session.
 ///
 /// The rules are `SessionName.default(agentName:usedNames:)` and
 /// `SessionName.fork(sourceName:usedNames:)` of FoundationModelsExtras. This
 /// type only collects their inputs: the name of the agent from the facts of
-/// the session, or the name of the source of a fork, and the slugs of the
-/// other sessions in the same folder that are not archived.
+/// the session, the name of the source of a fork, or the title of an import,
+/// and the slugs of the other sessions in the same folder that are not
+/// archived.
 enum SessionDefaultTitle {
     /// Tells whether a session needs a default name: its facts hold no
     /// title, or an empty title, which a summary reads as no title.
@@ -72,16 +74,39 @@ enum SessionDefaultTitle {
             usedNames: usedNames(besides: id, in: folder, among: summaries))
     }
 
+    /// The name of an imported session (D209 (h)), as the in-memory
+    /// directory of FoundationModelsExtras gives it: `title` as given when
+    /// its slug is empty or no used name has it, else the slug of `title`
+    /// with the first free number (`SessionName.default(agentName:usedNames:)`).
+    ///
+    /// - Parameters:
+    ///   - title: The title of the import request.
+    ///   - folder: The working folder of the import.
+    ///   - summaries: The summaries of the sessions that can hold a name, live
+    ///     and recorded. Only those in `folder` that are not archived count.
+    ///   - reserved: The slugs that other imports in `folder` hold and that
+    ///     `summaries` may not show yet.
+    /// - Returns: The name.
+    static func makeImport(
+        from title: String, in folder: URL, among summaries: [SessionSummary], reserved: Set<String>
+    ) -> String {
+        let usedNames = usedNames(besides: nil, in: folder, among: summaries).union(reserved)
+        let slug = SessionSlug.make(from: title)
+        guard !slug.isEmpty, usedNames.contains(slug) else { return title }
+        return SessionName.default(agentName: title, usedNames: usedNames)
+    }
+
     /// The slugs of the sessions of `summaries` in `folder` that are not
     /// archived, besides the session `id`.
     ///
     /// - Parameters:
-    ///   - id: The session that the name is for.
+    ///   - id: The session that the name is for, or `nil` for a session that
+    ///     has no id yet.
     ///   - folder: The working folder of that session.
     ///   - summaries: The summaries of the sessions that can hold a name.
     /// - Returns: The used names.
     private static func usedNames(
-        besides id: ULID, in folder: URL, among summaries: [SessionSummary]
+        besides id: ULID?, in folder: URL, among summaries: [SessionSummary]
     ) -> Set<String> {
         let path = RouterSessionDirectory.comparablePath(of: folder)
         return Set(

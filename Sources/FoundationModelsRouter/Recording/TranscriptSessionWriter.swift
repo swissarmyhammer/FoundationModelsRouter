@@ -51,9 +51,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - `index.md` with the ``SessionRecord`` of a new root session of this
     ///   handle: the working folder (`configuration.workingDirectory`, else
     ///   the session folder), the first facts of `configuration` (the agent,
-    ///   the title and the origin among them), the slot, the model and the
-    ///   context of this handle, the resolved profile of its run, the
-    ///   configuration envelope and the current schema version.
+    ///   the title, the origin and the provenance of an import among them),
+    ///   the slot, the model and the context of this handle, the resolved
+    ///   profile of its run, the configuration envelope and the current
+    ///   schema version.
     /// - `transcript.jsonl` with the `session` event, then one event for each
     ///   entry of `transcript`, in order. The events go through the recorder
     ///   of this handle and the entry mapper of a live session, so the

@@ -3,7 +3,8 @@ import FoundationModelsExtras
 
 /// The facts of one session that change after it starts: its agent, its
 /// tags, its title, who started it, how it started and when it was archived
-/// (ROUTER-1), and its last summary and its recap (D206).
+/// (ROUTER-1), its last summary and its recap (D206), and where an imported
+/// session came from (D209 (h)).
 ///
 /// A durable session keeps them in the frontmatter of the `index.md` in its
 /// session folder, as part of its ``SessionRecord``, and rewrites that file
@@ -61,6 +62,12 @@ public struct SessionFacts: Sendable, Equatable {
     /// has no recap.
     public var recapAt: Date?
 
+    /// Where an imported session came from (D209 (h)): the agent, the
+    /// source session and the time of the import, or `nil` for a session
+    /// that was not imported. The record writes it under the flat key
+    /// `importedFrom`, and a record with no such key reads it as `nil`.
+    public var importedFrom: SessionImportProvenance?
+
     /// Makes the facts of a session. Every field defaults to its absent
     /// value.
     ///
@@ -77,6 +84,8 @@ public struct SessionFacts: Sendable, Equatable {
     ///   - lastSummary: The last summary. The default is `nil`.
     ///   - recap: The recap. The default is `nil`.
     ///   - recapAt: The instant of the recap. The default is `nil`.
+    ///   - importedFrom: Where an imported session came from. The default
+    ///     is `nil`.
     public init(
         agentID: String? = nil,
         agentName: String? = nil,
@@ -89,7 +98,8 @@ public struct SessionFacts: Sendable, Equatable {
         endReason: SessionEndReason? = nil,
         lastSummary: String? = nil,
         recap: String? = nil,
-        recapAt: Date? = nil
+        recapAt: Date? = nil,
+        importedFrom: SessionImportProvenance? = nil
     ) {
         self.agentID = agentID
         self.agentName = agentName
@@ -103,13 +113,14 @@ public struct SessionFacts: Sendable, Equatable {
         self.lastSummary = lastSummary
         self.recap = recap
         self.recapAt = recapAt
+        self.importedFrom = importedFrom
     }
 
     /// The first facts of a fork of a session with these facts (D205): the
     /// agent id and the agent name of the source, and the origin
     /// ``FoundationModelsExtras/SessionDirectoryOrigin/fork``. A fork gets no
-    /// tags, no `startedBy` and no archive date of its source, as the fork of
-    /// the Extras in-memory directory does. A fork also gets no last summary
+    /// tags, no `startedBy`, no archive date and no provenance of an import
+    /// of its source, as the fork of the Extras in-memory directory does. A fork also gets no last summary
     /// and no recap of its source (D206): its own turns make them. Its title
     /// is the fork name that
     /// the directory gives it when it registers

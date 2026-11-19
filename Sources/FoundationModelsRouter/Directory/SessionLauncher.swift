@@ -2,8 +2,9 @@ import FoundationModelsExtras
 
 /// The port that the host fills, so the ``RouterSessionDirectory`` can start
 /// a new root session (ROUTER-8), so the host can restore a recorded one
-/// through the same port, and so the host builds each fork with its own
-/// surface (``forkSession(_:)``, D205). Router cannot
+/// through the same port, so the host builds each fork with its own
+/// surface (``forkSession(_:)``, D205), and so the host gives the model of
+/// each imported session (``importTarget(for:)``, D209 (h)). Router cannot
 /// compose the tools of a session and does not know the agent catalog, so
 /// the host makes each session; the directory only asks for one.
 ///
@@ -105,6 +106,60 @@ public protocol SessionLauncher: Sendable {
     /// - Throws: The error of the host, which refuses the fork, or the error
     ///   of the build.
     func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession
+
+    /// Gives the model and the configuration that
+    /// ``RouterSessionDirectory/importSession(_:transcript:)`` writes an
+    /// imported session with (D209 (h)).
+    ///
+    /// The launcher resolves the agent of `request` as it does for a start:
+    /// with no `agentID`, the agent is the `AGENT.md` of the folder, else the
+    /// default agent (D71). It gives the model handle of the default of that
+    /// agent, as the session of a start of that agent gets it, and the
+    /// configuration of that agent: its instructions, its recording root,
+    /// its compaction settings and its resolved ``SessionConfiguration/agentID``
+    /// and ``SessionConfiguration/agentName``.
+    ///
+    /// The directory then sets the facts of the import on the configuration:
+    /// the folder of the request, the name, `startedBy`, the origin
+    /// `import` and the provenance. It writes the recording with
+    /// ``RoutedModel/recordSession(from:configuration:)``. No session is
+    /// live: the launcher makes no session, and the host restores the
+    /// imported session with ``restoreSession(id:)`` when a client opens it.
+    ///
+    /// A launcher that does not implement this operation gets the default
+    /// of this protocol, which throws `SessionDirectoryError.importUnsupported`.
+    ///
+    /// - Parameter request: The import request, exactly as the directory got
+    ///   it: a nil agent stays nil.
+    /// - Returns: The model and the configuration of the import.
+    /// - Throws: `SessionDirectoryError.unknownAgent(_:nearNames:)` when the
+    ///   agent id names no agent, `SessionDirectoryError.notADirectory(_:)`
+    ///   when the folder is not a folder, or the error of the host.
+    func importTarget(for request: SessionImportRequest) async throws -> SessionImportTarget
+}
+
+/// The model and the configuration that an imported session is written with
+/// (D209 (h)): what ``SessionLauncher/importTarget(for:)`` gives
+/// ``RouterSessionDirectory/importSession(_:transcript:)``.
+public struct SessionImportTarget: Sendable {
+    /// The model handle of the default of the agent of the import. The
+    /// directory writes the recording through it, so the record holds its
+    /// slot, its model and the resolved profile of its run.
+    public var model: RoutedLLM
+
+    /// The configuration of the agent of the import. The directory sets the
+    /// facts of the import on it before the write.
+    public var configuration: SessionConfiguration
+
+    /// Makes the model and the configuration of an import.
+    ///
+    /// - Parameters:
+    ///   - model: The model handle of the default of the agent.
+    ///   - configuration: The configuration of the agent.
+    public init(model: RoutedLLM, configuration: SessionConfiguration) {
+        self.model = model
+        self.configuration = configuration
+    }
 }
 
 extension SessionLauncher {
@@ -117,5 +172,15 @@ extension SessionLauncher {
     /// - Throws: The error of the build.
     public func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession {
         try await request.makeFork()
+    }
+
+    /// See ``SessionLauncher/importTarget(for:)``. The default gives no
+    /// model: the launcher cannot import.
+    ///
+    /// - Parameter request: The import request of the directory.
+    /// - Returns: Nothing.
+    /// - Throws: `SessionDirectoryError.importUnsupported`.
+    public func importTarget(for request: SessionImportRequest) async throws -> SessionImportTarget {
+        throw SessionDirectoryError.importUnsupported
     }
 }

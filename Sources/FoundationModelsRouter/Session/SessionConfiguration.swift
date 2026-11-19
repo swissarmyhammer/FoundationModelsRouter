@@ -194,7 +194,7 @@ public struct SessionConfiguration: Sendable {
     /// (`default` for the root agent) or `folder:` plus the absolute path of
     /// a folder agent, or `nil`. Router stores it and never resolves it.
     ///
-    /// This field and the five below are the first ``SessionFacts`` of the
+    /// This field and the six below are the first ``SessionFacts`` of the
     /// session: a new session writes them to ``SessionRecord/facts`` in its
     /// `index.md`, and ``RoutedSession/facts`` holds them. ``persistable`` does
     /// not record them, so ``SessionRecord/configuration`` does not hold them.
@@ -219,6 +219,12 @@ public struct SessionConfiguration: Sendable {
     /// origin of FoundationModelsExtras, not the hook origin of
     /// ``hookOrigin``. See ``agentID``.
     public var origin: FoundationModelsExtras.SessionDirectoryOrigin?
+
+    /// Where an imported session came from, or `nil` (the default) for a
+    /// session that was not imported (D209 (h)). The session directory sets
+    /// it for ``RouterSessionDirectory/importSession(_:transcript:)``. See
+    /// ``agentID``.
+    public var importedFrom: SessionImportProvenance?
 
     /// The UI client that asked for the start of the session, for the tab
     /// rule, or `nil` (the default) when no client asked: a start by a
@@ -255,8 +261,9 @@ public struct SessionConfiguration: Sendable {
     /// `parentCall`, `hookSessionKey` and `hookOrigin` default to `nil`,
     /// `agentDelegationHint` defaults to `AgentDelegationHint()`, `tags`
     /// defaults to none, and the other fact fields (`agentID`, `agentName`,
-    /// `title`, `startedBy`, `origin`) and `requestedByClient` default to
-    /// `nil`, and `transcriptReader` defaults to `nil`.
+    /// `title`, `startedBy`, `origin`, `importedFrom`) and
+    /// `requestedByClient` default to `nil`, and `transcriptReader` defaults
+    /// to `nil`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -281,6 +288,7 @@ public struct SessionConfiguration: Sendable {
         title: String? = nil,
         startedBy: ULID? = nil,
         origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil,
+        importedFrom: SessionImportProvenance? = nil,
         requestedByClient: String? = nil,
         transcriptReader: (any SessionTranscriptReader)? = nil
     ) {
@@ -307,6 +315,7 @@ public struct SessionConfiguration: Sendable {
         self.title = title
         self.startedBy = startedBy
         self.origin = origin
+        self.importedFrom = importedFrom
         self.requestedByClient = requestedByClient
         self.transcriptReader = transcriptReader
     }
@@ -316,7 +325,7 @@ public struct SessionConfiguration: Sendable {
     var initialFacts: SessionFacts {
         SessionFacts(
             agentID: agentID, agentName: agentName, tags: tags, title: title, startedBy: startedBy,
-            origin: origin)
+            origin: origin, importedFrom: importedFrom)
     }
 
     /// The `Codable` slice of this configuration, persisted in the session's `index.md`.

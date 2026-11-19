@@ -12,10 +12,32 @@ comments:
     - Orchestrator decision on the event: the Router sends `factsChanged` with the summary of the new imported session (no new event case), so the change feed shows it. Extras aligns its in-memory directory and doc.
     Update the pin after ^mdhq7rh ends, with `swift package --manifest-cache local update FoundationModelsExtras`.
   timestamp: 2026-11-19T22:25:07.690133+00:00
+- actor: claude-code
+  id: 01m7v0tj3qejwggqg83j2kpxs7
+  text: |-
+    Research (implement):
+    - The directory holds no model. The host makes each session through `SessionLauncher` (`launchRootSession`, `restoreSession`, `forkSession`). Thus the directory gets the model handle of the agent's default through the launcher: a new launcher operation `importTarget(for: SessionImportRequest) -> SessionImportTarget` (the `RoutedLLM` handle of the default of the resolved agent, and the `SessionConfiguration` of the agent). The protocol default throws `SessionDirectoryError.importUnsupported`, so a host launcher still compiles (ACPAgent must implement it).
+    - The provenance goes to the writer through a new fact field `SessionConfiguration.importedFrom` (in `initialFacts`), as `origin` does. The directory sets `origin = .import`, `importedFrom`, the title (name), `startedBy` and the folder of the request on the configuration of the launcher.
+    - `SessionFacts.importedFrom` is a nested map under the flat key `importedFrom`; its dates are millisecond text like every other date of the record.
+    - The live summary (`summary(of:in:usage:)`) also must give `importedFrom`, so a restored import shows it.
+    - Name rule: the slugs of the live and recorded sessions in the folder that are not archived, as `SessionDefaultTitle` collects them; the title when its slug is free, else `SessionName.default(agentName: title, usedNames:)` (Extras in-memory rule). A name that an import in flight holds is reserved on the actor, so two imports at the same time do not get the same name.
+    - Event: one `factsChanged(summary)` after the write, no `started`.
+  timestamp: 2026-11-19T23:03:48.087644+00:00
+- actor: claude-code
+  id: 01m7v1j321nm7ad2zbs6x04r42
+  text: |-
+    ### implement — changed
+    - evidence: model handle: a new `SessionLauncher.importTarget(for: SessionImportRequest) -> SessionImportTarget` (the `RoutedLLM` of the default of the resolved agent and the configuration of the agent); the protocol default throws `importUnsupported`. The directory sets the folder, name, startedBy, origin `.import` and `importedFrom` (new `SessionConfiguration.importedFrom`, in `initialFacts`) and writes with `recordSession(from:configuration:)`, reads the record back, sends one `factsChanged(summary)`, no `started`. Name rule in `SessionDefaultTitle.makeImport`; `SessionImportNames` holds the names of imports in flight and of ended imports until a summary shows them. `SessionFacts.importedFrom` is the flat key `importedFrom` (`RecordedImportProvenance`, millisecond dates); `SessionSummary(record:)` and the live summary give it.
+    - files: Sources: Directory/RouterSessionDirectory.swift, Directory/SessionLauncher.swift, Directory/SessionDefaultTitle.swift, Directory/SessionImportNames.swift (new), Directory/RecordedSessionSummary.swift, Recording/SessionFacts.swift, Recording/SessionRecord.swift, Recording/RecordedImportProvenance.swift (new), Recording/TranscriptSessionWriter.swift (doc), Session/SessionConfiguration.swift. Tests: RouterSessionDirectoryImportTests.swift (new, 19 tests), SessionIndexFileTests (3 new), SessionSummaryRecordTests (1 new), SessionLauncherPublicSurfaceTests (2 new), Helpers/FakeSessionLauncher.swift.
+    - RED: compile failure first; then with the API surface only, 19 issues in the 3 suites; the surface import test failed with the directory method hidden. Absence tests (failed write leaves nothing, old index.md reads nil, launcher default) passed before the code because the stub wrote nothing.
+    - GREEN: changed suites 69 tests in 5 suites + 5 in 1 suite passed. Full `swift test` once: 3235 tests in 364 suites passed, plus 54 and 19; exit 0; no compiler warnings. Output: scratchpad/full-suite.txt.
+    - note: ACPAgent must implement `importTarget(for:)` (default throws `importUnsupported`). Not committed.
+    - next: /review
+  timestamp: 2026-11-19T23:16:39.105513+00:00
 depends_on:
 - 01M7TY6VQ8MK2NV6ADXMDHQ7RH
-position_column: todo
-position_ordinal: '8180'
+position_column: doing
+position_ordinal: '80'
 title: 'The session directory imports a session: importSession, the importedFrom fact, and the name (D209 (h), part 2)'
 ---
 ## Goal

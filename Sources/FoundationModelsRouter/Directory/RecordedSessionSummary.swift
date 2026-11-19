@@ -19,7 +19,9 @@ extension SessionSummary {
     /// - The title is the title of the facts; an empty title counts as none.
     ///   With no title, the slug is the 7-character short id.
     /// - The last summary, the recap, the time of the recap and
-    ///   ``SessionSummary/archivedAt`` are those of the facts (D206).
+    ///   ``SessionSummary/archivedAt`` are those of the facts (D206), and
+    ///   ``SessionSummary/importedFrom`` is the provenance of the facts
+    ///   (D209 (h)).
     /// - A record with no agent or no origin maps to the default agent and
     ///   the client origin.
     ///
@@ -45,6 +47,7 @@ extension SessionSummary {
             isLive: false,
             archivedAt: facts.archivedAt,
             recap: facts.recap,
-            recapAt: facts.recapAt)
+            recapAt: facts.recapAt,
+            importedFrom: facts.importedFrom)
     }
 }

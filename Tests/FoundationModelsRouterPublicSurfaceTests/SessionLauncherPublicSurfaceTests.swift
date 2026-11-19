@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import FoundationModelsExtras
 import Testing
 
@@ -60,6 +61,50 @@ struct SessionLauncherPublicSurfaceTests {
         await #expect(throws: SessionDirectoryError.unknownSession(unknown)) {
             try await directory.fork(
                 SessionForkRequest(sourceID: unknown, cut: .lastCompletedTurn, forker: .user(clientID: "host")))
+        }
+        await directory.shutdown()
+    }
+
+    /// A host launcher that gives the model of an import over the public
+    /// type of the port (D209 (h)). It has no model to give, so it throws
+    /// `unknownAgent` for the agent of the request.
+    struct ImportingHostLauncher: StartRefusingLauncher {
+        /// Throws `unknownAgent` for the agent of `request`.
+        ///
+        /// - Parameter request: The import request of the directory.
+        /// - Returns: Nothing.
+        /// - Throws: `SessionDirectoryError.unknownAgent` for the agent of
+        ///   `request`.
+        func importTarget(for request: SessionImportRequest) async throws -> SessionImportTarget {
+            throw SessionDirectoryError.unknownAgent(request.agentID ?? unknownAgentID, nearNames: [])
+        }
+    }
+
+    /// The import request of each import test.
+    private static let importRequest = SessionImportRequest(
+        agentID: unknownAgentID, workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
+        title: "Imported", provenance: SessionImportProvenance(
+            agent: "codex", sourceID: "source-1", sourcePath: "/tmp/source-1.jsonl",
+            importedAt: Date(timeIntervalSince1970: 0)))
+
+    @Test("a host's launcher gives the model of an import of the router's directory")
+    func aHostLauncherGetsTheImport() async throws {
+        let directory = Router(pool: ModelPool()).sessionDirectory
+        await directory.use(launcher: ImportingHostLauncher())
+
+        await #expect(throws: SessionDirectoryError.unknownAgent(Self.unknownAgentID, nearNames: [])) {
+            try await directory.importSession(Self.importRequest, transcript: Transcript())
+        }
+        await directory.shutdown()
+    }
+
+    @Test("a host's launcher with no import operation refuses the import")
+    func aHostLauncherWithNoImportOperationRefusesTheImport() async throws {
+        let directory = Router(pool: ModelPool()).sessionDirectory
+        await directory.use(launcher: AgentlessLauncher())
+
+        await #expect(throws: SessionDirectoryError.importUnsupported) {
+            try await directory.importSession(Self.importRequest, transcript: Transcript())
         }
         await directory.shutdown()
     }

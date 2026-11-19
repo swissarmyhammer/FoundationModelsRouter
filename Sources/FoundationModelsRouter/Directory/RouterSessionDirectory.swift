@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import FoundationModelsExtras
 import Logging
 import Synchronization
@@ -394,6 +395,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// `nil` before ``use(launcher:)`` and after ``shutdown()``. A directory
     /// with no launcher throws `noLauncher` from ``start(_:)``.
     private var launcher: (any SessionLauncher)?
+
+    /// The names that the imports hold (``importSession(_:transcript:)``,
+    /// D209 (h)), so two imports with one title in one folder do not get one
+    /// name.
+    private var importNames = SessionImportNames()
 
     /// The recording roots of the host, read at each query that includes
     /// the recorded sessions. A directory with none gives no recorded
@@ -812,8 +818,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The pin and the last use come from `usage` (``use(usageStore:)``).
     /// The last summary is the one the tracking holds, else the one of the
     /// facts: a session that a restore made has no answer in its tracking
-    /// yet, and its record keeps the last summary (D206). The recap and the
-    /// time of the recap are those of the facts.
+    /// yet, and its record keeps the last summary (D206). The recap, the
+    /// time of the recap and the provenance of an import (D209 (h)) are those
+    /// of the facts.
     ///
     /// - Parameters:
     ///   - session: The live session.
@@ -845,7 +852,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             lastUsedAt: usage?.lastUsedAt,
             archivedAt: facts.archivedAt,
             recap: facts.recap,
-            recapAt: facts.recapAt)
+            recapAt: facts.recapAt,
+            importedFrom: facts.importedFrom)
     }
 
     // MARK: - Query
@@ -1738,6 +1746,115 @@ public actor RouterSessionDirectory: SessionDirectory {
         guard recorded.state != .archived else { throw SessionDirectoryError.archivedSession(id) }
         guard let launcher else { throw SessionDirectoryError.noLauncher }
         return try await launcher.restoreSession(id: id)
+    }
+
+    // MARK: - Import
+
+    /// See `SessionDirectory.importSession(_:transcript:)` (D209 (h)).
+    /// Writes a new session recording from `transcript` and gives the
+    /// summary of the new session: a recorded root session that is not live,
+    /// with the state `idle`, the origin `import` and the provenance of
+    /// `request` in ``SessionSummary/importedFrom``.
+    ///
+    /// The launcher gives the model handle of the default of the agent of
+    /// `request` and the configuration of that agent
+    /// (``SessionLauncher/importTarget(for:)``). The directory sets the
+    /// facts of the import on that configuration (``importConfiguration(_:for:name:)``)
+    /// and writes the recording with
+    /// ``RoutedModel/recordSession(from:configuration:)``. The host restores
+    /// the session as it restores each recorded session.
+    ///
+    /// The name is the title of `request` when no session in the folder that
+    /// is not archived has its slug, else the slug of the title with the next
+    /// free number (``SessionDefaultTitle/makeImport(from:in:among:reserved:)``).
+    /// The sessions that count are the live sessions and the recorded
+    /// sessions of the recording roots (``useRecordingRoots(_:)``), and the
+    /// names of the other imports (``SessionImportNames``). Each import makes
+    /// a new session, also for a source that an earlier import read.
+    ///
+    /// After the write, the directory sends `factsChanged` with the summary
+    /// of the new session, one time. It sends no `started`, because the
+    /// session is not live. A write that fails leaves no session folder
+    /// (``RoutedModel/recordSession(from:configuration:)``), and the
+    /// directory then sends no event and lists no session for it.
+    ///
+    /// - Parameters:
+    ///   - request: The agent, the folder, the title, the provenance and the
+    ///     session that asks.
+    ///   - transcript: The history of the imported session.
+    /// - Returns: The summary of the imported session, read from the record
+    ///   that the write made, with the pin and the last use of the usage
+    ///   store.
+    /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
+    ///   launcher; the error of the launcher, for example
+    ///   `SessionDirectoryError.importUnsupported` from a launcher with no
+    ///   import operation; the error of the recording roots of the host or of
+    ///   a read of the recorded sessions; the error of the write; or
+    ///   `SessionDirectoryError.unknownSession` when the record of the new
+    ///   session does not read.
+    public func importSession(_ request: SessionImportRequest, transcript: Transcript) async throws -> SessionSummary {
+        guard let launcher else { throw SessionDirectoryError.noLauncher }
+        let target = try await launcher.importTarget(for: request)
+        let summaries = Self.merging(live: liveSummaries(), recorded: try await recordedSummaries())
+        let (name, token) = importNames.reserve(
+            from: request.title, in: request.workingDirectory, among: summaries)
+        do {
+            let summary = try await writeImport(
+                of: transcript, with: target,
+                configuration: Self.importConfiguration(target.configuration, for: request, name: name))
+            importNames.finish(token, as: summary.id)
+            emit(.factsChanged(summary))
+            return summary
+        } catch {
+            importNames.finish(token, as: nil)
+            throw error
+        }
+    }
+
+    /// Writes the recording of an import and reads back the summary of the
+    /// new session from its record.
+    ///
+    /// - Parameters:
+    ///   - transcript: The history of the imported session.
+    ///   - target: The model and the configuration of the launcher.
+    ///   - configuration: The configuration with the facts of the import.
+    /// - Returns: The recorded summary of the new session.
+    /// - Throws: The error of the write, the read error of the `index.md`,
+    ///   or `SessionDirectoryError.unknownSession` when the session folder
+    ///   holds no `index.md`.
+    private func writeImport(
+        of transcript: Transcript, with target: SessionImportTarget, configuration: SessionConfiguration
+    ) async throws -> SessionSummary {
+        let id = try await target.model.recordSession(from: transcript, configuration: configuration)
+        let folder = target.model.recordingDirectory(forSessionId: id, recordingRoot: configuration.recordingRoot)
+        guard let record = try SessionIndexFile.read(in: folder) else {
+            throw SessionDirectoryError.unknownSession(id)
+        }
+        return recordedSummary(of: record)
+    }
+
+    /// The configuration that an import writes with: the configuration of
+    /// the launcher, with the facts of the import. The folder, `startedBy`
+    /// and the provenance are those of `request`, the title is `name`, the
+    /// origin is `import`, and the session has no tags. The agent is the one
+    /// that the launcher resolved.
+    ///
+    /// - Parameters:
+    ///   - base: The configuration that the launcher gave.
+    ///   - request: The import request.
+    ///   - name: The name of the imported session.
+    /// - Returns: The configuration of the write.
+    private static func importConfiguration(
+        _ base: SessionConfiguration, for request: SessionImportRequest, name: String
+    ) -> SessionConfiguration {
+        var configuration = base
+        configuration.workingDirectory = request.workingDirectory
+        configuration.title = name
+        configuration.tags = []
+        configuration.startedBy = request.startedBy
+        configuration.origin = .import
+        configuration.importedFrom = request.provenance
+        return configuration
     }
 
     // MARK: - Messages
