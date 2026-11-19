@@ -134,14 +134,6 @@ struct RouterSessionDirectoryArchiveTests {
         return Fixture(pair: pair, backend: backend, latch: latch, launcher: launcher)
     }
 
-    /// The record that the `index.md` of `session` holds.
-    ///
-    /// - Parameter session: A durable session.
-    /// - Returns: The record on disk.
-    private static func recordOnDisk(of session: any RoutedSession) throws -> SessionRecord {
-        try #require(try SessionIndexFile.read(in: session.recordingDirectory))
-    }
-
     /// Sends ``text`` from ``archiver`` to the archived session `session`
     /// through `directory`, and checks that the receipt is `sent` with the
     /// note "archived" and that the inbox of the session holds the message
@@ -197,7 +189,7 @@ struct RouterSessionDirectoryArchiveTests {
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.archiver)
 
-        #expect(try Self.recordOnDisk(of: session).facts.archivedAt != nil)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.archivedAt != nil)
         #expect(session.facts.archivedAt != nil)
         await fixture.close(session)
     }
@@ -227,7 +219,7 @@ struct RouterSessionDirectoryArchiveTests {
         let fixture = try await Self.makeFixture()
         let session = await fixture.makeLiveRoot()
         let first = try await fixture.liveDirectory.archive(session.id, by: Self.archiver)
-        let onDisk = try Self.recordOnDisk(of: session)
+        let onDisk = try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
 
         let second = try await fixture.liveDirectory.archive(session.id, by: Self.archiver)
@@ -236,7 +228,7 @@ struct RouterSessionDirectoryArchiveTests {
 
         #expect(second.id == first.id)
         #expect(second.state == .archived)
-        #expect(try Self.recordOnDisk(of: session) == onDisk)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory) == onDisk)
         #expect(received == [Self.marker])
         await fixture.close(session)
     }
@@ -292,7 +284,7 @@ struct RouterSessionDirectoryArchiveTests {
         fixture.readingDirectory.emit(Self.marker)
         let received = await events.next(through: Self.marker)
 
-        let onDisk = try #require(try SessionIndexFile.read(in: recorded.recordingDirectory))
+        let onDisk = try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory)
         #expect(onDisk.facts.archivedAt != nil)
         #expect(summary.state == .archived)
         #expect(!summary.isLive)
@@ -311,7 +303,7 @@ struct RouterSessionDirectoryArchiveTests {
         let recorded = await fixture.pair.recordClosedRoot()
         await fixture.pair.useRoot(of: recorded.recordingDirectory)
         _ = try await fixture.readingDirectory.archive(recorded.id, by: Self.archiver)
-        let onDisk = try #require(try SessionIndexFile.read(in: recorded.recordingDirectory))
+        let onDisk = try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory)
         var events = fixture.readingDirectory.events().makeAsyncIterator()
 
         let summary = try await fixture.readingDirectory.archive(recorded.id, by: Self.archiver)
@@ -319,7 +311,7 @@ struct RouterSessionDirectoryArchiveTests {
         let received = await events.next(through: Self.marker)
 
         #expect(summary.state == .archived)
-        #expect(try SessionIndexFile.read(in: recorded.recordingDirectory) == onDisk)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory) == onDisk)
         #expect(received == [Self.marker])
         fixture.pair.remove()
     }
@@ -357,7 +349,7 @@ struct RouterSessionDirectoryArchiveTests {
         #expect(!live.map(\.id).contains(session.id))
         #expect(recorded.state == .archived)
         #expect(!recorded.isLive)
-        #expect(try Self.recordOnDisk(of: session).facts.archivedAt != nil)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.archivedAt != nil)
         await fixture.close(session)
     }
 

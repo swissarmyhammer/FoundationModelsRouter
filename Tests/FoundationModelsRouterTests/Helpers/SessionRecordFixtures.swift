@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsExtras
+import Testing
 
 @testable import FoundationModelsRouter
 
@@ -7,7 +8,8 @@ import FoundationModelsExtras
 /// that lay out a recording on disk by hand instead of vending sessions:
 /// a malformed tree, a recording root the scan reads, a session the
 /// transcript readers interpret. The values are placeholders the tests do
-/// not read back.
+/// not read back. ``recordOnDisk(in:)`` is the one read of a record that the
+/// directory suites make.
 enum SessionRecordFixtures {
     /// The concrete model each placeholder record holds.
     static let model: ModelRef = "org/model-a"
@@ -74,5 +76,15 @@ enum SessionRecordFixtures {
     /// - Throws: The error of the making of the folder or of the save.
     static func writePlaceholder(in directory: URL, forkedAtEntryCount: Int? = nil) throws {
         try write(record(in: directory, forkedAtEntryCount: forkedAtEntryCount), to: directory)
+    }
+
+    /// The record that the `index.md` in `folder` holds.
+    ///
+    /// - Parameter folder: The session folder of a durable session.
+    /// - Returns: The record on disk.
+    /// - Throws: The read error of the `index.md`, or the `#require` failure
+    ///   when the folder holds no `index.md`.
+    static func recordOnDisk(in folder: URL) throws -> SessionRecord {
+        try #require(try SessionIndexFile.read(in: folder))
     }
 }

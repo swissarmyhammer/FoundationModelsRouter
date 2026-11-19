@@ -39,6 +39,9 @@ import Testing
     /// The recap of a source.
     private static let sourceRecap = "Answered two prompts; the session waits."
 
+    /// The recap that a test writes to a recorded fork.
+    private static let forkRecap = "Answered one prompt; the fork waits."
+
     /// The text of a message that the directory delivers to a source.
     private static let mailText = "mail turn"
 
@@ -167,7 +170,7 @@ import Testing
 
         let fork = try await fixture.fork(source, at: .historyPosition(Self.secondTurnPosition))
 
-        let record = try #require(try SessionIndexFile.read(in: fork.recordingDirectory))
+        let record = try SessionRecordFixtures.recordOnDisk(in: fork.recordingDirectory)
         #expect(record.forkedAtHistoryOrdinal == Self.secondTurnPosition)
         await fixture.end([source, fork])
     }
@@ -417,15 +420,22 @@ import Testing
     /// Makes a named source with one fork, closes both, and restarts the
     /// fixture.
     ///
-    /// - Parameter fixture: The fixture before the restart.
+    /// - Parameters:
+    ///   - fixture: The fixture before the restart.
+    ///   - archivesTheFork: Whether the live fork is archived before the
+    ///     restart. The default is `false`.
     /// - Returns: The restarted fixture, the source and the fork. Both are
     ///   closed.
-    /// - Throws: What the source, the fork or the restart throws.
+    /// - Throws: What the source, the fork, the archive or the restart
+    ///   throws.
     private static func restartAfterAFork(
-        of fixture: Fixture
+        of fixture: Fixture, archivesTheFork: Bool = false
     ) async throws -> (restarted: Fixture, source: any RoutedSession, fork: any RoutedSession) {
         let source = try await fixture.makeSource(answering: Self.twoTurns, title: Self.sourceTitle)
         let fork = try await fixture.fork(source, at: .afterTurn(0))
+        if archivesTheFork {
+            _ = try await fixture.directory.archive(fork.id, by: Fixture.user)
+        }
         await source.close()
         await fork.close()
         return (try await fixture.restarted(), source, fork)
@@ -471,5 +481,44 @@ import Testing
         #expect(second.facts.title == "review-the-login-fork-2")
         await launcher.closeSessions()
         await restarted.end([second])
+    }
+
+    // MARK: - A change of a recorded fork
+
+    /// The production change that makes this test fail: a recap write that
+    /// finds a recorded session only in a folder that a recording root
+    /// holds directly. The folder of a fork is in the folder of its source.
+    @Test func aRecapWriteReachesARecordedForkAfterARestart() async throws {
+        let (restarted, _, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+
+        try await restarted.directory.recordRecap(Self.forkRecap, at: Date(), of: fork.id)
+
+        #expect(try SessionRecordFixtures.recordOnDisk(in: fork.recordingDirectory).facts.recap == Self.forkRecap)
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: an archive that
+    /// finds a recorded session only in a folder that a recording root holds
+    /// directly.
+    @Test func anArchiveReachesARecordedForkAfterARestart() async throws {
+        let (restarted, _, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+
+        _ = try await restarted.directory.archive(fork.id, by: Fixture.user)
+
+        #expect(try SessionRecordFixtures.recordOnDisk(in: fork.recordingDirectory).facts.archivedAt != nil)
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: an unarchive that
+    /// finds a recorded session only in a folder that a recording root holds
+    /// directly.
+    @Test func anUnarchiveReachesARecordedForkAfterARestart() async throws {
+        let (restarted, _, fork) = try await Self.restartAfterAFork(
+            of: try await Fixture.make(), archivesTheFork: true)
+
+        _ = try await restarted.directory.unarchive(fork.id, by: Fixture.user)
+
+        #expect(try SessionRecordFixtures.recordOnDisk(in: fork.recordingDirectory).facts.archivedAt == nil)
+        restarted.directories.remove()
     }
 }

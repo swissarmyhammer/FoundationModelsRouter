@@ -105,6 +105,16 @@ struct RecordedSessions {
         return (rootEntries + forks).sorted { $0.record.sessionId > $1.record.sessionId }
     }
 
+    /// The listed session `id` (``listedEntries()``): a root session, or a
+    /// recorded fork at any depth.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The entry, or `nil` when a listing does not show the id.
+    /// - Throws: What ``listedEntries()`` throws.
+    func listedEntry(of id: ULID) throws -> Entry? {
+        try listedEntries().first { $0.record.sessionId == id }
+    }
+
     /// The summaries of the sessions that a listing shows
     /// (``listedEntries()``).
     ///

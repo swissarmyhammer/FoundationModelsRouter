@@ -111,14 +111,6 @@ struct RouterSessionDirectoryRecapRecordTests {
         return reply
     }
 
-    /// The record that the `index.md` of `session` holds.
-    ///
-    /// - Parameter session: A durable session.
-    /// - Returns: The record on disk.
-    private static func recordOnDisk(of session: any RoutedSession) throws -> SessionRecord {
-        try #require(try SessionIndexFile.read(in: session.recordingDirectory))
-    }
-
     /// Writes ``recap`` and ``recapAt`` to the facts of the live `session`.
     ///
     /// - Parameter session: A live session.
@@ -143,7 +135,7 @@ struct RouterSessionDirectoryRecapRecordTests {
 
         let reply = try await Self.runTurn(of: session, in: fixture.liveDirectory)
 
-        #expect(try Self.recordOnDisk(of: session).facts.lastSummary == reply)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.lastSummary == reply)
         await session.close()
         fixture.pair.remove()
     }
@@ -249,7 +241,7 @@ struct RouterSessionDirectoryRecapRecordTests {
 
         try await fixture.liveDirectory.recordRecap(Self.recap, at: Self.recapAt, of: session.id)
 
-        let facts = try Self.recordOnDisk(of: session).facts
+        let facts = try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts
         #expect(facts.recap == Self.recap)
         #expect(facts.recapAt == Self.recapAt)
         await session.close()
@@ -317,8 +309,9 @@ struct RouterSessionDirectoryRecapRecordTests {
 
         try await fixture.readingDirectory.recordRecap(Self.recap, at: Self.recapAt, of: recorded.id)
 
-        let record = try #require(try SessionIndexFile.read(in: recorded.recordingDirectory))
+        let record = try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory)
         #expect(record.facts.recap == Self.recap)
+        #expect(record.facts.recapAt == Self.recapAt)
         fixture.pair.remove()
     }
 

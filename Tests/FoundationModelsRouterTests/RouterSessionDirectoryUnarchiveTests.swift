@@ -57,14 +57,6 @@ struct RouterSessionDirectoryUnarchiveTests {
         return recorded
     }
 
-    /// The record that the `index.md` in `folder` holds.
-    ///
-    /// - Parameter folder: The session folder of a durable session.
-    /// - Returns: The record on disk.
-    private static func recordOnDisk(in folder: URL) throws -> SessionRecord {
-        try #require(try SessionIndexFile.read(in: folder))
-    }
-
     /// Vends a live root session and writes `archivedAt` to its record, as a
     /// client does that opens an archived session with `session/load`.
     ///
@@ -98,7 +90,7 @@ struct RouterSessionDirectoryUnarchiveTests {
 
         _ = try await fixture.readingDirectory.unarchive(recorded.id, by: Self.user)
 
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory).facts.archivedAt == nil)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory).facts.archivedAt == nil)
         fixture.pair.remove()
     }
 
@@ -160,7 +152,7 @@ struct RouterSessionDirectoryUnarchiveTests {
         let recorded = await fixture.pair.recordClosedRoot()
         await fixture.pair.useRoot(of: recorded.recordingDirectory)
         _ = try await fixture.readingDirectory.summary(of: recorded.id)
-        let onDisk = try Self.recordOnDisk(in: recorded.recordingDirectory)
+        let onDisk = try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory)
         var events = fixture.readingDirectory.events().makeAsyncIterator()
 
         let summary = try await fixture.readingDirectory.unarchive(recorded.id, by: Self.user)
@@ -168,7 +160,7 @@ struct RouterSessionDirectoryUnarchiveTests {
         let received = await events.next(count: 1)
 
         #expect(summary.state == .idle)
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory) == onDisk)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory) == onDisk)
         #expect(received == [Self.marker])
         fixture.pair.remove()
     }
@@ -201,7 +193,7 @@ struct RouterSessionDirectoryUnarchiveTests {
         _ = try await fixture.liveDirectory.unarchive(session.id, by: Self.user)
 
         #expect(session.facts.archivedAt == nil)
-        #expect(try Self.recordOnDisk(in: session.recordingDirectory).facts.archivedAt == nil)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.archivedAt == nil)
         await fixture.close(session)
     }
 
@@ -265,7 +257,8 @@ struct RouterSessionDirectoryUnarchiveTests {
 
         let summary = try await fixture.liveDirectory.archive(session.id, by: Self.user)
 
-        let onDisk = try #require(try Self.recordOnDisk(in: session.recordingDirectory).facts.archivedAt)
+        let onDisk = try #require(
+            try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.archivedAt)
         #expect(summary.archivedAt == onDisk)
         await fixture.close(session)
     }
@@ -295,7 +288,8 @@ struct RouterSessionDirectoryUnarchiveTests {
 
         let recorded = try await fixture.readingDirectory.summary(of: session.id)
 
-        let onDisk = try #require(try Self.recordOnDisk(in: session.recordingDirectory).facts.archivedAt)
+        let onDisk = try #require(
+            try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.archivedAt)
         #expect(recorded?.archivedAt == onDisk)
         await fixture.close(session)
     }

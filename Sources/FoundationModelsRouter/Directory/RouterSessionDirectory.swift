@@ -2653,6 +2653,24 @@ public actor RouterSessionDirectory: SessionDirectory {
             }
     }
 
+    /// The folder of the recorded session `id` that a listing shows: the
+    /// folder that a recording root holds directly (``recordedFolder(of:)``),
+    /// else the folder of a recorded fork at any depth
+    /// (``RecordedSessions/listedEntry(of:)``). The folder of a fork is in
+    /// the folder of its source (D205).
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The folder, or `nil` when no root holds one and no listing
+    ///   shows the id.
+    /// - Throws: The error of the recording roots of the host, or what
+    ///   ``RecordedSessions/listedEntry(of:)`` throws.
+    private func listedRecordedFolder(of id: ULID) async throws -> URL? {
+        if let folder = try await recordedFolder(of: id) {
+            return folder
+        }
+        return try RecordedSessions(roots: try await allRecordingRoots()).listedEntry(of: id)?.folder
+    }
+
     /// The recording directory that holds the ledger of `session`: its
     /// recording directory when it records durably, else `nil`, because a
     /// memory-only session writes nothing to disk.
@@ -2740,8 +2758,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// port has no recap event. The recap maker of the directory calls it.
     ///
     /// The write goes through ``changeRecord(of:_:)``, thus a live session
-    /// and a recorded session that is not live, also an archived one, take
-    /// the recap alike. A recap and a time that the record holds already
+    /// and a recorded session that is not live, also an archived one and a
+    /// recorded fork, take the recap alike. A recap and a time that the record holds already
     /// change nothing and send no event. The time is rounded to the
     /// millisecond, as the `index.md` keeps it, so the live and the recorded
     /// summary give the same time.
@@ -2774,7 +2792,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// which saves its `index.md` best effort, and its live entry stamps the
     /// time of the change. A recorded session that is not live is read from
     /// the `index.md` of its folder, changed, and saved back; a failed save
-    /// throws, because no session goes on to hold the change.
+    /// throws, because no session goes on to hold the change. A recorded
+    /// session is each session that a listing shows: a root session, and a
+    /// recorded fork at any depth (``changeRecordedRecord(of:_:)``).
     ///
     /// A change that leaves the record as it was gives the summary and sends
     /// no event; a recorded session's `index.md` is then not written.
@@ -2802,8 +2822,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Changes the record of the recorded session `id`, which is not live:
-    /// reads the `index.md` of its folder, changes the record, and saves it
-    /// back when the change altered it. A failed save throws, because no
+    /// reads the `index.md` of its folder (``listedRecordedFolder(of:)``, so a
+    /// recorded fork whose folder is in the folder of its source is found
+    /// too), changes the record, and saves it back when the change altered
+    /// it. A failed save throws, because no
     /// session goes on to hold the change. The call sends no event; the
     /// caller sends the one its change calls for. A record with no title
     /// gets its default name first (``recordedSummaries()``), thus the
@@ -2815,14 +2837,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Returns: The recorded summary after the change, and whether the
     ///   change altered the record. A record the change left as it was is
     ///   not written.
-    /// - Throws: `SessionDirectoryError.unknownSession` when no session
-    ///   folder under the recording roots holds an `index.md` for the id; the
-    ///   error of the recording roots of the host; or the error of the read
-    ///   or the save of the `index.md`.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no recording
+    ///   root holds a folder for the id with an `index.md` and no listing
+    ///   shows the id; the error of the recording roots of the host; or the
+    ///   error of the read or the save of the `index.md`.
     private func changeRecordedRecord(
         of id: ULID, _ change: (inout SessionRecord) -> Void
     ) async throws -> (summary: SessionSummary, changed: Bool) {
-        guard let folder = try await recordedFolder(of: id) else {
+        guard let folder = try await listedRecordedFolder(of: id) else {
             throw SessionDirectoryError.unknownSession(id)
         }
         if let untitled = try SessionIndexFile.read(in: folder), SessionDefaultTitle.isMissing(in: untitled.facts) {

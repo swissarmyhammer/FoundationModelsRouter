@@ -75,14 +75,6 @@ import Testing
     /// The title a test sets.
     private static let newTitle = "Plan the trip"
 
-    /// The record that the `index.md` in `folder` holds.
-    ///
-    /// - Parameter folder: The recording directory of a session.
-    /// - Returns: The record on disk.
-    private static func recordOnDisk(in folder: URL) throws -> SessionRecord {
-        try #require(try SessionIndexFile.read(in: folder))
-    }
-
     /// The record that `recordedSessions(in:)` lists for the session in
     /// `folder`, read from the recording root that holds the folder.
     ///
@@ -110,7 +102,7 @@ import Testing
         #expect(summary.tags == [Self.reviewerTag])
         #expect(summary.isLive)
         #expect(session.facts.tags == [Self.reviewerTag])
-        #expect(try Self.recordOnDisk(in: session.recordingDirectory).facts.tags == [Self.reviewerTag])
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.tags == [Self.reviewerTag])
         #expect(received == [.factsChanged(summary), Self.marker])
         await session.close()
     }
@@ -125,7 +117,8 @@ import Testing
 
         #expect(summary.tags == [Self.travelTag, Self.reviewerTag])
         #expect(
-            try Self.recordOnDisk(in: session.recordingDirectory).facts.tags == [Self.travelTag, Self.reviewerTag])
+            try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.tags
+                == [Self.travelTag, Self.reviewerTag])
         await session.close()
     }
 
@@ -161,7 +154,8 @@ import Testing
 
         #expect(summary.tags == [Self.reviewerTag])
         #expect(!summary.isLive)
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory).facts.tags == [Self.reviewerTag])
+        #expect(
+            try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory).facts.tags == [Self.reviewerTag])
         #expect(received == [.factsChanged(summary), Self.marker])
     }
 
@@ -171,7 +165,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot(SessionConfiguration(tags: [Self.reviewerTag]))
-        let before = try Self.recordOnDisk(in: recorded.recordingDirectory)
+        let before = try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory)
         var events = fixture.readingDirectory.events().makeAsyncIterator()
 
         let summary = try await fixture.readingDirectory.addTags([Self.reviewerTag], to: recorded.id)
@@ -179,7 +173,7 @@ import Testing
         let received = await events.next(through: Self.marker)
 
         #expect(summary.tags == [Self.reviewerTag])
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory) == before)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory) == before)
         #expect(received == [Self.marker])
     }
 
@@ -199,7 +193,7 @@ import Testing
 
         #expect(summary.tags == [Self.travelTag])
         #expect(session.facts.tags == [Self.travelTag])
-        #expect(try Self.recordOnDisk(in: session.recordingDirectory).facts.tags == [Self.travelTag])
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.tags == [Self.travelTag])
         #expect(received == [.factsChanged(summary), Self.marker])
         await session.close()
     }
@@ -234,7 +228,7 @@ import Testing
         let received = await events.next(through: Self.marker)
 
         #expect(summary.tags.isEmpty)
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory).facts.tags.isEmpty)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory).facts.tags.isEmpty)
         #expect(received == [.factsChanged(summary), Self.marker])
     }
 
@@ -255,7 +249,7 @@ import Testing
 
         #expect(summary.title == Self.newTitle)
         #expect(session.facts.title == Self.newTitle)
-        #expect(try Self.recordOnDisk(in: session.recordingDirectory).facts.title == Self.newTitle)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.title == Self.newTitle)
         #expect(try Self.listedRecord(in: session.recordingDirectory).facts.title == Self.newTitle)
         #expect(received == [.factsChanged(summary), Self.marker])
         await session.close()
@@ -293,7 +287,7 @@ import Testing
 
         #expect(summary.title == Self.newTitle)
         #expect(!summary.isLive)
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory).facts.title == Self.newTitle)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory).facts.title == Self.newTitle)
         #expect(try Self.listedRecord(in: recorded.recordingDirectory).facts.title == Self.newTitle)
         #expect(received == [.factsChanged(summary), Self.marker])
     }
@@ -306,7 +300,7 @@ import Testing
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let session = fixture.makeLiveRoot(SessionConfiguration(tags: [Self.travelTag]))
-        let before = try Self.recordOnDisk(in: session.recordingDirectory)
+        let before = try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
 
         await #expect(throws: SessionDirectoryError.invalidTag(Self.invalidTag)) {
@@ -316,7 +310,7 @@ import Testing
         let received = await events.next(through: Self.marker)
 
         #expect(session.facts.tags == [Self.travelTag])
-        #expect(try Self.recordOnDisk(in: session.recordingDirectory) == before)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory) == before)
         #expect(received == [Self.marker])
         await session.close()
     }
@@ -327,13 +321,13 @@ import Testing
         let fixture = try await Self.makeFixture()
         defer { fixture.remove() }
         let recorded = await fixture.recordClosedRoot(SessionConfiguration(tags: [Self.reviewerTag]))
-        let before = try Self.recordOnDisk(in: recorded.recordingDirectory)
+        let before = try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory)
 
         await #expect(throws: SessionDirectoryError.invalidTag(Self.invalidTag)) {
             try await fixture.readingDirectory.removeTags([Self.reviewerTag, Self.invalidTag], from: recorded.id)
         }
 
-        #expect(try Self.recordOnDisk(in: recorded.recordingDirectory) == before)
+        #expect(try SessionRecordFixtures.recordOnDisk(in: recorded.recordingDirectory) == before)
     }
 
     // MARK: - Unknown sessions
