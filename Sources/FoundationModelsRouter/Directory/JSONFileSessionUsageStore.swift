@@ -19,8 +19,10 @@ import Synchronization
 /// The store keeps all the pinned usages, and at most
 /// ``maximumRecentCount`` usages that are not pinned. A write removes the
 /// usages that are not pinned and have the oldest last use first. A usage
-/// with no pin and no last use is removed: a write removes it, and a read of
-/// the file removes it too.
+/// with no last use counts from the time of its session id. A usage that
+/// holds only a recording root stays (``setRecordingRoot(_:of:)``), also
+/// after an unpin. A usage with no pin, no last use and no recording root
+/// is removed: a write removes it, and a read of the file removes it too.
 ///
 /// A `Mutex` holds the usages, so each call is safe from each thread. A write
 /// changes the usages in memory only after the file write succeeds.
@@ -99,8 +101,8 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
     /// Pins or unpins a session, and writes the file.
     ///
     /// A pin of a pinned session keeps the time of the first pin. An unpin
-    /// clears the pin. An unpin of a session that has no last use removes its
-    /// usage.
+    /// clears the pin. An unpin of a session that has no last use and no
+    /// recording root removes its usage.
     ///
     /// - Parameters:
     ///   - pinned: `true` to pin the session, `false` to unpin it.
@@ -135,6 +137,20 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
         }
     }
 
+    /// Records the recording root of a session, keeps its pin and its last
+    /// use, and writes the file. This call records no use.
+    ///
+    /// - Parameters:
+    ///   - recordingRoot: The recording root of the session.
+    ///   - id: The id of the session.
+    /// - Returns: The usage of the session after the change.
+    /// - Throws: The error of the folder or of the write. The file and the
+    ///   store then stay as they were.
+    @discardableResult
+    public func setRecordingRoot(_ recordingRoot: URL, of id: ULID) throws -> SessionUsage {
+        try change(id, recordingRoot: recordingRoot) { _ in }
+    }
+
     // MARK: - Changes
 
     /// Changes the usage of one session, removes the usages above the limit,
@@ -156,7 +172,7 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
             var usage = usages[id] ?? SessionUsage()
             body(&usage)
             usage.recordingRoot = recordingRoot ?? usage.recordingRoot
-            usages[id] = usage.hasPinOrUse ? usage : nil
+            usages[id] = usage.holdsAnything ? usage : nil
             let kept = trimmed(usages)
             try write(kept)
             contents = .read(kept)
@@ -179,8 +195,11 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
         return usages.filter { !removed.contains($0.key) }
     }
 
-    /// The order of the usages that are not pinned: the newest last use
-    /// first, then the greater session id, so that the order is stable.
+    /// The order of the usages that are not pinned: the newest time first,
+    /// then the greater session id, so that the order is stable. The time
+    /// of a usage is its last use, or the time of its session id when it
+    /// has no last use, so a usage that holds only a recording root is as
+    /// recent as its session.
     ///
     /// - Parameters:
     ///   - first: A usage and its session id.
@@ -189,7 +208,8 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
     private static func isMoreRecent(
         _ first: (key: ULID, value: SessionUsage), _ second: (key: ULID, value: SessionUsage)
     ) -> Bool {
-        (first.value.lastUsedAt ?? .distantPast, first.key) > (second.value.lastUsedAt ?? .distantPast, second.key)
+        (first.value.lastUsedAt ?? first.key.timestamp, first.key)
+            > (second.value.lastUsedAt ?? second.key.timestamp, second.key)
     }
 
     // MARK: - File
@@ -232,8 +252,9 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
     /// Decodes the usages of the data of a file.
     ///
     /// - Parameter data: The data of the file.
-    /// - Returns: The usages, by session id. An entry with no pin and no last
-    ///   use is not a usage, so the read removes it, as a write does.
+    /// - Returns: The usages, by session id. An entry with no pin, no last
+    ///   use and no recording root is not a usage, so the read removes it, as
+    ///   a write does.
     /// - Throws: A decoding error when the data is not the JSON object of a
     ///   file, or ``SessionUsageFileError`` when the version is not
     ///   ``fileVersion`` or a session id is not valid.
@@ -247,7 +268,7 @@ public final class JSONFileSessionUsageStore: SessionUsageStore {
             return (id, usage)
         }
         return try Dictionary(pairs) { _, _ in throw SessionUsageFileError.duplicateSessionID }
-            .filter { $0.value.hasPinOrUse }
+            .filter { $0.value.holdsAnything }
     }
 
     /// Writes the usages to the file atomically, and makes its folder when it
@@ -282,9 +303,9 @@ enum SessionUsageFileError: Error, Equatable {
 }
 
 extension SessionUsage {
-    /// Whether the usage has a pin or a last use. A usage with neither holds
-    /// nothing to keep.
-    fileprivate var hasPinOrUse: Bool {
-        pinnedAt != nil || lastUsedAt != nil
+    /// Whether the usage has a pin, a last use or a recording root. A usage
+    /// with none of them holds nothing to keep.
+    fileprivate var holdsAnything: Bool {
+        pinnedAt != nil || lastUsedAt != nil || recordingRoot != nil
     }
 }

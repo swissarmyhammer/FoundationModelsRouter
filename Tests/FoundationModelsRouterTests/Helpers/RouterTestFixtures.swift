@@ -152,6 +152,12 @@ struct BasicLLMContainer: PlainTranscriptStubContainer {
 /// per-test temp directory and the router itself — so the fixture data
 /// lives in exactly one place instead of being repeated per suite.
 enum RouterTestFixtures {
+    /// A part of a date smaller than one millisecond, in seconds: less than
+    /// one half of a millisecond, so a whole-millisecond date with it rounds
+    /// back to that date. Each test of the millisecond rounding of a date
+    /// adds this one value.
+    static let subMillisecond: TimeInterval = 0.000_25
+
     /// The `num_hidden_layers` of ``configJSON``. Two layers keep the KV
     /// cache of the stub model tiny, so its footprint is mostly the weights
     /// of ``weightFileBytes``.

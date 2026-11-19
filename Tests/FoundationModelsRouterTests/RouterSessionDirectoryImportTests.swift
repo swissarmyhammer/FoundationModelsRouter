@@ -317,17 +317,16 @@ import Testing
 
     // MARK: - The dates of the provenance
 
-    /// A provenance whose dates have a part smaller than one millisecond.
+    /// A provenance whose dates have a part smaller than one millisecond
+    /// (``RouterTestFixtures/subMillisecond``), so each date rounds down to
+    /// the date of ``provenance``.
     private static let subMillisecondProvenance = SessionImportProvenance(
         agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
-        sourceLastDate: Date(timeIntervalSince1970: TimeInterval(sourceLastMilliseconds) / 1000 + subMillisecond),
-        importedAt: Date(timeIntervalSince1970: TimeInterval(importedAtMilliseconds) / 1000 + subMillisecond),
+        sourceLastDate: Date(
+            timeIntervalSince1970: TimeInterval(sourceLastMilliseconds) / 1000 + RouterTestFixtures.subMillisecond),
+        importedAt: Date(
+            timeIntervalSince1970: TimeInterval(importedAtMilliseconds) / 1000 + RouterTestFixtures.subMillisecond),
         skippedRecordCount: skippedRecordCount)
-
-    /// The part smaller than one millisecond of the dates of
-    /// ``subMillisecondProvenance``, in seconds: less than one half of a
-    /// millisecond, so each date rounds down to the date of ``provenance``.
-    private static let subMillisecond: TimeInterval = 0.000_25
 
     /// The production change that makes this test fail: a live session that
     /// holds the provenance dates that are not rounded, while its `index.md`
@@ -444,11 +443,18 @@ import Testing
     ///
     /// - Parameter fixture: The fixture of the test.
     private static func useLauncherRecordingRoot(in fixture: Fixture) async {
-        await fixture.directory.use(
-            usageStore: JSONFileSessionUsageStore(
-                fileURL: fixture.folder.appendingPathComponent("usage.json", isDirectory: false)))
+        await fixture.directory.use(usageStore: makeUsageStore(in: fixture))
         await fixture.directory.use(
             launcher: FakeSessionLauncher(profile: fixture.profile, importRecordingRoot: fixture.launcherRecordingRoot))
+    }
+
+    /// Makes a usage store of the usage file in the folder of a test. Each
+    /// store of the same fixture reads and writes the same file.
+    ///
+    /// - Parameter fixture: The fixture of the test.
+    /// - Returns: A new store that has not read the file yet.
+    private static func makeUsageStore(in fixture: Fixture) -> JSONFileSessionUsageStore {
+        JSONFileSessionUsageStore(fileURL: fixture.folder.appendingPathComponent("usage.json", isDirectory: false))
     }
 
     /// The production change that makes this test fail: an import that
@@ -462,6 +468,67 @@ import Testing
             let listed = try await fixture.listed(imported.id)
 
             #expect(listed?.title == Self.title)
+        }
+    }
+
+    /// The production change that makes this test fail: an import that
+    /// records a use in the usage store, so a session that no client used
+    /// has a last use (D184).
+    @Test func anImportHasNoLastUse() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+
+            let imported = try await fixture.importSession()
+
+            #expect(imported.lastUsedAt == nil)
+        }
+    }
+
+    /// The production change that makes this test fail: a usage store that
+    /// does not keep the recording root of an import that has no use, so a
+    /// new directory over the same usage file does not read the root of the
+    /// launcher.
+    @Test func anImportToARootOfTheLauncherIsListedAfterARestart() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+            let imported = try await fixture.importSession()
+            let restarted = Router(pool: ModelPool()).sessionDirectory
+            await restarted.useRecordingRoots { [fixture.recordingRoot] }
+            await restarted.use(usageStore: Self.makeUsageStore(in: fixture))
+
+            let listed = try await restarted.sessions(matching: SessionQuery(includesRecorded: true))
+
+            #expect(listed.contains { $0.id == imported.id })
+        }
+    }
+
+    /// The production change that makes this test fail: an unpin that
+    /// removes the usage of a session with no last use, also when the usage
+    /// holds the recording root of the import.
+    @Test func aPinThenAnUnpinOfAnImportKeepsItListed() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+            let imported = try await fixture.importSession()
+            try await fixture.directory.setPinned(true, of: imported.id)
+            try await fixture.directory.setPinned(false, of: imported.id)
+
+            let listed = try await fixture.listed(imported.id)
+
+            #expect(listed?.id == imported.id)
+        }
+    }
+
+    /// The production change that makes this test fail: a usage store that
+    /// does not keep the recording root of an import, so a client use does
+    /// not find the session.
+    @Test func aClientUseOfAnImportSetsItsLastUse() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+            let imported = try await fixture.importSession()
+
+            let used = try await fixture.directory.markUsed(imported.id)
+
+            #expect(used.lastUsedAt != nil)
         }
     }
 

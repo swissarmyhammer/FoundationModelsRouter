@@ -11,18 +11,26 @@ import FoundationModelsExtras
 /// session before its write ends. Thus each import holds its name from the
 /// choice to the end of the import:
 ///
-/// - While the write runs, the reservation holds the name.
+/// - While the write runs, the reservation holds the name. The reservation
+///   protects the name only while the import runs.
 /// - When the import ends, with a session or with an error, the name goes.
-///   The list then shows the imported session, because the directory
-///   records its recording root before the release
-///   (``RouterSessionDirectory/importSession(_:transcript:)``).
+///   After the release, the list shows the imported session only when the
+///   recording root of the import is a root of the host
+///   (``RouterSessionDirectory/useRecordingRoots(_:)``) or the directory
+///   has a usage store (``RouterSessionDirectory/use(usageStore:)``): the
+///   directory then records the recording root of the import in the usage
+///   store before the release
+///   (``RouterSessionDirectory/importSession(_:transcript:)``). With no
+///   usage store and a recording root that the host does not give, the
+///   list does not show the session, and a later import with the same
+///   title in the same folder can get the same name.
 ///
 /// The directory changes the names on its actor. A choice reads the
 /// recorded sessions and holds its name with no suspension point between
 /// the read and the reservation, and an import records its recording root
-/// and releases its name with no suspension point between them. Thus a
-/// choice sees each other import either by its reservation or by its
-/// session.
+/// and releases its name with no suspension point between them. Thus, when
+/// the list shows the session of an import after the release, a choice
+/// sees each other import either by its reservation or by its session.
 struct SessionImportNames {
     /// One name that an import holds.
     private struct Reservation {

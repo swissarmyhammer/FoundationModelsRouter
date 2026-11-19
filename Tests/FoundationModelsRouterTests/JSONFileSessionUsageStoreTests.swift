@@ -64,9 +64,6 @@ import Testing
     /// The interval between two events of a test.
     static let interval: TimeInterval = 60
 
-    /// A part of a second that is smaller than one millisecond.
-    static let subMillisecond: TimeInterval = 0.000_4
-
     /// The text of a file that is not JSON.
     static let damagedText = "{ this is not json"
 
@@ -137,7 +134,8 @@ import Testing
         let id = ULID()
 
         let written = try fixture.makeStore().markUsed(
-            id, recordingRoot: fixture.recordingRoot, at: Self.time(0).addingTimeInterval(Self.subMillisecond))
+            id, recordingRoot: fixture.recordingRoot,
+            at: Self.time(0).addingTimeInterval(RouterTestFixtures.subMillisecond))
 
         #expect(fixture.makeStore().usage(of: id) == written)
     }
@@ -157,17 +155,64 @@ import Testing
         #expect(fixture.makeStore().usage(of: id)?.pinnedAt == Self.time(0))
     }
 
-    /// An unpin of a session that has no last use removes its entry.
+    /// An unpin of a session that has no last use and no recording root
+    /// removes its entry.
     @Test func anUnpinOfANeverUsedSessionRemovesTheEntry() throws {
         let fixture = Fixture()
         defer { fixture.remove() }
         let id = ULID()
         let store = fixture.makeStore()
 
-        try store.setPinned(true, of: id, recordingRoot: fixture.recordingRoot, at: Self.time(0))
+        try store.setPinned(true, of: id, recordingRoot: nil, at: Self.time(0))
         try store.setPinned(false, of: id, recordingRoot: nil, at: Self.time(1))
 
         #expect(fixture.makeStore().usages().isEmpty)
+    }
+
+    /// The production change that makes this test fail: an unpin that
+    /// removes a usage with no last use, also when it holds a recording
+    /// root, so the list no longer reads the root of the session.
+    @Test func anUnpinKeepsTheRecordingRoot() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        let id = ULID()
+        let store = fixture.makeStore()
+
+        try store.setRecordingRoot(fixture.recordingRoot, of: id)
+        try store.setPinned(true, of: id, recordingRoot: nil, at: Self.time(0))
+        try store.setPinned(false, of: id, recordingRoot: nil, at: Self.time(1))
+
+        #expect(fixture.makeStore().usage(of: id) == SessionUsage(recordingRoot: fixture.recordingRoot))
+    }
+
+    // MARK: - Recording roots
+
+    /// The production change that makes this test fail: a store that does
+    /// not keep a usage that holds only a recording root.
+    @Test func aRecordingRootComesBackWithNoUse() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        let id = ULID()
+
+        try fixture.makeStore().setRecordingRoot(fixture.recordingRoot, of: id)
+
+        #expect(fixture.makeStore().usage(of: id) == SessionUsage(recordingRoot: fixture.recordingRoot))
+    }
+
+    /// The production change that makes this test fail: a limit that puts
+    /// a usage with no last use before all the others, so the write of a
+    /// recording root to a full store removes that usage at once.
+    @Test func aboveTheLimitAUsageWithNoUseCountsFromTheTimeOfItsID() throws {
+        let fixture = Fixture()
+        defer { fixture.remove() }
+        let used = ULID()
+        let recorded = ULID(timestamp: Self.time(1))
+        let store = fixture.makeStore(maximumRecentCount: 1)
+
+        try store.markUsed(used, recordingRoot: fixture.recordingRoot, at: Self.time(0))
+        try store.setRecordingRoot(fixture.recordingRoot, of: recorded)
+
+        #expect(Set(fixture.makeStore().usages().keys) == [recorded])
     }
 
     /// A `nil` recording root keeps the recording root that the store holds.
@@ -271,9 +316,9 @@ import Testing
         #expect(fixture.makeStore().usages().isEmpty)
     }
 
-    /// A file entry with no pin and no last use is not a usage: the read
-    /// removes it, as a write does.
-    @Test func aFileEntryWithNoPinAndNoUseIsRemovedAtTheRead() throws {
+    /// A file entry with no pin, no last use and no recording root is not a
+    /// usage: the read removes it, as a write does.
+    @Test func aFileEntryThatHoldsNothingIsRemovedAtTheRead() throws {
         let fixture = Fixture()
         defer { fixture.remove() }
         try fixture.writeFile(

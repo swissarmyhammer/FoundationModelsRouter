@@ -90,8 +90,8 @@ public protocol SessionUsageStore: Sendable {
     /// Pins or unpins a session.
     ///
     /// A pin of a pinned session keeps the time of the first pin. An unpin
-    /// clears the pin. An unpin of a session that has no last use removes its
-    /// usage.
+    /// clears the pin. An unpin of a session that has no last use and no
+    /// recording root removes its usage.
     ///
     /// - Parameters:
     ///   - pinned: `true` to pin the session, `false` to unpin it.
@@ -117,4 +117,21 @@ public protocol SessionUsageStore: Sendable {
     ///   was.
     @discardableResult
     func markUsed(_ id: ULID, recordingRoot: URL?, at time: Date) throws -> SessionUsage
+
+    /// Records the recording root of a session, and keeps its pin and its
+    /// last use as they are. This call records no use: a session that the
+    /// store knows only by this call has no pin and no last use.
+    ///
+    /// The store keeps a usage that holds only a recording root, so a list
+    /// that reads the roots of the store finds the session. An unpin of
+    /// that session keeps the recording root.
+    ///
+    /// - Parameters:
+    ///   - recordingRoot: The recording root of the session.
+    ///   - id: The id of the session.
+    /// - Returns: The usage of the session after the change.
+    /// - Throws: The error of a write that fails. The store then stays as it
+    ///   was.
+    @discardableResult
+    func setRecordingRoot(_ recordingRoot: URL, of id: ULID) throws -> SessionUsage
 }

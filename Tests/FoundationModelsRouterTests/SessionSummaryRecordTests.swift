@@ -30,11 +30,6 @@ import Testing
     /// The number of characters of the short id of a session.
     private static let shortIDLength = 7
 
-    /// A part of a date smaller than one millisecond, in seconds: less than
-    /// one half of a millisecond, so a whole-millisecond date with it rounds
-    /// back to that date.
-    private static let subMillisecond: TimeInterval = 0.000_25
-
     /// The POSIX permissions of a folder that the owner can search but not
     /// list.
     private static let searchOnlyPermissions = 0o100
@@ -214,8 +209,10 @@ import Testing
         facts.importedFrom = SessionImportProvenance(
             agent: Self.provenance.agent, sourceID: Self.provenance.sourceID,
             sourcePath: Self.provenance.sourcePath,
-            sourceLastDate: Self.provenance.sourceLastDate.map { $0.addingTimeInterval(Self.subMillisecond) },
-            importedAt: Self.provenance.importedAt.addingTimeInterval(Self.subMillisecond),
+            sourceLastDate: Self.provenance.sourceLastDate.map {
+                $0.addingTimeInterval(RouterTestFixtures.subMillisecond)
+            },
+            importedAt: Self.provenance.importedAt.addingTimeInterval(RouterTestFixtures.subMillisecond),
             skippedRecordCount: Self.provenance.skippedRecordCount)
 
         #expect(facts.importedFrom == Self.provenance)
