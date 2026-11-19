@@ -52,10 +52,28 @@ comments:
     - Full `swift test` one time: 3082 tests in 351 suites passed, 50 in 26 and 19 in 3 passed, exit 0, 0 issues, no compiler warning. Output: scratchpad/full-suite-vhy7017-fix.txt.
     - next: review. Not committed.
   timestamp: 2026-11-19T03:46:28.625294+00:00
+- actor: claude-code
+  id: 01m7rysjvp79yzyds19wn1yp5x
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (4ed26812). 8 files reviewed. 0 findings, 0 confirmed, 0 refuted. All 3 items of the 2026-11-18 21:32 section are checked.
+    - check: StartRefusingLauncher replaces the two stub copies. launchFork(_:) closes the build on each path. close() and keep(_:) change the state under the same Mutex, so one of the two is always first: when close is first, make(tools:) discards the fork and throws requestClosed; when keep is first, close() returns the fork and launchFork keeps or discards it. A builder that throws after the close does not reopen the build. The close sets .closed, which releases the builder and thus the source and the tools.
+    - check: the 8 new tests fail without the fix (a kept request stays .open or gives forkAlreadyMade; a late build keeps a live fork and its folder).
+    - next: none. The task moves to done.
+  timestamp: 2026-11-19T03:49:50.070888+00:00
+- actor: claude-code
+  id: 01m7ryt4wbkca7jtasmj2cwqp4
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — SessionLaunchForkRequest.swift (closed state, requestClosed), RouterSessionDirectory.swift, SessionLauncher.swift; StartRefusingLauncher (new), ForkBuildTests (new), 3 test files
+    - test: green — one full swift test run, 3082 tests in 351 suites (+50, +19), 0 failures
+    - commit: 4ed26812
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T03:50:08.523964+00:00
 depends_on:
 - 01M7RSS1HNR7E0G704X1VESQJJ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffb780
 title: A fork goes through the host launcher, so the host gives its surface before the first prompt runs (D205)
 ---
 ## Goal
