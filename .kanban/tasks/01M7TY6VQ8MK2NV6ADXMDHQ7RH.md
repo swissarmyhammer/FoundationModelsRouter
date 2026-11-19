@@ -86,8 +86,24 @@ comments:
     - evidence: doc-only change, no live format change (orchestrator decision). Files: Sources/FoundationModelsRouter/Recording/TranscriptEventSource.swift (type doc lists the event kinds with and without grammar), Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift (recordStart doc), Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift (makeRunEventPartial doc). Search of every `partialEvent(` call site and every direct `TranscriptEvent.Partial(` build: WITH the session grammar: .session; the entry kinds .instructions, .prompt, .toolCalls, .toolOutput (of a submission), .response, .reasoning, .unknown (submission diff, compaction, writer, close of a failed submission); the live router-only kinds .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail, .promptStarted. WITHOUT grammar through the source: .toolCallStarted (recordStart) and the run-row .toolOutput (makeRunEventPartial); both are not model output and the writer writes neither. Also WITHOUT grammar, not through the source: the restore events .modelChanged and the .divergence of changed instructions (SessionTreeRestoration.appendRestoreEvent). Not written by any build: .embedding, .toolCall. `swift build`: Build complete, no compiler warnings (only the SwiftPM build-system line "missing creator for mutated node" for the mlx-swift_Cmlx bundle, which is not from the source). `swift test --filter FoundationModelsRouterTests.RecordSessionFromTranscriptTests`: 11 tests in 1 suite passed. No full `swift test`: the change is doc comments only. Both items of 16:52 are checked.
     - next: /review
   timestamp: 2026-11-19T22:58:01.825287+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7v0kn75bmpvf2wmrr8tkzft
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (8a25b9f5), engine counts findings 0, confirmed 0, refuted 0 (7 attempted, 0 failed; the 2 .kanban files are excluded by .reviewignore). All 4 items of 16:36 and 16:52 are checked. Doc check against the code: each `partialEvent(` call gives the grammar that the doc of TranscriptEventSource states. WITH grammar: .session (writer, recordSessionMetaIfNeeded), the entry kinds through TranscriptDiffer (recordTranscriptDelta, compaction diffByEntryId, writer), the .response close of a submission, .divergence (appendDivergenceMarker), .generationCall, .repeatedPartRemoval, .watchStop, .mail, .promptStarted. WITHOUT grammar: .toolCallStarted (recordStart) and the run-row .toolOutput (makeRunEventPartial, both callers). The direct `TranscriptEvent.Partial(` builds: TranscriptDiffer.partial (each caller builds the event again through the source with the grammar), SessionTreeRestoration.appendRestoreEvent (.modelChanged and the .divergence of changed instructions, no grammar), and Partial.with (keeps the grammar). OpenToolCalls.rekinded and FoldedHistory.numbered make read-side events only and write nothing. The list of kinds covers all 18 cases of TranscriptEvent.Kind; no build writes .embedding or .toolCall. The doc links recordStart(of:correlationID:) and makeRunEventPartial(toolName:events:) agree with the signatures. No code was edited.
+    - next: none; the task is in done.
+  timestamp: 2026-11-19T23:00:01.893304+00:00
+- actor: claude-code
+  id: 01m7v0m4z2jpt6t8egwjx57m16
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — TranscriptEventSource.swift, RoutedSessionActorRecording.swift, RoutedSessionActorRunJournal.swift (docs only)
+    - test: green — swift build with no warnings; RecordSessionFromTranscriptTests 11/11; the last full run (3213 tests) was before this doc-only change
+    - commit: 8a25b9f5
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T23:00:18.018245+00:00
+position_column: done
+position_ordinal: ffffffffffc180
 title: A public writer makes a new session recording from a given model transcript, with no live session (D209 (h), part 1)
 ---
 ## Goal
