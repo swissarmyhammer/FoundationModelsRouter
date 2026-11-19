@@ -53,6 +53,42 @@ comments:
     - public API change: SessionTreeRestorationError.notARootSession removed (nothing throws it).
     - next: /review
   timestamp: 2026-11-19T03:03:17.993142+00:00
+- actor: claude-code
+  id: 01m7rwnx2ba1p5z19ccb8kf5jy
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD: 10 engine findings (10 confirmed, 8 refuted). 3 are recorded: Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift:366, :425, :501 (the new moved-fork and fork-with-a-session tests repeat the fork, switch and close setup). 7 are dropped by the review skill rule for tests that existed before: HookLineageTests.swift:517, :560, :599; RecordedForkTreeRestoreTests.swift:484, :657, :681, :730.
+    - prior items: the 6 items of Review Findings (2026-11-18 20:34) are fixed. SessionRecord.movesModel(to:) and moveModel(to:) are used by rebuild and moveRecordedForks. hasSession(_:) skips each fork that the session directory holds, live or suspended. The switchingModel doc agrees with that rule. ModelSwitchRestoreTests has tests for the event, the slot and the context of a moved fork, and for no move of a fork with a session (both cases). restoreSessionTree has no withForks path.
+    - API removal: no file in /Users/wballard/github/swissarmyhammer/*/Sources other than this package uses restoreSessionTree, RestoredSessionTree, session(_:), children(of:) of the tree or notARootSession. Production reached the removed path only from tests.
+    - test helper: modelChangedEvents(of:) keeps only events with the sessionId of the session. The move writes its event with the id of the fork (appendRestoreEvent uses node.id). The dropped events are events of the source that forkPrefix keeps after the last entry of the cut. No production code reads modelChanged from effective events. Thus the filter hides no event that the change writes.
+    - next: /implement the 3 open items of Review Findings (2026-11-18 21:06).
+  timestamp: 2026-11-19T03:12:52.299885+00:00
+- actor: claude-code
+  id: 01m7rwpr41g65032s9r6mdz1vx
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — SessionTreeRestoration.swift, SessionRestoration.swift, 10 unit test files, 1 integration test file (the integration package compiles with `swift build --build-tests` after a dependency update)
+    - test: green — one full swift test run, 3061 tests in 349 suites (+49, +19), 0 failures
+    - commit: 1f865ac7
+    - review: findings — ModelSwitchRestoreTests.swift:366, :425, :501 (the new fork tests repeat one setup). The reviewer dropped 7 findings on tests that were there before, by the written rule of the review skill; the orchestrator accepts that.
+  timestamp: 2026-11-19T03:13:20.001174+00:00
+- actor: claude-code
+  id: 01m7rwxtj8sy9gv9n11q95t2bx
+  text: |-
+    Implementation of the 3 open findings of 2026-11-18 21:06 (test file only, no behavior change):
+    - `recordedForkAfterRootMove(in:)` replaces `suspendedSourceWithARecordedFork(in:)`. It writes the recorded fork, switches the root to flash, closes the restored session, and returns the fork id and the `index.md` record after the switch. The 5 moved-fork tests call it and keep only their assertion.
+    - `forkSessionAfterRootMove(in:suspendsFork:)` is new. It makes the fork session, reads the `index.md` of the fork, switches the root, closes the restored session and the fork, reads the `index.md` again, and returns the fork and the two records. The 3 fork-with-a-session tests call it.
+    - The index read after the switch was also repeated in each test. The helpers now return the record, so that read is in one place.
+    - `aSuspendedForkKeepsItsDirectoryEntry` still calls `suspendedSourceWithAForkSession` directly, because it examines the directory before the close. The default value `suspendsFork: Bool = false` of that helper had no caller after the change, so it is removed.
+    - The full suite shows one build-system line, `warning: missing creator for mutated node` for the mlx-swift_Cmlx.bundle in .build. It is a SwiftPM message about a bundle of a dependency, not a compiler warning of the source.
+  timestamp: 2026-11-19T03:17:11.880938+00:00
+- actor: claude-code
+  id: 01m7rwxxtjv2y973y9qxm48xdr
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift. `swift test --filter FoundationModelsRouterTests.ModelSwitchRestoreTests`: 24 tests, 0 failures. Full `swift test` once (exit 0): 3061 tests in 349 suites passed, plus 49 and 19; 0 failures; log at /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-swift-test.log. The 3 findings of 2026-11-18 21:06 are `- [x]`.
+    - next: /review
+  timestamp: 2026-11-19T03:17:15.218693+00:00
 position_column: doing
 position_ordinal: '80'
 title: A restore of a root session by id must not make a second instance of a live recorded fork
@@ -93,3 +129,16 @@ Decide and implement: a root restore by id restores no fork that is live in this
 - [x] `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift:233` `review/orchestrator-check` — The doc of `switchingModel` says that a live fork "does not move, because its session owns its `index.md`" and that "a fork that the host suspended moves". A suspended fork also has a session that owns its `index.md` (see the finding on `isLive(_:)`). Make the doc agree with the rule that the fix of that finding sets.
 - [x] `Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift:388` `review/orchestrator-check` — `moveRecordedForks(_:)` is a new write path, but the new tests examine only `record.model` of the fork. No test examines that a moved fork gets exactly one `modelChanged` event with the new slot and model, that its `index.md` gets the new slot and context, or that a live fork gets no `modelChanged` event. Add tests for these writes (`modelChangedEvents(of:)` of the `Workspace` helper reads the events).
 - [x] `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift:272` `review/orchestrator-check` — This call is the only production call of `restoreSessionTree`, and it now always gives `withForks: false`. The `withForks: true` path of `restoreSessionTree` (the default value `true` of the parameter, the guard on `rootNode.parentId`, the walk into `node.children`, and the walk in `requireClaimable`) is now reached only from tests. Production code that only tests reach is dead code. Remove the `withForks: true` path and move the tests that use it to `restoreSession(id:)`, or give the path a production caller.
+
+## Review Findings (2026-11-18 21:06)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 15 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 7 engine findings are not on this list. Each asks for a refactor of a test that existed before this change, and the review skill drops such findings: `HookLineageTests.swift:517`, `:560`, `:599`; `RecordedForkTreeRestoreTests.swift:484`, `:657`, `:681`, `:730`. The commit changed one restore line and one close line in each of these tests.
+
+- [x] `Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift:366` `duplication/duplication` — The sequence of building the recorded fork, switching the root to flash, and closing the restored session is copied in five tests. Each copy must be kept in step with the others. Add a helper that builds the recorded fork, switches the root, closes the restored session and returns the fork id and folder. Each test then keeps only its own assertion.
+- [x] `Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift:425` `duplication/duplication` — The setup, switch and close block is repeated in this test, which differs from the others only in its final assertion. Use the shared switch helper proposed for line 366.
+- [x] `Tests/FoundationModelsRouterTests/ModelSwitchRestoreTests.swift:501` `duplication/duplication` — The fork-with-a-session tests repeat the same setup, switch and close, and differ only in the final check. Three tests build the same fork and switch the same root. Add one helper that does the fork, the switch and the close, and returns the fork and the recorded index. Keep each test's assertion in its own body.
