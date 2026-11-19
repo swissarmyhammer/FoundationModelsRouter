@@ -211,6 +211,10 @@ extension RoutedSessionActor {
     /// of the output keeps the error of a failed answer next to its event
     /// (``answerEndError(for:)``).
     ///
+    /// An answer first writes its last summary to the record
+    /// (``recordLastSummary(of:)``, D206), so the record holds it before
+    /// any reader of the event or of the reply.
+    ///
     /// The ids leave ``openAnswerMail`` directly after the event, so a caller
     /// that got the terminal event can use the same id again. They leave
     /// after the event and not before it: a mail subscription of a new mail
@@ -219,6 +223,9 @@ extension RoutedSessionActor {
     /// - Parameter result: The final reply of the chain, or its error.
     func emitAnswerEnd(for result: Result<String, any Error>) {
         let end = answerEndEvent(for: result)
+        if case .success(let reply) = result {
+            recordLastSummary(of: reply)
+        }
         answerReducer.apply(end)
         emitSessionScopedEvent(end, failure: answerEndError(for: result))
         openAnswerMail.removeAll()

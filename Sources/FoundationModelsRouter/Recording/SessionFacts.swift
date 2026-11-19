@@ -3,7 +3,7 @@ import FoundationModelsExtras
 
 /// The facts of one session that change after it starts: its agent, its
 /// tags, its title, who started it, how it started and when it was archived
-/// (ROUTER-1).
+/// (ROUTER-1), and its last summary and its recap (D206).
 ///
 /// A durable session keeps them in the frontmatter of the `index.md` in its
 /// session folder, as part of its ``SessionRecord``, and rewrites that file
@@ -45,6 +45,22 @@ public struct SessionFacts: Sendable, Equatable {
     /// is not ended.
     public var endReason: SessionEndReason?
 
+    /// The last final reply of the session, cut to
+    /// ``SessionStateTracking/lastSummaryLength`` characters (ROUTER-9,
+    /// D206), or `nil` before the first answer. The directory writes it at
+    /// the end of each turn that changed it, so a recorded session gives it
+    /// after a restart.
+    public var lastSummary: String?
+
+    /// The recap of the session (D206): one sentence that tells what the
+    /// session did and where it stands, or `nil` when the session has no
+    /// recap.
+    public var recap: String?
+
+    /// The instant the directory made ``recap``, or `nil` when the session
+    /// has no recap.
+    public var recapAt: Date?
+
     /// Makes the facts of a session. Every field defaults to its absent
     /// value.
     ///
@@ -58,6 +74,9 @@ public struct SessionFacts: Sendable, Equatable {
     ///   - archivedAt: The archive instant. The default is `nil`.
     ///   - endedAt: The instant of the ended marker. The default is `nil`.
     ///   - endReason: The reason of the ended marker. The default is `nil`.
+    ///   - lastSummary: The last summary. The default is `nil`.
+    ///   - recap: The recap. The default is `nil`.
+    ///   - recapAt: The instant of the recap. The default is `nil`.
     public init(
         agentID: String? = nil,
         agentName: String? = nil,
@@ -67,7 +86,10 @@ public struct SessionFacts: Sendable, Equatable {
         origin: FoundationModelsExtras.SessionDirectoryOrigin? = nil,
         archivedAt: Date? = nil,
         endedAt: Date? = nil,
-        endReason: SessionEndReason? = nil
+        endReason: SessionEndReason? = nil,
+        lastSummary: String? = nil,
+        recap: String? = nil,
+        recapAt: Date? = nil
     ) {
         self.agentID = agentID
         self.agentName = agentName
@@ -78,13 +100,18 @@ public struct SessionFacts: Sendable, Equatable {
         self.archivedAt = archivedAt
         self.endedAt = endedAt
         self.endReason = endReason
+        self.lastSummary = lastSummary
+        self.recap = recap
+        self.recapAt = recapAt
     }
 
     /// The first facts of a fork of a session with these facts (D205): the
     /// agent id and the agent name of the source, and the origin
     /// ``FoundationModelsExtras/SessionDirectoryOrigin/fork``. A fork gets no
     /// tags, no `startedBy` and no archive date of its source, as the fork of
-    /// the Extras in-memory directory does. Its title is the fork name that
+    /// the Extras in-memory directory does. A fork also gets no last summary
+    /// and no recap of its source (D206): its own turns make them. Its title
+    /// is the fork name that
     /// the directory gives it when it registers
     /// (``RouterSessionDirectory/fork(_:)``).
     var forFork: SessionFacts {

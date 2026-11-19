@@ -23,7 +23,14 @@ import Synchronization
 /// For each registered session, one task reads the events of the session
 /// and keeps its work state and its last summary (ROUTER-9,
 /// ``SessionStateTracking``). The task holds neither the session nor the
-/// directory, and it ends when the session closes or is released.
+/// directory, and it ends when the session closes or is released. The
+/// session itself writes the last summary of each answer to its record
+/// (``RoutedSessionActor/recordLastSummary(of:)``, D206), so a recorded
+/// session gives it after a restart. The record also keeps the recap of the
+/// session and its time (D206), which ``recordRecap(_:at:of:)`` writes with
+/// one `factsChanged`. An archive and an unarchive keep both, and a fork starts
+/// with neither (``SessionFacts/forFork``). The live and the recorded
+/// summary give the last summary, the recap and the time of the recap.
 ///
 /// For each registered durable session, one watcher also reads the `inbox/`
 /// folder of the session folder (``SessionInboxWatcher``). A file that
@@ -690,6 +697,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// its inbox, and the message starts no turn (D204).
     /// ``SessionSummary/archivedAt`` is the `archivedAt` of the facts.
     /// The pin and the last use come from `usage` (``use(usageStore:)``).
+    /// The last summary is the one the tracking holds, else the one of the
+    /// facts: a session that a restore made has no answer in its tracking
+    /// yet, and its record keeps the last summary (D206). The recap and the
+    /// time of the recap are those of the facts.
     ///
     /// - Parameters:
     ///   - session: The live session.
@@ -715,11 +726,13 @@ public actor RouterSessionDirectory: SessionDirectory {
             origin: facts.origin ?? defaultOrigin,
             createdAt: session.id.timestamp,
             updatedAt: entry.updatedAt,
-            lastSummary: entry.tracking.lastSummary,
+            lastSummary: entry.tracking.lastSummary ?? facts.lastSummary,
             isLive: true,
             pinnedAt: usage?.pinnedAt,
             lastUsedAt: usage?.lastUsedAt,
-            archivedAt: facts.archivedAt)
+            archivedAt: facts.archivedAt,
+            recap: facts.recap,
+            recapAt: facts.recapAt)
     }
 
     // MARK: - Query
@@ -2720,6 +2733,37 @@ public actor RouterSessionDirectory: SessionDirectory {
     @discardableResult
     public func setAdditionalDirectories(to directories: [URL], for id: ULID) async throws -> SessionSummary {
         try await changeRecord(of: id) { $0.additionalDirectories = directories }
+    }
+
+    /// Writes the recap of the session `id` and its time to the facts of its
+    /// record (D206), and sends `factsChanged` with its summary: the Extras
+    /// port has no recap event. The recap maker of the directory calls it.
+    ///
+    /// The write goes through ``changeRecord(of:_:)``, thus a live session
+    /// and a recorded session that is not live, also an archived one, take
+    /// the recap alike. A recap and a time that the record holds already
+    /// change nothing and send no event. The time is rounded to the
+    /// millisecond, as the `index.md` keeps it, so the live and the recorded
+    /// summary give the same time.
+    ///
+    /// - Parameters:
+    ///   - recap: The recap: one sentence that tells what the session did
+    ///     and where it stands.
+    ///   - instant: The instant the recap was made.
+    ///   - id: The session id.
+    /// - Returns: The summary of the session after the write.
+    /// - Throws: What ``changeRecord(of:_:)`` throws:
+    ///   `SessionDirectoryError.unknownSession` when no live or recorded
+    ///   session has the id, the error of the recording roots of the host,
+    ///   or the error of the read or the save of the `index.md` of a recorded
+    ///   session.
+    @discardableResult
+    func recordRecap(_ recap: String, at instant: Date, of id: ULID) async throws -> SessionSummary {
+        let recapAt = MillisecondDate.rounded(instant)
+        return try await changeRecord(of: id) { record in
+            record.facts.recap = recap
+            record.facts.recapAt = recapAt
+        }
     }
 
     /// Changes the record of the session `id` and sends `factsChanged` with

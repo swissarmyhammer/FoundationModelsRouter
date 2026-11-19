@@ -54,6 +54,22 @@ extension RoutedSessionActor {
         updateRecord { change(&$0.facts) }.facts
     }
 
+    /// Writes the last summary of `reply` (``SessionStateTracking/lastSummary(of:)``)
+    /// to the facts of this session (D206), when the facts hold another one.
+    /// Thus the record changes only at the end of an answer that changed the
+    /// last summary, and a recorded session gives it after a restart. The
+    /// session calls it before it sends ``SessionEvent/answered(_:)``, so the
+    /// write is in order with the answer and comes before its caller gets
+    /// the reply. Only the answer path of the session writes the last
+    /// summary, so no other write comes between the read and the write.
+    ///
+    /// - Parameter reply: The final reply of an answer.
+    nonisolated func recordLastSummary(of reply: String) {
+        let summary = SessionStateTracking.lastSummary(of: reply)
+        guard facts.lastSummary != summary else { return }
+        updateFacts { $0.lastSummary = summary }
+    }
+
     /// Writes the first `index.md` of a new session, which also brings its
     /// session folder into existence. `makeRoutedSessionActor` calls it
     /// once, after the construction and before the session records

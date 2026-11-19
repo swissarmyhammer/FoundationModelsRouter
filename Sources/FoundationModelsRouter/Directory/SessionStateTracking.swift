@@ -32,6 +32,15 @@ import FoundationModelsExtras
 /// ``lastSummary`` keeps the reply in each state, for the summary of the
 /// session.
 ///
+/// The tracking itself is in memory only. The record keeps the last
+/// summary too (D206): at the end of each answer that changed it, the
+/// session writes the same cut reply (``lastSummary(of:)``) to
+/// ``SessionFacts/lastSummary`` before it sends the answer
+/// (``RoutedSessionActor/recordLastSummary(of:)``), so a recorded session
+/// gives it after a restart. A live session whose tracking has no answer yet
+/// gives the last summary of its facts. The recap of the session (``SessionFacts/recap``, D206) is not a
+/// part of the tracking: the directory writes it to the facts.
+///
 /// A form answer of the client (``RoutedSession/respond(elicitationId:response:)``)
 /// sends no event that names its question. So at each work end the directory
 /// gives the tracking the open questions of the session itself
@@ -87,7 +96,7 @@ struct SessionStateTracking: Sendable {
         case .elicitationCompleted(let completion):
             closeQuestion(id: completion.elicitationId)
         case .answered(let answer):
-            lastSummary = String(answer.reply.prefix(Self.lastSummaryLength))
+            lastSummary = Self.lastSummary(of: answer.reply)
         case .textDelta, .textReset, .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
             .toolDisplay, .entryRecorded, .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed,
             .generationStalled, .submissionStarted, .submissionEnded, .answerFailed,
@@ -98,6 +107,16 @@ struct SessionStateTracking: Sendable {
             // and the output of a turn or a run comes while the session works.
             break
         }
+    }
+
+    /// The last summary of a final reply: the reply cut to
+    /// ``lastSummaryLength`` characters. The tracking and the record of the
+    /// session (D206) cut the reply in the same way.
+    ///
+    /// - Parameter reply: The final reply of an answer.
+    /// - Returns: The last summary.
+    static func lastSummary(of reply: String) -> String {
+        String(reply.prefix(lastSummaryLength))
     }
 
     /// Replaces the open questions with the questions the session itself

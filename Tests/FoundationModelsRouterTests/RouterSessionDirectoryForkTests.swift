@@ -33,6 +33,12 @@ import Testing
     /// The title of a named source.
     private static let sourceTitle = "Review the login"
 
+    /// The last summary of a source with a recap.
+    private static let sourceSummary = "answer 2"
+
+    /// The recap of a source.
+    private static let sourceRecap = "Answered two prompts; the session waits."
+
     /// The text of a message that the directory delivers to a source.
     private static let mailText = "mail turn"
 
@@ -190,6 +196,27 @@ import Testing
         #expect(summary.parentID == source.id)
         #expect(summary.origin == .fork)
         #expect(summary.workingDirectory == source.workingDirectory)
+        await fixture.end([source, fork])
+    }
+
+    /// The production change that makes this test fail: fork facts that
+    /// copy the last summary or the recap of the source (D206).
+    @Test func theForkHasNoRecapAndNoLastSummaryOfItsSource() async throws {
+        let fixture = try await Fixture.make()
+        let source = try await fixture.makeSource(answering: Self.twoTurns)
+        let actor = try #require(source as? RoutedSessionActor)
+        actor.updateFacts { facts in
+            facts.lastSummary = Self.sourceSummary
+            facts.recap = Self.sourceRecap
+            facts.recapAt = MillisecondDate.rounded(Date())
+        }
+
+        let fork = try await fixture.fork(source, at: .lastCompletedTurn)
+
+        let summary = try #require(try await fixture.directory.summary(of: fork.id))
+        #expect(summary.recap == nil)
+        #expect(summary.recapAt == nil)
+        #expect(summary.lastSummary == nil)
         await fixture.end([source, fork])
     }
 

@@ -22,6 +22,16 @@ import Testing
     /// The text of ``updatedAt`` in the frontmatter.
     private static let updatedAtText = "2025-08-24T01:46:40.123Z"
 
+    /// The last summary of every made record.
+    private static let lastSummary = "The login test passes."
+
+    /// The recap of every made record.
+    private static let recap = "Fixed the login test; the build is green."
+
+    /// The keys of the last summary and the recap (D206), which a record
+    /// from before D206 does not hold.
+    private static let recapKeys = ["lastSummary", "recap", "recapAt"]
+
     /// The milliseconds that ``firstActivityAt`` comes before ``updatedAt``.
     private static let firstActivityLeadMilliseconds: Int64 = 60_000
 
@@ -64,7 +74,10 @@ import Testing
             title: "Review the login change",
             startedBy: ULID.generate(),
             origin: .tool,
-            archivedAt: updatedAt)
+            archivedAt: updatedAt,
+            lastSummary: lastSummary,
+            recap: recap,
+            recapAt: updatedAt)
     }
 
     /// A record with every field filled: a fork with a spawn, a profile and
@@ -182,6 +195,40 @@ import Testing
         #expect(text.contains("agentName: Reviewer"))
         #expect(text.contains(Self.updatedAtText))
         #expect(!text.contains("facts:"))
+    }
+
+    /// The production change that makes this test fail: an encode that
+    /// writes no last summary and no recap (D206), so the read gives `nil`.
+    @Test func theLastSummaryAndTheRecapSurviveASaveAndARead() throws {
+        let directory = try Self.makeSessionDirectory()
+        let record = try Self.makeFullRecord(in: directory)
+
+        try SessionIndexFile.save(record, in: directory)
+        let read = try #require(try SessionIndexFile.read(in: directory))
+
+        #expect(read.facts.lastSummary == Self.lastSummary)
+        #expect(read.facts.recap == Self.recap)
+        #expect(read.facts.recapAt == Self.updatedAt)
+    }
+
+    /// The production change that makes this test fail: a decode that
+    /// requires the keys of the last summary and the recap. A record from
+    /// before D206 holds none of them, and it reads with `nil` for each.
+    @Test func aRecordWithNoRecapKeysReadsThemAsNil() throws {
+        let directory = try Self.makeSessionDirectory()
+        try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
+        let lines = try Self.indexText(in: directory).split(separator: "\n", omittingEmptySubsequences: false)
+        let old = lines.filter { line in
+            !Self.recapKeys.contains { line.hasPrefix("\($0):") }
+        }
+        try old.joined(separator: "\n").write(
+            to: SessionIndexFile.url(in: directory), atomically: true, encoding: .utf8)
+
+        let read = try #require(try SessionIndexFile.read(in: directory))
+
+        #expect(read.facts.lastSummary == nil)
+        #expect(read.facts.recap == nil)
+        #expect(read.facts.recapAt == nil)
     }
 
     /// A date with whole seconds only is not the text Router writes, so the
