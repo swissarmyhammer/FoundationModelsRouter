@@ -1,5 +1,4 @@
 import Foundation
-import FoundationModels
 import FoundationModelsDecision
 import Testing
 
@@ -23,37 +22,8 @@ struct ResolutionProgressPublicSurfaceTests {
     /// with, so a leaked directory is attributable to this suite.
     private static let tempDirPrefix = "ResolutionProgressPublicSurfaceTests"
 
-    /// The canned `config.json` payload behind ``rawMetadata`` — a tiny,
-    /// valid model config the resolver can size.
-    private static let configJSON = Data(
-        """
-        {
-            "num_hidden_layers": 2,
-            "max_position_embeddings": 8192,
-            "num_attention_heads": 8,
-            "num_key_value_heads": 2,
-            "head_dim": 16,
-            "hidden_size": 128
-        }
-        """.utf8)
-
-    /// The canned repo file-tree payload behind ``rawMetadata`` — one
-    /// plausible weights file the resolver can size.
-    private static let treeJSON = Data(
-        """
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
-
-    /// The canned repo metadata the stub metadata source serves for every
-    /// candidate.
-    private static var rawMetadata: RawRepoMetadata {
-        RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
-    }
-
     /// The physical RAM the stub probe reports: ample, so the tiny model of
-    /// ``rawMetadata`` always fits.
+    /// ``PlainImportResolveStubs/rawMetadata`` always fits.
     private static let totalRAMBytes: Int64 = 64 << 30
 
     /// The GPU working set the stub probe reports.
@@ -110,150 +80,6 @@ struct ResolutionProgressPublicSurfaceTests {
         decision: [flashRef]
     )
 
-    /// A ``MachineProbe`` that reports fixed hardware facts.
-    private struct FixedProbe: MachineProbe {
-        let chip: String
-        let totalRAM: Int64
-        let recommendedMaxWorkingSetSize: Int64
-    }
-
-    /// A ``MetadataSource`` that answers every fetch with one canned payload.
-    private struct CannedMetadataSource: MetadataSource {
-        /// The payload every fetch returns.
-        let raw: RawRepoMetadata
-
-        func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
-            raw
-        }
-    }
-
-    /// A ``LoadedEmbeddingContainer`` that embeds every text as a zero vector
-    /// of the configured dimension.
-    private struct ZeroEmbedder: LoadedEmbeddingContainer {
-        let dimension: Int
-
-        func embed(texts: [String]) async throws -> [[Float]] {
-            texts.map { _ in [Float](repeating: 0, count: dimension) }
-        }
-    }
-
-    /// The ``TokenCounter`` of ``ResolveOnlyContainer``: one token per word.
-    ///
-    /// This target imports the library alone, so it cannot use the shared
-    /// scripted counter of the test-support target. A word is one run of
-    /// characters between whitespace. A transcript counts the words of the
-    /// `.text` segments of every entry the model reads, and the name of every
-    /// tool call. A reasoning entry is not replayed to the model, so it counts
-    /// nothing. `prefix(of:tokens:)` keeps the first `limit` words, joined
-    /// with one space.
-    private struct WordTokenCounter: TokenCounter {
-        func count(_ text: String) -> Int {
-            Self.words(of: text).count
-        }
-
-        func count(_ transcript: Transcript) throws -> Int {
-            transcript.reduce(0) { $0 + count(Self.text(of: $1)) }
-        }
-
-        func prefix(of text: String, tokens limit: Int) -> String {
-            Self.words(of: text).prefix(Swift.max(limit, 0)).joined(separator: " ")
-        }
-
-        /// The runs of characters between whitespace in `text`.
-        private static func words(of text: String) -> [Substring] {
-            text.split(whereSeparator: \.isWhitespace)
-        }
-
-        /// The text the model reads of `entry`, or the empty string for an
-        /// entry the model does not read again.
-        private static func text(of entry: Transcript.Entry) -> String {
-            switch entry {
-            case .instructions(let instructions):
-                return text(of: instructions.segments)
-            case .prompt(let prompt):
-                return text(of: prompt.segments)
-            case .response(let response):
-                return text(of: response.segments)
-            case .toolCalls(let calls):
-                return calls.map(\.toolName).joined(separator: " ")
-            case .toolOutput(let output):
-                return text(of: output.segments)
-            case .reasoning, .data:
-                return ""
-            @unknown default:
-                return ""
-            }
-        }
-
-        /// The `.text` content of `segments`, joined with one space.
-        private static func text(of segments: [Transcript.Segment]) -> String {
-            segments.compactMap { segment -> String? in
-                if case .text(let text) = segment { return text.content }
-                return nil
-            }.joined(separator: " ")
-        }
-    }
-
-    /// A ``LoadedLLMContainer`` a resolve can hold resident and nothing can
-    /// open a session over.
-    ///
-    /// The resolve under test loads, warms and holds a container; it never
-    /// asks one for a session. A session request is therefore a programmer
-    /// error in this suite, and each factory says so instead of vending a
-    /// backend the test cannot measure.
-    private struct ResolveOnlyContainer: LoadedLLMContainer {
-        /// The message each factory traps with.
-        private static let noSessionMessage =
-            "ResolveOnlyContainer vends no session; the resolve under test never asks for one"
-
-        /// The counter of this container: one token per word.
-        let tokenCounter: any TokenCounter = WordTokenCounter()
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            preconditionFailure(Self.noSessionMessage)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            preconditionFailure(Self.noSessionMessage)
-        }
-    }
-
-    /// A ``ModelLoader`` that reports one known download observation for each
-    /// model it loads, so the test can read the same bytes back through
-    /// `progress.slots`.
-    private struct ReportingLoader: ModelLoader {
-        /// The observation reported for each generation model.
-        let generationDownload: DownloadProgress
-
-        /// The observation reported for the embedding model.
-        let embeddingDownload: DownloadProgress
-
-        /// The dimension of the embedder this loader vends.
-        let dimension: Int
-
-        func loadLLM(
-            ref: ModelRef,
-            slot: ModelSlot,
-            context: Int,
-            kvCache: KVCacheQuantization?,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedLLMContainer {
-            reporting(generationDownload)
-            return ResolveOnlyContainer()
-        }
-
-        func loadEmbedder(
-            ref: ModelRef,
-            slot: ModelSlot,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedEmbeddingContainer {
-            reporting(embeddingDownload)
-            return ZeroEmbedder(dimension: dimension)
-        }
-
-        func preload(container: any LoadedModelContainer) async throws {}
-    }
-
     /// Reads one slot back through the public surface and holds it to the
     /// ready state, the model the profile named for it, and the byte counts
     /// the loader reported for it.
@@ -298,11 +124,11 @@ struct ResolutionProgressPublicSurfaceTests {
         let progress = ResolutionProgress()
         let router = Router(
             cacheDir: cacheDir,
-            probe: FixedProbe(
+            probe: FixedMachineProbe(
                 chip: "Apple Test",
                 totalRAM: Self.totalRAMBytes,
                 recommendedMaxWorkingSetSize: Self.recommendedMaxWorkingSetBytes),
-            metadataSource: CannedMetadataSource(raw: Self.rawMetadata),
+            metadataSource: CannedMetadataSource(raw: PlainImportResolveStubs.rawMetadata),
             loader: ReportingLoader(
                 generationDownload: Self.generationDownload,
                 embeddingDownload: Self.embeddingDownload,
