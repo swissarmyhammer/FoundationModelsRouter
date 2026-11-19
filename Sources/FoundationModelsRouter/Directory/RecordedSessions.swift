@@ -10,7 +10,8 @@ import FoundationModelsExtras
 /// root: an entry that is a folder named by a ULID and holds an `index.md`
 /// (``SessionIndexFile``) is a root session, and any other entry is not.
 /// The ``SessionRecord`` in the frontmatter of that `index.md` is all a
-/// listing reads, and a summary made from it is never live:
+/// listing reads, and the summary made from it
+/// (`SessionSummary/init(record:)`) is never live:
 ///
 /// - The kind is `fork` of the source when the record holds a
 ///   ``SessionRecord/forkParentId``, else `subagent` of the spawning session
@@ -122,38 +123,7 @@ struct RecordedSessions {
     ///   recorded fork, newest first.
     /// - Throws: What ``listedEntries()`` throws.
     func summaries() throws -> [SessionSummary] {
-        try listedEntries().map { Self.summary(of: $0.record) }
-    }
-
-    /// The summary of a recorded session, made from its record alone.
-    ///
-    /// - Parameter record: The record of the session.
-    /// - Returns: The summary. It is never live. Its
-    ///   ``SessionSummary/archivedAt`` is the `archivedAt` of the facts, and
-    ///   its last summary, its recap and the time of its recap are those of
-    ///   the facts (D206).
-    static func summary(of record: SessionRecord) -> SessionSummary {
-        let facts = record.facts
-        let lineage = SessionRecord.directoryLineage(forkSource: record.forkParentId, agentSpawn: record.agentSpawn)
-        return SessionSummary(
-            id: record.sessionId,
-            agentID: facts.agentID ?? RouterSessionDirectory.defaultAgentID,
-            agentName: facts.agentName,
-            workingDirectory: record.workingDirectory,
-            title: SessionDefaultTitle.given(facts.title),
-            tags: facts.tags,
-            kind: lineage.kind,
-            state: facts.archivedAt == nil ? .idle : .archived,
-            parentID: lineage.parentID,
-            startedBy: facts.startedBy,
-            origin: facts.origin ?? RouterSessionDirectory.defaultOrigin,
-            createdAt: record.sessionId.timestamp,
-            updatedAt: record.updatedAt,
-            lastSummary: facts.lastSummary,
-            isLive: false,
-            archivedAt: facts.archivedAt,
-            recap: facts.recap,
-            recapAt: facts.recapAt)
+        try listedEntries().map { SessionSummary(record: $0.record) }
     }
 
     /// How deep a listing looks for the folder of a session under a root.

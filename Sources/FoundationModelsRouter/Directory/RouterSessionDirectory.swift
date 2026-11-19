@@ -998,7 +998,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     private nonisolated func namingUntitled(_ entries: [RecordedSessions.Entry]) -> [SessionSummary] {
         let live = liveSummaries()
         let liveIDs = Set(live.map(\.id))
-        var recorded = entries.map { RecordedSessions.summary(of: $0.record) }
+        var recorded = entries.map { SessionSummary(record: $0.record) }
         for index in recorded.indices.reversed() where Self.needsDefaultTitle(recorded[index], liveIDs: liveIDs) {
             var record = entries[index].record
             let title = SessionDefaultTitle.make(
@@ -1028,7 +1028,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Parameter record: The record of the session.
     /// - Returns: The summary. It is never live.
     private nonisolated func recordedSummary(of record: SessionRecord) -> SessionSummary {
-        Self.withUsage(RecordedSessions.summary(of: record), currentUsageStore()?.usage(of: record.sessionId))
+        Self.withUsage(SessionSummary(record: record), currentUsageStore()?.usage(of: record.sessionId))
     }
 
     /// A summary with the pin and the last use of a usage.
@@ -1068,6 +1068,28 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   recording schema error when the record is from a newer router.
     public static func recordedSessions(in recordingRoot: URL) throws -> [SessionRecord] {
         try RecordedSessions(roots: [recordingRoot]).records()
+    }
+
+    /// Reads the summary of one recorded session from the `index.md` of its
+    /// session folder (D207). A host calls it with no router and no
+    /// directory, for example to make the item of each recorded session it
+    /// already knows the folder of.
+    ///
+    /// The read opens only the `index.md` of `folder`. It lists no folder and
+    /// reads no other folder: not the recording root, not a sibling session
+    /// folder, and not a registered project folder. The summary is
+    /// `SessionSummary/init(record:)` of the record: it has no pin and no
+    /// last use, and a root session with no title has no default name.
+    ///
+    /// - Parameter folder: A session folder: the folder that holds the
+    ///   `index.md` of the session.
+    /// - Returns: The summary, or `nil` when `folder` holds no `index.md`.
+    /// - Throws: The read error of the `index.md`:
+    ///   ``SessionIndexFileError`` when it holds no frontmatter or the
+    ///   frontmatter does not decode, a recording schema error when the
+    ///   record is from a newer router, or the error of the read of the file.
+    public static func recordedSummary(inSessionFolder folder: URL) throws -> SessionSummary? {
+        try SessionIndexFile.read(in: folder).map(SessionSummary.init(record:))
     }
 
     /// The live summaries, and each recorded summary whose session is not

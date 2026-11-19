@@ -1,0 +1,1 @@
+{"id":"01M7T179V34W510EP4F1GR5C7M","timestamp":"2026-11-19T13:51:31.171630Z","op":"create","item_id":"01M7T179V3Q9NQ1DSSF940H4TM","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 7057ff\n+tag_name: d207\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 7057ff\n-tag_name: d207\n","transaction_id":null}
