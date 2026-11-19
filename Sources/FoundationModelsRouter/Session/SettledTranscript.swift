@@ -24,7 +24,7 @@ struct SettledTranscript: Sendable {
     /// settled point (``RoutedSessionActor/historyOrdinal``). The first
     /// ``recordedEntryCount`` entries are the render of that history, so a
     /// fork that cuts at this position or after it takes its entries from
-    /// ``entries`` (``RoutedSessionActor/makeFork(at:)``).
+    /// ``entries`` (``RoutedSessionActor/prepareFork(at:)``).
     let historyOrdinal: Int
 
     /// The entries as a transcript.

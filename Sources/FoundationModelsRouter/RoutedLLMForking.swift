@@ -8,7 +8,7 @@ import FoundationModelsExtras
 extension RoutedModel where Container == any LoadedLLMContainer {
     /// Makes a fork of `source` over this resident model, from `seed`.
     ///
-    /// The fork has a new id, `source` as its ``RoutedSession/parentId``, and
+    /// The fork has the id `id`, `source` as its ``RoutedSession/parentId``, and
     /// the working directory of `source`. Its recording directory nests in
     /// the recording directory of `source`, so a restore of the recording of
     /// `source` finds the fork as a fork node with its cut
@@ -17,8 +17,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// recorded: the fork records only its own entries, and copies no
     /// history of `source`.
     ///
-    /// The tools are the original tools of `source`, each forked first
-    /// (`ForkableTool.forked()`, or the tool itself) and then mounted on the
+    /// The tools are `tools`, the surface that the host gives the fork
+    /// (``SessionLauncher/forkSession(_:)``). With no `tools`, they are the
+    /// original tools of `source`, each forked first
+    /// (`ForkableTool.forked()`, or the tool itself). Either way they are
+    /// then mounted on the
     /// own outbox and run plane of the fork, so a background run of the fork
     /// never posts to `source`. The chain is fork → mount → cap. The fork is
     /// a top-level session, so its mount site is a root site, and it gets the
@@ -34,11 +37,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Parameters:
     ///   - source: The session to fork. It runs on this handle.
+    ///   - forkID: The id of the fork.
     ///   - seed: The transcript, the cut and the context counter of the fork.
+    ///   - tools: The tools of the fork, or `nil` for the tools of `source`.
     /// - Returns: The fork, not registered.
-    func makeFork(of source: RoutedSessionActor, seed: ForkSeed) -> RoutedSessionActor {
-        let forkID = ULID.generate()
-        let forkedTools = source.originalTools.map { ($0 as? any ForkableTool)?.forked() ?? $0 }
+    func makeFork(
+        of source: RoutedSessionActor, id forkID: ULID, seed: ForkSeed, tools: [any Tool]?
+    ) -> RoutedSessionActor {
+        let forkedTools = tools ?? source.originalTools.map { ($0 as? any ForkableTool)?.forked() ?? $0 }
         let delegationAdvisor = AgentDelegationAdvisor.make(
             hint: source.delegationAdvisorSlot.withLock { $0?.hint }, tools: forkedTools, isRoot: true)
         let (outbox, runPlane, instancedTools, resultWitness) = wireSessionTools(
@@ -67,9 +73,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             instructions: source.instructions,
             grammar: source.grammar,
             tools: instancedTools,
-            // The originals of the source, not the forked copies: a fork of
-            // this fork forks each tool from its original state again.
-            originalTools: source.originalTools,
+            // The tools of the host, or the originals of the source and not
+            // the forked copies: a fork of this fork forks each tool from its
+            // original state again.
+            originalTools: tools ?? source.originalTools,
             outbox: outbox,
             runPlane: runPlane,
             // Each entry of the seed is history of the source, so the fork

@@ -1,8 +1,9 @@
 import FoundationModelsExtras
 
 /// The port that the host fills, so the ``RouterSessionDirectory`` can start
-/// a new root session (ROUTER-8), and so the host can restore a recorded one
-/// through the same port. Router cannot
+/// a new root session (ROUTER-8), so the host can restore a recorded one
+/// through the same port, and so the host builds each fork with its own
+/// surface (``forkSession(_:)``, D205). Router cannot
 /// compose the tools of a session and does not know the agent catalog, so
 /// the host makes each session; the directory only asks for one.
 ///
@@ -57,4 +58,49 @@ public protocol SessionLauncher: Sendable {
     /// - Throws: `SessionDirectoryError.unknownSession(_:)` when no recorded
     ///   session has this id, or the error of the restore.
     func restoreSession(id: ULID) async throws -> any RoutedSession
+
+    /// Builds the fork of `request` with the surface of the host (D205):
+    /// the tools of the MCP servers and the folders of the client or of the
+    /// source. ``RouterSessionDirectory/fork(_:)`` calls this when the
+    /// directory has a launcher.
+    ///
+    /// The directory already mapped the cut and chose the id of the fork. The
+    /// launcher builds the fork through the request
+    /// (``SessionLaunchForkRequest/makeFork(tools:)``), one time, and
+    /// returns that fork. It does not map the cut again, so the recording
+    /// node of the fork and its ``SessionRecord/forkedAtHistoryOrdinal``
+    /// agree with the request.
+    ///
+    /// The directory registers the fork and mails its first prompt only
+    /// after this call returns. So no prompt of the fork runs before the
+    /// host gave its surface, and the host holds the fork from its start.
+    /// The launcher sends nothing to the fork.
+    ///
+    /// When this call throws, the directory refuses the fork: it registers
+    /// nothing, closes a fork that the request built, and removes its
+    /// recording node.
+    ///
+    /// A launcher that does not implement this operation gets the default
+    /// of this protocol: the fork has the tools of the source
+    /// (``SessionLaunchForkRequest/makeFork()``).
+    ///
+    /// - Parameter request: The source, the cut, the fork id, the folder and
+    ///   the client of the fork, and the way to build it.
+    /// - Returns: The fork that the request built.
+    /// - Throws: The error of the host, which refuses the fork, or the error
+    ///   of the build.
+    func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession
+}
+
+extension SessionLauncher {
+    /// See ``SessionLauncher/forkSession(_:)``. The default builds the fork
+    /// with the tools of the source (``SessionLaunchForkRequest/makeFork()``),
+    /// as a directory with no launcher does.
+    ///
+    /// - Parameter request: The fork request of the directory.
+    /// - Returns: The fork that the request built.
+    /// - Throws: The error of the build.
+    public func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession {
+        try await request.makeFork()
+    }
 }

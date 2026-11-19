@@ -5,7 +5,7 @@ import Metrics
 
 /// What a fork of a session starts from (D205): its transcript, its position
 /// in the history of its source, and its context counter.
-struct ForkSeed {
+struct ForkSeed: Sendable {
     /// The transcript of the fork: the history of the source up to the cut,
     /// as the model reads it.
     let entries: [Transcript.Entry]
@@ -23,13 +23,12 @@ struct ForkSeed {
 /// ``RoutedSessionActor``'s live fork (D205): a new session with the history
 /// of this session up to a cut.
 extension RoutedSessionActor {
-    /// Makes a live fork of this session at `cut`. The fork has the model,
-    /// the slot, the instructions, the grammar, the settings and the tools of
-    /// this session (each tool through `ForkableTool.forked()`), and the
-    /// history of this session up to the cut. It records as a fork node in
-    /// the recording folder of this session, with the cut in its record
-    /// (``SessionRecord/forkedAtHistoryOrdinal``), and it copies no recorded
-    /// history. The caller registers it (``RouterSessionDirectory/fork(_:)``).
+    /// Maps `cut` to the seed of a live fork of this session: the history
+    /// of this session up to the cut, the position of the cut, and the
+    /// context counter. ``makeFork(id:seed:tools:)`` then builds the fork
+    /// from the seed. The two steps are apart so that the launcher of the
+    /// host can build the fork with its own tools between them
+    /// (``SessionLauncher/forkSession(_:)``).
     ///
     /// The cut is a position in the recorded history of this session
     /// (``ForkCutHistory``). The history comes from two places, read with no
@@ -55,7 +54,7 @@ extension RoutedSessionActor {
     /// recording.
     ///
     /// - Parameter cut: The cut of the fork.
-    /// - Returns: The fork, not registered.
+    /// - Returns: The seed of the fork.
     /// - Throws: `SessionDirectoryError.forkUnsupported` when this session
     ///   records nothing durably or runs on a slot that has no session;
     ///   `SessionDirectoryError.forkCutOutOfRange` for a cut that
@@ -63,14 +62,33 @@ extension RoutedSessionActor {
     ///   body of the open model call of this session; the error of the read
     ///   of the recording (``TranscriptTreeError``,
     ///   ``TranscriptReconstructionError``).
-    func makeFork(at cut: SessionForkCut) async throws -> RoutedSessionActor {
+    func prepareFork(at cut: SessionForkCut) throws -> ForkSeed {
         guard persistsIndex else { throw SessionDirectoryError.forkUnsupported }
-        let handle = try forkHandle()
+        _ = try forkHandle()
         if cut == .callingToolCall {
             try settleAtCallingToolCall()
         }
-        let seed = try forkSeed(at: cut)
-        let fork = handle.makeFork(of: self, seed: seed)
+        return try forkSeed(at: cut)
+    }
+
+    /// Makes a live fork of this session from `seed`. The fork has the
+    /// model, the slot, the instructions, the grammar and the settings of
+    /// this session, and the history of the seed. It records as a fork node
+    /// in the recording folder of this session, with the cut of the seed in
+    /// its record (``SessionRecord/forkedAtHistoryOrdinal``), and it copies
+    /// no recorded history. The caller registers it
+    /// (``RouterSessionDirectory/fork(_:)``).
+    ///
+    /// - Parameters:
+    ///   - id: The id of the fork.
+    ///   - seed: The seed that ``prepareFork(at:)`` gave.
+    ///   - tools: The tools of the fork, or `nil` for the tools of this
+    ///     session, each through `ForkableTool.forked()`.
+    /// - Returns: The fork, not registered.
+    /// - Throws: `SessionDirectoryError.forkUnsupported` when this session
+    ///   runs on a slot that has no session.
+    func makeFork(id: ULID, seed: ForkSeed, tools: [any Tool]?) async throws -> RoutedSessionActor {
+        let fork = try forkHandle().makeFork(of: self, id: id, seed: seed, tools: tools)
         // Host settings, as the other settings of the fork are.
         await fork.setGenerationStallReportInterval(generationStallReportInterval)
         await fork.useTelemetry(logger: explicitLogger, metricsFactory: explicitMetricsFactory)
@@ -111,7 +129,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameter cut: The cut of the fork.
     /// - Returns: The seed.
-    /// - Throws: What ``makeFork(at:)`` throws for the cut and the read.
+    /// - Throws: What ``prepareFork(at:)`` throws for the cut and the read.
     private func forkSeed(at cut: SessionForkCut) throws -> ForkSeed {
         let settled = settledTranscript
         let events = try recordedForkEvents()

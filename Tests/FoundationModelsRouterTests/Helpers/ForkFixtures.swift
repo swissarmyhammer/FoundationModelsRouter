@@ -358,16 +358,19 @@ struct ForkFixture<Container: LoadedLLMContainer> {
         return Self(directories: directories, router: router, profile: profile, container: container)
     }
 
-    /// Vends a source session with `title` that answered each prompt of
-    /// `prompts`, in order.
+    /// Vends a source session with `title` and `tools` that answered each
+    /// prompt of `prompts`, in order.
     ///
     /// - Parameters:
     ///   - prompts: The prompts of the turns of the source.
     ///   - title: The title of the source.
+    ///   - tools: The tools of the source. The default is no tool.
     /// - Returns: The source.
     /// - Throws: What an answer throws.
-    func makeSource(answering prompts: [String], title: String? = nil) async throws -> any RoutedSession {
-        let source = profile.standard.makeSession(configuration: SessionConfiguration(title: title))
+    func makeSource(
+        answering prompts: [String], title: String? = nil, tools: [any Tool] = []
+    ) async throws -> any RoutedSession {
+        let source = profile.standard.makeSession(configuration: SessionConfiguration(tools: tools, title: title))
         for prompt in prompts {
             _ = try await source.respond(to: prompt)
         }

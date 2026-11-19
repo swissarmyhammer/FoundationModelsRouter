@@ -1,10 +1,31 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7rx9gkkxyem9gzev9982e5k
+  text: |-
+    Research done.
+    - Today `RouterSessionDirectory.fork(_:)` calls `RoutedSessionActor.makeFork(at:)`, which maps the cut (`forkSeed(at:)`) and builds the fork at once (`RoutedModel.makeFork(of:seed:)` in RoutedLLMForking.swift, fork id from `ULID.generate()` there).
+    - The actor writes its first `index.md` (and so its recording folder) in `makeRoutedSessionActor`. So a fork that a launcher built and then threw has a recording node. The directory must close that fork and remove the folder `<source recording folder>/<fork id>`.
+    - Plan: split the actor call in two: `prepareFork(at:) -> ForkSeed` (the cut, on the source actor) and `makeFork(id:seed:tools:)` (the build). New public `SessionLaunchForkRequest` (source id, fork id, `forkedAtHistoryOrdinal`, folder, client) with `makeFork()` (tools of the source) and `makeFork(tools:)` (the host surface). New protocol requirement `forkSession(_:)` with a default in a protocol extension that calls `request.makeFork()`. The directory: prepare, launch (or build directly with no launcher), check that the session is the one the request built, register, hold, mail.
+    - `SessionForkRequest` and `SessionDirectoryError` are Extras types; I do not change Extras. A new Router error `SessionLaunchForkError` covers a second build and a launcher that returns another session.
+  timestamp: 2026-11-19T03:23:34.899138+00:00
+- actor: claude-code
+  id: 01m7rxrx7smpmeqgqwqb1h5py2
+  text: |-
+    ### implement — changed
+    - evidence: launcher operation `func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession` on `SessionLauncher`, with a default in a protocol extension that calls `request.makeFork()` (tools of the source). `public struct SessionLaunchForkRequest: Sendable` has `sourceID: ULID`, `forkID: ULID`, `forkedAtHistoryOrdinal: Int`, `workingDirectory: URL`, `requestedByClient: String?`, `func makeFork(tools: [any Tool]) async throws -> any RoutedSession` (host surface) and `func makeFork() async throws -> any RoutedSession` (tools of the source). New `public enum SessionLaunchForkError { case forkAlreadyMade(ULID), notTheRequestedFork(ULID) }`.
+    - Directory order: `prepareFork(at:)` maps the cut, the directory chooses the fork id, the launcher (or `makeFork()` with no launcher) builds, the directory checks that the session is the one the request built, registers, holds, mails. On a throw: close the built fork, remove `<source folder>/<fork id>`, register nothing.
+    - Files: Sources/FoundationModelsRouter/Directory/SessionLaunchForkRequest.swift (new), SessionLauncher.swift, RouterSessionDirectory.swift, RoutedLLMForking.swift, Session/RoutedSessionActorForking.swift, Session/SettledTranscript.swift (doc link); Tests: RouterSessionDirectoryForkLauncherTests.swift (new, 13 tests), Helpers/ForkLauncherFixtures.swift (new), Helpers/ForkFixtures.swift (`makeSource` takes `tools:`), PublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift (+1 test, public conformance).
+    - RED: first a compile failure (no type), then with the type but no directory wiring 11 of 13 failed; the 2 that passed are the "launcher with no fork operation" guards of the old behavior. GREEN: 13/13. Fork suites `FoundationModelsRouterTests.RouterSessionDirectoryFork`: 55 tests in 5 suites passed. Public surface suite: 3 passed.
+    - Full `swift test` one time: 3074 tests in 350 suites passed, 50 in 26 and 19 in 3 passed, exit 0, 0 issues. Output: scratchpad/full-suite.txt. A first full run was stopped before its end because I changed code (build reset on a throw, a doc line) while it ran; it is not counted.
+    - next: review. Not committed, not pushed.
+  timestamp: 2026-11-19T03:31:59.353997+00:00
 depends_on:
 - 01M7RSS1HNR7E0G704X1VESQJJ
-position_column: todo
-position_ordinal: '8680'
+position_column: doing
+position_ordinal: '80'
 title: A fork goes through the host launcher, so the host gives its surface before the first prompt runs (D205)
 ---
 ## Goal
@@ -21,10 +42,10 @@ The Router already asks the host to build a session through `SessionLauncher` (`
 
 ## Tests
 
-- [ ] With a launcher that implements the fork operation: the launcher gets one call with the source, the cut position and the fork id; the fork uses the session that the launcher gave; the first prompt runs on that session.
-- [ ] With a launcher that does not implement it: the fork works as before.
-- [ ] The first prompt does not start before the launcher returns.
-- [ ] A launcher that throws: the fork is refused, nothing is registered, no recording node stays.
+- [x] With a launcher that implements the fork operation: the launcher gets one call with the source, the cut position and the fork id; the fork uses the session that the launcher gave; the first prompt runs on that session.
+- [x] With a launcher that does not implement it: the fork works as before.
+- [x] The first prompt does not start before the launcher returns.
+- [x] A launcher that throws: the fork is refused, nothing is registered, no recording node stays.
 
 ## After
 

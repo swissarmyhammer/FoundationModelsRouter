@@ -83,8 +83,8 @@ import Synchronization
 /// with no title gets one when a read finds it. Only ``setTitle(_:of:)``
 /// changes the name after that. ``fork(_:)`` makes a live fork of a session
 /// at a cut of its history (D205): a top-level session of kind `fork` with
-/// the name of its source and `-fork`, which the directory holds until it
-/// closes.
+/// the name of its source and `-fork`, which the launcher builds with the
+/// surface of the host and the directory holds until it closes.
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -1406,8 +1406,27 @@ public actor RouterSessionDirectory: SessionDirectory {
     // MARK: - Fork
 
     /// See `SessionDirectory.fork(_:)` (D205). Makes a live fork of the
-    /// source at the cut of `request` (``RoutedSessionActor/makeFork(at:)``),
-    /// registers it as a `fork` of the source, and mails its first prompt.
+    /// source at the cut of `request`, registers it as a `fork` of the
+    /// source, and mails its first prompt. The steps come in this order:
+    ///
+    /// 1. The source maps the cut to a position in its history
+    ///    (``RoutedSessionActor/prepareFork(at:)``), and the directory chooses
+    ///    the id of the fork.
+    /// 2. The launcher of the host builds the fork with its surface
+    ///    (``SessionLauncher/forkSession(_:)``). A launcher that does not
+    ///    implement that operation, and a directory with no launcher, build
+    ///    the fork with the tools of the source. The fork has the id and the
+    ///    cut of step 1, so its recording node and its
+    ///    `forkedAtHistoryOrdinal` agree with the request of the launcher.
+    /// 3. The directory registers the fork and holds it.
+    /// 4. The directory mails the first prompt.
+    ///
+    /// So no prompt of the fork runs before the host gave its surface, and
+    /// the host holds the fork from its start: it does not stop and restore
+    /// the fork to give it its surface. When the launcher throws, or gives
+    /// another session than the fork of its request, the fork is refused:
+    /// the directory registers nothing, closes a fork that the request
+    /// built, and removes its recording node.
     ///
     /// - The source must be live, or recorded and not archived. A recorded
     ///   source that is not live is restored first, through the launcher
@@ -1415,7 +1434,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   restored session. This is the simpler path: a fork needs the tools
     ///   of its source, and only the host can make them.
     /// - The fork has the agent, the model profile, the slot, the
-    ///   instructions, the settings and the tools of the source, and the
+    ///   instructions and the settings of the source, the tools that the
+    ///   launcher gave (or the tools of the source), and the
     ///   history of the source up to the cut (``ForkCutHistory``). Its record
     ///   holds `forkParentId` and `forkedAtHistoryOrdinal`, and it records as
     ///   a fork node in the recording folder of the source, so a restore of
@@ -1448,11 +1468,17 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   source when the directory has no launcher; the error of the restore;
     ///   `SessionDirectoryError.forkUnsupported` for a source that records
     ///   nothing durably; `SessionDirectoryError.forkCutOutOfRange` for a cut
-    ///   outside the history; the error of the read of the recording; or the
-    ///   refusal of the first prompt.
+    ///   outside the history; the error of the read of the recording; the
+    ///   error of the launcher or of the build of the fork;
+    ///   ``SessionLaunchForkError`` for a launcher that builds the fork two
+    ///   times or gives another session; or the refusal of the first prompt.
     public func fork(_ request: SessionForkRequest) async throws -> SessionSummary {
         let source = try await forkSource(of: request.sourceID)
-        let fork = try await Self.recordOwner(of: source).makeFork(at: request.cut)
+        let owner = try Self.recordOwner(of: source)
+        let fork = try await launchFork(
+            SessionLaunchForkRequest(
+                source: owner, seed: try await owner.prepareFork(at: request.cut), forkID: ULID.generate(),
+                requestedByClient: request.requestedByClient))
         register(
             fork, kind: .fork, parentID: source.id, requestedByClient: request.requestedByClient, namingFork: true)
         state.withLock { $0.heldForks[fork.id] = fork }
@@ -1469,6 +1495,47 @@ public actor RouterSessionDirectory: SessionDirectory {
             throw SessionDirectoryError.unknownSession(fork.id)
         }
         return summary
+    }
+
+    /// Builds the fork of `request`: through the launcher of the host
+    /// (``SessionLauncher/forkSession(_:)``) when the directory has one,
+    /// else with the tools of the source. The fork must be the fork that
+    /// `request` built. When the build or the launcher throws, or the
+    /// launcher gives another session, the fork is refused: a fork that
+    /// `request` built is closed, and its recording node is removed.
+    ///
+    /// - Parameter request: The fork request.
+    /// - Returns: The fork, not registered.
+    /// - Throws: The error of the launcher or of the build;
+    ///   ``SessionLaunchForkError/notTheRequestedFork(_:)`` when the launcher
+    ///   gives another session.
+    private func launchFork(_ request: SessionLaunchForkRequest) async throws -> RoutedSessionActor {
+        do {
+            let session =
+                if let launcher { try await launcher.forkSession(request) } else { try await request.makeFork() }
+            guard let fork = request.build.fork, fork === session else {
+                throw SessionLaunchForkError.notTheRequestedFork(request.forkID)
+            }
+            return fork
+        } catch {
+            await discardRefusedFork(of: request)
+            throw error
+        }
+    }
+
+    /// Removes the fork of a refused `request`
+    /// (``ForkBuild/discard()``). A recording node that stays is logged:
+    /// the refusal of the fork stands.
+    ///
+    /// - Parameter request: The refused fork request.
+    private func discardRefusedFork(of request: SessionLaunchForkRequest) async {
+        do {
+            try await request.build.discard()
+        } catch {
+            Self.logSession(
+                .error, "the recording node of a refused fork stays; its removal failed", session: request.forkID,
+                error: error)
+        }
     }
 
     /// The live session that a fork of `id` comes from: the live session,
