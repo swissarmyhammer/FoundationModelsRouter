@@ -30,6 +30,11 @@ import Testing
     /// The number of characters of the short id of a session.
     private static let shortIDLength = 7
 
+    /// A part of a date smaller than one millisecond, in seconds: less than
+    /// one half of a millisecond, so a whole-millisecond date with it rounds
+    /// back to that date.
+    private static let subMillisecond: TimeInterval = 0.000_25
+
     /// The POSIX permissions of a folder that the owner can search but not
     /// list.
     private static let searchOnlyPermissions = 0o100
@@ -199,6 +204,21 @@ import Testing
         let summary = SessionSummary(record: record)
 
         #expect(summary.importedFrom == Self.provenance)
+    }
+
+    /// The production change that makes this test fail: facts that keep
+    /// the provenance dates that are not rounded, while the `index.md` holds
+    /// them rounded to the millisecond.
+    @Test func theFactsRoundTheProvenanceDatesToTheMillisecond() {
+        var facts = SessionFacts()
+        facts.importedFrom = SessionImportProvenance(
+            agent: Self.provenance.agent, sourceID: Self.provenance.sourceID,
+            sourcePath: Self.provenance.sourcePath,
+            sourceLastDate: Self.provenance.sourceLastDate.map { $0.addingTimeInterval(Self.subMillisecond) },
+            importedAt: Self.provenance.importedAt.addingTimeInterval(Self.subMillisecond),
+            skippedRecordCount: Self.provenance.skippedRecordCount)
+
+        #expect(facts.importedFrom == Self.provenance)
     }
 
     /// A session with no title has the 7-character short id as its slug.

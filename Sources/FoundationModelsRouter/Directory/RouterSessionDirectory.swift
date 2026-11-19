@@ -396,9 +396,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// with no launcher throws `noLauncher` from ``start(_:)``.
     private var launcher: (any SessionLauncher)?
 
-    /// The names that the imports hold (``importSession(_:transcript:)``,
-    /// D209 (h)), so two imports with one title in one folder do not get one
-    /// name.
+    /// The names that the imports hold while they run
+    /// (``importSession(_:transcript:)``, D209 (h)), so two imports with one
+    /// title in one folder do not get one name.
     private var importNames = SessionImportNames()
 
     /// The recording roots of the host, read at each query that includes
@@ -1754,7 +1754,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// Writes a new session recording from `transcript` and gives the
     /// summary of the new session: a recorded root session that is not live,
     /// with the state `idle`, the origin `import` and the provenance of
-    /// `request` in ``SessionSummary/importedFrom``.
+    /// `request`, with its dates rounded to the millisecond, in
+    /// ``SessionSummary/importedFrom``.
     ///
     /// The launcher gives the model handle of the default of the agent of
     /// `request` and the configuration of that agent
@@ -1772,6 +1773,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// names of the other imports (``SessionImportNames``). Each import makes
     /// a new session, also for a source that an earlier import read.
     ///
+    /// Each import holds its name while it runs, and releases it when it
+    /// ends, with a session or with an error. Before the release, the
+    /// directory records the import as a use of the new session in the
+    /// usage store, with the recording root of the session
+    /// (``recordImportUsage(of:in:)``). Thus the list and the name rule
+    /// show the session after the import also when the launcher writes to
+    /// a root that the host does not give.
+    ///
+    /// The provenance of the facts holds the dates of the provenance of
+    /// `request` rounded to the nearest millisecond, the precision of the
+    /// `index.md` (``SessionFacts/importedFrom``).
+    ///
     /// After the write, the directory sends `factsChanged` with the summary
     /// of the new session, one time. It sends no `started`, because the
     /// session is not live. A write that fails leaves no session folder
@@ -1784,7 +1797,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - transcript: The history of the imported session.
     /// - Returns: The summary of the imported session, read from the record
     ///   that the write made, with the pin and the last use of the usage
-    ///   store.
+    ///   store. The last use is the time of the import when the directory
+    ///   has a usage store.
     /// - Throws: `SessionDirectoryError.noLauncher` when the directory has no
     ///   launcher; the error of the launcher, for example
     ///   `SessionDirectoryError.importUnsupported` from a launcher with no
@@ -1798,21 +1812,17 @@ public actor RouterSessionDirectory: SessionDirectory {
         let summaries = Self.merging(live: liveSummaries(), recorded: try await recordedSummaries())
         let (name, token) = importNames.reserve(
             from: request.title, in: request.workingDirectory, among: summaries)
-        do {
-            let summary = try await writeImport(
-                of: transcript, with: target,
-                configuration: Self.importConfiguration(target.configuration, for: request, name: name))
-            importNames.finish(token, as: summary.id)
-            emit(.factsChanged(summary))
-            return summary
-        } catch {
-            importNames.finish(token, as: nil)
-            throw error
-        }
+        defer { importNames.release(token) }
+        let summary = try await writeImport(
+            of: transcript, with: target,
+            configuration: Self.importConfiguration(target.configuration, for: request, name: name))
+        emit(.factsChanged(summary))
+        return summary
     }
 
-    /// Writes the recording of an import and reads back the summary of the
-    /// new session from its record.
+    /// Writes the recording of an import, records its recording root in the
+    /// usage store (``recordImportUsage(of:in:)``), and reads back the
+    /// summary of the new session from its record.
     ///
     /// - Parameters:
     ///   - transcript: The history of the imported session.
@@ -1827,10 +1837,37 @@ public actor RouterSessionDirectory: SessionDirectory {
     ) async throws -> SessionSummary {
         let id = try await target.model.recordSession(from: transcript, configuration: configuration)
         let folder = target.model.recordingDirectory(forSessionId: id, recordingRoot: configuration.recordingRoot)
+        recordImportUsage(of: id, in: folder.deletingLastPathComponent())
         guard let record = try SessionIndexFile.read(in: folder) else {
             throw SessionDirectoryError.unknownSession(id)
         }
         return recordedSummary(of: record)
+    }
+
+    /// Records the import of the session `id` as a use in the usage store,
+    /// with the recording root that holds its folder, as ``markUsed(_:)``
+    /// records the root of a session. The recording root of each usage
+    /// joins the roots that the list and the name rule read
+    /// (``allRecordingRoots()``), so they show the imported session also
+    /// when the host does not give its root (``useRecordingRoots(_:)``).
+    ///
+    /// The session exists when this call runs, so a write of the store that
+    /// fails does not fail the import: it is logged. A directory with no
+    /// usage store records nothing; then the directory shows an import to a
+    /// root that the host does not give only until the import ends.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the imported session.
+    ///   - recordingRoot: The recording root that holds the folder of the
+    ///     session.
+    private func recordImportUsage(of id: ULID, in recordingRoot: URL) {
+        do {
+            try currentUsageStore()?.markUsed(id, recordingRoot: recordingRoot, at: Date())
+        } catch {
+            Self.logSession(
+                .warning, "the usage store did not record an imported session; the list reads only the roots of the host",
+                session: id, error: error)
+        }
     }
 
     /// The configuration that an import writes with: the configuration of

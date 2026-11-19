@@ -66,7 +66,16 @@ public struct SessionFacts: Sendable, Equatable {
     /// source session and the time of the import, or `nil` for a session
     /// that was not imported. The record writes it under the flat key
     /// `importedFrom`, and a record with no such key reads it as `nil`.
-    public var importedFrom: SessionImportProvenance?
+    ///
+    /// The facts hold each date of the provenance rounded to the nearest
+    /// millisecond, the precision of the record, as the directory rounds
+    /// ``archivedAt``, ``endedAt`` and ``recapAt``. The initializer and each
+    /// set round the dates (``RecordedImportProvenance/rounded(_:)``), so a
+    /// live session gives the same provenance as its record after a
+    /// restart.
+    public var importedFrom: SessionImportProvenance? {
+        didSet { importedFrom = importedFrom.map(RecordedImportProvenance.rounded) }
+    }
 
     /// Makes the facts of a session. Every field defaults to its absent
     /// value.
@@ -84,8 +93,8 @@ public struct SessionFacts: Sendable, Equatable {
     ///   - lastSummary: The last summary. The default is `nil`.
     ///   - recap: The recap. The default is `nil`.
     ///   - recapAt: The instant of the recap. The default is `nil`.
-    ///   - importedFrom: Where an imported session came from. The default
-    ///     is `nil`.
+    ///   - importedFrom: Where an imported session came from, with its
+    ///     dates rounded to the nearest millisecond. The default is `nil`.
     public init(
         agentID: String? = nil,
         agentName: String? = nil,
@@ -113,7 +122,7 @@ public struct SessionFacts: Sendable, Equatable {
         self.lastSummary = lastSummary
         self.recap = recap
         self.recapAt = recapAt
-        self.importedFrom = importedFrom
+        self.importedFrom = importedFrom.map(RecordedImportProvenance.rounded)
     }
 
     /// The first facts of a fork of a session with these facts (D205): the

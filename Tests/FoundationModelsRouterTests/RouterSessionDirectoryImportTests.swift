@@ -90,12 +90,26 @@ import Testing
         /// ``directory``.
         let router: Router
 
+        /// The recorder of ``router``.
+        let recorder: any TranscriptRecorder
+
+        /// The profile that ``router`` resolved. ``launcher`` gives its
+        /// `.standard` slot as the model of each import.
+        let profile: LanguageModelProfile
+
         /// The launcher that gives the model of each import.
         let launcher: FakeSessionLauncher
 
         /// The recording root of ``router``: the folder that holds each
         /// session folder that it writes.
         let recordingRoot: URL
+
+        /// A recording root that the directory does not read from the host
+        /// (`useRecordingRoots(_:)`): the root of a launcher that writes
+        /// each import to a root of its own.
+        var launcherRecordingRoot: URL {
+            folder.appendingPathComponent("launcher-recordings", isDirectory: true)
+        }
 
         /// The working folder of each import request.
         var workingDirectory: URL {
@@ -106,19 +120,21 @@ import Testing
         var directory: RouterSessionDirectory { router.sessionDirectory }
 
         /// Makes the router over a durable recording root whose recorder is
-        /// `recorder`, a launcher over its profile, and gives both the
-        /// launcher and the recording root to the directory.
+        /// the one that `recorder` makes, a launcher over its profile, and
+        /// gives both the launcher and the recording root to the directory.
         ///
-        /// - Parameter recorder: The recorder of the router, or `nil` (the
-        ///   default) for a recorder that writes JSONL files.
+        /// - Parameter recorder: Makes the recorder of the router from a
+        ///   recorder that writes JSONL files, or `nil` (the default) for that
+        ///   JSONL recorder.
         /// - Returns: The fixture.
         /// - Throws: The error of the resolve of the profile.
-        static func make(recorder: (any TranscriptRecorder)? = nil) async throws -> Fixture {
+        static func make(recorder: RecorderMaker? = nil) async throws -> Fixture {
             let folder = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
             let recordingsDir = folder.appendingPathComponent("recordings", isDirectory: true)
+            let transcriptRecorder = (recorder ?? { $0 })(JSONLRecorder(directory: recordingsDir))
             let router = RouterTestFixtures.makeRouter(
                 cacheDir: folder.appendingPathComponent("cache", isDirectory: true),
-                recordingsDir: recordingsDir, recorder: recorder ?? JSONLRecorder(directory: recordingsDir),
+                recordingsDir: recordingsDir, recorder: transcriptRecorder,
                 loader: StubModelLoader(container: BasicLLMContainer(), dimension: RouterTestFixtures.stubDimension))
             let profile = try await router.resolve(
                 profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
@@ -126,7 +142,9 @@ import Testing
             let launcher = FakeSessionLauncher(profile: profile)
             await router.sessionDirectory.use(launcher: launcher)
             await router.sessionDirectory.useRecordingRoots { [recordingRoot] }
-            return Fixture(folder: folder, router: router, launcher: launcher, recordingRoot: recordingRoot)
+            return Fixture(
+                folder: folder, router: router, recorder: transcriptRecorder, profile: profile, launcher: launcher,
+                recordingRoot: recordingRoot)
         }
 
         /// The import request of each test: ``title``, ``provenance`` and
@@ -168,16 +186,21 @@ import Testing
         }
     }
 
+    /// Makes the recorder of the router of a fixture from the recorder that
+    /// writes JSONL files.
+    typealias RecorderMaker = @Sendable (any TranscriptRecorder) -> any TranscriptRecorder
+
     /// Makes a fixture, runs `body` with it, and tears it down, also when
     /// `body` throws.
     ///
     /// - Parameters:
-    ///   - recorder: The recorder of the router, or `nil` (the default) for
-    ///     a recorder that writes JSONL files.
+    ///   - recorder: Makes the recorder of the router from a recorder that
+    ///     writes JSONL files, or `nil` (the default) for that JSONL
+    ///     recorder.
     ///   - body: The work of the test.
     /// - Throws: What the fixture or `body` throws.
     private static func withFixture(
-        recorder: (any TranscriptRecorder)? = nil, _ body: (Fixture) async throws -> Void
+        recorder: RecorderMaker? = nil, _ body: (Fixture) async throws -> Void
     ) async throws {
         let fixture = try await Fixture.make(recorder: recorder)
         do {
@@ -292,6 +315,49 @@ import Testing
         }
     }
 
+    // MARK: - The dates of the provenance
+
+    /// A provenance whose dates have a part smaller than one millisecond.
+    private static let subMillisecondProvenance = SessionImportProvenance(
+        agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
+        sourceLastDate: Date(timeIntervalSince1970: TimeInterval(sourceLastMilliseconds) / 1000 + subMillisecond),
+        importedAt: Date(timeIntervalSince1970: TimeInterval(importedAtMilliseconds) / 1000 + subMillisecond),
+        skippedRecordCount: skippedRecordCount)
+
+    /// The part smaller than one millisecond of the dates of
+    /// ``subMillisecondProvenance``, in seconds: less than one half of a
+    /// millisecond, so each date rounds down to the date of ``provenance``.
+    private static let subMillisecond: TimeInterval = 0.000_25
+
+    /// The production change that makes this test fail: a live session that
+    /// holds the provenance dates that are not rounded, while its `index.md`
+    /// holds the rounded dates, so its summary changes after a restart.
+    @Test func aLiveSessionGivesItsProvenanceDatesRoundedToTheMillisecond() async throws {
+        try await Self.withFixture { fixture in
+            let session = fixture.profile.standard.makeSession(
+                configuration: SessionConfiguration(importedFrom: Self.subMillisecondProvenance))
+
+            let summary = try await fixture.directory.summary(of: session.id)
+            await session.close()
+
+            #expect(summary?.importedFrom == Self.provenance)
+        }
+    }
+
+    /// The production change that makes this test fail: an import that
+    /// gives the provenance dates that are not rounded.
+    @Test func anImportGivesItsProvenanceDatesRoundedToTheMillisecond() async throws {
+        try await Self.withFixture { fixture in
+            let request = SessionImportRequest(
+                workingDirectory: fixture.workingDirectory, title: Self.title,
+                provenance: Self.subMillisecondProvenance)
+
+            let imported = try await fixture.directory.importSession(request, transcript: Self.transcript)
+
+            #expect(imported.importedFrom == Self.provenance)
+        }
+    }
+
     // MARK: - The name
 
     /// The production change that makes this test fail: an import that
@@ -333,6 +399,101 @@ import Testing
         }
     }
 
+    // MARK: - The held names
+
+    /// The production change that makes this test fail: an import that
+    /// holds no name while its write runs, so a second import that starts
+    /// before the first write ends gets the same name.
+    @Test func twoImportsAtTheSameTimeGetTwoNames() async throws {
+        try await Self.withFixture(recorder: { FirstWriteRecorder(inner: $0, mode: .held) }) { fixture in
+            let recorder = try #require(fixture.recorder as? FirstWriteRecorder)
+            let first = Task { try await fixture.importSession() }
+            await recorder.entered.waitUntilOpen()
+
+            let second: SessionSummary
+            do {
+                second = try await fixture.importSession()
+            } catch {
+                await recorder.release.open()
+                _ = try? await first.value
+                throw error
+            }
+            await recorder.release.open()
+            let firstSummary = try await first.value
+
+            #expect(firstSummary.title != second.title)
+        }
+    }
+
+    /// The production change that makes this test fail: an import whose
+    /// write fails and that keeps its name, so the next import with the
+    /// same title gets the next number.
+    @Test func aFailedImportReleasesItsName() async throws {
+        try await Self.withFixture(recorder: { FirstWriteRecorder(inner: $0, mode: .dropped) }) { fixture in
+            _ = try? await fixture.importSession()
+
+            let next = try await fixture.importSession()
+
+            #expect(next.title == Self.title)
+        }
+    }
+
+    /// Gives the directory of `fixture` a usage store in the folder of the
+    /// test, and a launcher that writes each import to
+    /// ``Fixture/launcherRecordingRoot``, a root that the host does not give.
+    ///
+    /// - Parameter fixture: The fixture of the test.
+    private static func useLauncherRecordingRoot(in fixture: Fixture) async {
+        await fixture.directory.use(
+            usageStore: JSONFileSessionUsageStore(
+                fileURL: fixture.folder.appendingPathComponent("usage.json", isDirectory: false)))
+        await fixture.directory.use(
+            launcher: FakeSessionLauncher(profile: fixture.profile, importRecordingRoot: fixture.launcherRecordingRoot))
+    }
+
+    /// The production change that makes this test fail: an import that
+    /// does not record its recording root in the usage store, so the list
+    /// does not read a root that only the launcher knows.
+    @Test func anImportToARootOfTheLauncherIsListed() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+            let imported = try await fixture.importSession()
+
+            let listed = try await fixture.listed(imported.id)
+
+            #expect(listed?.title == Self.title)
+        }
+    }
+
+    /// The production change that makes this test fail: an import that
+    /// releases its name at its end and does not record its recording root,
+    /// so the name rule does not see the first import.
+    @Test func aSecondImportToARootOfTheLauncherGetsTheNextFreeNumber() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+            _ = try await fixture.importSession()
+
+            let second = try await fixture.importSession()
+
+            #expect(second.title == Self.secondName)
+        }
+    }
+
+    /// The production change that makes this test fail: an import that
+    /// keeps its name after its end, so the archive of the session does not
+    /// free the name.
+    @Test func anArchivedImportToARootOfTheLauncherFreesTheName() async throws {
+        try await Self.withFixture { fixture in
+            await Self.useLauncherRecordingRoot(in: fixture)
+            let first = try await fixture.importSession()
+            _ = try await fixture.directory.archive(first.id, by: .user(clientID: Self.tempDirPrefix))
+
+            let next = try await fixture.importSession()
+
+            #expect(next.title == Self.title)
+        }
+    }
+
     /// The production change that makes this test fail: an import that
     /// opens the session of an earlier import with the same source (Q85
     /// (c)).
@@ -368,7 +529,7 @@ import Testing
     /// The production change that makes this test fail: an import that
     /// leaves the folder of a write that failed in the recording root.
     @Test func aFailedWriteLeavesNoFolder() async throws {
-        try await Self.withFixture(recorder: NoneRecorder()) { fixture in
+        try await Self.withFixture(recorder: { _ in NoneRecorder() }) { fixture in
             _ = try? await fixture.importSession()
 
             #expect(fixture.recordingRootEntries.isEmpty)
@@ -378,7 +539,7 @@ import Testing
     /// The production change that makes this test fail: an import that
     /// does not give the error of the write to its caller.
     @Test func aFailedWriteThrows() async throws {
-        try await Self.withFixture(recorder: NoneRecorder()) { fixture in
+        try await Self.withFixture(recorder: { _ in NoneRecorder() }) { fixture in
             await #expect(throws: SessionRecordingWriteError.self) {
                 try await fixture.importSession()
             }
@@ -388,7 +549,7 @@ import Testing
     /// The production change that makes this test fail: an import that
     /// adds the session to the directory before the write ends.
     @Test func aFailedWriteLeavesNoDirectoryEntry() async throws {
-        try await Self.withFixture(recorder: NoneRecorder()) { fixture in
+        try await Self.withFixture(recorder: { _ in NoneRecorder() }) { fixture in
             _ = try? await fixture.importSession()
 
             let listed = try await fixture.directory.sessions(matching: SessionQuery(includesRecorded: true))
@@ -400,7 +561,7 @@ import Testing
     /// The production change that makes this test fail: an import that
     /// sends an event for a session that it did not write.
     @Test func aFailedWriteSendsNoEvent() async throws {
-        try await Self.withFixture(recorder: NoneRecorder()) { fixture in
+        try await Self.withFixture(recorder: { _ in NoneRecorder() }) { fixture in
             var events = fixture.directory.events().makeAsyncIterator()
 
             _ = try? await fixture.importSession()

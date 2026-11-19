@@ -224,6 +224,10 @@ public struct SessionConfiguration: Sendable {
     /// session that was not imported (D209 (h)). The session directory sets
     /// it for ``RouterSessionDirectory/importSession(_:transcript:)``. See
     /// ``agentID``.
+    ///
+    /// The facts of the session hold its dates rounded to the nearest
+    /// millisecond (``SessionFacts/importedFrom``), so the summary of the
+    /// session gives the rounded dates, before and after a restart.
     public var importedFrom: SessionImportProvenance?
 
     /// The UI client that asked for the start of the session, for the tab

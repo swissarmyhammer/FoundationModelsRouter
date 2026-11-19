@@ -25,6 +25,20 @@ struct RecordedImportProvenance: Codable {
         self.provenance = provenance
     }
 
+    /// A provenance with each date rounded to the nearest millisecond
+    /// (``MillisecondDate/rounded(_:)``), the precision of the record. The
+    /// facts hold a provenance in this form (``SessionFacts/importedFrom``).
+    ///
+    /// - Parameter provenance: A provenance.
+    /// - Returns: `provenance` with its dates rounded.
+    static func rounded(_ provenance: SessionImportProvenance) -> SessionImportProvenance {
+        SessionImportProvenance(
+            agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
+            sourceLastDate: provenance.sourceLastDate.map(MillisecondDate.rounded),
+            importedAt: MillisecondDate.rounded(provenance.importedAt),
+            skippedRecordCount: provenance.skippedRecordCount)
+    }
+
     /// Decodes the provenance from its map. An absent `sourceLastDate` is
     /// `nil`.
     ///

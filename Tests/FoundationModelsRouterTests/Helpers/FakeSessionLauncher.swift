@@ -33,6 +33,10 @@ final class FakeSessionLauncher: SessionLauncher {
     /// for a launcher that breaks the contract and vends with none of them.
     private let copiesRequestFacts: Bool
 
+    /// The recording root that each import writes to, or `nil` for the
+    /// recording root of the profile.
+    private let importRecordingRoot: URL?
+
     /// The requests, the restores and the sessions, which the directory
     /// changes from its task.
     private let state = Mutex(State())
@@ -44,9 +48,12 @@ final class FakeSessionLauncher: SessionLauncher {
     ///   - copiesRequestFacts: `true` (the default) to copy the facts of each
     ///     request into the configuration of its session; `false` to vend
     ///     each session with none of them.
-    init(profile: LanguageModelProfile, copiesRequestFacts: Bool = true) {
+    ///   - importRecordingRoot: The recording root that each import writes
+    ///     to, or `nil` (the default) for the recording root of the profile.
+    init(profile: LanguageModelProfile, copiesRequestFacts: Bool = true, importRecordingRoot: URL? = nil) {
         self.profile = profile
         self.copiesRequestFacts = copiesRequestFacts
+        self.importRecordingRoot = importRecordingRoot
     }
 
     /// Each request the launcher got, in order.
@@ -92,15 +99,17 @@ final class FakeSessionLauncher: SessionLauncher {
 
     /// Gives the `.standard` slot of the profile as the model of an imported
     /// session, with a configuration that holds the agent of `request`, else
-    /// the default agent, and no other value: the directory sets the facts
-    /// of the import.
+    /// the default agent, and the recording root of the import of the
+    /// launcher, and no other value: the directory sets the facts of the
+    /// import.
     ///
     /// - Parameter request: The import request, as the directory gives it.
     /// - Returns: The model and the configuration of the import.
     func importTarget(for request: SessionImportRequest) async throws -> SessionImportTarget {
         SessionImportTarget(
             model: profile.standard,
-            configuration: SessionConfiguration(agentID: request.agentID ?? RouterSessionDirectory.defaultAgentID))
+            configuration: SessionConfiguration(
+                recordingRoot: importRecordingRoot, agentID: request.agentID ?? RouterSessionDirectory.defaultAgentID))
     }
 
     /// Closes each session the launcher vended or restored.
