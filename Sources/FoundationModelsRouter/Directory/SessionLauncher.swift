@@ -80,6 +80,11 @@ public protocol SessionLauncher: Sendable {
     /// nothing, closes a fork that the request built, and removes its
     /// recording node.
     ///
+    /// The request is usable only in this call. When the call returns or
+    /// throws, the directory closes the request: a later build throws
+    /// ``SessionLaunchForkError/requestClosed(_:)``, and a build that is in
+    /// flight at the close discards its fork.
+    ///
     /// A launcher that does not implement this operation gets the default
     /// of this protocol: the fork has the tools of the source
     /// (``SessionLaunchForkRequest/makeFork()``).

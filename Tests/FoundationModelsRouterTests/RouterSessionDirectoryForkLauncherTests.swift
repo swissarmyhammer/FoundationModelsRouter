@@ -55,6 +55,23 @@ import Testing
                 forker: Fixture.user))
     }
 
+    /// Forks `source` through `launcher`, and gives the request that the
+    /// launcher kept after the fork call ended. The fork call can throw: the
+    /// test reads only the kept request.
+    ///
+    /// - Parameters:
+    ///   - source: The source.
+    ///   - launcher: The launcher of the directory of `fixture`.
+    ///   - fixture: The fixture of the test.
+    /// - Returns: The request that the launcher kept.
+    /// - Throws: When the launcher kept no request.
+    private static func keptRequest(
+        afterForking source: any RoutedSession, through launcher: ForkLaunchingLauncher, in fixture: Fixture
+    ) async throws -> SessionLaunchForkRequest {
+        _ = try? await fork(source, in: fixture)
+        return try #require(launcher.requests.first)
+    }
+
     /// The original tool names of `session`, or `nil` for a session that is
     /// not a Router session.
     ///
@@ -241,5 +258,75 @@ import Testing
         #expect(error == .notTheRequestedFork(launch.forkID))
         await launcher.closeSessions()
         await fixture.end([source, other])
+    }
+
+    // MARK: - A request that the launcher keeps after the fork call
+
+    @Test func aRequestKeptAfterARefusalBeforeTheBuildBuildsNoFork() async throws {
+        let fixture = try await Fixture.make()
+        let launcher = ForkLaunchingLauncher(behavior: .throwBeforeBuild)
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let request = try await Self.keptRequest(afterForking: source, through: launcher, in: fixture)
+
+        await #expect(throws: SessionLaunchForkError.requestClosed(request.forkID)) {
+            try await request.makeFork(tools: [])
+        }
+        await launcher.closeSessions()
+        await fixture.end([source])
+    }
+
+    @Test func aRequestKeptAfterARefusalBeforeTheBuildLeavesNoRecordingNode() async throws {
+        let fixture = try await Fixture.make()
+        let launcher = ForkLaunchingLauncher(behavior: .throwBeforeBuild)
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let request = try await Self.keptRequest(afterForking: source, through: launcher, in: fixture)
+
+        let lateFork = try? await request.makeFork(tools: [])
+
+        let node = source.recordingDirectory.appendingPathComponent(request.forkID.description, isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: node.path) == false)
+        await lateFork?.close()
+        await launcher.closeSessions()
+        await fixture.end([source])
+    }
+
+    @Test func aRequestKeptAfterARefusalAfterTheBuildBuildsNoFork() async throws {
+        let fixture = try await Fixture.make()
+        let launcher = ForkLaunchingLauncher(behavior: .buildThenThrow)
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let request = try await Self.keptRequest(afterForking: source, through: launcher, in: fixture)
+
+        await #expect(throws: SessionLaunchForkError.requestClosed(request.forkID)) {
+            try await request.makeFork(tools: [])
+        }
+        await launcher.closeSessions()
+        await fixture.end([source])
+    }
+
+    @Test func aRequestKeptAfterAnotherSessionBuildsNoFork() async throws {
+        let fixture = try await Fixture.make()
+        let other = try await fixture.makeSource(answering: [])
+        let launcher = ForkLaunchingLauncher(behavior: .returnOther(other))
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let request = try await Self.keptRequest(afterForking: source, through: launcher, in: fixture)
+
+        await #expect(throws: SessionLaunchForkError.requestClosed(request.forkID)) {
+            try await request.makeFork(tools: [])
+        }
+        await launcher.closeSessions()
+        await fixture.end([source, other])
+    }
+
+    @Test func aRequestKeptAfterTheForkBuildsNoSecondFork() async throws {
+        let fixture = try await Fixture.make()
+        let launcher = ForkLaunchingLauncher()
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let request = try await Self.keptRequest(afterForking: source, through: launcher, in: fixture)
+
+        await #expect(throws: SessionLaunchForkError.requestClosed(request.forkID)) {
+            try await request.makeFork(tools: [])
+        }
+        await launcher.closeSessions()
+        await fixture.end([source])
     }
 }

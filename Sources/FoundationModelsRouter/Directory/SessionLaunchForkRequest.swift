@@ -19,6 +19,13 @@ import Synchronization
 /// A request builds one fork. The launcher returns that fork, and the
 /// directory refuses each other session
 /// (``SessionLaunchForkError/notTheRequestedFork(_:)``).
+///
+/// A request is usable only in the fork call
+/// (``SessionLauncher/forkSession(_:)``). When that call returns or throws,
+/// the directory closes the request: a later build throws
+/// ``SessionLaunchForkError/requestClosed(_:)``, a build that is in flight
+/// at the close discards its fork, and the request releases the source and
+/// the tools that it holds.
 public struct SessionLaunchForkRequest: Sendable {
     /// The id of the source of the fork.
     public let sourceID: ULID
@@ -57,7 +64,13 @@ public struct SessionLaunchForkRequest: Sendable {
         self.forkedAtHistoryOrdinal = seed.historyOrdinal
         self.workingDirectory = source.workingDirectory
         self.requestedByClient = requestedByClient
-        self.build = ForkBuild(source: source, seed: seed, forkID: forkID)
+        self.build = ForkBuild(
+            forkID: forkID,
+            recordingDirectory: source.recordingDirectory.appendingPathComponent(
+                forkID.description, isDirectory: true)
+        ) { tools in
+            try await source.makeFork(id: forkID, seed: seed, tools: tools)
+        }
     }
 
     /// Builds the fork with `tools`: the tool surface that the host gives
@@ -67,7 +80,9 @@ public struct SessionLaunchForkRequest: Sendable {
     /// - Parameter tools: The tools of the fork.
     /// - Returns: The fork, not registered.
     /// - Throws: ``SessionLaunchForkError/forkAlreadyMade(_:)`` when this
-    ///   request built its fork before.
+    ///   request built its fork before;
+    ///   ``SessionLaunchForkError/requestClosed(_:)`` when the fork call
+    ///   ended before the build started or before it ended.
     public func makeFork(tools: [any Tool]) async throws -> any RoutedSession {
         try await build.make(tools: tools)
     }
@@ -78,7 +93,9 @@ public struct SessionLaunchForkRequest: Sendable {
     ///
     /// - Returns: The fork, not registered.
     /// - Throws: ``SessionLaunchForkError/forkAlreadyMade(_:)`` when this
-    ///   request built its fork before.
+    ///   request built its fork before;
+    ///   ``SessionLaunchForkError/requestClosed(_:)`` when the fork call
+    ///   ended before the build started or before it ended.
     public func makeFork() async throws -> any RoutedSession {
         try await build.make(tools: nil)
     }
@@ -92,92 +109,150 @@ public enum SessionLaunchForkError: Error, Sendable, Equatable {
     /// The launcher returned a session that is not the fork that the request
     /// built.
     case notTheRequestedFork(ULID)
+
+    /// The fork call of the request ended, so the request builds no fork.
+    case requestClosed(ULID)
 }
 
 /// The one build of the fork of a ``SessionLaunchForkRequest``: it builds the
-/// fork one time, keeps it, and removes it again when the directory refuses
-/// the fork.
+/// fork one time, and keeps it until the fork call of the directory closes
+/// the build (``close()``).
+///
+/// After the close, the build builds no fork: a launcher that kept the
+/// request gets ``SessionLaunchForkError/requestClosed(_:)``. A build that
+/// is in flight when the close comes discards the fork that it makes. The
+/// close releases the builder, and thus the source, the seed and the tools
+/// that it holds.
 final class ForkBuild: Sendable {
+    /// The operation that builds the fork with the tools that it gets, or
+    /// with the tools of the source for `nil`.
+    typealias Builder = @Sendable ([any Tool]?) async throws -> RoutedSessionActor
+
     /// The state of the build.
     private enum State {
-        /// No build started.
-        case open
+        /// No build started. The builder holds the source and the seed.
+        case open(Builder)
 
         /// A build runs.
         case building
 
         /// The fork that the build made.
         case built(RoutedSessionActor)
+
+        /// The fork call ended. The build builds no fork.
+        case closed
     }
-
-    /// The source of the fork.
-    private let source: RoutedSessionActor
-
-    /// The transcript, the cut and the context counter of the fork.
-    private let seed: ForkSeed
 
     /// The id of the fork.
     private let forkID: ULID
 
+    /// The folder where the fork records: a folder in the recording folder
+    /// of the source.
+    let recordingDirectory: URL
+
     /// The state of the build.
-    private let state = Mutex(State.open)
+    private let state: Mutex<State>
 
     /// Makes the build of a fork.
     ///
     /// - Parameters:
-    ///   - source: The source of the fork.
-    ///   - seed: The seed of the fork.
     ///   - forkID: The id of the fork.
-    init(source: RoutedSessionActor, seed: ForkSeed, forkID: ULID) {
-        self.source = source
-        self.seed = seed
+    ///   - recordingDirectory: The folder where the fork records.
+    ///   - builder: The operation that builds the fork.
+    init(forkID: ULID, recordingDirectory: URL, builder: @escaping Builder) {
         self.forkID = forkID
+        self.recordingDirectory = recordingDirectory
+        self.state = Mutex(.open(builder))
     }
 
-    /// The folder where the fork records: a folder in the recording folder
-    /// of the source.
-    var recordingDirectory: URL {
-        source.recordingDirectory.appendingPathComponent(forkID.description, isDirectory: true)
-    }
-
-    /// The fork that the build made, or `nil` before it made one.
-    var fork: RoutedSessionActor? {
+    /// Closes the build: after this call, the build builds no fork, and a
+    /// build in flight discards its fork. The fork call of the directory
+    /// calls it on each path, when the launcher returns or throws.
+    ///
+    /// - Returns: The fork that the build made before the close, or `nil`
+    ///   when it made none. The caller keeps the fork, or discards it
+    ///   (``discard(_:)``).
+    func close() -> RoutedSessionActor? {
         state.withLock { state in
+            defer { state = .closed }
             guard case .built(let fork) = state else { return nil }
             return fork
         }
     }
 
-    /// Removes the fork of a refused build: closes the fork that the build
-    /// made, and removes its recording node. A build that made no fork
-    /// removes nothing.
+    /// Removes a fork of this build that the directory does not keep:
+    /// closes `fork`, and removes its recording node.
     ///
+    /// - Parameter fork: The fork that this build made.
     /// - Throws: The error of the removal of the recording node.
-    func discard() async throws {
-        guard let fork else { return }
+    func discard(_ fork: RoutedSessionActor) async throws {
         await fork.close()
         try FileManager.default.removeItem(at: recordingDirectory)
     }
 
     /// Builds the fork with `tools`, or with the tools of the source for
-    /// `nil`. A build that throws made no fork, so the build is open again.
+    /// `nil`. A build that throws made no fork, so the build is open again,
+    /// unless the build closed meanwhile. A build that ends after the close
+    /// discards its fork.
     ///
     /// - Parameter tools: The tools of the fork, or `nil`.
     /// - Returns: The fork.
     /// - Throws: ``SessionLaunchForkError/forkAlreadyMade(_:)`` when a build
-    ///   runs or made the fork before, or the error of the build.
+    ///   runs or made the fork before;
+    ///   ``SessionLaunchForkError/requestClosed(_:)`` when the build closed
+    ///   before the build started or before it ended; the error of the
+    ///   build; or the error of the removal of the recording node of a fork
+    ///   that the build discards.
     func make(tools: [any Tool]?) async throws -> RoutedSessionActor {
-        try state.withLock { state in
-            guard case .open = state else { throw SessionLaunchForkError.forkAlreadyMade(forkID) }
-            state = .building
-        }
+        let builder = try startBuild()
+        let fork: RoutedSessionActor
         do {
-            let fork = try await source.makeFork(id: forkID, seed: seed, tools: tools)
-            state.withLock { $0 = .built(fork) }
-            return fork
+            fork = try await builder(tools)
         } catch {
-            state.withLock { $0 = .open }
+            state.withLock { state in
+                guard case .building = state else { return }
+                state = .open(builder)
+            }
             throw error
+        }
+        guard keep(fork) else {
+            try await discard(fork)
+            throw SessionLaunchForkError.requestClosed(forkID)
+        }
+        return fork
+    }
+
+    /// Moves the build from open to building.
+    ///
+    /// - Returns: The builder.
+    /// - Throws: ``SessionLaunchForkError/forkAlreadyMade(_:)`` when a build
+    ///   runs or made the fork before;
+    ///   ``SessionLaunchForkError/requestClosed(_:)`` after the close.
+    private func startBuild() throws -> Builder {
+        try state.withLock { state in
+            switch state {
+            case .open(let builder):
+                state = .building
+                return builder
+            case .building, .built:
+                throw SessionLaunchForkError.forkAlreadyMade(forkID)
+            case .closed:
+                throw SessionLaunchForkError.requestClosed(forkID)
+            }
+        }
+    }
+
+    /// Keeps `fork` as the fork of the build, when the build did not close
+    /// while the fork was built.
+    ///
+    /// - Parameter fork: The fork that the builder made.
+    /// - Returns: `true` when the build keeps `fork`; `false` when the build
+    ///   closed, and the caller must discard `fork`.
+    private func keep(_ fork: RoutedSessionActor) -> Bool {
+        state.withLock { state in
+            guard case .building = state else { return false }
+            state = .built(fork)
+            return true
         }
     }
 }

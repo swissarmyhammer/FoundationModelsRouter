@@ -1500,9 +1500,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// Builds the fork of `request`: through the launcher of the host
     /// (``SessionLauncher/forkSession(_:)``) when the directory has one,
     /// else with the tools of the source. The fork must be the fork that
-    /// `request` built. When the build or the launcher throws, or the
-    /// launcher gives another session, the fork is refused: a fork that
-    /// `request` built is closed, and its recording node is removed.
+    /// `request` built.
+    ///
+    /// When the launcher returns or throws, the build of `request` closes
+    /// (``ForkBuild/close()``), so the request builds no fork after this
+    /// call. When the build or the launcher throws, or the launcher gives
+    /// another session, the fork is refused: a fork that `request` built is
+    /// closed, and its recording node is removed.
     ///
     /// - Parameter request: The fork request.
     /// - Returns: The fork, not registered.
@@ -1510,27 +1514,32 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   ``SessionLaunchForkError/notTheRequestedFork(_:)`` when the launcher
     ///   gives another session.
     private func launchFork(_ request: SessionLaunchForkRequest) async throws -> RoutedSessionActor {
+        let session: any RoutedSession
         do {
-            let session =
-                if let launcher { try await launcher.forkSession(request) } else { try await request.makeFork() }
-            guard let fork = request.build.fork, fork === session else {
-                throw SessionLaunchForkError.notTheRequestedFork(request.forkID)
-            }
-            return fork
+            session = if let launcher { try await launcher.forkSession(request) } else { try await request.makeFork() }
         } catch {
-            await discardRefusedFork(of: request)
+            await discardRefusedFork(request.build.close(), of: request)
             throw error
         }
+        let built = request.build.close()
+        guard let built, built === session else {
+            await discardRefusedFork(built, of: request)
+            throw SessionLaunchForkError.notTheRequestedFork(request.forkID)
+        }
+        return built
     }
 
-    /// Removes the fork of a refused `request`
-    /// (``ForkBuild/discard()``). A recording node that stays is logged:
+    /// Removes `fork`, the fork of a refused `request`
+    /// (``ForkBuild/discard(_:)``). A recording node that stays is logged:
     /// the refusal of the fork stands.
     ///
-    /// - Parameter request: The refused fork request.
-    private func discardRefusedFork(of request: SessionLaunchForkRequest) async {
+    /// - Parameters:
+    ///   - fork: The fork that `request` built, or `nil` when it built none.
+    ///   - request: The refused fork request.
+    private func discardRefusedFork(_ fork: RoutedSessionActor?, of request: SessionLaunchForkRequest) async {
+        guard let fork else { return }
         do {
-            try await request.build.discard()
+            try await request.build.discard(fork)
         } catch {
             Self.logSession(
                 .error, "the recording node of a refused fork stays; its removal failed", session: request.forkID,

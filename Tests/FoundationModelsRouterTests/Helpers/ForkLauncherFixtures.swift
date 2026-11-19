@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsRouterTestSupport
 import Synchronization
 
 @testable import FoundationModelsRouter
@@ -93,14 +94,17 @@ struct ForkStateAtReturn: Equatable {
 }
 
 /// A ``SessionLauncher`` that implements the fork operation (D205): it builds
-/// each fork through the request with its own tool surface, and records each
-/// call. The other operations throw: the fork tests start no root session
-/// and restore no session through it.
-final class ForkLaunchingLauncher: SessionLauncher {
+/// each fork through the request with its own tool surface, records each
+/// call, and keeps each request. It refuses each start and each restore
+/// (``StartRefusingLauncher``): the fork tests start no root session and
+/// restore no session through it.
+final class ForkLaunchingLauncher: StartRefusingLauncher {
     /// What the launcher does for a fork.
     enum Behavior {
         /// Builds the fork with the tools, and returns it.
         case build
+        /// Throws ``Refusal`` before it builds the fork.
+        case throwBeforeBuild
         /// Builds the fork, and then throws ``Refusal``.
         case buildThenThrow
         /// Builds the fork two times.
@@ -109,14 +113,17 @@ final class ForkLaunchingLauncher: SessionLauncher {
         case returnOther(any RoutedSession)
     }
 
-    /// The error of a launcher that refuses a fork, or of an operation that
-    /// this launcher does not do.
+    /// The error of a launcher that refuses a fork.
     struct Refusal: Error, Equatable {}
 
     /// What the launcher records.
     private struct State {
         /// Each fork call, in order.
         var launches: [ForkLaunch] = []
+
+        /// The request of each fork call, in order. The launcher keeps them
+        /// after the call ends, as a host that breaks the contract can.
+        var requests: [SessionLaunchForkRequest] = []
 
         /// Each fork that the launcher built, in order.
         var sessions: [any RoutedSession] = []
@@ -151,6 +158,11 @@ final class ForkLaunchingLauncher: SessionLauncher {
         state.withLock { $0.launches }
     }
 
+    /// The request of each fork call, in order.
+    var requests: [SessionLaunchForkRequest] {
+        state.withLock { $0.requests }
+    }
+
     /// Each fork that the launcher built, in order.
     var sessions: [any RoutedSession] {
         state.withLock { $0.sessions }
@@ -161,47 +173,46 @@ final class ForkLaunchingLauncher: SessionLauncher {
         state.withLock { $0.statesAtReturn }
     }
 
-    /// Throws ``Refusal``: the fork tests start no root session.
-    ///
-    /// - Parameter request: The start request.
-    /// - Returns: Nothing.
-    /// - Throws: ``Refusal``.
-    func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
-        throw Refusal()
-    }
-
-    /// Throws ``Refusal``: the fork tests restore no session through this
-    /// launcher.
-    ///
-    /// - Parameter id: The session id.
-    /// - Returns: Nothing.
-    /// - Throws: ``Refusal``.
-    func restoreSession(id: ULID) async throws -> any RoutedSession {
-        throw Refusal()
-    }
-
-    /// Records `request`, builds the fork with ``surface``, and acts as
-    /// ``behavior`` says.
+    /// Records and keeps `request`, builds the fork with ``surface``, and
+    /// acts as ``behavior`` says.
     ///
     /// - Parameter request: The fork request of the directory.
     /// - Returns: The fork, or the session of ``Behavior/returnOther(_:)``.
-    /// - Throws: ``Refusal`` for ``Behavior/buildThenThrow``, or the error of
-    ///   a build.
+    /// - Throws: ``Refusal`` for ``Behavior/throwBeforeBuild`` and
+    ///   ``Behavior/buildThenThrow``, or the error of a build.
     func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession {
-        state.withLock { $0.launches.append(ForkLaunch(request)) }
-        let fork = try await request.makeFork(tools: surface)
-        state.withLock { $0.sessions.append(fork) }
+        state.withLock { state in
+            state.launches.append(ForkLaunch(request))
+            state.requests.append(request)
+        }
         switch behavior {
         case .build:
+            let fork = try await build(request)
             await recordStateAtReturn(of: fork)
             return fork
+        case .throwBeforeBuild:
+            throw Refusal()
         case .buildThenThrow:
+            _ = try await build(request)
             throw Refusal()
         case .buildTwice:
+            _ = try await build(request)
             return try await request.makeFork(tools: surface)
         case .returnOther(let other):
+            _ = try await build(request)
             return other
         }
+    }
+
+    /// Builds the fork of `request` with ``surface``, and keeps it.
+    ///
+    /// - Parameter request: The fork request of the directory.
+    /// - Returns: The fork.
+    /// - Throws: The error of the build.
+    private func build(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession {
+        let fork = try await request.makeFork(tools: surface)
+        state.withLock { $0.sessions.append(fork) }
+        return fork
     }
 
     /// Closes each fork that the launcher built.

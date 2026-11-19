@@ -3,6 +3,7 @@ import FoundationModelsExtras
 import Testing
 
 import FoundationModelsRouter
+import FoundationModelsRouterTestSupport
 
 /// Holds ``SessionLauncher`` and the launcher calls of
 /// ``RouterSessionDirectory`` to the access level a host outside this package
@@ -14,49 +15,14 @@ import FoundationModelsRouter
 @Suite("SessionLauncher over a plain import")
 struct SessionLauncherPublicSurfaceTests {
     /// A host launcher that knows no agent: each start throws
-    /// `unknownAgent`, so a start that reaches it shows the directory used it.
-    struct AgentlessLauncher: SessionLauncher {
-        /// Throws `unknownAgent` for each request.
-        ///
-        /// - Parameter request: The start request.
-        /// - Returns: Nothing.
-        /// - Throws: `SessionDirectoryError.unknownAgent` for
-        ///   ``SessionLauncherPublicSurfaceTests/unknownAgentID``.
-        func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
-            throw SessionDirectoryError.unknownAgent(SessionLauncherPublicSurfaceTests.unknownAgentID, nearNames: [])
-        }
-
-        /// Throws `unknownSession` for `id`.
-        ///
-        /// - Parameter id: The session id.
-        /// - Returns: Nothing.
-        /// - Throws: `SessionDirectoryError.unknownSession`.
-        func restoreSession(id: ULID) async throws -> any RoutedSession {
-            throw SessionDirectoryError.unknownSession(id)
-        }
-    }
+    /// `unknownAgent` (``StartRefusingLauncher``), so a start that reaches
+    /// it shows the directory used it.
+    struct AgentlessLauncher: StartRefusingLauncher {}
 
     /// A host launcher that builds each fork with its own tool surface
-    /// (D205), through the public build of `SessionLaunchForkRequest`.
-    struct ForkingHostLauncher: SessionLauncher {
-        /// Throws `unknownAgent` for each request.
-        ///
-        /// - Parameter request: The start request.
-        /// - Returns: Nothing.
-        /// - Throws: `SessionDirectoryError.unknownAgent`.
-        func launchRootSession(for request: SessionStartRequest) async throws -> any RoutedSession {
-            throw SessionDirectoryError.unknownAgent(SessionLauncherPublicSurfaceTests.unknownAgentID, nearNames: [])
-        }
-
-        /// Throws `unknownSession` for `id`.
-        ///
-        /// - Parameter id: The session id.
-        /// - Returns: Nothing.
-        /// - Throws: `SessionDirectoryError.unknownSession`.
-        func restoreSession(id: ULID) async throws -> any RoutedSession {
-            throw SessionDirectoryError.unknownSession(id)
-        }
-
+    /// (D205), through the public build of `SessionLaunchForkRequest`. It
+    /// refuses each start and each restore (``StartRefusingLauncher``).
+    struct ForkingHostLauncher: StartRefusingLauncher {
         /// Builds the fork of `request` with no tool.
         ///
         /// - Parameter request: The fork request of the directory.

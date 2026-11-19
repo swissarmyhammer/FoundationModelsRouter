@@ -22,6 +22,36 @@ comments:
     - Full `swift test` one time: 3074 tests in 350 suites passed, 50 in 26 and 19 in 3 passed, exit 0, 0 issues. Output: scratchpad/full-suite.txt. A first full run was stopped before its end because I changed code (build reset on a throw, a doc line) while it ran; it is not counted.
     - next: review. Not committed, not pushed.
   timestamp: 2026-11-19T03:31:59.353997+00:00
+- actor: claude-code
+  id: 01m7ry24s8tm5f6s8f3kbk3we7
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (c41097b8). Engine: 2 findings, 2 confirmed, 0 refuted — Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift:47, Tests/FoundationModelsRouterTests/Helpers/ForkLauncherFixtures.swift:169. Orchestrator checks: 1 finding — Sources/FoundationModelsRouter/Directory/SessionLaunchForkRequest.swift:169 (the request can build a fork after the fork call ends).
+    - checks that pass: the first prompt starts only after the launcher returns; a launcher that throws leaves no registration, no live fork and no recording node; a second build is refused (forkAlreadyMade); another session is refused (notTheRequestedFork); the pump files did not change; prepareFork reads the settled transcript, not the live transcript; the ACPAgent AgentSessionLauncher declares only launchRootSession and restoreSession, so the default forkSession applies.
+    - next: implement the 3 open items in the 2026-11-18 21:32 section.
+  timestamp: 2026-11-19T03:37:01.992446+00:00
+- actor: claude-code
+  id: 01m7ry2v2fx9c7k14aderw6t8a
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — SessionLaunchForkRequest.swift (new), SessionLauncher.swift, RouterSessionDirectory.swift, RoutedLLMForking.swift, RoutedSessionActorForking.swift, SettledTranscript.swift; RouterSessionDirectoryForkLauncherTests (new, 13), ForkLauncherFixtures (new), public surface test
+    - test: green — one full swift test run, 3074 tests in 350 suites (+50, +19), 0 failures
+    - commit: c41097b8
+    - review: findings — SessionLauncherPublicSurfaceTests.swift:47, ForkLauncherFixtures.swift:169 (copied launcher stubs), SessionLaunchForkRequest.swift:169 (the request stays usable after the fork call ends: a late or in-flight build makes an unregistered fork)
+  timestamp: 2026-11-19T03:37:24.815895+00:00
+- actor: claude-code
+  id: 01m7ryke4hef21jqpfcm0bgs9b
+  text: |-
+    ### implement — changed
+    - evidence: the 3 items of the 2026-11-18 21:32 section are done.
+    - Items 1 and 2: new shared test helper `public protocol StartRefusingLauncher: SessionLauncher` in Tests/FoundationModelsRouterTestSupport/StartRefusingLauncher.swift. Its extension refuses each start (`SessionDirectoryError.unknownAgent(request.agentID ?? "default", nearNames: [])`) and each restore (`unknownSession(id)`). Both test targets already link TestSupport. `AgentlessLauncher` is now `struct AgentlessLauncher: StartRefusingLauncher {}`; `ForkingHostLauncher` and `ForkLaunchingLauncher` declare only `forkSession`.
+    - Item 3: new error case `SessionLaunchForkError.requestClosed(ULID)`. `ForkBuild` has a `.closed` state. Its `.open` state holds the builder closure, which holds the source and the seed, so the close releases them. `close()` returns the fork that the build made (or nil) and sets `.closed`; `discard(_:)` closes a fork and removes its recording folder. `launchFork(_:)` calls `close()` on each path: success, throw before build, throw after build, another session. A build in flight at the close discards its fork and throws `requestClosed`. A build that throws after the close stays closed.
+    - Test seam: `ForkBuild.init(forkID:recordingDirectory:builder:)` takes the build as a closure, so a test can hold the build at a gate (AwaitedEvent) with no sleep.
+    - New tests (8): RouterSessionDirectoryForkLauncherTests +5 (a request kept after each path of the fork call: throw before build -> requestClosed, and no recording node; throw after build, another session, success -> requestClosed). New suite ForkBuildTests (3): a gated build that ends after the close throws requestClosed, its fork is closed, its recording folder is gone.
+    - RED: one run, 8 of 8 new tests failed for the expected reason (no error and a live fork, `forkAlreadyMade` in place of `requestClosed`, folder present, fork not closed). Output: scratchpad/red.txt. GREEN: 21/21 and 3/3 in the changed suites.
+    - Full `swift test` one time: 3082 tests in 351 suites passed, 50 in 26 and 19 in 3 passed, exit 0, 0 issues, no compiler warning. Output: scratchpad/full-suite-vhy7017-fix.txt.
+    - next: review. Not committed.
+  timestamp: 2026-11-19T03:46:28.625294+00:00
 depends_on:
 - 01M7RSS1HNR7E0G704X1VESQJJ
 position_column: doing
@@ -50,3 +80,14 @@ The Router already asks the host to build a session through `SessionLauncher` (`
 ## After
 
 Push when green. Send the sha and the name of the launcher operation to foundationmodelsacpagent-9e. #d205
+
+## Review Findings (2026-11-18 21:32)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 10 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterPublicSurfaceTests/SessionLauncherPublicSurfaceTests.swift:47` `reuse/reuse` — The new ForkingHostLauncher declares launchRootSession and restoreSession with bodies that are the same as the existing AgentlessLauncher stubs (both throw the same error). The new type repeats that stub behavior instead of reusing it, so a later change to the stub must be made in two places. Only the forkSession operation is new behavior here. Give AgentlessLauncher the forkSession operation as a parameter (for example, a closure with a default that throws), or let ForkingHostLauncher wrap or extend AgentlessLauncher, so only the fork operation is written in the new type.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/ForkLauncherFixtures.swift:169` `reuse/reuse` — ForkLaunchingLauncher repeats the launchRootSession and restoreSession stub bodies (each throws Refusal) that the public-surface test launchers already implement. These two new stubs add a second copy of the same no-op behavior. Reuse one stub source for the no-op launcher operations. For example, move the shared no-op operations into one test helper that the fork launcher and the public-surface launcher both use, and keep only forkSession in ForkLaunchingLauncher.
+- [x] `Sources/FoundationModelsRouter/Directory/SessionLaunchForkRequest.swift:169` `orchestrator-check/request-after-fork` — `ForkBuild` has no closed state, so the request stays usable after `RouterSessionDirectory.fork(_:)` ends. When the fork call ends with no fork built (the launcher throws before it builds, or it gives another session), the state stays `.open`. A launcher that kept the request (it is `Sendable` and public) can then call `makeFork()` or `makeFork(tools:)` later: this makes a second, live fork with a recording node in the folder of the source, with the tools of the source, that the directory does not register, hold or close. Also, a build that the launcher starts in a task of its own and that ends after the launcher threw is not discarded, because `discard()` (line 156) saw no fork. And a kept request keeps the source and its tools alive. Close the build when the fork call ends: for example, a `.closed` state that `launchFork(_:)` (`RouterSessionDirectory.swift:1512`) sets on each path (success and refusal), that `make(tools:)` refuses with a `SessionLaunchForkError`, and that discards a fork that a build in flight makes after the close. Drop the strong reference to the source at the close. Add tests: a request kept after a refused fork cannot build; a build that ends after the launcher threw leaves no live fork and no recording node.
