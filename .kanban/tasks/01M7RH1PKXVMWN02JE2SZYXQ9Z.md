@@ -40,8 +40,27 @@ comments:
     - evidence: 19 test files changed (Helpers/ChangeSignalWait.swift, Helpers/FIFOGenerationLock.swift, Helpers/PassObservingModel.swift, Helpers/PassObservingFixture.swift, Helpers/RecordedWaitResult.swift, Helpers/MailQueueFixtures.swift, LockWaitStallWatchTests, PoolEntrySharingTests, SessionLanguageModelPassTests, SharedModelLockContentionTests, NestedGenerationReentryTests, SummarizerSubmissionTests, IdenticalToolCallLimitTests, NoOpToolCallWithNothingPendingTests, RunSettledInsideAnAnswerTests, ToolBodyHoldsNoLockTests, PooledResidencyTests, CancelForegroundTests, RespondRunPlaneDrainTests). No production change. Changed suites (regex filter FoundationModelsRouterTests.(13 suites)/): 86 tests in 13 suites passed. Full swift test once: 2971 tests in 344 suites passed, plus 49 in 26 and 19 in 3; only the known mlx Cmlx bundle warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-run-2.txt. All 15 findings are [x].
     - next: review
   timestamp: 2026-11-19T00:57:22.675353+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7rn3rwy1w3d7s74x4w69chk
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (e2f2a801): 0 findings, 0 confirmed, 0 refuted, 21 attempted, 0 failed. 19 files reviewed; 4 `.kanban/` files not reviewed (ignore rule). All 15 items of "## Review Findings (2026-11-18 18:42)" are checked, and each is fixed in the code.
+    - check of the next-pass wait in `ToolBodyHoldsNoLockTests.twoToolLoopsTakeTurnsPerGeneration`: the reasoning is correct. Odd passes belong to the first answer and even passes to the second. The last pass of the first answer is released only in the last loop step, and the last pass of the second answer is released after the loop. Thus each `waitForWaiters(1, endingOnEndOf: anAnswerEnds)` occurs while the two answers are open. After a release, the released answer can end, so the next-pass wait ends only on the answer that owns the next pass. That answer cannot end before its pass starts.
+    - check of `SummarizerSubmissionTests`: the single read is correct. `FIFOGenerationLock.unlock()` removes the first waiter in the same call, and the flash pass unlocks before the flash answer ends.
+    - `Task.sleep` calls stay on ^8kw2ya3 (out of scope).
+    - next: none. The task is in done.
+  timestamp: 2026-11-19T01:00:38.174388+00:00
+- actor: claude-code
+  id: 01m7rn4ghzdj50zjwsxk67e563
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 19 test files (shared event waits, no .timeLimit, waits end on their event where one exists)
+    - test: green — one full swift test run, 2971 tests in 344 suites (+49, +19), 0 failures
+    - commit: e2f2a801
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T01:01:02.399705+00:00
+position_column: done
+position_ordinal: ffffffffffb480
 title: Make the model-lock wait tests and the full-suite hang deterministic
 ---
 ## Problem
