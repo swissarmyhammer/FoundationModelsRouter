@@ -90,10 +90,26 @@ comments:
     - evidence: new Tests/FoundationModelsRouterTests/Helpers/RouterSessionDirectory+TestSend.swift; changed Helpers/RouterSessionDirectory+SendAndAwaitDelivery.swift, RouterSessionDirectoryArchiveTests.swift, RouterSessionDirectoryArchivedTargetTests.swift, RouterSessionDirectoryArchiveMailTests.swift, RouterSessionDirectoryInboxTests.swift, RouterSessionDirectoryDeliveryTests.swift, RouterSessionDirectorySourceSessionTests.swift. No change in Sources/. Filtered: 74 tests in 6 suites passed. Full `swift test` (one run): 2968 tests in 343 suites passed (one test fewer: the archived-target inbox-file test is merged into the full-id test), plus 49 and 19; exit 0; no warnings in the test files.
     - next: /review
   timestamp: 2026-11-19T00:12:20.737209+00:00
+- actor: claude-code
+  id: 01m7rjffbzb9bn49z9kd1r6t3n
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (e1860ca0). 0 findings, 0 confirmed, 0 refuted. 8 files reviewed. All 3 items of "## Review Findings (2026-11-18 17:59)" are checked. All prior items are checked.
+    - next: The task is in done. Push when the tests are green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a.
+  timestamp: 2026-11-19T00:14:35.903468+00:00
+- actor: claude-code
+  id: 01m7rjfvz70nvxqr9z7m3sew8e
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — Helpers/RouterSessionDirectory+TestSend.swift (new), 7 test files (one send helper, one send-and-check helper)
+    - test: green — one full swift test run, 2968 tests in 343 suites (+49, +19), 0 failures
+    - commit: e1860ca0
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T00:14:48.807025+00:00
 depends_on:
 - 01M7QTQCW62ZNN9CXFTVE3TV8Y
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffb380
 title: A message to an archived session goes to its inbox (D204)
 ---
 ## Goal
