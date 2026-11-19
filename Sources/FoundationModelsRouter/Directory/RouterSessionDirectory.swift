@@ -1470,7 +1470,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// the source, when both run on the same slot and model and the model can
     /// copy a cache (``RoutedSessionActor/takePromptCacheCopy(of:through:)``).
     /// The copy ends before the first prompt is mailed, on both build paths,
-    /// and its outcome goes to the log with the id of the fork.
+    /// and its outcome goes to the log with the id of the fork. A fork at
+    /// ``SessionForkCut/callingToolCall`` gets the copy, because no pass of
+    /// the source holds its cache while the tool body runs. A fork at
+    /// ``SessionForkCut/lastCompletedTurn`` while a turn runs can get no
+    /// copy, when an executor call of the source runs at that instant; its
+    /// first pass then reads its whole prompt.
     ///
     /// - Parameter request: The source, the cut, the first prompt, the
     ///   client and the forker.

@@ -503,8 +503,8 @@ enum RouterTelemetry {
         static let forker = prefix + "session.forked_by"
 
         /// The outcome of the copy of the prompt cache of the source of a
-        /// fork to the key of the fork (``PromptCacheCopyOutcome``), beside
-        /// the id of the fork in ``forkSessionId``.
+        /// fork to the key of the fork (``PromptCacheCopyOutcome/logValue``),
+        /// beside the id of the fork in ``forkSessionId``.
         static let forkPromptCacheCopy = prefix + "session.fork_prompt_cache_copy"
 
         /// The id of a transcript entry.

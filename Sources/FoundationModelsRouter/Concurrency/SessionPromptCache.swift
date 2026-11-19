@@ -18,7 +18,10 @@ extension MLXLanguageModel: SessionPromptCacheReleasing {}
 
 /// The outcome of a copy of the prompt cache of one session to the key of
 /// another session (D205 (f)).
-enum PromptCacheCopyOutcome: String, Sendable, Equatable {
+///
+/// Each outcome other than ``copied`` copies nothing: the first pass of the
+/// fork then reads its prompt in full, and the router sends no budget again.
+enum PromptCacheCopyOutcome: Sendable, Equatable {
     /// The cache of the source is now also under the key of the target.
     case copied
 
@@ -26,7 +29,40 @@ enum PromptCacheCopyOutcome: String, Sendable, Equatable {
     case sourceNotFound
 
     /// A pass of the source holds its cache now, so the model copied nothing.
+    /// The model does not wait for the pass.
     case sourceInUse
+
+    /// The model has a cache of the source, but it copied nothing, for the
+    /// reason.
+    case refused(PromptCacheCopyRefusal)
+
+    /// The value of this outcome in the fork log
+    /// (``RouterTelemetry/LogMetadataKey/forkPromptCacheCopy``). A refusal
+    /// gives its reason too, so each outcome has its own value.
+    var logValue: String {
+        switch self {
+        case .copied: "copied"
+        case .sourceNotFound: "sourceNotFound"
+        case .sourceInUse: "sourceInUse"
+        case .refused(let refusal): "refused.\(refusal.rawValue)"
+        }
+    }
+}
+
+/// Why a model did not copy the cache of a source that it has
+/// (``PromptCacheCopyOutcome/refused(_:)``).
+enum PromptCacheCopyRefusal: String, Sendable, Equatable {
+    /// The source and the target are the same session.
+    case sameSession
+
+    /// The target has a cache already.
+    case destinationHasCache
+
+    /// A pass of the target runs now and holds its cache.
+    case destinationInUse
+
+    /// No part of the cache of the source could be copied.
+    case copyFailed
 }
 
 /// A raw model that keeps a prompt cache for each session, and can copy the
@@ -35,8 +71,7 @@ enum PromptCacheCopyOutcome: String, Sendable, Equatable {
 ///
 /// The copy and the source are independent: a pass of one does not change
 /// the cache of the other, and a release of one key does not release the
-/// other key. No model of the router conforms yet: `MLXLanguageModel` gets
-/// the copy in a later mlx-swift-lm release (task ^jx6ng3r). The GGUF cache
+/// other key. `MLXLanguageModel` conforms (task ^jx6ng3r). The GGUF cache
 /// has no session key, so the GGUF model does not conform.
 protocol SessionPromptCacheCopying: Sendable {
     /// Copies the prompt cache of session `sourceSessionID` to the key of
@@ -48,6 +83,62 @@ protocol SessionPromptCacheCopying: Sendable {
     /// - Returns: The outcome of the copy.
     func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
         -> PromptCacheCopyOutcome
+}
+
+extension MLXLanguageModel: SessionPromptCacheCopying {
+    /// Copies the prompt cache of `sourceSessionID` to the key of
+    /// `targetSessionID` with the copy of mlx-swift-lm, and maps its result to
+    /// the router outcome.
+    ///
+    /// The copy of mlx-swift-lm does not wait: when a pass of the source
+    /// holds its cache, it gives `.sourceInUse` at once. It has each token of
+    /// the source, and the first pass of the target rewinds it to the common
+    /// prefix of its own render. It goes into the store of mlx-swift-lm at
+    /// once, so `promptCacheUsage` counts it and the memory budget applies to
+    /// it.
+    ///
+    /// - Parameters:
+    ///   - sourceSessionID: The session id whose cache the copy reads.
+    ///   - targetSessionID: The session id that the copy writes.
+    /// - Returns: The outcome of the copy.
+    func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
+        -> PromptCacheCopyOutcome
+    {
+        let result: PromptCacheCopyResult = await copyPromptCache(
+            fromSession: sourceSessionID, toSession: targetSessionID)
+        return PromptCacheCopyOutcome(result)
+    }
+}
+
+extension PromptCacheCopyOutcome {
+    /// The router outcome of a copy of mlx-swift-lm. The router keeps no
+    /// token count of a copy: the first pass of the fork reports the tokens
+    /// that it reused.
+    ///
+    /// - Parameter result: The result of
+    ///   `MLXLanguageModel.copyPromptCache(fromSession:toSession:)`.
+    init(_ result: PromptCacheCopyResult) {
+        switch result {
+        case .copied: self = .copied
+        case .sourceNotFound: self = .sourceNotFound
+        case .sourceInUse: self = .sourceInUse
+        case .refused(let refusal): self = .refused(PromptCacheCopyRefusal(refusal))
+        }
+    }
+}
+
+extension PromptCacheCopyRefusal {
+    /// The router reason of a refusal of mlx-swift-lm.
+    ///
+    /// - Parameter refusal: The reason that mlx-swift-lm gave.
+    init(_ refusal: PromptCacheCopyResult.Refusal) {
+        switch refusal {
+        case .sameSession: self = .sameSession
+        case .destinationHasCache: self = .destinationHasCache
+        case .destinationInUse: self = .destinationInUse
+        case .copyFailed: self = .copyFailed
+        }
+    }
 }
 
 /// A session backend whose passes key the prompt cache of its model by the

@@ -2,7 +2,6 @@ import Foundation
 import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import MLXLMCommon
-import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -38,34 +37,6 @@ private let promptCacheInstructions = "You are a terse assistant."
 /// footprint: 1 MiB. One answer of either model leaves a larger entry, so each
 /// entry must go to disk.
 private let promptCacheRoomBytes: Int64 = 1 << 20
-
-/// A ``MachineProbe`` whose recommended working set the test sets. It starts
-/// at the working set of the host.
-private final class AdjustableWorkingSetProbe: MachineProbe {
-    /// The live probe that gives the chip and the physical RAM.
-    private let live = SystemMachineProbe()
-
-    /// The working set this probe reports.
-    private let workingSet: Mutex<Int64>
-
-    /// Makes a probe that reports the working set of the host.
-    init() {
-        workingSet = Mutex(live.recommendedMaxWorkingSetSize)
-    }
-
-    var chip: String { live.chip }
-
-    var totalRAM: Int64 { live.totalRAM }
-
-    var recommendedMaxWorkingSetSize: Int64 { workingSet.withLock { $0 } }
-
-    /// Sets the working set the next reads report.
-    ///
-    /// - Parameter bytes: The working set, in bytes.
-    func setWorkingSet(_ bytes: Int64) {
-        workingSet.withLock { $0 = bytes }
-    }
-}
 
 /// Gated real-model coverage for the prompt-cache memory budget: the pool
 /// sizes the prompt-cache memory budget of the fork, with two generation

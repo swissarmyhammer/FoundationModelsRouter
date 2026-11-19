@@ -8,6 +8,10 @@ import Testing
 ///
 /// The pool is never `ModelPool.shared`, so no other suite can hold a model in
 /// it, and a test reads the eviction of each model of a profile from it.
+///
+/// A router that records durably keeps its recordings in a folder under
+/// ``root``, so ``removeRoot()`` removes them too. Only a session that records
+/// durably can be forked.
 struct IsolatedPoolRouter {
     /// The directory the router caches its sizing metadata under.
     let root: URL
@@ -25,16 +29,21 @@ struct IsolatedPoolRouter {
     ///     name of the suite.
     ///   - samplingMode: The decoding of each generation of the router.
     ///   - probe: The machine probe behind the budget of the router.
+    ///   - recordsDurably: Whether the router records its sessions in a
+    ///     recordings folder under ``root``. The default is `false`: the
+    ///     router records nothing durably.
     init(
         label: String,
         samplingMode: GenerationOptions.SamplingMode,
-        probe: any MachineProbe = SystemMachineProbe()
+        probe: any MachineProbe = SystemMachineProbe(),
+        recordsDurably: Bool = false
     ) {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(label)-\(UUID().uuidString)", isDirectory: true)
         pool = ModelPool()
         router = Router(
             cacheDir: root.appendingPathComponent("cache", isDirectory: true),
+            recordingsDir: recordsDurably ? root.appendingPathComponent("recordings", isDirectory: true) : nil,
             probe: probe,
             loader: LiveModelLoader(),
             samplingMode: samplingMode,

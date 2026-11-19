@@ -64,7 +64,25 @@ extension RoutedSessionActor {
     ///
     /// The outcome goes to the log with the id of this fork. After a copy,
     /// `handle` sends the prompt-cache budget again, so the next budget
-    /// counts the copy.
+    /// counts the copy. An outcome that copied nothing sends no budget.
+    ///
+    /// The MLX model holds the cache of a session only while one executor
+    /// call of that session runs: the call checks the cache out at its start
+    /// and checks it in before it returns. The copy does not wait for such a
+    /// call. Thus:
+    ///
+    /// - A fork at ``SessionForkCut/callingToolCall`` gets `.copied`. The
+    ///   executor call that emitted the tool call ended before the SDK ran
+    ///   the tool body (`ExecutorPassBoundaryIntegrationTests`), so no pass
+    ///   of `source` holds its cache while the tool body forks. The copy has
+    ///   the tokens of the tool call too, and the first pass of the fork
+    ///   rewinds them, because the history of the fork ends before the round
+    ///   of the call.
+    /// - A fork at ``SessionForkCut/lastCompletedTurn`` while a turn of
+    ///   `source` runs gets `.sourceInUse` when an executor call of `source`
+    ///   runs at that instant, and `.copied` when the turn is between two
+    ///   calls (in a tool body). With `.sourceInUse` the first pass of the
+    ///   fork reads its whole prompt: the fork is correct, only slower.
     ///
     /// - Parameters:
     ///   - source: The session that this fork comes from.
@@ -92,7 +110,7 @@ extension RoutedSessionActor {
             metadata: [
                 RouterTelemetry.LogMetadataKey.sessionId: "\(source.id.description)",
                 RouterTelemetry.LogMetadataKey.forkSessionId: "\(id.description)",
-                RouterTelemetry.LogMetadataKey.forkPromptCacheCopy: "\(outcome.rawValue)",
+                RouterTelemetry.LogMetadataKey.forkPromptCacheCopy: "\(outcome.logValue)",
             ])
     }
 }

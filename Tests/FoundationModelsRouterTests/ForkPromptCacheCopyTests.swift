@@ -227,13 +227,13 @@ import Testing
     /// makes after a copy with that outcome: one after a copy that copied,
     /// and none after a copy that copied nothing.
     private static let budgetSendsAfterEachOutcome: [(PromptCacheCopyOutcome, Int)] = [
-        (.copied, 1), (.sourceNotFound, 0), (.sourceInUse, 0),
+        (.copied, 1), (.sourceNotFound, 0), (.sourceInUse, 0), (.refused(.destinationHasCache), 0),
     ]
 
     /// The production change that makes this test fail: a fork that sends
-    /// the budget again after a copy with the `.sourceNotFound` or the
-    /// `.sourceInUse` outcome, or that sends no budget after a copy with the
-    /// `.copied` outcome.
+    /// the budget again after a copy with the `.sourceNotFound`, the
+    /// `.sourceInUse` or a `.refused` outcome, or that sends no budget after
+    /// a copy with the `.copied` outcome.
     ///
     /// The fork goes through a hand-built handle whose budget sender counts
     /// its calls, so the count does not include a budget that the footprints
@@ -299,7 +299,7 @@ import Testing
                 containing: "prompt cache",
                 metadata: [
                     RouterTelemetry.LogMetadataKey.forkSessionId: fork.id.description,
-                    RouterTelemetry.LogMetadataKey.forkPromptCacheCopy: PromptCacheCopyOutcome.sourceInUse.rawValue,
+                    RouterTelemetry.LogMetadataKey.forkPromptCacheCopy: PromptCacheCopyOutcome.sourceInUse.logValue,
                 ])
             await fixture.forks.end([source, fork])
         }
