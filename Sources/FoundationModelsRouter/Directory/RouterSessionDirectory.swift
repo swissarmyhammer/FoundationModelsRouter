@@ -1423,7 +1423,14 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///
     /// So no prompt of the fork runs before the host gave its surface, and
     /// the host holds the fork from its start: it does not stop and restore
-    /// the fork to give it its surface. When the launcher throws, or gives
+    /// the fork to give it its surface.
+    ///
+    /// The launcher call of step 2 runs in the task of the caller of this
+    /// operation. No `Task {}`, no `Task.detached` and no other task comes
+    /// between them, so a `@TaskLocal` value that the caller sets around this
+    /// call is visible in ``SessionLauncher/forkSession(_:)``, and a fork of
+    /// another caller does not see it. Keep each step between them an
+    /// `await` in the task of the caller. When the launcher throws, or gives
     /// another session than the fork of its request, the fork is refused:
     /// the directory registers nothing, closes a fork that the request
     /// built, and removes its recording node.
@@ -1434,12 +1441,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   restored session. This is the simpler path: a fork needs the tools
     ///   of its source, and only the host can make them.
     /// - The fork has the agent, the model profile, the slot, the
-    ///   instructions and the settings of the source, the tools that the
-    ///   launcher gave (or the tools of the source), and the
-    ///   history of the source up to the cut (``ForkCutHistory``). Its record
-    ///   holds `forkParentId` and `forkedAtHistoryOrdinal`, and it records as
-    ///   a fork node in the recording folder of the source, so a restore of
-    ///   the source restores the fork with its prefix.
+    ///   instructions and the settings of the source, the tools and the
+    ///   added folders (``SessionRecord/additionalDirectories``) that the
+    ///   launcher gave (or the tools and the added folders of the source),
+    ///   and the history of the source up to the cut (``ForkCutHistory``).
+    ///   Its record holds `forkParentId` and `forkedAtHistoryOrdinal`, and
+    ///   it records as a fork node in the recording folder of the source, so
+    ///   a restore of the source restores the fork with its prefix.
     /// - The fork is a top-level session in the folder of its source: kind
     ///   `fork`, the source as its parent, origin `fork`. It is no subagent,
     ///   so it is not in ``unendedChildren(of:)`` of the source, and the end,
@@ -1505,8 +1513,12 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Builds the fork of `request`: through the launcher of the host
     /// (``SessionLauncher/forkSession(_:)``) when the directory has one,
-    /// else with the tools of the source. The fork must be the fork that
+    /// else with the surface of the source. The fork must be the fork that
     /// `request` built.
+    ///
+    /// The launcher call runs in the task of this call, so it has the
+    /// task-locals of the caller of ``fork(_:)``. Do not put it in a new
+    /// task.
     ///
     /// When the launcher returns or throws, the build of `request` closes
     /// (``ForkBuild/close()``), so the request builds no fork after this

@@ -84,8 +84,8 @@ import Testing
             forkID: forkID,
             recordingDirectory: source.recordingDirectory.appendingPathComponent(
                 forkID.description, isDirectory: true)
-        ) { tools in
-            try await gate.pass { try await source.makeFork(id: forkID, seed: seed, tools: tools) }
+        ) { surface in
+            try await gate.pass { try await source.makeFork(id: forkID, seed: seed, surface: surface) }
         }
         return GatedBuild(build: build, gate: gate)
     }
@@ -99,7 +99,7 @@ import Testing
     private static func buildPastTheClose(in fixture: Fixture) async throws -> (LateBuild, any RoutedSession) {
         let source = try await fixture.makeSource(answering: ["first", "second"])
         let gated = try await makeGatedBuild(of: try #require(source as? RoutedSessionActor))
-        let building = Task { try await gated.build.make(tools: nil) }
+        let building = Task { try await gated.build.make(surface: nil) }
         try await gated.gate.entered.wait()
 
         _ = gated.build.close()

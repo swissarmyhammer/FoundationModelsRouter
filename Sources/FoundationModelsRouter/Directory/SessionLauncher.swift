@@ -66,10 +66,20 @@ public protocol SessionLauncher: Sendable {
     ///
     /// The directory already mapped the cut and chose the id of the fork. The
     /// launcher builds the fork through the request
-    /// (``SessionLaunchForkRequest/makeFork(tools:)``), one time, and
+    /// (``SessionLaunchForkRequest/makeFork(tools:additionalDirectories:)``
+    /// or ``SessionLaunchForkRequest/makeFork(tools:)``), one time, and
     /// returns that fork. It does not map the cut again, so the recording
     /// node of the fork and its ``SessionRecord/forkedAtHistoryOrdinal``
     /// agree with the request.
+    ///
+    /// The directory calls this operation in the task of the caller of
+    /// ``RouterSessionDirectory/fork(_:)``. No `Task {}`, no `Task.detached`
+    /// and no other task comes between them: each step between them is an
+    /// `await` in that task. Thus a `@TaskLocal` value that the host sets
+    /// around its own call of ``RouterSessionDirectory/fork(_:)`` is visible
+    /// in this call, and a fork call of another caller does not see it, also
+    /// when the two forks run at the same time on one source for one client.
+    /// A host can use such a value to find its own data for the fork.
     ///
     /// The directory registers the fork and mails its first prompt only
     /// after this call returns. So no prompt of the fork runs before the

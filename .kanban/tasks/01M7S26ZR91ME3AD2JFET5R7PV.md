@@ -1,10 +1,26 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7s32z60hp2k08w5km6g610a
+  text: 'Research. (1) A new session holds its added folders in `SessionRecord.additionalDirectories` (index.md); `SessionStartRequest` has no such field, and a host sets them with `setAdditionalDirectories(to:for:)`. The fork record comes from `SessionRecordSource.new(facts)` in `RoutedLLM.makeFork(of:id:seed:tools:)` (RoutedLLMForking.swift), so the plan is: give `.new` an `additionalDirectories` value (default none), and the first index.md of the fork holds the folders. The default `makeFork()` takes `source.record.additionalDirectories`. The builder of `ForkBuild` gets a surface value (tools and folders), `nil` for the surface of the source; the closed-state rules of `ForkBuild` do not change. (2) The path `RouterSessionDirectory.fork(_:)` -> `forkSource` -> `prepareFork` -> `launchFork(_:)` -> `launcher.forkSession(_:)` has no `Task {}` and no `Task.detached`: each step is an `await` in the task of the caller (actor hops keep the task and its task-locals). So part 2 is the docs and a test; the RED of the test is shown with a temporary `Task.detached` in `launchFork(_:)`.'
+  timestamp: 2026-11-19T05:04:51.904138+00:00
+- actor: claude-code
+  id: 01m7s3f8g7tb0kcyfj92qa99z0
+  text: 'Implementation landed. New public API: `SessionLaunchForkRequest.makeFork(tools: [any Tool], additionalDirectories: [URL]) async throws -> any RoutedSession`; `makeFork(tools:)` calls it with no folders; `makeFork()` takes the folders of the source record. Internal: `ForkSurface` (tools + folders) replaces the `[any Tool]?` of the `ForkBuild` builder, `RoutedSessionActor.makeFork(id:seed:surface:)`, `RoutedLLM.makeFork(of:id:seed:surface:)`, and `SessionRecordSource.new(_:additionalDirectories:)` (default none), so the FIRST index.md of the fork holds the folders (same field as a new session). `ForkBuild` close rules did not change. The fork path has no `Task {}` / `Task.detached`; the guarantee is now in the docs of `SessionLauncher.forkSession(_:)`, `RouterSessionDirectory.fork(_:)` and `launchFork(_:)`. RED evidence: (a) the build failed with "extra argument ''additionalDirectories'' in call" before the API; (b) with the API but folders `?? []`, `aForkWithTheSurfaceOfTheSourceHasTheFoldersOfTheSource` failed (`[]` != folders); (c) with a temporary `Task.detached` around `launcher.forkSession(request)` in `launchFork(_:)`, `theLauncherCallSeesTheTaskLocalsOfTheForkCallerOnly` failed (the first call saw `nil`); the temporary change was removed. `aForkWithOnlyToolsHasNoFoldersOfTheSource` guards the old behavior of `makeFork(tools:)` and passed from the start.'
+  timestamp: 2026-11-19T05:11:34.663132+00:00
+- actor: claude-code
+  id: 01m7s3g7c1pg6k7d3nprkg5k7a
+  text: |-
+    ### implement — changed
+    - evidence: new `public func makeFork(tools: [any Tool], additionalDirectories: [URL]) async throws -> any RoutedSession` on `SessionLaunchForkRequest`. Files: Sources/FoundationModelsRouter/Directory/SessionLaunchForkRequest.swift, Directory/SessionLauncher.swift (docs), Directory/RouterSessionDirectory.swift (docs), Recording/SessionIndexWriter.swift, RoutedLLMForking.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorForking.swift, Session/RoutedSessionActorPromptCache.swift (doc link); Tests ForkBuildTests.swift, ForkPromptCacheCopyTests.swift, Helpers/ForkLauncherFixtures.swift (ForkLaunchingLauncher additionalDirectories, CallerMarkLauncher, ForkCallerMark), RouterSessionDirectoryForkLauncherTests.swift (5 new tests). Suites: 38 tests in 3 suites passed. Full `swift test` once: 3099 tests in 352 suites passed; 50 in 26 and 19 in 3 passed; no compiler warnings. Output: scratchpad/full.txt.
+    - next: /review. Push and the message to foundationmodelsacpagent-9e come after commit.
+  timestamp: 2026-11-19T05:12:06.273286+00:00
 depends_on:
 - 01M7S15T37N1RG9ECXB2QM6EAS
-position_column: todo
-position_ordinal: '8380'
+position_column: doing
+position_ordinal: '80'
 title: A host fork can give additional directories to the fork record, and the launcher call runs in the task of the fork caller (D205)
 ---
 ## Goal
@@ -21,9 +37,9 @@ Two API asks from foundationmodelsacpagent-9e, for the fork launcher of ^vhy7017
 
 ## Tests
 
-- [ ] `makeFork(tools:additionalDirectories:)`: the fork record has the directories after the fork and after a restart.
-- [ ] `makeFork()`: the fork record has the additional directories of the source.
-- [ ] A `@TaskLocal` set by the test around `fork(_:)` is visible in `forkSession(_:)` of a test launcher; a second `fork(_:)` with no such value does not see it. Run the two forks at the same time on the same source and client, in a fixed order with gates.
+- [x] `makeFork(tools:additionalDirectories:)`: the fork record has the directories after the fork and after a restart.
+- [x] `makeFork()`: the fork record has the additional directories of the source.
+- [x] A `@TaskLocal` set by the test around `fork(_:)` is visible in `forkSession(_:)` of a test launcher; a second `fork(_:)` with no such value does not see it. Run the two forks at the same time on the same source and client, in a fixed order with gates.
 
 ## After
 

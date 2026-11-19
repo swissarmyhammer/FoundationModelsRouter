@@ -1015,7 +1015,7 @@ actor RoutedSessionActor: RoutedSession {
         switch record {
         case .restored(let restored):
             self.recordState = Mutex(restored)
-        case .new(let facts):
+        case .new(let facts, let additionalDirectories):
             // A session with no parent is a root and carries no cut point.
             // The run's resolved profile is stated once, on the root.
             self.recordState = Mutex(
@@ -1029,6 +1029,7 @@ actor RoutedSessionActor: RoutedSession {
                     recordingLevel: indexWriter?.recordingLevel ?? .off,
                     routerId: routerId,
                     facts: facts,
+                    additionalDirectories: additionalDirectories,
                     forkParentId: parentId,
                     forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
                     forkedAtHistoryOrdinal: parentId == nil ? nil : historyOrdinal,

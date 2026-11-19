@@ -9,8 +9,9 @@ import Synchronization
 /// The directory makes the request after it mapped the cut of the fork to a
 /// position in the history of the source (``ForkCutHistory``), and after it
 /// chose the id of the fork. The launcher does not map the cut again: it
-/// builds the fork through the request, with ``makeFork(tools:)`` for the
-/// tools of the host or ``makeFork()`` for the tools of the source. The
+/// builds the fork through the request, with
+/// ``makeFork(tools:additionalDirectories:)`` or ``makeFork(tools:)`` for the
+/// surface of the host, or ``makeFork()`` for the surface of the source. The
 /// fork that the request builds has ``forkID`` as its id, ``sourceID`` as its
 /// parent, and ``forkedAtHistoryOrdinal`` in its record
 /// (``SessionRecord/forkedAtHistoryOrdinal``). It records as a fork node in
@@ -68,14 +69,38 @@ public struct SessionLaunchForkRequest: Sendable {
             forkID: forkID,
             recordingDirectory: source.recordingDirectory.appendingPathComponent(
                 forkID.description, isDirectory: true)
-        ) { tools in
-            try await source.makeFork(id: forkID, seed: seed, tools: tools)
+        ) { surface in
+            try await source.makeFork(id: forkID, seed: seed, surface: surface)
         }
     }
 
-    /// Builds the fork with `tools`: the tool surface that the host gives
-    /// the fork, in place of the tools of the source. Each other setting of
-    /// the fork comes from the source.
+    /// Builds the fork with `tools` and `additionalDirectories`: the surface
+    /// that the host gives the fork, in place of the surface of the source.
+    /// Each other setting of the fork comes from the source.
+    ///
+    /// The record of the fork holds `additionalDirectories` as
+    /// ``SessionRecord/additionalDirectories``, as the record of a new
+    /// session holds the folders that a host added
+    /// (``RouterSessionDirectory/setAdditionalDirectories(to:for:)``). The
+    /// first `index.md` of the fork has them, so a restore of the fork has
+    /// them too.
+    ///
+    /// - Parameters:
+    ///   - tools: The tools of the fork.
+    ///   - additionalDirectories: The folders that the host added to the
+    ///     working folder of the fork, in the order that the host gives
+    ///     them.
+    /// - Returns: The fork, not registered.
+    /// - Throws: ``SessionLaunchForkError/forkAlreadyMade(_:)`` when this
+    ///   request built its fork before;
+    ///   ``SessionLaunchForkError/requestClosed(_:)`` when the fork call
+    ///   ended before the build started or before it ended.
+    public func makeFork(tools: [any Tool], additionalDirectories: [URL]) async throws -> any RoutedSession {
+        try await build.make(surface: ForkSurface(tools: tools, additionalDirectories: additionalDirectories))
+    }
+
+    /// Builds the fork with `tools` and with no added folders
+    /// (``makeFork(tools:additionalDirectories:)``).
     ///
     /// - Parameter tools: The tools of the fork.
     /// - Returns: The fork, not registered.
@@ -84,11 +109,13 @@ public struct SessionLaunchForkRequest: Sendable {
     ///   ``SessionLaunchForkError/requestClosed(_:)`` when the fork call
     ///   ended before the build started or before it ended.
     public func makeFork(tools: [any Tool]) async throws -> any RoutedSession {
-        try await build.make(tools: tools)
+        try await makeFork(tools: tools, additionalDirectories: [])
     }
 
-    /// Builds the fork with the tools of the source, each forked first
-    /// (`ForkableTool.forked()`, or the tool itself). This is the fork of a
+    /// Builds the fork with the surface of the source: the tools of the
+    /// source, each forked first (`ForkableTool.forked()`, or the tool
+    /// itself), and the added folders of the source
+    /// (``SessionRecord/additionalDirectories``). This is the fork of a
     /// launcher that does not implement ``SessionLauncher/forkSession(_:)``.
     ///
     /// - Returns: The fork, not registered.
@@ -97,7 +124,7 @@ public struct SessionLaunchForkRequest: Sendable {
     ///   ``SessionLaunchForkError/requestClosed(_:)`` when the fork call
     ///   ended before the build started or before it ended.
     public func makeFork() async throws -> any RoutedSession {
-        try await build.make(tools: nil)
+        try await build.make(surface: nil)
     }
 }
 
@@ -124,9 +151,9 @@ public enum SessionLaunchForkError: Error, Sendable, Equatable {
 /// close releases the builder, and thus the source, the seed and the tools
 /// that it holds.
 final class ForkBuild: Sendable {
-    /// The operation that builds the fork with the tools that it gets, or
-    /// with the tools of the source for `nil`.
-    typealias Builder = @Sendable ([any Tool]?) async throws -> RoutedSessionActor
+    /// The operation that builds the fork with the surface that it gets, or
+    /// with the surface of the source for `nil`.
+    typealias Builder = @Sendable (ForkSurface?) async throws -> RoutedSessionActor
 
     /// The state of the build.
     private enum State {
@@ -190,12 +217,12 @@ final class ForkBuild: Sendable {
         try FileManager.default.removeItem(at: recordingDirectory)
     }
 
-    /// Builds the fork with `tools`, or with the tools of the source for
+    /// Builds the fork with `surface`, or with the surface of the source for
     /// `nil`. A build that throws made no fork, so the build is open again,
     /// unless the build closed meanwhile. A build that ends after the close
     /// discards its fork.
     ///
-    /// - Parameter tools: The tools of the fork, or `nil`.
+    /// - Parameter surface: The surface of the fork, or `nil`.
     /// - Returns: The fork.
     /// - Throws: ``SessionLaunchForkError/forkAlreadyMade(_:)`` when a build
     ///   runs or made the fork before;
@@ -203,11 +230,11 @@ final class ForkBuild: Sendable {
     ///   before the build started or before it ended; the error of the
     ///   build; or the error of the removal of the recording node of a fork
     ///   that the build discards.
-    func make(tools: [any Tool]?) async throws -> RoutedSessionActor {
+    func make(surface: ForkSurface?) async throws -> RoutedSessionActor {
         let builder = try startBuild()
         let fork: RoutedSessionActor
         do {
-            fork = try await builder(tools)
+            fork = try await builder(surface)
         } catch {
             state.withLock { state in
                 guard case .building = state else { return }

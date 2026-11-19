@@ -135,6 +135,11 @@ final class ForkLaunchingLauncher: StartRefusingLauncher {
     /// The tools that the launcher gives to each fork.
     private let surface: [any Tool]
 
+    /// The added folders that the launcher gives to each fork, or `nil` for
+    /// a launcher that gives only tools
+    /// (``SessionLaunchForkRequest/makeFork(tools:)``).
+    private let additionalDirectories: [URL]?
+
     /// What the launcher does for a fork.
     private let behavior: Behavior
 
@@ -148,9 +153,14 @@ final class ForkLaunchingLauncher: StartRefusingLauncher {
     ///     and returns the fork.
     ///   - surface: The tools of each fork. The default is one
     ///     ``HostSurfaceTool``.
-    init(behavior: Behavior = .build, surface: [any Tool] = [HostSurfaceTool()]) {
+    ///   - additionalDirectories: The added folders of each fork, or `nil`
+    ///     for a launcher that gives only tools. The default is `nil`.
+    init(
+        behavior: Behavior = .build, surface: [any Tool] = [HostSurfaceTool()], additionalDirectories: [URL]? = nil
+    ) {
         self.behavior = behavior
         self.surface = surface
+        self.additionalDirectories = additionalDirectories
     }
 
     /// Each fork call, in order.
@@ -204,13 +214,19 @@ final class ForkLaunchingLauncher: StartRefusingLauncher {
         }
     }
 
-    /// Builds the fork of `request` with ``surface``, and keeps it.
+    /// Builds the fork of `request` with ``surface``, and with
+    /// ``additionalDirectories`` when the launcher has them, and keeps it.
     ///
     /// - Parameter request: The fork request of the directory.
     /// - Returns: The fork.
     /// - Throws: The error of the build.
     private func build(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession {
-        let fork = try await request.makeFork(tools: surface)
+        let fork =
+            if let additionalDirectories {
+                try await request.makeFork(tools: surface, additionalDirectories: additionalDirectories)
+            } else {
+                try await request.makeFork(tools: surface)
+            }
         state.withLock { $0.sessions.append(fork) }
         return fork
     }
@@ -229,5 +245,73 @@ final class ForkLaunchingLauncher: StartRefusingLauncher {
         let state = ForkStateAtReturn(
             promptTexts: await fork.transcript.promptTexts, waitingMessages: await fork.pendingMessages().count)
         self.state.withLock { $0.statesAtReturn.append(state) }
+    }
+}
+
+/// The mark that a test sets around its own call of
+/// ``RouterSessionDirectory/fork(_:)``, as a host sets a `@TaskLocal` value
+/// around its fork call to find its own request in its launcher.
+enum ForkCallerMark {
+    /// The mark of the caller of the fork, or `nil` when the caller set
+    /// none.
+    @TaskLocal static var value: String?
+}
+
+/// What a ``CallerMarkLauncher`` saw in one fork call.
+struct CallerMarkSeen: Equatable {
+    /// The id of the fork of the call.
+    let forkID: ULID
+
+    /// The ``ForkCallerMark`` that the call saw, or `nil`.
+    let mark: String?
+}
+
+/// A ``SessionLauncher`` that records the ``ForkCallerMark`` that each fork
+/// call sees (D205). Its first fork call waits at a gate after it sends
+/// ``firstCallEntered``, until the test sends ``releaseFirstCall``. Thus a
+/// test can run a second fork call while the first one waits. It reads the
+/// mark after the gate, and builds each fork with no tools.
+final class CallerMarkLauncher: StartRefusingLauncher {
+    /// What the launcher records.
+    private struct State {
+        /// The number of fork calls that started.
+        var startedCalls = 0
+
+        /// What each fork call saw, in the order of the reads.
+        var seen: [CallerMarkSeen] = []
+    }
+
+    /// Sent when the first fork call starts.
+    let firstCallEntered = AwaitedEvent()
+
+    /// Sent by the test to let the first fork call go on.
+    let releaseFirstCall = AwaitedEvent()
+
+    /// The records, which the fork calls change from their tasks.
+    private let state = Mutex(State())
+
+    /// What each fork call saw, in the order of the reads.
+    var seen: [CallerMarkSeen] {
+        state.withLock { $0.seen }
+    }
+
+    /// Waits at the gate in the first call, records the mark that the call
+    /// sees, and builds the fork with no tools.
+    ///
+    /// - Parameter request: The fork request of the directory.
+    /// - Returns: The fork.
+    /// - Throws: The error of the wait or of the build.
+    func forkSession(_ request: SessionLaunchForkRequest) async throws -> any RoutedSession {
+        let isFirstCall = state.withLock { state in
+            state.startedCalls += 1
+            return state.startedCalls == 1
+        }
+        if isFirstCall {
+            firstCallEntered.signal()
+            try await releaseFirstCall.wait()
+        }
+        let seen = CallerMarkSeen(forkID: request.forkID, mark: ForkCallerMark.value)
+        state.withLock { $0.seen.append(seen) }
+        return try await request.makeFork(tools: [])
     }
 }

@@ -23,6 +23,23 @@ import Testing
     /// The first prompt of a fork.
     private static let forkPrompt = "fork only"
 
+    /// The UI client of each fork of the tests of the task of the fork call.
+    private static let client = "fork-launcher-client"
+
+    /// The mark that the first caller sets around its fork call.
+    private static let firstCallerMark = "first caller"
+
+    /// The names of the folders that a host adds to a working folder.
+    private static let addedFolderNames = ["added-docs", "added-assets"]
+
+    /// The folders that a host adds, in the cache folder of `fixture`.
+    ///
+    /// - Parameter fixture: The fixture of the test.
+    /// - Returns: The added folders, in the order that the host gives them.
+    private static func addedFolders(in fixture: Fixture) -> [URL] {
+        addedFolderNames.map { fixture.directories.cacheDir.appendingPathComponent($0, isDirectory: true) }
+    }
+
     /// Gives `launcher` to the directory of `fixture`, and makes a source
     /// with two turns and one ``SourceSurfaceTool``.
     ///
@@ -70,6 +87,50 @@ import Testing
     ) async throws -> SessionLaunchForkRequest {
         _ = try? await fork(source, in: fixture)
         return try #require(launcher.requests.first)
+    }
+
+    /// Forks `source` at ``cutPosition`` for ``client``.
+    ///
+    /// - Parameters:
+    ///   - source: The source.
+    ///   - fixture: The fixture of the test.
+    /// - Returns: The summary of the fork.
+    /// - Throws: The error of the fork.
+    private static func forkForClient(
+        _ source: any RoutedSession, in fixture: Fixture
+    ) async throws -> SessionSummary {
+        try await fixture.directory.fork(
+            SessionForkRequest(
+                sourceID: source.id, cut: .historyPosition(cutPosition), requestedByClient: client,
+                forker: Fixture.user))
+    }
+
+    /// Forks `source` for ``client`` while the first fork call of
+    /// `launcher` waits at its gate, and then releases that call, also when
+    /// this fork throws.
+    ///
+    /// - Parameters:
+    ///   - source: The source.
+    ///   - fixture: The fixture of the test.
+    ///   - launcher: The launcher whose first fork call waits.
+    /// - Returns: The summary of the fork.
+    /// - Throws: The error of the fork.
+    private static func secondFork(
+        of source: any RoutedSession, in fixture: Fixture, releasingTheFirstCallOf launcher: CallerMarkLauncher
+    ) async throws -> SessionSummary {
+        defer { launcher.releaseFirstCall.signal() }
+        return try await forkForClient(source, in: fixture)
+    }
+
+    /// The added folders in the record of the live session `id`, or `nil`
+    /// when no live Router session has the id.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the session.
+    ///   - fixture: The fixture of the test.
+    /// - Returns: The added folders of the record.
+    private static func liveAdditionalDirectories(of id: ULID, in fixture: Fixture) -> [URL]? {
+        (fixture.directory.session(id: id) as? RoutedSessionActor)?.record.additionalDirectories
     }
 
     /// The original tool names of `session`, or `nil` for a session that is
@@ -158,6 +219,91 @@ import Testing
         #expect(launcher.statesAtReturn == [ForkStateAtReturn(promptTexts: [Self.twoTurns[0]], waitingMessages: 0)])
         await launcher.closeSessions()
         await fixture.end([source])
+    }
+
+    // MARK: - The added folders of the fork
+
+    @Test func theForkRecordHasTheFoldersThatTheLauncherGave() async throws {
+        let fixture = try await Fixture.make()
+        let folders = Self.addedFolders(in: fixture)
+        let launcher = ForkLaunchingLauncher(additionalDirectories: folders)
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+
+        let summary = try await Self.fork(source, in: fixture)
+
+        #expect(Self.liveAdditionalDirectories(of: summary.id, in: fixture) == folders)
+        await launcher.closeSessions()
+        await fixture.end([source])
+    }
+
+    @Test func theForkRecordHasTheFoldersThatTheLauncherGaveAfterARestart() async throws {
+        let fixture = try await Fixture.make()
+        let folders = Self.addedFolders(in: fixture)
+        let launcher = ForkLaunchingLauncher(additionalDirectories: folders)
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let summary = try await Self.fork(source, in: fixture)
+        await launcher.closeSessions()
+        await source.close()
+        let restarted = try await fixture.restarted()
+
+        let restored = try await restarted.profile.standard.restoreSession(id: summary.id).session
+
+        #expect((restored as? RoutedSessionActor)?.record.additionalDirectories == folders)
+        await restarted.end([restored])
+    }
+
+    @Test func aForkWithOnlyToolsHasNoFoldersOfTheSource() async throws {
+        let fixture = try await Fixture.make()
+        let launcher = ForkLaunchingLauncher()
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        try await fixture.directory.setAdditionalDirectories(to: Self.addedFolders(in: fixture), for: source.id)
+
+        let summary = try await Self.fork(source, in: fixture)
+
+        #expect(Self.liveAdditionalDirectories(of: summary.id, in: fixture) == [])
+        await launcher.closeSessions()
+        await fixture.end([source])
+    }
+
+    @Test func aForkWithTheSurfaceOfTheSourceHasTheFoldersOfTheSource() async throws {
+        let fixture = try await Fixture.make()
+        let folders = Self.addedFolders(in: fixture)
+        let launcher = FakeSessionLauncher(profile: fixture.profile)
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        try await fixture.directory.setAdditionalDirectories(to: folders, for: source.id)
+
+        let summary = try await Self.fork(source, in: fixture)
+
+        #expect(Self.liveAdditionalDirectories(of: summary.id, in: fixture) == folders)
+        let fork = try #require(fixture.directory.session(id: summary.id))
+        await fixture.end([source, fork])
+    }
+
+    // MARK: - The task of the fork call
+
+    /// Two forks of one source for one client at the same time: the first
+    /// sets ``ForkCallerMark`` around its fork call and waits in the
+    /// launcher, the second sets no mark and ends while the first waits.
+    @Test func theLauncherCallSeesTheTaskLocalsOfTheForkCallerOnly() async throws {
+        let fixture = try await Fixture.make()
+        let launcher = CallerMarkLauncher()
+        let source = try await Self.makeSource(in: fixture, launcher: launcher)
+        let firstCall = Task {
+            try await ForkCallerMark.$value.withValue(Self.firstCallerMark) {
+                try await Self.forkForClient(source, in: fixture)
+            }
+        }
+        try await launcher.firstCallEntered.wait()
+        let second = try await Self.secondFork(of: source, in: fixture, releasingTheFirstCallOf: launcher)
+        let first = try await firstCall.value
+
+        #expect(
+            launcher.seen == [
+                CallerMarkSeen(forkID: second.id, mark: nil),
+                CallerMarkSeen(forkID: first.id, mark: Self.firstCallerMark),
+            ])
+        let forks = [first.id, second.id].compactMap { fixture.directory.session(id: $0) }
+        await fixture.end([source] + forks)
     }
 
     // MARK: - A launcher with no fork operation

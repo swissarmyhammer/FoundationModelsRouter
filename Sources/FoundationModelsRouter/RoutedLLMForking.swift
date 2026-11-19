@@ -17,9 +17,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// recorded: the fork records only its own entries, and copies no
     /// history of `source`.
     ///
-    /// The tools are `tools`, the surface that the host gives the fork
-    /// (``SessionLauncher/forkSession(_:)``). With no `tools`, they are the
-    /// original tools of `source`, each forked first
+    /// The tools are the tools of `surface`, the surface that the host gives
+    /// the fork (``SessionLauncher/forkSession(_:)``). With no `surface`,
+    /// they are the original tools of `source`, each forked first
     /// (`ForkableTool.forked()`, or the tool itself). Either way they are
     /// then mounted on the
     /// own outbox and run plane of the fork, so a background run of the fork
@@ -34,16 +34,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// The hooks of the fork have the kind `.fork`, the origin `.forked` and
     /// `source` as the parent (``SessionHooks/makeForkHooks(sessionID:workingDirectory:)``).
     /// The first facts are ``SessionFacts/forFork`` of the facts of `source`.
+    /// The first record holds the added folders of `surface` as
+    /// ``SessionRecord/additionalDirectories``, as the record of a new
+    /// session holds them, so the first `index.md` of the fork has them.
+    /// With no `surface`, they are the added folders of `source`.
     ///
     /// - Parameters:
     ///   - source: The session to fork. It runs on this handle.
     ///   - forkID: The id of the fork.
     ///   - seed: The transcript, the cut and the context counter of the fork.
-    ///   - tools: The tools of the fork, or `nil` for the tools of `source`.
+    ///   - surface: The surface of the fork, or `nil` for the surface of
+    ///     `source`.
     /// - Returns: The fork, not registered.
     func makeFork(
-        of source: RoutedSessionActor, id forkID: ULID, seed: ForkSeed, tools: [any Tool]?
+        of source: RoutedSessionActor, id forkID: ULID, seed: ForkSeed, surface: ForkSurface?
     ) -> RoutedSessionActor {
+        let tools = surface?.tools
         let forkedTools = tools ?? source.originalTools.map { ($0 as? any ForkableTool)?.forked() ?? $0 }
         let delegationAdvisor = AgentDelegationAdvisor.make(
             hint: source.delegationAdvisorSlot.withLock { $0?.hint }, tools: forkedTools, isRoot: true)
@@ -104,7 +110,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tracer: tracer,
             hooks: source.hooks?.makeForkHooks(sessionID: forkID, workingDirectory: source.workingDirectory),
             transcriptReader: source.transcriptReader,
-            record: .new(source.facts.forFork)
+            record: .new(
+                source.facts.forFork,
+                additionalDirectories: surface?.additionalDirectories ?? source.record.additionalDirectories)
         )
         fork.bind(delegationAdvisor: delegationAdvisor)
         fork.bind(resultWitness: resultWitness)

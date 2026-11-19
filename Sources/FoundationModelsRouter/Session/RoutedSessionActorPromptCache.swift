@@ -47,7 +47,7 @@ extension RoutedSessionActor {
     /// Starts the prompt cache of this fork as a copy of the prompt cache of
     /// `source` (D205 (f)): the model copies the cache of
     /// ``promptCacheSessionID`` of `source` to the key of this fork.
-    /// ``makeFork(id:seed:tools:)`` of `source` calls it before it returns,
+    /// ``makeFork(id:seed:surface:)`` of `source` calls it before it returns,
     /// so the copy ends before the directory mails the first prompt of the
     /// fork.
     ///

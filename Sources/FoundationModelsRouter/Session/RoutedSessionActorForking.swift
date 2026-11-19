@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import Logging
@@ -20,12 +21,25 @@ struct ForkSeed: Sendable {
     let usageState: ContextUsageState
 }
 
+/// The surface that the host gives a fork (D205), in place of the surface of
+/// its source: the tools of the fork, and the folders that the host added to
+/// its working folder.
+struct ForkSurface: Sendable {
+    /// The tools of the fork.
+    let tools: [any Tool]
+
+    /// The folders that the host added to the working folder of the fork,
+    /// in the order that the host gives them. The record of the fork holds
+    /// them as ``SessionRecord/additionalDirectories``.
+    let additionalDirectories: [URL]
+}
+
 /// ``RoutedSessionActor``'s live fork (D205): a new session with the history
 /// of this session up to a cut.
 extension RoutedSessionActor {
     /// Maps `cut` to the seed of a live fork of this session: the history
     /// of this session up to the cut, the position of the cut, and the
-    /// context counter. ``makeFork(id:seed:tools:)`` then builds the fork
+    /// context counter. ``makeFork(id:seed:surface:)`` then builds the fork
     /// from the seed. The two steps are apart so that the launcher of the
     /// host can build the fork with its own tools between them
     /// (``SessionLauncher/forkSession(_:)``).
@@ -84,14 +98,16 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - id: The id of the fork.
     ///   - seed: The seed that ``prepareFork(at:)`` gave.
-    ///   - tools: The tools of the fork, or `nil` for the tools of this
-    ///     session, each through `ForkableTool.forked()`.
+    ///   - surface: The surface that the host gives the fork, or `nil` for
+    ///     the surface of this session: its tools, each through
+    ///     `ForkableTool.forked()`, and its added folders
+    ///     (``SessionRecord/additionalDirectories``).
     /// - Returns: The fork, not registered.
     /// - Throws: `SessionDirectoryError.forkUnsupported` when this session
     ///   runs on a slot that has no session.
-    func makeFork(id: ULID, seed: ForkSeed, tools: [any Tool]?) async throws -> RoutedSessionActor {
+    func makeFork(id: ULID, seed: ForkSeed, surface: ForkSurface?) async throws -> RoutedSessionActor {
         let handle = try forkHandle()
-        let fork = handle.makeFork(of: self, id: id, seed: seed, tools: tools)
+        let fork = handle.makeFork(of: self, id: id, seed: seed, surface: surface)
         // Host settings, as the other settings of the fork are.
         await fork.setGenerationStallReportInterval(generationStallReportInterval)
         await fork.useTelemetry(logger: explicitLogger, metricsFactory: explicitMetricsFactory)

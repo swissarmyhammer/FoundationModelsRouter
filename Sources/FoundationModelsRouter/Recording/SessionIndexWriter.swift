@@ -51,9 +51,11 @@ package struct SessionIndexWriter: Sendable {
 /// Each builder of a session states which case applies.
 enum SessionRecordSource: Sendable {
     /// The session is new: vended. It makes its first record from
-    /// these first facts and its own construction values, and
-    /// `makeRoutedSessionActor` writes that record as its first `index.md`.
-    case new(SessionFacts)
+    /// these first facts, these added folders
+    /// (``SessionRecord/additionalDirectories``) and its own construction
+    /// values, and `makeRoutedSessionActor` writes that record as its first
+    /// `index.md`. The default has no added folders.
+    case new(SessionFacts, additionalDirectories: [URL] = [])
 
     /// The session is a reconstruction of one already on disk, with the
     /// record read from its `index.md`. Construction writes nothing.

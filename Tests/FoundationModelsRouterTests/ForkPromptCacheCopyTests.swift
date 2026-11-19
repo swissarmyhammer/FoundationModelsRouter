@@ -97,7 +97,7 @@ import Testing
     {
         let fork = handle.makeFork(
             of: source, id: .generate(), seed: ForkSeed(entries: [], historyOrdinal: 0, usageState: .none),
-            tools: nil)
+            surface: nil)
         await fork.takePromptCacheCopy(of: source, through: handle)
         return fork
     }
