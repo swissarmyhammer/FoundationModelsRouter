@@ -67,8 +67,7 @@ struct SharedModelLockContentionTests {
         let holderAnswer = Task { try await holder.respond(to: Self.firstPrompt) }
         // The wait also ends when the holder answer ends (rule T1): the latch
         // holds its pass, so in a test that passes it cannot end first.
-        try await RecordedWaitResult.wait(
-            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
+        try await fixture.waitUntilTheFirstPassEntered(endingOnEndOf: holderAnswer)
 
         // The pass of the flash session now waits for the very same lock.
         // This is the contention: two handles, one container, one model.

@@ -94,6 +94,35 @@ extension ChangeSignal {
         try await wait(until: { try await value() >= count })
     }
 
+    /// Waits until a counter is at least `count`, or until `task` ended
+    /// (rule T1). When `task` ended first, the wait throws
+    /// ``FailureEventCameFirst``.
+    ///
+    /// This is the one wait of the tests for a count with a failure event:
+    /// a count of passes or waiters. It is
+    /// ``wait(isolation:until:endingOnEndOf:sourceLocation:)`` with the
+    /// condition `value() >= count`.
+    ///
+    /// - Parameters:
+    ///   - isolation: The isolation of the caller. The wait runs there, so
+    ///     `value` can read the state of the caller.
+    ///   - count: The smallest value of the counter that ends the wait.
+    ///   - value: Reads the counter.
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first;
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first;
+    ///   otherwise what `value` throws.
+    func wait<Success: Sendable, Failure: Error>(
+        isolation: isolated (any Actor)? = #isolation,
+        untilAtLeast count: Int,
+        of value: () async throws -> Int,
+        endingOnEndOf task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await wait(until: { try await value() >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
+    }
+
     /// Waits until `condition` holds, or until `failureEvent` holds (rule
     /// T1). When the failure event came and `condition` does not hold, the
     /// wait throws ``FailureEventCameFirst``.

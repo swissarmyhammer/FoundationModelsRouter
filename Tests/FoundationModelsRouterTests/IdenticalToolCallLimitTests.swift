@@ -80,9 +80,7 @@ struct IdenticalToolCallLimitTests {
         #expect(recoveryPrompt.contains("\(RepetitionDetection.defaultIdenticalToolCallLimit) times"))
     }
 
-    @Test(
-        "identical calls whose arguments differ only in key order and whitespace stop at the limit",
-        .timeLimit(.minutes(1)))
+    @Test("identical calls whose arguments differ only in key order and whitespace stop at the limit")
     func keyReorderedCallsStopAtTheLimit() async throws {
         let arguments = [
             RunCodeArgumentsJSON.keysInOneOrder(running: Self.repeatedCode),

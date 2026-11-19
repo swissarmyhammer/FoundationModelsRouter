@@ -63,7 +63,7 @@ final class ObservedPassLog: Sendable {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         try await changes.wait(
-            until: { recorded.count >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
+            untilAtLeast: count, of: { recorded.count }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 
     /// Every pass so far, in the order it started.

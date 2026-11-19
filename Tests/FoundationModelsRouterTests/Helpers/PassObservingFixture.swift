@@ -1,4 +1,5 @@
 import FoundationModelsRouterTestSupport
+import Testing
 
 @testable import FoundationModelsRouter
 
@@ -43,6 +44,28 @@ struct PassObservingFixture: Sendable {
             observer: observer, lock: lock, latch: latch, passes: passes, step: step, toolRounds: toolRounds,
             holdsAfterFirstOutput: holdsAfterFirstOutput)
         container = LiveBackendContainer(model: model)
+    }
+
+    /// Waits until the first pass entered ``model``, or until `task` ended
+    /// (rule T1). When `task` ended first, the wait throws
+    /// ``FailureEventCameFirst``.
+    ///
+    /// In a test that passes, `task` must not end before the pass entered:
+    /// for example `task` is the answer of that pass, and the latch holds
+    /// the pass.
+    ///
+    /// - Parameters:
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first, or
+    ///   ``ConditionNeverHeld`` when the test was cancelled first.
+    func waitUntilTheFirstPassEntered<Success: Sendable, Failure: Error>(
+        endingOnEndOf task: Task<Success, Failure>, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let observer = observer
+        try await RecordedWaitResult.wait(
+            for: { try await observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: task,
+            sourceLocation: sourceLocation)
     }
 
     /// A new container over the parts of this fixture.

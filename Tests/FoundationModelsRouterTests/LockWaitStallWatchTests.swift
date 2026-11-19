@@ -147,6 +147,41 @@ struct LockWaitStallWatchTests {
             until: { await actor.appliedStallWatch()?.passOutputSince != nil }, endingOnEndOf: answer)
     }
 
+    /// Waits until the tool body of `log` starts, or until `answer` ended
+    /// (rule T1).
+    ///
+    /// - Parameters:
+    ///   - log: The log of the probe tool.
+    ///   - answer: The answer that calls the tool. A gate of the test holds
+    ///     the body, so the answer cannot end before the body starts.
+    /// - Throws: ``FailureEventCameFirst`` when `answer` ended first, or
+    ///   ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func waitUntilTheToolBodyStarts<Success: Sendable, Failure: Error>(
+        log: PassBoundaryLog, endingOnEndOf answer: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await RecordedWaitResult.wait(
+            for: { try await log.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer,
+            sourceLocation: sourceLocation)
+    }
+
+    /// Waits until `log` has a stall report, or until `answer` ended (rule
+    /// T1).
+    ///
+    /// - Parameters:
+    ///   - log: The events of the answer.
+    ///   - answer: The answer whose call stalls. Its pass holds, so the
+    ///     answer cannot end before the report.
+    /// - Throws: ``FailureEventCameFirst`` when `answer` ended first, or
+    ///   ``ConditionNeverHeld`` when the test task was cancelled first.
+    private static func waitForAStall<Failure: Error>(
+        in log: SessionEventLog, endingOnEndOf answer: Task<Void, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await log.wait(
+            until: { !Self.stalls(in: $0).isEmpty }, endingOnEndOf: answer, sourceLocation: sourceLocation)
+    }
+
     @Test("a call that waits for the lock behind the long generation of another session gives no stall")
     func aCallThatWaitsForTheLockGivesNoStall() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
@@ -210,8 +245,7 @@ struct LockWaitStallWatchTests {
         let (_, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
         // The tool gate holds the body, so the answer cannot end before the
         // body starts. An answer that ends first did not call the tool.
-        try await RecordedWaitResult.wait(
-            for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer)
+        try await Self.waitUntilTheToolBodyStarts(log: toolLog, endingOnEndOf: answer)
         let noTimeCounts = try await Self.noTimeCountsInTheToolBody(of: actor)
         toolGate.signal()
         try await answer.value
@@ -237,7 +271,7 @@ struct LockWaitStallWatchTests {
         try await Self.waitUntilTheFirstOutputCounts(on: actor, endingOnEndOf: answer)
         try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answer)
         clock.advance(by: Self.reportInterval)
-        try await log.wait(until: { !Self.stalls(in: $0).isEmpty }, endingOnEndOf: answer)
+        try await Self.waitForAStall(in: log, endingOnEndOf: answer)
         await fixture.latch.open()
         try await answer.value
 
@@ -295,8 +329,7 @@ struct LockWaitStallWatchTests {
         step.signal()
         // The tool gate holds the body, so the waiting answer cannot end
         // before the body starts.
-        try await RecordedWaitResult.wait(
-            for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: waitingAnswer)
+        try await Self.waitUntilTheToolBodyStarts(log: toolLog, endingOnEndOf: waitingAnswer)
         // The tool body counts no time while the clock moves.
         #expect(try await Self.noTimeCountsInTheToolBody(of: waitingActor))
         clock.advance(by: Self.toolBodyTime)
@@ -310,7 +343,7 @@ struct LockWaitStallWatchTests {
             until: { await waitingActor.appliedStallWatch()?.lastProgressKind == .toolResult },
             endingOnEndOf: waitingAnswer)
         clock.advance(by: Self.reportInterval)
-        try await log.wait(until: { !Self.stalls(in: $0).isEmpty }, endingOnEndOf: waitingAnswer)
+        try await Self.waitForAStall(in: log, endingOnEndOf: waitingAnswer)
         let stalls = await log.stalls
         step.signal()
         _ = try await holdingAnswer.value

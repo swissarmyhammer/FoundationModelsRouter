@@ -77,6 +77,37 @@ extension RecordedWaitResult {
         return ended
     }
 
+    /// Makes a task that ends when `first` or `second` ended: the failure
+    /// event of a wait for a state that both tasks make.
+    ///
+    /// The end of each of the two tasks is recorded with
+    /// ``recordingEnd(of:reportingTo:)`` on one signal. The returned task
+    /// ends on the first of the two records, and then stops both records.
+    /// Give the returned task to a wait of rule T1 as the task whose end is
+    /// the failure event, and cancel it in a `defer`: the cancel ends it and
+    /// stops both records. In a test that passes, neither task must end
+    /// before the state comes.
+    ///
+    /// - Parameters:
+    ///   - first: One task.
+    ///   - second: The other task.
+    /// - Returns: The task that ends when one of the two ended, or when it
+    ///   was cancelled.
+    static func endOfEither<Success: Sendable>(
+        _ first: Task<Success, any Error>, _ second: Task<Success, any Error>
+    ) -> Task<Void, Never> {
+        let changes = ChangeSignal()
+        let firstEnded = recordingEnd(of: first, reportingTo: changes)
+        let secondEnded = recordingEnd(of: second, reportingTo: changes)
+        return Task {
+            defer {
+                firstEnded.stopRecording()
+                secondEnded.stopRecording()
+            }
+            try? await changes.wait(until: { firstEnded.value != nil || secondEnded.value != nil })
+        }
+    }
+
     /// Cancels the observer task of ``recordingEnd(of:reportingTo:)``.
     ///
     /// After the cancel, the observer task records no end and sends no

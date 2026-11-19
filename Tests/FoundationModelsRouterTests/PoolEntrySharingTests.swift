@@ -183,8 +183,7 @@ struct PoolEntrySharingTests {
             let answer = Task { try await session.respond(to: prompt) }
             answers.append(answer)
             if index == 0 {
-                try await RecordedWaitResult.wait(
-                    for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
+                try await fixture.waitUntilTheFirstPassEntered(endingOnEndOf: answer)
             } else {
                 try await fixture.lock.waitForWaiters(index, endingOnEndOf: answer)
             }
@@ -203,6 +202,25 @@ struct PoolEntrySharingTests {
     }
 
     // MARK: - Embedding
+
+    /// Starts one embed call, and waits until the call is inside `model`, or
+    /// until the call ended (rule T1). The gate of `model` holds each call in
+    /// the model, so in a test that passes the call does not end first.
+    ///
+    /// - Parameters:
+    ///   - model: The model that the call goes to.
+    ///   - embed: The embed call.
+    /// - Returns: The task of the call.
+    /// - Throws: ``FailureEventCameFirst`` when the call ended before it was
+    ///   inside `model`, or ``ConditionNeverHeld`` when the test was cancelled
+    ///   first.
+    private static func startCall(
+        inside model: GatedEmbedding, _ embed: @escaping @Sendable () async throws -> [[Float]]
+    ) async throws -> Task<[[Float]], any Error> {
+        let call = Task { try await embed() }
+        try await RecordedWaitResult.wait(forPermitOf: model.entered, endingOnEndOf: call)
+        return call
+    }
 
     @Test("a router embed call and a direct Extras embedder of one key share one load, and the router adds no queue")
     @MainActor
@@ -232,11 +250,9 @@ struct PoolEntrySharingTests {
         // (rule T1): the gate holds each call in the model, so in a test that
         // passes no call ends first.
         let directEmbedder = try PooledEmbedder(hold: directHold)
-        let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
-        let entered = directLoader.embedding.entered
-        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall)
-        let routerCall = Task { try await profile.embedding.embed(texts: Self.texts) }
-        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: routerCall)
+        let model = directLoader.embedding
+        let directCall = try await Self.startCall(inside: model) { try await directEmbedder.embed(texts: Self.texts) }
+        let routerCall = try await Self.startCall(inside: model) { try await profile.embedding.embed(texts: Self.texts) }
 
         directLoader.embedding.gate.signal()
         directLoader.embedding.gate.signal()

@@ -347,11 +347,23 @@ struct ToolBodyHoldsNoLockTests {
         // passes of one session gives the lock to the other session. A pass
         // holds on its step, so the count of the passes is exact at each
         // read.
+        //
+        // Each wait also ends on an answer that ends (rule T1). Before a
+        // release, one answer holds its pass on the step and the other has a
+        // pass to come, so no answer can end first: the wait for the waiter
+        // ends when one of the two answers ends. After a release, the
+        // released pass can be the last pass of its answer, so that answer
+        // can end. The wait for the next pass thus ends on the answer of
+        // that pass, which cannot end before the pass starts.
+        let anAnswerEnds = RecordedWaitResult.endOfEither(firstAnswerTask, secondAnswerTask)
+        defer { anAnswerEnds.cancel() }
         for released in 1..<allPasses {
-            try await lock.waitForWaiters(1)
+            try await lock.waitForWaiters(1, endingOnEndOf: anAnswerEnds)
             step.signal()
-            try await passes.waitForPasses(released + 1)
-            #expect(passes.recorded.count == released + 1)
+            let nextPass = released + 1
+            let answerOfTheNextPass = nextPass.isMultiple(of: 2) ? secondAnswerTask : firstAnswerTask
+            try await passes.waitForPasses(nextPass, endingOnEndOf: answerOfTheNextPass)
+            #expect(passes.recorded.count == nextPass)
         }
         step.signal()
         let firstAnswer = try await firstAnswerTask.value

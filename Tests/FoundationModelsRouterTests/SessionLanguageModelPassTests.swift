@@ -48,8 +48,7 @@ struct SessionLanguageModelPassTests {
         let firstCall = Task { try await first.respond(to: "first", maxTokens: nil) }
         // The wait also ends when the first call ends (rule T1): the latch
         // holds its pass, so in a test that passes it cannot end first.
-        try await RecordedWaitResult.wait(
-            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: firstCall)
+        try await fixture.waitUntilTheFirstPassEntered(endingOnEndOf: firstCall)
         let secondCall = Task { try await second.respond(to: "second", maxTokens: nil) }
         // The second pass waits for the lock, which the first pass holds.
         try await fixture.lock.waitForWaiters(1, endingOnEndOf: secondCall)
@@ -104,8 +103,7 @@ struct SessionLanguageModelPassTests {
         let holdingCall = Task { try await holder.respond(to: "holder", maxTokens: nil) }
         // The wait also ends when the holding call ends (rule T1): the latch
         // holds its pass, so in a test that passes it cannot end first.
-        try await RecordedWaitResult.wait(
-            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holdingCall)
+        try await fixture.waitUntilTheFirstPassEntered(endingOnEndOf: holdingCall)
         let waitingCall = Task { try await waiter.respond(to: "waiter", maxTokens: nil) }
         try await fixture.lock.waitForWaiters(1, endingOnEndOf: waitingCall)
 

@@ -290,7 +290,7 @@ extension PromptCountingBackend {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         try await changes.wait(
-            until: { self.promptCount >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
+            untilAtLeast: count, of: { self.promptCount }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 }
 

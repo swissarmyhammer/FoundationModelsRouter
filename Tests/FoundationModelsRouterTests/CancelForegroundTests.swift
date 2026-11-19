@@ -84,7 +84,7 @@ struct CancelForegroundTests {
         _ count: Int, on actor: RoutedSessionActor, ending answering: Task<String, any Error>
     ) async throws {
         try await actor.idleChanges.wait(
-            until: { await actor.runPlane.openElicitations().count >= count }, endingOnEndOf: answering)
+            untilAtLeast: count, of: { await actor.runPlane.openElicitations().count }, endingOnEndOf: answering)
     }
 
     /// Waits until the run plane of `actor` holds no open run.

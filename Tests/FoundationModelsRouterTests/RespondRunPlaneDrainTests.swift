@@ -322,7 +322,7 @@ struct RespondRunPlaneDrainTests {
         atLeast count: Int, on session: any RoutedSession, reportedBy backend: BackgroundingBackend,
         endingOnEndOf answer: Task<Success, Failure>
     ) async throws -> [String] {
-        try await backend.changes.wait(until: { backend.toolOutputs.count >= count }, endingOnEndOf: answer)
+        try await backend.changes.wait(untilAtLeast: count, of: { backend.toolOutputs.count }, endingOnEndOf: answer)
         return await session.runPlane.backgroundRuns().map(\.completionToken)
     }
 

@@ -130,6 +130,11 @@ struct PooledResidencyTests {
     /// Waits for the first footprint of `footprints` that has no resident
     /// model.
     ///
+    /// The stream of the pool does not end, so no failure event ends this
+    /// wait. A regression that keeps a model resident keeps this wait open:
+    /// the stacks of the test process then show this wait, and the pool
+    /// entry that was not evicted.
+    ///
     /// - Parameter footprints: The footprint stream of the pool, from
     ///   `ModelPool.footprints`.
     private static func waitUntilNothingIsResident(in footprints: AsyncStream<ModelPoolFootprint>) async {
@@ -415,12 +420,11 @@ struct PooledResidencyTests {
 
         let firstSession = first.standard.makeSession(instructions: nil)
         let secondSession = second.standard.makeSession(instructions: nil)
-        async let firstReply: String = firstSession.respond(to: "0")
-        async let secondReply: String = secondSession.respond(to: "1")
+        let firstReply = Task { try await firstSession.respond(to: "0") }
+        let secondReply = Task { try await secondSession.respond(to: "1") }
         // The gate gets one permit for each call, and then each session
-        // closes, also when the test throws (rule T1). This `defer` comes
-        // after the two `async let` calls, so it runs before the implicit wait
-        // for them: that wait ends only after the gate releases each call.
+        // closes, also when the test throws (rule T1): a close waits for a
+        // held call.
         defer {
             await SessionFixtureLifecycle.close(
                 [firstSession, secondSession], releasing: [releaseGate], permits: Self.sharedModelCallCount)
@@ -428,17 +432,20 @@ struct PooledResidencyTests {
 
         // Let one call reach (and suspend inside) the shared model, and the
         // other wait for the shared lock, before releasing them, so the lock
-        // — not scheduling luck — is what is under test.
-        try await observer.changes.wait(until: { await observer.active == 1 })
-        // The two calls are `async let` children, not tasks, so no end of a
-        // task is available to end this wait.
-        try await lock.waitForWaiters(1)
+        // — not scheduling luck — is what is under test. Each wait also ends
+        // when one of the two calls ended (rule T1): the gate holds the call
+        // in the model, and the lock holds the other, so in a test that
+        // passes no call ends first.
+        let aCallEnds = RecordedWaitResult.endOfEither(firstReply, secondReply)
+        defer { aCallEnds.cancel() }
+        try await observer.changes.wait(until: { await observer.active == 1 }, endingOnEndOf: aCallEnds)
+        try await lock.waitForWaiters(1, endingOnEndOf: aCallEnds)
         #expect(await lock.waitingCount == 1)
         #expect(await observer.maxActive == 1)
 
         releaseGate.signal()
         releaseGate.signal()
-        _ = try await (firstReply, secondReply)
+        _ = try await (firstReply.value, secondReply.value)
 
         #expect(await observer.maxActive == 1)
         #expect(await observer.entryOrder.count == 2)
@@ -793,7 +800,9 @@ struct PooledResidencyTests {
         // This wait does not also end on the end of `resolveBTask`. An
         // observer of that task keeps a second handle of it, and thus of the
         // profile of B, until the task ends. The test counts the references
-        // of that profile, so a second handle can change the result.
+        // of that profile, so a second handle can change the result. A
+        // regression that never reaches the gated load keeps this wait open:
+        // the stacks of the test process then show this wait.
         await entrySignal.wait()
 
         // B is now suspended inside its own standard slot's download, with

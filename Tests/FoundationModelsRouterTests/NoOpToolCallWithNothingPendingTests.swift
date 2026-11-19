@@ -20,7 +20,7 @@ import Testing
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``StagedReasoningModel``. No GPU is in the loop, and no operation
 /// of the session is pending.
-@Suite("A no-op tool call with nothing pending ends the answer", .timeLimit(.minutes(1)))
+@Suite("A no-op tool call with nothing pending ends the answer")
 struct NoOpToolCallWithNothingPendingTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "NoOpToolCallWithNothingPendingTests"

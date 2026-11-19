@@ -64,7 +64,7 @@ actor FIFOGenerationLock {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         try await changes.wait(
-            until: { await self.waitingCount >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
+            untilAtLeast: count, of: { await self.waitingCount }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 
     /// Takes the lock, or waits at the end of the line.

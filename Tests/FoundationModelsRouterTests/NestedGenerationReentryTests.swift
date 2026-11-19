@@ -944,8 +944,7 @@ struct NestedGenerationReentryTests {
         // the other passes in the lock, so in a test that passes no answer
         // ends first.
         let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
-        try await RecordedWaitResult.wait(
-            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
+        try await fixture.waitUntilTheFirstPassEntered(endingOnEndOf: holderAnswer)
 
         // The pump of the waiter runs its answer, which has an identity; its
         // pass waits for the lock of the model.

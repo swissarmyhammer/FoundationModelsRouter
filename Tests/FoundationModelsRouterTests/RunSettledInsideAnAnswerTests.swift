@@ -15,7 +15,7 @@ import Testing
 /// `runCode` call. The body of that call (``JobSettlingRunCodeTool``) lets
 /// the job settle, and gives its result only after the session sent
 /// ``SessionEvent/runSettled(_:)``. No GPU is in the loop.
-@Suite("A run that settles inside an answer reaches the model with the next tool result", .timeLimit(.minutes(1)))
+@Suite("A run that settles inside an answer reaches the model with the next tool result")
 struct RunSettledInsideAnAnswerTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "RunSettledInsideAnAnswerTests"
@@ -55,6 +55,12 @@ struct RunSettledInsideAnAnswerTests {
         }
         defer { opener.cancel() }
 
+        // The tool body holds the answer until the session sent the settled
+        // event, so no failure event comes before that event: the drain ends
+        // only when the fixture closes the session, after the answer. A
+        // regression that holds the settled event until the answer ends keeps
+        // this answer open: the stacks of the test process then show the
+        // tool body that waits for `settled`.
         _ = try await fixture.session.respond(to: Self.prompt)
 
         let next = try #require(fixture.log.renders.dropFirst(Self.callAfterTheToolResult).first)

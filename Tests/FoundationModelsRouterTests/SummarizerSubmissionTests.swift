@@ -135,8 +135,7 @@ struct SummarizerSubmissionTests {
             // ends when that answer ends (rule T1): the latch holds its pass,
             // so in a test that passes it cannot end first.
             let flashAnswer = Task { try await flashSession.respond(to: flashPrompt) }
-            try await RecordedWaitResult.wait(
-                for: { try await flash.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: flashAnswer)
+            try await flash.waitUntilTheFirstPassEntered(endingOnEndOf: flashAnswer)
 
             // The next answer of the session over the trigger compacts first,
             // and the pass of its flash summarizer call waits for the lock of
@@ -208,9 +207,11 @@ struct SummarizerSubmissionTests {
         await #expect(throws: CancellationError.self) {
             try await waiting.compactingAnswer.value
         }
-        // The abandoned pass left the lock at its turn, and never ran.
-        let lock = flash.lock
-        try await lock.changes.wait(until: { await lock.waitingCount == 0 })
+        // The abandoned pass left the lock at its turn, and never ran. Its
+        // turn came when the pass of the flash session gave the lock back,
+        // and that came before the flash answer ended. So one read after
+        // that end sees the lock with no waiter.
+        #expect(await flash.lock.waitingCount == 0)
         #expect(await flash.observer.enteredCount == 1)
     }
 }
