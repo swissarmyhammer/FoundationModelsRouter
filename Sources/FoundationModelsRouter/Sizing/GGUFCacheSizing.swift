@@ -17,6 +17,13 @@ import FoundationModelsLlamaCpp
 ///   `LlamaLanguageModel.Options.defaultMaxLiveSequences` of them, with no
 ///   rollback snapshot.
 ///
+/// A fork of a GGUF session does not change these figures (D205 (f)). The
+/// cache of FoundationModelsLlamaCpp copies the live sequence of the source
+/// into a free sequence of the same context. The copy is one of the
+/// `defaultMaxLiveSequences` live sequences, and its KV cells are cells of the
+/// unified KV cache of the context. The `makeRoom` of that cache counts the
+/// cells that a copy shares with its source one time.
+///
 /// The compute buffers that llama.cpp adds are not modeled, as the overhead
 /// of an MLX model is not modeled (see ``Footprint``).
 struct GGUFCacheSizing: Sendable, Equatable, Codable {

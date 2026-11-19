@@ -72,7 +72,10 @@ enum PromptCacheCopyRefusal: String, Sendable, Equatable {
 /// The copy and the source are independent: a pass of one does not change
 /// the cache of the other, and a release of one key does not release the
 /// other key. `MLXLanguageModel` conforms (task ^jx6ng3r). The GGUF cache
-/// has no session key, so the GGUF model does not conform.
+/// has no session key, so the GGUF model does not conform, and the router
+/// calls no copy for a GGUF slot: on a partial hit of a live record, the cache
+/// of FoundationModelsLlamaCpp copies the live sequence itself, and the record
+/// of the source stays live (task ^h3xtekz).
 protocol SessionPromptCacheCopying: Sendable {
     /// Copies the prompt cache of session `sourceSessionID` to the key of
     /// session `targetSessionID`.

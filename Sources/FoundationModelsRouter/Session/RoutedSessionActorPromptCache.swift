@@ -62,6 +62,12 @@ extension RoutedSessionActor {
     /// and the same model reference: the cache of a different model is of
     /// no use to this fork.
     ///
+    /// A GGUF model gives no outcome: it does not conform to
+    /// ``SessionPromptCacheCopying``, because the cache of
+    /// FoundationModelsLlamaCpp copies a live sequence itself on a partial hit
+    /// of a live record. Thus a GGUF fork logs no outcome and sends no budget
+    /// here.
+    ///
     /// The outcome goes to the log with the id of this fork. After a copy,
     /// `handle` sends the prompt-cache budget again, so the next budget
     /// counts the copy. An outcome that copied nothing sends no budget.

@@ -44,7 +44,7 @@ private let forkCopyProfile = ProfileDefinition(
 /// - The first call of a fork reuses the history up to the cut from the
 ///   copy, for `.lastCompletedTurn`, `.callingToolCall` and
 ///   `.historyPosition(n)`. The bound is the tokens of the history that the
-///   source left in its cache, less ``templateSeamTokens``.
+///   source left in its cache, less ``MeasuredAnswer/templateSeamTokens``.
 /// - With no copy, the first call of a fork reads its whole prompt and
 ///   answers correctly, and its greedy reply equals the reply of a fork with
 ///   the copy.
@@ -104,13 +104,6 @@ struct ForkPromptCacheCopyIntegrationTests {
 
     /// The prompt of a later turn of a fork.
     private static let forkFollowUpPrompt = "Say my code word one more time. Reply with just the code word."
-
-    /// The tokens at the end of the cached history that the render of the
-    /// next prompt can change: the end marker of the last entry, the role
-    /// marker of the next entry, and the generation prompt. A call that
-    /// reuses at least the history less these tokens did not prefill the
-    /// history again.
-    private static let templateSeamTokens = 16
 
     /// The ceiling of each reply.
     private static let replyTokenCeiling = GatedRealModelBudget.responseTokenCeiling
@@ -180,9 +173,7 @@ struct ForkPromptCacheCopyIntegrationTests {
         /// - Throws: The error of the fork, or the `#require` failure when the
         ///   fork is not live.
         func fork(_ source: any RoutedSession, at cut: SessionForkCut) async throws -> any RoutedSession {
-            let summary = try await directory.fork(
-                SessionForkRequest(sourceID: source.id, cut: cut, forker: .user(clientID: "fork-copy-test")))
-            return try #require(directory.session(id: summary.id))
+            try await directory.liveFork(of: source, at: cut, clientID: "fork-copy-test")
         }
     }
 
@@ -218,37 +209,6 @@ struct ForkPromptCacheCopyIntegrationTests {
         try await MeasuredAnswer.answer(to: prompt, on: session, maxTokens: replyTokenCeiling)
     }
 
-    /// The input tokens that the first call of `answer` reused from the
-    /// prompt cache.
-    ///
-    /// - Parameter answer: The answer.
-    /// - Returns: The reused tokens.
-    /// - Throws: The `#require` failure for an answer with no call, or a call
-    ///   with no cached count.
-    private static func cachedTokensOfFirstCall(of answer: MeasuredAnswer) throws -> Int {
-        let firstCall = try #require(answer.calls.first)
-        return try #require(firstCall.tokensCached)
-    }
-
-    /// The tokens that a call must reuse when the cache holds `history`: the
-    /// history less ``templateSeamTokens``.
-    ///
-    /// - Parameter history: The tokens of the cached history.
-    /// - Returns: The least reused tokens.
-    private static func reuseBound(of history: Int) -> Int {
-        history - templateSeamTokens
-    }
-
-    /// The tokens of the history that the last call of `answer` left in the
-    /// prompt cache.
-    ///
-    /// - Parameter answer: The answer.
-    /// - Returns: The tokens.
-    /// - Throws: The `#require` failure for an answer with no call.
-    private static func historyTokens(after answer: MeasuredAnswer) throws -> Int {
-        try #require(answer.calls.last).historyTokens
-    }
-
     /// The prompt-cache usage once no entry is being written to disk.
     ///
     /// - Returns: The usage.
@@ -257,22 +217,6 @@ struct ForkPromptCacheCopyIntegrationTests {
         let usage = await MLXLanguageModel.promptCacheUsage
         return PromptCacheUsage(
             memoryBytes: usage.memoryBytes, spillingBytes: usage.spillingBytes, diskBytes: usage.diskBytes)
-    }
-
-    /// The history position of the second prompt of `session`: a cut there
-    /// keeps the first turn and not the second.
-    ///
-    /// - Parameter session: The session.
-    /// - Returns: The position.
-    /// - Throws: The `#require` failure for a session with fewer than two
-    ///   prompts.
-    private static func positionOfSecondPrompt(of session: any RoutedSession) async throws -> Int {
-        let entries = Array(await session.transcript)
-        let promptPositions = entries.indices.filter {
-            if case .prompt = entries[$0] { return true }
-            return false
-        }
-        return try #require(promptPositions.dropFirst().first)
     }
 
     /// The room for one and a half entries of `entryBytes`: room for one
@@ -305,8 +249,8 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let answer = try await Self.answer(Self.forkPrompt, on: fork)
 
-            let history = try Self.historyTokens(after: source.second)
-            #expect(try Self.cachedTokensOfFirstCall(of: answer) >= Self.reuseBound(of: history))
+            let history = try source.second.historyTokens()
+            #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             await Self.close([source.session, fork])
         }
     }
@@ -318,13 +262,13 @@ struct ForkPromptCacheCopyIntegrationTests {
     func aForkAtAHistoryPositionReusesTheHistoryUpToThePosition() async throws {
         try await Self.withFixture { fixture in
             let source = try await fixture.makeAnsweredSource()
-            let position = try await Self.positionOfSecondPrompt(of: source.session)
+            let position = try await source.session.positionOfSecondPrompt()
             let fork = try await fixture.fork(source.session, at: .historyPosition(position))
 
             let answer = try await Self.answer(Self.forkPrompt, on: fork)
 
-            let history = try Self.historyTokens(after: source.first)
-            #expect(try Self.cachedTokensOfFirstCall(of: answer) >= Self.reuseBound(of: history))
+            let history = try source.first.historyTokens()
+            #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             #expect(answer.reply.contains(Self.codeWord))
             await Self.close([source.session, fork])
         }
@@ -346,7 +290,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             let answer = try await Self.answer(Self.arithmeticPrompt, on: fork)
 
             let toolCallPass = try #require(sourceAnswer.calls.first { $0.entryKind == .toolCall })
-            #expect(try Self.cachedTokensOfFirstCall(of: answer) >= Self.reuseBound(of: toolCallPass.tokensIn))
+            #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: toolCallPass.tokensIn))
             await Self.close([source, fork])
         }
     }
@@ -364,7 +308,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let answer = try await Self.answer(Self.forkPrompt, on: fork)
 
-            #expect(try Self.cachedTokensOfFirstCall(of: answer) == 0)
+            #expect(try answer.cachedTokensOfFirstCall() == 0)
             #expect(answer.reply.contains(Self.codeWord))
             await Self.close([source.session, fork])
         }
@@ -384,8 +328,8 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let uncopiedAnswer = try await Self.answer(Self.forkPrompt, on: uncopied)
 
-            #expect(try Self.cachedTokensOfFirstCall(of: copiedAnswer) > 0)
-            #expect(try Self.cachedTokensOfFirstCall(of: uncopiedAnswer) == 0)
+            #expect(try copiedAnswer.cachedTokensOfFirstCall() > 0)
+            #expect(try uncopiedAnswer.cachedTokensOfFirstCall() == 0)
             #expect(copiedAnswer.reply == uncopiedAnswer.reply)
             await Self.close([source.session, copied, uncopied])
         }
@@ -401,14 +345,14 @@ struct ForkPromptCacheCopyIntegrationTests {
     func aPromptToTheForkLeavesTheCacheOfTheSource() async throws {
         try await Self.withFixture { fixture in
             let source = try await fixture.makeAnsweredSource()
-            let position = try await Self.positionOfSecondPrompt(of: source.session)
+            let position = try await source.session.positionOfSecondPrompt()
             let fork = try await fixture.fork(source.session, at: .historyPosition(position))
             _ = try await Self.answer(Self.forkPrompt, on: fork)
 
             let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
 
-            let history = try Self.historyTokens(after: source.second)
-            #expect(try Self.cachedTokensOfFirstCall(of: sourceAnswer) >= Self.reuseBound(of: history))
+            let history = try source.second.historyTokens()
+            #expect(try sourceAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             await Self.close([source.session, fork])
         }
     }
@@ -425,8 +369,8 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let forkAnswer = try await Self.answer(Self.forkFollowUpPrompt, on: fork)
 
-            let history = try Self.historyTokens(after: firstForkAnswer)
-            #expect(try Self.cachedTokensOfFirstCall(of: forkAnswer) >= Self.reuseBound(of: history))
+            let history = try firstForkAnswer.historyTokens()
+            #expect(try forkAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             await Self.close([source.session, fork])
         }
     }
@@ -479,10 +423,10 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let afterClose = await Self.settledPromptCacheUsage()
             let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
-            let history = try Self.historyTokens(after: source.second)
+            let history = try source.second.historyTokens()
             #expect(withCopy.totalBytes == 2 * before.totalBytes)
             #expect(afterClose.totalBytes == before.totalBytes)
-            #expect(try Self.cachedTokensOfFirstCall(of: sourceAnswer) >= Self.reuseBound(of: history))
+            #expect(try sourceAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             await Self.close([source.session])
         }
     }
@@ -500,9 +444,9 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let afterClose = await Self.settledPromptCacheUsage()
             let answer = try await Self.answer(Self.forkPrompt, on: fork)
-            let history = try Self.historyTokens(after: source.second)
+            let history = try source.second.historyTokens()
             #expect(2 * afterClose.totalBytes == withCopy.totalBytes)
-            #expect(try Self.cachedTokensOfFirstCall(of: answer) >= Self.reuseBound(of: history))
+            #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             await Self.close([fork])
         }
     }
@@ -520,8 +464,8 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let answer = try await Self.answer(Self.forkPrompt, on: fork)
 
-            let history = try Self.historyTokens(after: source.second)
-            #expect(try Self.cachedTokensOfFirstCall(of: answer) >= Self.reuseBound(of: history))
+            let history = try source.second.historyTokens()
+            #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             await Self.close([source.session, fork])
         }
     }

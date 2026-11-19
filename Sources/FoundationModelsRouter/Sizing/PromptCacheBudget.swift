@@ -95,10 +95,15 @@ public struct PromptCacheUsage: Sendable, Equatable {
 ///   at the copy. After a copy the router sends the budget again
 ///   (``PromptCacheSizing/sendBudgetAgain()``), so the spilling bytes of an
 ///   eviction that the copy causes are in the next budget.
-/// - The GGUF copy is a live sequence of the same llama.cpp context. It is
-///   inside the KV of the context, and inside the recurrent estimate for
+/// - The router calls no copy for a GGUF slot. On a partial hit of a live
+///   record, the cache of FoundationModelsLlamaCpp copies the live sequence
+///   itself (`llama_memory_seq_cp`) into a free sequence of the same llama.cpp
+///   context, and the record of the source stays live. The copy is inside the
+///   KV of the context, and inside the recurrent estimate for
 ///   `LlamaLanguageModel.Options.defaultMaxLiveSequences` sequences
-///   (``GGUFCacheSizing``), so the fit does not change.
+///   (``GGUFCacheSizing``), so the fit does not change. The `makeRoom` of that
+///   cache counts the KV cells that a copy shares with its source one time,
+///   so the copy does not cause an eviction for the cells that it shares.
 ///
 /// ## More than one pool
 ///

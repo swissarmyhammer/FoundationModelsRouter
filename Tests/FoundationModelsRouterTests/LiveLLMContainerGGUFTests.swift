@@ -139,6 +139,22 @@ struct LiveLLMContainerGGUFTests {
         #expect(level == ReasoningOffRequest.reasoningLevel)
     }
 
+    /// The production change that makes this test fail: a GGUF model that
+    /// conforms to ``SessionPromptCacheCopying``, so a fork of a GGUF session
+    /// asks the model for a copy and sends the budget again (D205 (f)). The
+    /// cache of FoundationModelsLlamaCpp copies the live sequence itself on a
+    /// partial live hit, and the router calls no copy.
+    @Test("the backend of a GGUF container copies no prompt cache for a fork")
+    func backendOfAGGUFContainerCopiesNoPromptCache() async throws {
+        let container = try LiveLLMContainer.make(wrapping: Self.makeModel(), ref: Self.ref)
+        let backend = try #require(container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend)
+
+        let outcome = await backend.copyPromptCache(
+            fromSession: ULID.generate().description, toSession: ULID.generate().description)
+
+        #expect(outcome == nil)
+    }
+
     @Test("the live loader wraps the LlamaLanguageModel its model loader gives, and makes a session over it")
     func liveLoaderWrapsAGGUFModel() async throws {
         let model = try Self.makeModel()

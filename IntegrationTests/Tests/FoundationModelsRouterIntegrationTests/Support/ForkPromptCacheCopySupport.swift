@@ -142,10 +142,84 @@ struct MeasuredAnswer {
     }
 }
 
+extension MeasuredAnswer {
+    /// The tokens at the end of the cached history that the render of the
+    /// next prompt can change: the end marker of the last entry, the role
+    /// marker of the next entry, and the generation prompt. A call that
+    /// reuses at least the history less these tokens did not prefill the
+    /// history again.
+    static let templateSeamTokens = 16
+
+    /// The tokens that a call must reuse when the cache holds `history`: the
+    /// history less ``templateSeamTokens``.
+    ///
+    /// - Parameter history: The tokens of the cached history.
+    /// - Returns: The least reused tokens.
+    static func reuseBound(of history: Int) -> Int {
+        history - templateSeamTokens
+    }
+
+    /// The input tokens that the first call of this answer reused from the
+    /// prompt cache.
+    ///
+    /// - Returns: The reused tokens.
+    /// - Throws: The `#require` failure for an answer with no call, or a call
+    ///   with no cached count.
+    func cachedTokensOfFirstCall() throws -> Int {
+        let firstCall = try #require(calls.first)
+        return try #require(firstCall.tokensCached)
+    }
+
+    /// The tokens of the history that the last call of this answer left in
+    /// the prompt cache.
+    ///
+    /// - Returns: The tokens.
+    /// - Throws: The `#require` failure for an answer with no call.
+    func historyTokens() throws -> Int {
+        try #require(calls.last).historyTokens
+    }
+}
+
 extension GenerationCallUsage {
     /// The tokens of the history that this call left in the prompt cache:
     /// the tokens of its prompt and of its reply.
     var historyTokens: Int { tokensIn + tokensOut }
+}
+
+extension RouterSessionDirectory {
+    /// Forks `source` at `cut` for the user `clientID`, and gives the live
+    /// fork.
+    ///
+    /// - Parameters:
+    ///   - source: The source.
+    ///   - cut: The cut of the fork.
+    ///   - clientID: The client of the user that asks for the fork.
+    /// - Returns: The live fork.
+    /// - Throws: The error of the fork, or the `#require` failure when the
+    ///   fork is not live.
+    func liveFork(of source: any RoutedSession, at cut: SessionForkCut, clientID: String) async throws
+        -> any RoutedSession
+    {
+        let summary = try await fork(SessionForkRequest(sourceID: source.id, cut: cut, forker: .user(clientID: clientID)))
+        return try #require(session(id: summary.id))
+    }
+}
+
+extension RoutedSession {
+    /// The history position of the second prompt of this session: a cut
+    /// there keeps the first turn and not the second.
+    ///
+    /// - Returns: The position.
+    /// - Throws: The `#require` failure for a session with fewer than two
+    ///   prompts.
+    func positionOfSecondPrompt() async throws -> Int {
+        let entries = Array(await transcript)
+        let promptPositions = entries.indices.filter {
+            if case .prompt = entries[$0] { return true }
+            return false
+        }
+        return try #require(promptPositions.dropFirst().first)
+    }
 }
 
 extension PromptCacheUsage {
