@@ -24,8 +24,29 @@ comments:
     - evidence: MeteredToolLoopLanguageModel.swift: 5 Task.sleep replaced by MeteredPaceClock (ManualRunClock given to Router.useRunClock; advance by prefill/decode; after the first output send, wait on GenerationPassObserver.phaseChanges.waitForChange(after:) with a "take stacks if this hangs" comment). SessionIndexRecordingTests.swift: Task.sleep(5 ms) replaced by updateRecord that moves updatedAt back 60 s (no Date seam; decided not worth a production seam). GenerationCallFirstTokenTests and GenerationCallUsageTests: >= bounds with leastDecodeTime slack became exact == checks. GenerationCallOutputBufferedTests: comment. Filtered run of 8 suites: 58 tests passed. Full swift test once: 3082 tests in 351 suites passed (plus 50 and 19), exit 0, output in scratchpad/full-suite.txt. No sleeps remain in Tests/ or IntegrationTests/Tests.
     - next: /review
   timestamp: 2026-11-19T03:59:04.191941+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7rzg4xh46e46z2e2th3ap42
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (75ea6059): 0 findings, 0 confirmed, 0 refuted. 5 files reviewed. 2 .kanban files are not in scope (.reviewignore).
+    - checks in addition to the engine:
+      - No real-time wait is in Tests/ or IntegrationTests/Tests. The only sleep calls are on a manual clock (ManualRunClockWaitTests) and on a test clock that never reaches a deadline (SessionDrainTests).
+      - MeteredPaceClock.sendFirstOutput reads phaseChanges.changeCount before channel.send. ChangeSignal.waitForChange(after:) compares the count in its lock, so a signal that comes before the wait starts ends the wait at once. The wait cannot miss the change.
+      - The exact `==` checks are correct. Only the paced calls move the ManualRunClock. passStarted reads the clock before the executor runs. The relay reads the clock for the first output event before the call moves the clock by its decode, because the call waits for that record. The session reads the end of a tool call at the tool-call open, and the end of the answer after the call ended. In both cases the decode move is done and the next prefill move is not done. The default stall interval is zero, so no stall watch sleeps on the clock.
+      - The session index test moves updatedAt back by 60 s before the second prompt. If the second prompt does not move updatedAt forward, updatedAt stays 60 s before afterFirst.updatedAt and the `>=` check fails. Thus the test still tests that a prompt moves updatedAt forward.
+    - next: none. The task is in done.
+  timestamp: 2026-11-19T04:02:09.457640+00:00
+- actor: claude-code
+  id: 01m7rzgrr7a8btt5hseqksdjg0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — MeteredToolLoopLanguageModel.swift (MeteredPaceClock), SessionIndexRecordingTests.swift, GenerationCallFirstTokenTests.swift, GenerationCallUsageTests.swift, GenerationCallOutputBufferedTests.swift
+    - test: green — one full swift test run, 3082 tests in 351 suites (+50, +19), 0 failures
+    - commit: 75ea6059
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T04:02:29.767290+00:00
+position_column: done
+position_ordinal: ffffffffffb880
 title: Replace the wall-clock sleeps of the metered model and the session index test with a test clock
 ---
 ## Problem
