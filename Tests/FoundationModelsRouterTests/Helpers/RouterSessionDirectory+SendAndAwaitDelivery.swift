@@ -46,7 +46,6 @@ extension RouterSessionDirectory {
     func sendAndAwaitDelivery(
         _ text: String, fromClient clientID: String, to id: ULID
     ) async throws -> [SessionSendReceipt] {
-        try await sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: clientID), to: .session(id), text: text))
+        try await send(text, to: id, from: .user(clientID: clientID), awaitingDelivery: true)
     }
 }

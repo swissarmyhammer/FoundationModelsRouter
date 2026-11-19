@@ -56,6 +56,40 @@ comments:
     - evidence: Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift, RouterSessionDirectoryArchivedTargetTests.swift, RouterSessionDirectoryArchiveMailTests.swift. Check 1 shown to fail: with the `SessionInboxFile.write` line in `writeInboxFile` removed, the 2 changed tests failed ("no such file"); line put back, `git diff Sources/` empty. Filtered: 27 tests in 3 suites passed. Full `swift test` (one run): 2969 tests in 343 suites passed, plus 49 and 19; exit 0; no warnings.
     - next: /review
   timestamp: 2026-11-18T23:59:31.141091+00:00
+- actor: claude-code
+  id: 01m7rhqcfmzxb3qtwmw6m71yya
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (496edc13). 3 findings (3 confirmed, 0 refuted). The 2 items of "Review Findings (2026-11-18 17:50)" are fixed: the live-archived test and the restart test read the inbox file back, and the archived-target suite calls the shared `Fixture.send`. New: Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift:283, Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:87, Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:395.
+    - next: implement the 3 items of "Review Findings (2026-11-18 17:59)". The task stays in review.
+  timestamp: 2026-11-19T00:01:26.516915+00:00
+- actor: claude-code
+  id: 01m7rhqxwdf24ev7v3pgvajaf6
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — RouterSessionDirectoryArchiveTests.swift, RouterSessionDirectoryArchivedTargetTests.swift, RouterSessionDirectoryArchiveMailTests.swift (inbox read-back shown to fail; one Fixture send helper)
+    - test: green — one full swift test run, 2969 tests in 343 suites (+49, +19), 0 failures
+    - commit: 496edc13
+    - review: findings — RouterSessionDirectoryArchiveMailTests.swift:283, RouterSessionDirectoryArchiveTests.swift:87, RouterSessionDirectoryArchiveTests.swift:395 (all reuse in tests)
+  timestamp: 2026-11-19T00:01:44.333511+00:00
+- actor: claude-code
+  id: 01m7rjanpkyfg9yswd5d3t17ye
+  text: |-
+    Implement pass 3 (the 3 items of "Review Findings (2026-11-18 17:59)").
+    - One send helper in the new file `Tests/FoundationModelsRouterTests/Helpers/RouterSessionDirectory+TestSend.swift`: `RouterSessionDirectory.send(_:to:from:sourceSession:awaitingDelivery:)` (one form for a `SessionAddress`, one for a session id that forwards `.session(id)`), and `sendMessage(_:to:from:sourceSession:awaitingDelivery:)` (send and `#require` of the message id). `awaitingDelivery: true` uses `sendAndAwaitDelivery(_:)`; that is the contract difference of the delivery and source-session suites. The file also holds `SessionSendReceipt.archived(_:to:)`, the `sent` receipt with the note "archived".
+    - Finding 1: the directory, not the Fixture, holds `sendMessage`. Reason: the memory-only test has no Fixture, so an instance method of the Fixture with a `through directory:` parameter cannot serve it. The memory-only test calls `router.sessionDirectory.sendMessage(...)`; the archive suites call `fixture.liveDirectory.sendMessage(...)`. `Fixture.send` and `Fixture.sendMessage` are removed.
+    - Finding 2: the private send helpers of the inbox, delivery and source-session suites are removed; the suites call the shared helper. Each suite has a `user` constant for its UI sender. The assertions of the existing inbox tests did not change. `sendAndAwaitDelivery(_:fromClient:to:)` now forwards to the shared helper.
+    - Finding 3: `RouterSessionDirectoryArchiveTests.sendToArchivedSession(_:through:)` sends, takes the id with `#require`, checks the archived receipt and the inbox file text. The live-archived test, the restart test and the archived-target full-id test call it. The archived-target test "a send to an archived session writes the message as a file in its inbox" is merged into the full-id test, because the helper does the same check.
+    - Other copies removed in the changed files: the inline archived receipt in the delivery and source-session suites (now `SessionSendReceipt.archived`); the "live root with archivedAt" setup of the archive test and of `liveArchivedSession` (now `Fixture.makeLiveArchivedRoot()`).
+    - Filtered: 6 suites (Archive, ArchivedTarget, ArchiveMail, Inbox, Delivery, SourceSession), 74 tests passed; after the last change, Archive and ArchivedTarget, 18 tests passed.
+  timestamp: 2026-11-19T00:11:58.547721+00:00
+- actor: claude-code
+  id: 01m7rjbbc17j3dhc91bkjmcryf
+  text: |-
+    ### implement — changed
+    - evidence: new Tests/FoundationModelsRouterTests/Helpers/RouterSessionDirectory+TestSend.swift; changed Helpers/RouterSessionDirectory+SendAndAwaitDelivery.swift, RouterSessionDirectoryArchiveTests.swift, RouterSessionDirectoryArchivedTargetTests.swift, RouterSessionDirectoryArchiveMailTests.swift, RouterSessionDirectoryInboxTests.swift, RouterSessionDirectoryDeliveryTests.swift, RouterSessionDirectorySourceSessionTests.swift. No change in Sources/. Filtered: 74 tests in 6 suites passed. Full `swift test` (one run): 2968 tests in 343 suites passed (one test fewer: the archived-target inbox-file test is merged into the full-id test), plus 49 and 19; exit 0; no warnings in the test files.
+    - next: /review
+  timestamp: 2026-11-19T00:12:20.737209+00:00
 depends_on:
 - 01M7QTQCW62ZNN9CXFTVE3TV8Y
 position_column: doing
@@ -102,3 +136,14 @@ Push when green. Send the sha to foundationmodelsmultitool-89 and testudoapp-9a.
 
 - [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:238` `completeness/inverse-operation-coverage` — The test named 'a live session whose record holds archivedAt reads archived, and a send to it goes to its inbox' never checks the inbox. It asserts the receipt, the archived state and that pendingMessages is empty, but it does not read the inbox file back. The write side of the new behaviour is therefore unproven: a send could return the archivedNote receipt and still write no file, and the test would pass. After the send, read the file back with the message id (`SessionInboxFile.url(of:in:)` and `SessionInboxFile.read`, or the existing inbox-file helper) and assert that it exists and holds the sent text. Apply the same check to the restart test.
 - [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchivedTargetTests.swift:75` `reuse/reuse` — The new private helper `send(to:in:)` repeats the send helper of the archive suite. That helper sends the same kind of UI message to a session id. It is private to another suite, so this suite cannot call it, and the two copies can drift apart. Move the send helper to a shared place, such as a static on `RouterSessionDirectoryArchiveTests.Fixture` or an internal helper, and take the sender as a parameter. Then both suites call one copy. If the sender difference is kept, pass it in rather than writing a parallel copy.
+
+## Review Findings (2026-11-18 17:59)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveMailTests.swift:283` `reuse/reuse` — The memory-only test repeats the body of `Fixture.sendMessage` inline: it calls `Fixture.send` and then takes `receipts.first?.messageID` with `#require`. The existing helper was not extended with a directory parameter, so the same send-and-require sequence is written out a second time. Add a `through directory:` parameter to `Fixture.sendMessage`, defaulting to `liveDirectory`, and call it here with `router.sessionDirectory`, so both paths use one send-and-require helper.
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:87` `reuse/reuse` — The new `Fixture.send` helper repeats a send helper that already exists in another test suite. `RouterSessionDirectoryInboxTests.send` does the same job, so the test code now has two copies that can drift apart. Move the one send helper into a shared test helper file, such as `Tests/FoundationModelsRouterTests/Helpers/`, and have the archive, delivery and inbox suites call it. If the other suites need a different contract, parameterize the shared helper instead of keeping a parallel copy.
+- [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryArchiveTests.swift:395` `reuse/reuse` — The restart test repeats the send, the `#require` of the message id, the receipt check and the inbox-file text check that the live-archived test already performs. The two copies are near-identical and will drift apart. Extract a helper such as `sendToArchivedSession(_:through:)` that returns the message id after checking the archived receipt and the inbox file, and call it from both tests. Each test keeps its own remaining assertions.

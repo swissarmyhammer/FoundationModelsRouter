@@ -58,10 +58,7 @@ struct RouterSessionDirectoryArchivedTargetTests {
     ///   ``RoutedSessionActor``.
     private static func liveArchivedSession(in fixture: Fixture) async throws -> any RoutedSession {
         await fixture.latch.open()
-        let session = await fixture.makeLiveRoot()
-        let actor = try #require(session as? RoutedSessionActor)
-        actor.updateFacts { $0.archivedAt = MillisecondDate.rounded(Date()) }
-        return session
+        return try await fixture.makeLiveArchivedRoot()
     }
 
     /// The `messageQueued` events of the message `id` in `events`.
@@ -80,22 +77,16 @@ struct RouterSessionDirectoryArchivedTargetTests {
     // MARK: - A recorded archived session
 
     /// The production change that makes this test fail: a resolver that
-    /// refuses an archived target, or a send that gives no note.
-    @Test("a send by full id to an archived session is sent with the note archived")
+    /// refuses an archived target, a send that gives no note, or a send that
+    /// writes no file in the `inbox/` folder of the session.
+    @Test("a send by full id to an archived session is sent with the note archived, into its inbox")
     func aSendByFullIDIsSentWithTheNoteArchived() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let session = try await Self.archivedSession(in: fixture)
 
-        let receipts = try await Fixture.send(
-            Self.text, to: session.id, from: Self.user, through: fixture.liveDirectory)
+        _ = try await RouterSessionDirectoryArchiveTests.sendToArchivedSession(
+            session, through: fixture.liveDirectory)
 
-        let messageID = try #require(receipts.first?.messageID)
-        #expect(
-            receipts == [
-                SessionSendReceipt(
-                    messageID: messageID, target: session.id, outcome: .sent,
-                    reason: RouterSessionDirectory.archivedNote)
-            ])
         await fixture.close(session)
     }
 
@@ -107,23 +98,10 @@ struct RouterSessionDirectoryArchivedTargetTests {
         let session = try await Self.archivedSession(in: fixture)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
 
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        let messageID = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
         fixture.liveDirectory.emit(Self.marker)
 
         #expect(Self.queued(messageID, in: await events.next(through: Self.marker)).count == 1)
-        await fixture.close(session)
-    }
-
-    /// The production change that makes this test fail: a send to an
-    /// archived session that writes no file in its `inbox/` folder.
-    @Test("a send to an archived session writes the message as a file in its inbox")
-    func aSendToAnArchivedSessionWritesAnInboxFile() async throws {
-        let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
-        let session = try await Self.archivedSession(in: fixture)
-
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
-
-        #expect(try RouterSessionDirectoryArchiveMailTests.inboxFile(messageID, of: session).text == Self.text)
         await fixture.close(session)
     }
 
@@ -134,7 +112,7 @@ struct RouterSessionDirectoryArchivedTargetTests {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let session = try await Self.archivedSession(in: fixture)
 
-        _ = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        _ = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
 
         let summary = try await SessionDirectorySummaries.summary(
             of: session.id, in: fixture.liveDirectory, matching: SessionQuery(includesRecorded: true))
@@ -149,7 +127,7 @@ struct RouterSessionDirectoryArchivedTargetTests {
     func afterAnUnarchiveAndAnOpenTheMessageReachesTheSession() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let session = try await Self.archivedSession(in: fixture)
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        let messageID = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
         await fixture.latch.open()
 
         let (launcher, _, delivered) = try await RouterSessionDirectoryArchiveMailTests.reopen(
@@ -169,7 +147,7 @@ struct RouterSessionDirectoryArchivedTargetTests {
     func aLiveArchivedSessionKeepsTheMessageInItsInbox() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let session = try await Self.liveArchivedSession(in: fixture)
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        let messageID = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
 
         await fixture.liveDirectory.scanInbox(of: session.id)
 
@@ -186,7 +164,7 @@ struct RouterSessionDirectoryArchivedTargetTests {
     func anUnarchiveOfALiveArchivedSessionDeliversTheMessage() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let session = try await Self.liveArchivedSession(in: fixture)
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        let messageID = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
 
         _ = try await fixture.liveDirectory.unarchive(session.id, by: Self.user)

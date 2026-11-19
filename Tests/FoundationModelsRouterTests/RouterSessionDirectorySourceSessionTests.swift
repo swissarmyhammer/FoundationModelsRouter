@@ -24,6 +24,9 @@ struct RouterSessionDirectorySourceSessionTests {
     /// The UI client that sends each message.
     private static let clientID = "client-a"
 
+    /// The UI user that sends each message.
+    private static let user = SessionMessageSender.user(clientID: clientID)
+
     /// The title of a recorded source session.
     private static let recordedTitle = "Release notes"
 
@@ -60,26 +63,6 @@ struct RouterSessionDirectorySourceSessionTests {
         return prompt(title: try #require(summary.title), folder: summary.workingDirectory)
     }
 
-    /// Sends a user message with ``text`` and the source session `source` to
-    /// `address`. When `awaitingDelivery` is `true`, waits until the
-    /// directory delivered it.
-    ///
-    /// - Parameters:
-    ///   - address: The target of the message.
-    ///   - source: The source session of the message.
-    ///   - fixture: The fixture of the test.
-    ///   - awaitingDelivery: `true` to wait for the delivery. Use `false` for a
-    ///     recorded target that is not live: no delivery follows that send.
-    /// - Returns: The receipts of the send.
-    private static func send(
-        to address: SessionAddress, from source: ULID, in fixture: Fixture, awaitingDelivery: Bool = true
-    ) async throws -> [SessionSendReceipt] {
-        let message = OutgoingSessionMessage(
-            from: .user(clientID: clientID), to: address, text: text, sourceSession: source)
-        if awaitingDelivery { return try await fixture.directory.sendAndAwaitDelivery(message) }
-        return try await fixture.directory.send(message)
-    }
-
     /// Sends a user message from `source` to the idle live session `target`,
     /// lets its turn end, and gives the prompt texts of its transcript.
     ///
@@ -91,7 +74,8 @@ struct RouterSessionDirectorySourceSessionTests {
     private static func promptTexts(
         afterSendingFrom source: ULID, to target: any RoutedSession, in fixture: Fixture
     ) async throws -> [String] {
-        _ = try await send(to: .session(target.id), from: source, in: fixture)
+        _ = try await fixture.directory.send(
+            Self.text, to: .session(target.id), from: Self.user, sourceSession: source, awaitingDelivery: true)
         #expect(await target.awaitIdle())
         return await target.transcript.promptTexts
     }
@@ -108,7 +92,8 @@ struct RouterSessionDirectorySourceSessionTests {
         let target = fixture.makeSession()
         let expected = try await Self.prompt(namingSource: source.id, in: fixture)
 
-        let receipts = try await Self.send(to: .session(target.id), from: source.id, in: fixture)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target.id), from: Self.user, sourceSession: source.id, awaitingDelivery: true)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
@@ -125,7 +110,8 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let target = fixture.makeSession()
 
-        let receipts = try await Self.send(to: .session(target.id), from: source.id, in: fixture)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target.id), from: Self.user, sourceSession: source.id, awaitingDelivery: true)
 
         let messageID = try #require(receipts.first?.messageID)
         let delivered = try await fixture.directory.message(messageID, to: target.id)
@@ -146,7 +132,8 @@ struct RouterSessionDirectorySourceSessionTests {
         let target = try await RouterSessionDirectoryDeliveryTests.startHeldTurn(in: fixture, on: backend)
         let expected = try await Self.prompt(namingSource: source.id, in: fixture)
 
-        let receipts = try await Self.send(to: .session(target.id), from: source.id, in: fixture)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target.id), from: Self.user, sourceSession: source.id, awaitingDelivery: true)
         let waiting = await target.pendingMessages().map(\.body)
         await latch.open()
 
@@ -200,7 +187,8 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let target = try await fixture.recordClosedSession()
 
-        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target), from: Self.user, sourceSession: source.id)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target, outcome: .sent)])
@@ -215,7 +203,7 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let (target, folder) = try await fixture.recordClosedSessionWithFolder()
 
-        _ = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
+        _ = try await fixture.directory.send(Self.text, to: .session(target), from: Self.user, sourceSession: source.id)
 
         let files = try SessionInboxFile.pending(in: folder)
         let limit = SessionMessageLimits().maxMessageBytes
@@ -235,7 +223,8 @@ struct RouterSessionDirectorySourceSessionTests {
         let target = try await fixture.recordClosedSession()
         let expected = try await Self.prompt(namingSource: source.id, in: fixture)
         var events = fixture.directory.events().makeAsyncIterator()
-        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target), from: Self.user, sourceSession: source.id)
         let messageID = try #require(receipts.first?.messageID)
 
         let opened = try await fixture.profile.standard.restoreSession(id: target).session
@@ -254,7 +243,8 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let target = try await fixture.recordClosedSession()
         var events = fixture.directory.events().makeAsyncIterator()
-        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target), from: Self.user, sourceSession: source.id)
         let messageID = try #require(receipts.first?.messageID)
 
         let opened = try await fixture.profile.standard.restoreSession(id: target).session
@@ -298,7 +288,9 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let expected = try await Self.prompt(namingSource: source.id, in: fixture)
 
-        let receipts = try await Self.send(to: .agent(id: Self.agentID, folder: nil), from: source.id, in: fixture)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .agent(id: Self.agentID, folder: nil), from: Self.user, sourceSession: source.id,
+            awaitingDelivery: true)
 
         let started = try #require(fixture.launcher.sessions.first)
         #expect(receipts.map(\.outcome) == [.started])
@@ -315,14 +307,11 @@ struct RouterSessionDirectorySourceSessionTests {
         let source = fixture.makeSession()
         let target = try await fixture.recordClosedSession { $0.archivedAt = Date() }
 
-        let receipts = try await Self.send(to: .session(target), from: source.id, in: fixture, awaitingDelivery: false)
+        let receipts = try await fixture.directory.send(
+            Self.text, to: .session(target), from: Self.user, sourceSession: source.id)
 
         let messageID = try #require(receipts.first?.messageID)
-        #expect(
-            receipts == [
-                SessionSendReceipt(
-                    messageID: messageID, target: target, outcome: .sent, reason: RouterSessionDirectory.archivedNote)
-            ])
+        #expect(receipts == [SessionSendReceipt.archived(messageID, to: target)])
         await fixture.close([source])
     }
 }

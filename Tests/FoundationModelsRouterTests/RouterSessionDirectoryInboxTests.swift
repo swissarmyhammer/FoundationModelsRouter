@@ -30,6 +30,9 @@ struct RouterSessionDirectoryInboxTests {
     /// The UI client that sends each message.
     private static let clientID = "client-a"
 
+    /// The UI user that sends each message.
+    private static let user = SessionMessageSender.user(clientID: clientID)
+
     /// The sender of each file that ``writeFile(to:id:chainDepth:unknownKeys:)``
     /// writes: the default user sender, which is the sender of a file with no
     /// `clientID` key.
@@ -392,21 +395,6 @@ struct RouterSessionDirectoryInboxTests {
 
     // MARK: - Send
 
-    /// Sends one message to the session `id`.
-    ///
-    /// - Parameters:
-    ///   - id: The session id of the target.
-    ///   - directory: The directory that sends.
-    ///   - sender: The sender. The default is the UI client.
-    /// - Returns: The receipts of the send.
-    /// - Throws: The error of the send.
-    private static func send(
-        to id: ULID, through directory: RouterSessionDirectory,
-        from sender: SessionMessageSender = .user(clientID: clientID)
-    ) async throws -> [SessionSendReceipt] {
-        try await directory.send(OutgoingSessionMessage(from: sender, to: .session(id), text: text))
-    }
-
     /// The production change that makes this test fail: a send that does not
     /// carry the sender session through the file, or that leaves the file in
     /// the inbox after the delivery.
@@ -417,7 +405,7 @@ struct RouterSessionDirectoryInboxTests {
         let target = fixture.makeSession()
         let sender = fixture.makeSession()
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory, from: .session(sender.id))
+        let receipts = try await fixture.directory.send(Self.text, to: target.id, from: .session(sender.id))
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
@@ -441,7 +429,7 @@ struct RouterSessionDirectoryInboxTests {
         var events = fixture.directory.events().makeAsyncIterator()
         let target = fixture.makeSession()
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+        let receipts = try await fixture.directory.send(Self.text, to: target.id, from: Self.user)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
@@ -465,7 +453,7 @@ struct RouterSessionDirectoryInboxTests {
         await target.close()
         fixture.directory.register(target, kind: .root, parentID: nil)
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+        let receipts = try await fixture.directory.send(Self.text, to: target.id, from: Self.user)
 
         #expect(
             receipts
@@ -486,7 +474,7 @@ struct RouterSessionDirectoryInboxTests {
         await target.close()
         fixture.directory.register(target, kind: .root, parentID: nil)
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory, from: .session(sender.id))
+        let receipts = try await fixture.directory.send(Self.text, to: target.id, from: .session(sender.id))
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
@@ -508,7 +496,7 @@ struct RouterSessionDirectoryInboxTests {
         var events = fixture.directory.events().makeAsyncIterator()
         let target = fixture.makeSession()
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory)
+        let receipts = try await fixture.directory.send(Self.text, to: target.id, from: Self.user)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(await events.nextDelivery(of: messageID) != nil)
@@ -527,7 +515,7 @@ struct RouterSessionDirectoryInboxTests {
             over: BasicLLMContainer(), cacheDir: scratch)
         let target = profile.standard.makeSession(configuration: SessionConfiguration())
 
-        let receipts = try await Self.send(to: target.id, through: router.sessionDirectory)
+        let receipts = try await router.sessionDirectory.send(Self.text, to: target.id, from: Self.user)
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
@@ -549,7 +537,7 @@ struct RouterSessionDirectoryInboxTests {
         let id = try await fixture.recordClosedSession()
         let sender = fixture.makeSession()
         var events = fixture.directory.events().makeAsyncIterator()
-        let receipts = try await Self.send(to: id, through: fixture.directory, from: .session(sender.id))
+        let receipts = try await fixture.directory.send(Self.text, to: id, from: .session(sender.id))
         let messageID = try #require(receipts.first?.messageID)
         #expect(receipts == [SessionSendReceipt(messageID: messageID, target: id, outcome: .sent)])
 
@@ -571,7 +559,7 @@ struct RouterSessionDirectoryInboxTests {
         let fixture = try await RouterSessionDirectoryDeliveryTests.makeFixture()
         let (id, folder) = try await fixture.recordClosedSessionWithFolder()
 
-        let receipts = try await Self.send(to: id, through: fixture.directory)
+        let receipts = try await fixture.directory.send(Self.text, to: id, from: Self.user)
 
         #expect(
             receipts
@@ -729,7 +717,7 @@ struct RouterSessionDirectoryInboxTests {
         var events = fixture.directory.events().makeAsyncIterator()
 
 
-        let receipts = try await Self.send(to: target.id, through: fixture.directory, from: .session(sender))
+        let receipts = try await fixture.directory.send(Self.text, to: target.id, from: .session(sender))
 
         let messageID = try #require(receipts.first?.messageID)
         #expect(fixture.directory.openInboxWatcherCount == 0)

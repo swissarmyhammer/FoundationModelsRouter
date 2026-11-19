@@ -127,7 +127,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     func aQueuedMessageStaysAsAnInboxFile() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        let messageID = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
 
@@ -145,7 +145,7 @@ struct RouterSessionDirectoryArchiveMailTests {
         let (session, _) = try await fixture.startHeldTurn()
         let source = await fixture.makeLiveRoot()
         let sourceSummary = try await fixture.liveDirectory.summary(of: source.id)
-        let messageID = try await fixture.sendMessage(
+        let messageID = try await fixture.liveDirectory.sendMessage(
             Self.text, to: session.id, from: Self.user, sourceSession: source.id)
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
@@ -164,7 +164,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     func anArchiveSendsNoDeliveryForAKeptMessage() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let (session, _) = try await fixture.startHeldTurn()
-        _ = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        _ = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
         var events = fixture.liveDirectory.events().makeAsyncIterator()
 
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
@@ -181,7 +181,7 @@ struct RouterSessionDirectoryArchiveMailTests {
     func theQueuedMessageReachesTheSessionWhenItOpens() async throws {
         let fixture = try await RouterSessionDirectoryArchiveTests.makeFixture()
         let (session, prompt) = try await fixture.startHeldTurn()
-        let messageID = try await fixture.sendMessage(Self.text, to: session.id, from: Self.user)
+        let messageID = try await fixture.liveDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
         _ = try await fixture.liveDirectory.archive(session.id, by: Self.user)
         let unread = try await fixture.readingDirectory.inbox(of: session.id, markRead: false)
 
@@ -280,9 +280,7 @@ struct RouterSessionDirectoryArchiveMailTests {
         let session = profile.standard.makeSession(configuration: SessionConfiguration())
         _ = try session.send("first question")
         try await backend.changes.wait(untilAtLeast: 1) { backend.prompts.count }
-        let receipts = try await Fixture.send(
-            Self.text, to: session.id, from: Self.user, through: router.sessionDirectory)
-        let waiting = try #require(receipts.first?.messageID)
+        let waiting = try await router.sessionDirectory.sendMessage(Self.text, to: session.id, from: Self.user)
         var events = router.sessionDirectory.events().makeAsyncIterator()
 
         _ = try await router.sessionDirectory.archive(session.id, by: Self.user)
