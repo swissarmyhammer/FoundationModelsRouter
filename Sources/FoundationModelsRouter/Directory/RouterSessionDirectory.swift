@@ -1131,7 +1131,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// store keeps the root it holds: its folder can sit inside the folder of
     /// its parent, which is not a recording root. A memory-only session gives
     /// `nil` too. A recorded session that is not live gives the recording
-    /// root that holds its folder.
+    /// root that holds its folder directly. A recorded fork whose folder is in
+    /// the folder of its source gives `nil`, as a live fork does
+    /// (``recordedLocation(of:)``).
     ///
     /// - Parameter id: The session id.
     /// - Returns: The summary and the recording root.
@@ -1143,10 +1145,12 @@ public actor RouterSessionDirectory: SessionDirectory {
             let folder = summary.kind == .root ? Self.ledgerDirectory(of: session) : nil
             return (summary, folder?.deletingLastPathComponent())
         }
-        guard let folder = try await recordedFolder(of: id), let record = try SessionIndexFile.read(in: folder) else {
+        guard let location = try await recordedLocation(of: id),
+            let record = try SessionIndexFile.read(in: location.folder)
+        else {
             throw SessionDirectoryError.unknownSession(id)
         }
-        return (recordedSummary(of: record), folder.deletingLastPathComponent())
+        return (recordedSummary(of: record), location.recordingRoot)
     }
 
     // MARK: - Launcher
@@ -2138,8 +2142,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// deliver a file to an archived session, also when a client opened it
     /// with `session/load`, so the file waits for the unarchive
     /// (``unarchive(_:by:)``). The file of a live archived session goes to
-    /// the folder of the live session, and a recorded one to the folder that
-    /// a recording root holds.
+    /// the folder of the live session, and a recorded one to its folder that
+    /// a listing shows (``inboxFolder(of:)``), also the folder of a recorded
+    /// fork in the folder of its source.
     ///
     /// - Parameters:
     ///   - message: The message.
@@ -2158,8 +2163,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   no source session to a recorded target that is not archived, and no
     ///   file.
     /// - Throws: `SessionDirectoryError.unknownSession(_:)` when the session
-    ///   has no folder: no recording root holds the folder of a recorded
-    ///   session, or a live archived session is memory-only. Or the errors of
+    ///   has no folder: no listing shows the folder of a recorded session
+    ///   (``inboxFolder(of:)``), or a live archived session is memory-only.
+    ///   Or the errors of ``inboxFolder(of:)`` and
     ///   ``writeInboxFile(_:chainDepth:userHeader:to:)``.
     private func sendToRecorded(
         _ message: OutgoingSessionMessage, chainDepth: Int, userHeader: UserMessageHeader?, isArchived: Bool,
@@ -2179,16 +2185,18 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// The session folder that holds the `inbox/` folder of the session
     /// `id`: the recording directory of a live durable session, else the
-    /// folder that a recording root holds (``recordedFolder(of:)``).
+    /// folder of the recorded session that a listing shows
+    /// (``listedRecordedFolder(of:)``), also a recorded fork.
     ///
     /// - Parameter id: The session id.
     /// - Returns: The folder, or `nil` when the session has none.
-    /// - Throws: The error of the recording roots of the host.
+    /// - Throws: The error of the recording roots of the host, or what
+    ///   ``listedRecordedFolder(of:)`` throws.
     private func inboxFolder(of id: ULID) async throws -> URL? {
         if let live = session(id: id), let folder = Self.ledgerDirectory(of: live) {
             return folder
         }
-        return try await recordedFolder(of: id)
+        return try await listedRecordedFolder(of: id)
     }
 
     /// Starts a new root session of the agent through the launcher, and
@@ -2604,18 +2612,20 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// The ledger of the session `id`, when a live session or a recorded
-    /// session folder has the id.
+    /// session that a listing shows (``listedRecordedFolder(of:)``), also a
+    /// recorded fork, has the id.
     ///
     /// - Parameter id: The session id.
-    /// - Returns: The ledger, or `nil` when no live session and no session
-    ///   folder under the recording roots has the id.
-    /// - Throws: The error of a read of the ledger, or the error of the
-    ///   recording roots of the host.
+    /// - Returns: The ledger, or `nil` when no live session and no recorded
+    ///   session under the recording roots has the id.
+    /// - Throws: The error of a read of the ledger, the error of the
+    ///   recording roots of the host, or what ``listedRecordedFolder(of:)``
+    ///   throws.
     private func knownLedger(of id: ULID) async throws -> SessionMessageLedger? {
         if let session = session(id: id) {
             return try ledger(of: id, in: Self.ledgerDirectory(of: session))
         }
-        guard let folder = try await recordedFolder(of: id) else { return nil }
+        guard let folder = try await listedRecordedFolder(of: id) else { return nil }
         return try ledger(of: id, in: folder)
     }
 
@@ -2639,6 +2649,11 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The folder of the recorded session `id` under the recording roots of
     /// the host and of the usage store (``allRecordingRoots()``): the folder
     /// named by the id in the first root that holds one.
+    ///
+    /// It does not find a recorded fork whose folder is in the folder of its
+    /// source (D205), so only ``recordedLocation(of:)`` calls it, as its fast
+    /// first step. A lookup of a recorded session uses
+    /// ``listedRecordedFolder(of:)``.
     ///
     /// - Parameter id: The session id.
     /// - Returns: The folder, or `nil` when no root holds one.
@@ -2665,10 +2680,30 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// - Throws: The error of the recording roots of the host, or what
     ///   ``RecordedSessions/listedEntry(of:)`` throws.
     private func listedRecordedFolder(of id: ULID) async throws -> URL? {
+        try await recordedLocation(of: id)?.folder
+    }
+
+    /// The folder of the recorded session `id` that a listing shows, and the
+    /// recording root that holds the folder directly.
+    ///
+    /// A session whose folder a recording root holds directly gives that
+    /// root. A recorded fork whose folder is in the folder of its source
+    /// (D205) gives `nil` as its root: the folder of its source is not a
+    /// recording root.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The folder and the recording root, or `nil` when no root
+    ///   holds the folder and no listing shows the id.
+    /// - Throws: The error of the recording roots of the host, or what
+    ///   ``RecordedSessions/listedEntry(of:)`` throws.
+    private func recordedLocation(of id: ULID) async throws -> (folder: URL, recordingRoot: URL?)? {
+        // Keep the direct lookup first: it checks one folder for each root,
+        // and it tells that the folder is a direct entry of a root. The
+        // listing reads the index.md of each session.
         if let folder = try await recordedFolder(of: id) {
-            return folder
+            return (folder, folder.deletingLastPathComponent())
         }
-        return try RecordedSessions(roots: try await allRecordingRoots()).listedEntry(of: id)?.folder
+        return try RecordedSessions(roots: try await allRecordingRoots()).listedEntry(of: id).map { ($0.folder, nil) }
     }
 
     /// The recording directory that holds the ledger of `session`: its
@@ -2986,7 +3021,8 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// The ended marker of the session `id`, or `nil` when the session is not
     /// ended. A live session answers from its facts; a recorded session that
-    /// is not live answers from the `index.md` of its folder.
+    /// is not live, also a recorded fork, answers from the `index.md` of its
+    /// folder (``listedRecordedFolder(of:)``).
     ///
     /// - Parameter id: The session id.
     /// - Returns: The marker, or `nil` for a session that is not ended.
@@ -2997,7 +3033,8 @@ public actor RouterSessionDirectory: SessionDirectory {
         if let session = session(id: id) {
             return session.facts.end
         }
-        guard let folder = try await recordedFolder(of: id), let record = try SessionIndexFile.read(in: folder) else {
+        guard let folder = try await listedRecordedFolder(of: id), let record = try SessionIndexFile.read(in: folder)
+        else {
             throw SessionDirectoryError.unknownSession(id)
         }
         return record.facts.end

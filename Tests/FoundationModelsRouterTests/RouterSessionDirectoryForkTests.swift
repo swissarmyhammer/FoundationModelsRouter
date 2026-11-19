@@ -53,6 +53,10 @@ import Testing
     /// A turn index that no source of this suite has.
     private static let missingTurn = 5
 
+    /// The name of the file of the usage store, in the cache folder of the
+    /// test.
+    private static let usageStoreFileName = "sessions.json"
+
     // MARK: - The last completed turn
 
     @Test func aForkAtTheLastCompletedTurnHasBothTurns() async throws {
@@ -424,18 +428,22 @@ import Testing
     ///   - fixture: The fixture before the restart.
     ///   - archivesTheFork: Whether the live fork is archived before the
     ///     restart. The default is `false`.
+    ///   - beforeTheClose: Runs on the live fork before the close. The
+    ///     default does nothing.
     /// - Returns: The restarted fixture, the source and the fork. Both are
     ///   closed.
-    /// - Throws: What the source, the fork, the archive or the restart
-    ///   throws.
+    /// - Throws: What the source, the fork, the archive, `beforeTheClose` or
+    ///   the restart throws.
     private static func restartAfterAFork(
-        of fixture: Fixture, archivesTheFork: Bool = false
+        of fixture: Fixture, archivesTheFork: Bool = false,
+        beforeTheClose: (any RoutedSession) async throws -> Void = { _ in }
     ) async throws -> (restarted: Fixture, source: any RoutedSession, fork: any RoutedSession) {
         let source = try await fixture.makeSource(answering: Self.twoTurns, title: Self.sourceTitle)
         let fork = try await fixture.fork(source, at: .afterTurn(0))
         if archivesTheFork {
             _ = try await fixture.directory.archive(fork.id, by: Fixture.user)
         }
+        try await beforeTheClose(fork)
         await source.close()
         await fork.close()
         return (try await fixture.restarted(), source, fork)
@@ -519,6 +527,145 @@ import Testing
         _ = try await restarted.directory.unarchive(fork.id, by: Fixture.user)
 
         #expect(try SessionRecordFixtures.recordOnDisk(in: fork.recordingDirectory).facts.archivedAt == nil)
+        restarted.directories.remove()
+    }
+
+    // MARK: - The usage, the mail and the end of a recorded fork
+
+    /// Gives the directory of `fixture` a usage store in the cache folder of
+    /// the test.
+    ///
+    /// - Parameter fixture: The fixture of the test.
+    /// - Returns: The store that the directory uses.
+    private static func useUsageStore(in fixture: Fixture) async -> JSONFileSessionUsageStore {
+        let store = JSONFileSessionUsageStore(
+            fileURL: fixture.directories.cacheDir.appendingPathComponent(Self.usageStoreFileName, isDirectory: false))
+        await fixture.directory.use(usageStore: store)
+        return store
+    }
+
+    /// Makes a source with one fork, sends one UI message to the live fork
+    /// and waits until the fork answered it, closes both, and restarts the
+    /// fixture.
+    ///
+    /// - Parameter fixture: The fixture before the restart.
+    /// - Returns: The restarted fixture, the source, the fork and the id of
+    ///   the message in the ledger of the fork.
+    /// - Throws: What ``restartAfterAFork(of:archivesTheFork:beforeTheClose:)``
+    ///   or the send throws, or the `#require` failure when the send gives no
+    ///   message id.
+    private static func restartAfterAMailedFork(
+        of fixture: Fixture
+    ) async throws -> (restarted: Fixture, source: any RoutedSession, fork: any RoutedSession, mailID: MailID) {
+        var mailID: MailID?
+        let (restarted, source, fork) = try await restartAfterAFork(of: fixture) { fork in
+            let receipts = try await fixture.directory.sendAndAwaitDelivery(
+                OutgoingSessionMessage(from: Fixture.user, to: .session(fork.id), text: Self.mailText))
+            #expect(await fork.awaitIdle())
+            mailID = receipts.first?.messageID
+        }
+        return (restarted, source, fork, try #require(mailID))
+    }
+
+    /// The production change that makes this test fail: a pin that finds a
+    /// recorded session only in a folder that a recording root holds
+    /// directly, or that gives the folder of the source as the recording
+    /// root of the fork.
+    @Test func aPinReachesARecordedForkAfterARestart() async throws {
+        let (restarted, _, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+        let store = await Self.useUsageStore(in: restarted)
+
+        try await restarted.directory.setPinned(true, of: fork.id)
+
+        let usage = try #require(store.usage(of: fork.id))
+        #expect(usage.pinnedAt != nil)
+        #expect(usage.recordingRoot == nil)
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: a mark of a use that
+    /// finds a recorded session only in a folder that a recording root holds
+    /// directly.
+    @Test func aMarkOfAUseReachesARecordedForkAfterARestart() async throws {
+        let (restarted, _, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+        let store = await Self.useUsageStore(in: restarted)
+
+        try await restarted.directory.markUsed(fork.id)
+
+        #expect(store.usage(of: fork.id)?.lastUsedAt != nil)
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: a send to a
+    /// recorded session that finds its inbox folder only in a folder that a
+    /// recording root holds directly.
+    @Test func aSendReachesTheInboxOfARecordedForkAfterARestart() async throws {
+        let (restarted, source, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+
+        _ = try await restarted.directory.send(
+            Self.mailText, to: .session(fork.id), from: Fixture.user, sourceSession: source.id)
+
+        #expect(try SessionInboxFile.pending(in: fork.recordingDirectory).count == 1)
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: an inbox that reads
+    /// the ledger of a recorded session only in a folder that a recording
+    /// root holds directly.
+    @Test func theInboxOfARecordedForkReadsItsFolderAfterARestart() async throws {
+        let (restarted, _, fork, mailID) = try await Self.restartAfterAMailedFork(of: try await Fixture.make())
+
+        let inbox = try await restarted.directory.inbox(of: fork.id, markRead: false)
+
+        #expect(inbox.map(\.id) == [mailID])
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: a lookup of one
+    /// message that reads the ledger of a recorded session only in a folder
+    /// that a recording root holds directly.
+    @Test func aLookupFindsAMessageOfARecordedForkAfterARestart() async throws {
+        let (restarted, _, fork, mailID) = try await Self.restartAfterAMailedFork(of: try await Fixture.make())
+
+        let found = try await restarted.directory.message(mailID, to: fork.id)
+
+        #expect(found?.id == mailID)
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: a chain depth that
+    /// reads the ledger of the sender only in a folder that a recording root
+    /// holds directly, so a send in a mail turn of a recorded fork starts a
+    /// new chain.
+    @Test func aSendInAMailTurnOfARecordedForkGetsTheNextChainDepth() async throws {
+        let (restarted, source, fork, mailID) = try await Self.restartAfterAMailedFork(of: try await Fixture.make())
+
+        _ = try await OriginContext.$current.withValue(.mail([mailID])) {
+            try await restarted.directory.send(Self.mailText, to: .session(source.id), from: .session(fork.id))
+        }
+
+        let files = try SessionInboxFile.pending(in: source.recordingDirectory)
+        let limit = SessionMessageLimits().maxMessageBytes
+        let written = try files.map { try SessionInboxFile.read($0, maxMessageBytes: limit) }
+        #expect(written.map(\.chainDepth) == [RouterSessionDirectory.firstChainDepth + 1])
+        restarted.directories.remove()
+    }
+
+    /// The production change that makes this test fail: an end marker that
+    /// reads a recorded session only in a folder that a recording root holds
+    /// directly.
+    @Test func theEndMarkerOfARecordedForkReadsItsFolderAfterARestart() async throws {
+        let fixture = try await Fixture.make()
+        var marker: SessionEndedMarker?
+        let (restarted, _, fork) = try await Self.restartAfterAFork(of: fixture) { fork in
+            marker = try await fixture.directory.markEnded(fork.id, reason: .finished)
+        }
+
+        let expected = try #require(marker)
+
+        let found = try await restarted.directory.endMarker(of: fork.id)
+
+        #expect(found == expected)
         restarted.directories.remove()
     }
 }

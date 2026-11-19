@@ -76,6 +76,40 @@ comments:
     - evidence: Sources: Directory/RecordedSessions.swift (`listedEntry(of:)`), Directory/RouterSessionDirectory.swift (`listedRecordedFolder(of:)`, used by `changeRecordedRecord(of:_:)`; docs of `changeRecord`, `changeRecordedRecord`, `recordRecap`). Tests: Helpers/SessionRecordFixtures.swift (shared `recordOnDisk(in:)`), RouterSessionDirectoryRecapRecordTests (recapAt check, shared helper), RouterSessionDirectoryArchiveTests, RouterSessionDirectoryUnarchiveTests, RouterSessionDirectoryTagTests (shared helper), RouterSessionDirectoryForkTests (+3 recorded-fork tests, `restartAfterAFork(of:archivesTheFork:)`). RED: 3 new tests failed with `.unknownSession`. Changed suites: 122 tests in 7 suites passed. Full `swift test` (one run): 3123 tests in 354 suites passed, plus 50 and 19; no warnings. Output: scratchpad/full-suite-3.txt.
     - next: /review
   timestamp: 2026-11-19T09:46:43.422544+00:00
+- actor: claude-code
+  id: 01m7skday3e4fb27kpeegykyxr
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD`: engine 0 findings (1 refuted, 14 attempted). The 3 items of 2026-11-19 03:37 are fixed on their lines. Driver check: 1 open item. The cause of item 3 stays in the file. `setPinned`/`markUsed` (`usageTarget(of:)`), `send` (`inboxFolder(of:)`), `inbox`/`message`/`chainDepth` (`knownLedger(of:)`) and `endMarker(of:)` still find only `<root>/<id>`, thus they fail for a closed recorded fork that the listing shows. Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:2667
+    - next: implement the item of 2026-11-19 03:47, then review again.
+  timestamp: 2026-11-19T09:50:08.835034+00:00
+- actor: claude-code
+  id: 01m7skdxjj27y4w5n2ja741r6h
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — RecordedSessions.swift (listedEntry(of:)), RouterSessionDirectory.swift (listedRecordedFolder(of:) in changeRecordedRecord); SessionRecordFixtures (shared helper), 5 test files (+3 recorded-fork tests that failed with unknownSession first)
+    - test: green — one full swift test run, 3123 tests in 354 suites (+50, +19), 0 failures
+    - commit: c1e8e493
+    - review: findings — RouterSessionDirectory.swift:2667 (the same cause is in setPinned, markUsed, send/sendToRecorded/inboxFolder, inbox(of:markRead:), message(_:to:), chainDepth(of:in:), endMarker(of:)): a closed recorded fork is listed but not found.
+  timestamp: 2026-11-19T09:50:27.922948+00:00
+- actor: claude-code
+  id: 01m7sks4dyx17d6hpvrhgr4zv5
+  text: |-
+    Item of 2026-11-19 03:47 fixed (implement, iteration 3):
+    - New private `recordedLocation(of:) -> (folder, recordingRoot?)?`: the direct lookup `recordedFolder(of:)` first (root = parent folder), else `RecordedSessions.listedEntry(of:)` (root = nil, because the folder of the source is not a recording root). `listedRecordedFolder(of:)` gives its folder.
+    - `usageTarget(of:)` (setPinned, markUsed) uses `recordedLocation(of:)`: a recorded fork gives a nil root, as a live fork does.
+    - `inboxFolder(of:)` (send -> sendToRecorded), `knownLedger(of:)` (inbox, message, chainDepth) and `endMarker(of:)` (also markEnded through requireEndMarker) use `listedRecordedFolder(of:)`.
+    - The one kept direct call of `recordedFolder(of:)` is in `recordedLocation(of:)`, with a comment: it is the fast first step, and it tells that the folder is a direct entry of a root. The doc of `recordedFolder(of:)` says that only `recordedLocation(of:)` calls it.
+    - Discovery: `markEnded(_:reason:)` also failed for a closed fork before this fix, because `requireEndMarker(of:)` calls `endMarker(of:)` after the record write.
+    - Tests: 7 new tests in RouterSessionDirectoryForkTests (pin + nil root, mark used, send, inbox, message lookup, chain depth in a mail turn, end marker). RED: 5 failed with `.unknownSession`, the lookup gave nil, and the chain depth was 1 (expected 2). GREEN: 42 tests in 1 suite passed.
+  timestamp: 2026-11-19T09:56:35.390993+00:00
+- actor: claude-code
+  id: 01m7sks9hth39xxxwsq886q4jz
+  text: |-
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift (`recordedLocation(of:)`; `usageTarget(of:)`, `inboxFolder(of:)`, `knownLedger(of:)`, `endMarker(of:)` find a recorded fork; docs of these, `sendToRecorded`, `recordedFolder(of:)`). Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkTests.swift (+7 tests, `restartAfterAFork` takes `beforeTheClose`, `restartAfterAMailedFork`, `useUsageStore(in:)`). RED: 7 issues before the fix. Changed suite: 42 tests in 1 suite passed. Full `swift test` (one run): 3130 tests in 354 suites passed, plus 50 and 19; the only warning is the SwiftPM "missing creator for mutated node" line of the mlx bundle, which is in each earlier full run too. Output: scratchpad/full-suite-4.txt.
+    - next: /review
+  timestamp: 2026-11-19T09:56:40.634636+00:00
 depends_on:
 - 01M7S16CT48HZ95JXCKH3XTEKZ
 position_column: doing
@@ -126,3 +160,12 @@ Push when green. Send the sha to foundationmodelsmultitool-89, foundationmodelsa
 - [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryRecapRecordTests.swift:118` `reuse/reuse` — The new helper recordOnDisk(of:) reimplements an existing helper with the same body. The same one-line read of the session index is already in RouterSessionDirectoryArchiveTests, so the same logic now lives in two places and can drift apart. Move recordOnDisk into a shared test helper (for example, beside SessionDirectoryRouterPair in Tests/FoundationModelsRouterTests/Helpers/) and call it from both suites. Or make the existing helper internal rather than private and call it from the new suite. Do not keep two copies.
 - [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryRecapRecordTests.swift:321` `completeness/inverse-operation-coverage` — The recorded-session recap write test reads back only the recap from the index.md. It does not check recapAt. The sibling live-session test (aRecapWriteOfALiveSessionWritesTheRecord, lines 253-254) checks both recap and recapAt. A recap write to a recorded session could store the text and drop or corrupt the time, and this test would still pass. Add `#expect(record.facts.recapAt == Self.recapAt)` after line 321 so the recorded-session write is checked for both fields, as the live-session write already is.
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:2742` `review/driver-check` — The doc of `recordRecap(_:at:of:)` says that "a live session and a recorded session that is not live, also an archived one, take the recap alike", and that it throws `unknownSession` only "when no live or recorded session has the id". This is not true for a recorded fork that is not live. `changeRecord(of:_:)` finds a recorded session with `recordedFolder(of:)`, which looks only at `<root>/<id>`. A recorded fork has its folder inside the folder of its source, and `RecordedSessions.listedEntries()` lists it (^3hxcxee). Thus the directory lists the fork, and `recordRecap` on it throws `unknownSession`. This has an effect on ^4maqy3m: the recap maker makes a recap 20 s after a turn, and a fork that closes in that time loses its recap with no error to the user. Make `recordRecap` reach a recorded fork that is not live (find the folder at any depth, as `nestedEntries()` does), and add a test that writes a recap to a closed fork and reads it from its `index.md`. If the limit stays, state it in the doc and in the `- Throws:` part, and add a test that shows the `unknownSession` error for a closed fork.
+
+## Review Findings (2026-11-19 03:47)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:2667` `review/driver-check` — The fix of item 3 of 2026-11-19 03:37 removes the cause from `changeRecordedRecord(of:_:)` only. The cause is not removed from the whole file. The cause: `RecordedSessions.listedEntries()` lists a recorded fork at any depth, but `recordedFolder(of:)` finds only `<root>/<id>`. These public operations still use `recordedFolder(of:)` and throw `unknownSession` (or give `nil`) for a recorded fork that is not live, although the listing shows the fork and each doc says "when no live or recorded session has the id": (1) `setPinned(_:of:)` and `markUsed(_:)` through `usageTarget(of:)`; (2) `send(_:)`: `recordedSummaries()` resolves the fork as a target (`.sendToRecorded`), then `sendToRecorded` throws `unknownSession` from `inboxFolder(of:)`; (3) `inbox(of:markRead:)`, `message(_:to:)` and `chainDepth(of:in:)` through `knownLedger(of:)`; (4) `endMarker(of:)`. The reason to keep `recordedFolder(of:)` in `usageTarget(of:)` is correct only in part: the parent of a fork folder is not a recording root, thus a blind change to `listedRecordedFolder(of:)` gives a wrong root. But a live fork already gives `nil` as its root ("so the store keeps the root it holds"), and a recorded fork can do the same. Make each of these operations find a recorded fork through `listedRecordedFolder(of:)`. In `usageTarget(of:)`, give the parent folder as the root only when the folder is a direct entry of a recording root, else `nil`. Add one test for each operation on a closed fork: pin, mark used, send, inbox, message read and end marker. If a limit stays for an operation, state it in its doc and its `- Throws:` part, and add a test that shows the `unknownSession` error for a closed fork.
