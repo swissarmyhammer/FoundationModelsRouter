@@ -110,10 +110,27 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift (`recordedLocation(of:)`; `usageTarget(of:)`, `inboxFolder(of:)`, `knownLedger(of:)`, `endMarker(of:)` find a recorded fork; docs of these, `sendToRecorded`, `recordedFolder(of:)`). Tests/FoundationModelsRouterTests/RouterSessionDirectoryForkTests.swift (+7 tests, `restartAfterAFork` takes `beforeTheClose`, `restartAfterAMailedFork`, `useUsageStore(in:)`). RED: 7 issues before the fix. Changed suite: 42 tests in 1 suite passed. Full `swift test` (one run): 3130 tests in 354 suites passed, plus 50 and 19; the only warning is the SwiftPM "missing creator for mutated node" line of the mlx bundle, which is in each earlier full run too. Output: scratchpad/full-suite-4.txt.
     - next: /review
   timestamp: 2026-11-19T09:56:40.634636+00:00
+- actor: claude-code
+  id: 01m7sky09d0by70jwk0my3ndy8
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (d9e2105b): 0 findings, 0 confirmed, 1 refuted, 7 attempted. 2 files reviewed; 2 `.kanban/` files are excluded by `.reviewignore`. All items of "Review Findings (2026-11-19 03:37)" and "(2026-11-19 03:47)" are checked.
+    - check of the 03:47 item: `usageTarget(of:)` (setPinned, markUsed), `inboxFolder(of:)` (send/sendToRecorded), `knownLedger(of:)` (inbox(of:markRead:), message(_:to:), chainDepth(of:in:)), `endMarker(of:)`, and `changeRecordedRecord(of:_:)` (markEnded, recordRecap) find a recorded session through `listedRecordedFolder(of:)` / `recordedLocation(of:)`. A recorded fork gives a nil recording root. The only call of `recordedFolder(of:)` is in `recordedLocation(of:)`, and its doc gives the reason. In `Sources/FoundationModelsRouter/Directory/`, no other lookup of a recorded session by `<root>/<id>` exists: `summary(of:)` and `forkSource(of:)` use `recordedSummaries()` (the listing), `recordedChildren(of:)` uses `nestedEntries()`, and `firstPrompt(of:)` and `runStatuses(of:)` use `TranscriptTree.sessionFolder(of:under:)`, which finds a folder at any depth. The new tests in `RouterSessionDirectoryForkTests.swift` cover pin, mark used, send, inbox, message read, chain depth and end marker on a closed fork.
+    - next: done.
+  timestamp: 2026-11-19T09:59:14.989308+00:00
+- actor: claude-code
+  id: 01m7skyhzwbt2y3pzqrxjzqym7
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — RouterSessionDirectory.swift (recordedLocation(of:) for usageTarget, inboxFolder, knownLedger, endMarker); RouterSessionDirectoryForkTests (+7 closed-fork tests, all failed first)
+    - test: green — one full swift test run, 3130 tests in 354 suites (+50, +19), 0 failures
+    - commit: d9e2105b
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T09:59:33.116571+00:00
 depends_on:
 - 01M7S16CT48HZ95JXCKH3XTEKZ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffbe80
 title: The record keeps lastSummary, recap and recapAt, and each summary gives them (D206)
 ---
 ## Goal
