@@ -459,7 +459,7 @@ struct HumanWaitGateTests {
         }
 
         let answerA = ObservedRun { try await sessionA.respond(to: "a-wait") }
-        try await BoundedWait.run { try await answerA.wait(for: waitStarted) }
+        try await answerA.wait(for: waitStarted)
 
         // A's pump keeps its answer running for the full wait.
         #expect(await sessionA.isPumpRunning)
@@ -467,12 +467,12 @@ struct HumanWaitGateTests {
         // B answers during the wait: the wait is a tool body, and it holds
         // no lock of the model.
         let answerB = ObservedRun { try await sessionB.respond(to: "b") }
-        #expect(try await BoundedWait.run { try await answerB.value() } == Self.reply(to: "b"))
+        #expect(try await answerB.value() == Self.reply(to: "b"))
         #expect(await fixture.observer.exited == ["b"])
 
         // A then finishes its own answer.
         humanGate.signal()
-        #expect(try await BoundedWait.run { try await answerA.value() } == Self.reply(to: "a-wait"))
+        #expect(try await answerA.value() == Self.reply(to: "a-wait"))
         #expect(await fixture.observer.entered == ["a-wait", "b"])
         #expect(await fixture.observer.exited == ["b", "a-wait"])
         #expect(await sessionA.isIdleOnceThePumpEnds())
@@ -827,12 +827,12 @@ struct HumanWaitGateTests {
         // body while A's answer is suspended in its tool body: neither holds
         // the lock of the model.
         let answerB = ObservedRun { try await sessionB.respond(to: "answer-b") }
-        try await BoundedWait.run { try await answerB.wait(for: inAnswerB) }
+        try await answerB.wait(for: inAnswerB)
         #expect(await sessionB.isPumpRunning)
 
         // A's answer ends *while* the wait is still open.
         releaseAnswerA.signal()
-        #expect(try await BoundedWait.run { try await answerA.value() } == Self.reply(to: "answer-a"))
+        #expect(try await answerA.value() == Self.reply(to: "answer-a"))
         #expect(await sessionA.isIdleOnceThePumpEnds())
 
         // The wait ends next. It takes nothing back, so it does not suspend.

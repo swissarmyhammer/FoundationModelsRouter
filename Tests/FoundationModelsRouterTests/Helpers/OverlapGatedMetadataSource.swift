@@ -6,9 +6,10 @@ import Foundation
 /// one repo until a metadata read of a second repo has begun.
 ///
 /// A resolve that sizes the two repos one after the other, the held repo
-/// first, never begins the second read, so the held read never ends. A test
-/// wraps its resolve in a ``BoundedWait``, which fails it then. A resolve that
-/// sizes the two at the same time ends.
+/// first, never begins the second read, so the held read never ends. The test
+/// run then hangs, and the stacks of the test process show the held read in
+/// ``fetchRawMetadata(repo:revision:)``. The wait has no time limit on
+/// purpose. A resolve that sizes the two at the same time ends.
 actor OverlapGatedMetadataSource: MetadataSource {
     /// The source that answers each read.
     private let base: any MetadataSource

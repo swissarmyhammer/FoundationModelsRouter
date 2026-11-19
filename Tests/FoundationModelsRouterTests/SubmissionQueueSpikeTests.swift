@@ -204,20 +204,19 @@ struct SubmissionQueueSpikeTests {
         // The first submission of the parent. `streamEvents` ends with its SDK
         // call and does not wait for the background run, as a submission must
         // not wait. A tool that waits in its body keeps this wait open.
-        try await BoundedWait.run {
-            try await worker.submit(Self.parentLabel) {
-                for try await _ in await parent.streamEvents(to: Self.parentPrompt) {}
-            }
+        try await worker.submit(Self.parentLabel) {
+            for try await _ in await parent.streamEvents(to: Self.parentPrompt) {}
         }
 
         // The terminal of the background run comes after the submission of
         // the child. With no terminal, no mail wakes the pump, so the test
         // fails here, before it waits for the delivery (rule T1).
-        let terminal = try #require(try await BoundedWait.run { await settledRun.value })
+        let terminal = try #require(await settledRun.value)
 
         // The pump of the parent: the waiting mail causes the next submission,
         // with no caller call (task ^3qx0mpt).
-        try await BoundedWait.run { try await fixture.passes.waitForPasses(Self.passesBeforeDelivery + 1) }
+        try await fixture.passes.changes.wait(
+            until: { fixture.passes.recorded.count > Self.passesBeforeDelivery }, endingWhenWorkEnds: parent)
         #expect(await parent.becomesIdle())
 
         let childAnswer = PassObservingModel.answer(to: Self.childPrompt)

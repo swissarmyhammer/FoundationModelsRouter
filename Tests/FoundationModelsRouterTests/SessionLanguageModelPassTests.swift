@@ -20,8 +20,8 @@ import Testing
 /// ``LiveBackendContainer``.
 ///
 /// Rule T1: a backend has no end call and no cancel call for a `defer`, so
-/// these tests close no backend. Each wait that a regression can keep open
-/// is a ``BoundedWait``.
+/// these tests close no backend. No wait has a time limit: a wait for a
+/// state that a call makes also ends when that call ends.
 @Suite("The passes of the sessions over one model (tasks ^8csj2hw, ^1psqdm9, ^qhgfajc)")
 struct SessionLanguageModelPassTests {
     /// The repository id of the raw MLX model the wrapper tests build. The
@@ -48,18 +48,16 @@ struct SessionLanguageModelPassTests {
         let firstCall = Task { try await first.respond(to: "first", maxTokens: nil) }
         // The wait also ends when the first call ends (rule T1): the latch
         // holds its pass, so in a test that passes it cannot end first.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: firstCall)
-        }
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: firstCall)
         let secondCall = Task { try await second.respond(to: "second", maxTokens: nil) }
         // The second pass waits for the lock, which the first pass holds.
-        try await BoundedWait.run { try await fixture.lock.waitForWaiters(1) }
+        try await fixture.lock.waitForWaiters(1, endingOnEndOf: secondCall)
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
-        let firstAnswer = try await BoundedWait.value(of: firstCall)
-        let secondAnswer = try await BoundedWait.value(of: secondCall)
+        let firstAnswer = try await firstCall.value
+        let secondAnswer = try await secondCall.value
 
         #expect(firstAnswer == PassObservingModel.answer(to: "first"))
         #expect(secondAnswer == PassObservingModel.answer(to: "second"))
@@ -106,21 +104,19 @@ struct SessionLanguageModelPassTests {
         let holdingCall = Task { try await holder.respond(to: "holder", maxTokens: nil) }
         // The wait also ends when the holding call ends (rule T1): the latch
         // holds its pass, so in a test that passes it cannot end first.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holdingCall)
-        }
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holdingCall)
         let waitingCall = Task { try await waiter.respond(to: "waiter", maxTokens: nil) }
-        try await BoundedWait.run { try await fixture.lock.waitForWaiters(1) }
+        try await fixture.lock.waitForWaiters(1, endingOnEndOf: waitingCall)
 
         // The cancel does not wait for the lock: the call ends while the
         // holder still holds it.
         waitingCall.cancel()
-        let waitingOutcome = try await BoundedWait.run { await waitingCall.result }
+        let waitingOutcome = await waitingCall.result
         let passesWhileTheHolderHeldTheLock = fixture.passes.recorded.map(\.prompt)
 
         await fixture.latch.open()
-        _ = try await BoundedWait.value(of: holdingCall)
+        _ = try await holdingCall.value
 
         #expect(throws: CancellationError.self) { try waitingOutcome.get() }
         #expect(passesWhileTheHolderHeldTheLock == ["holder"])

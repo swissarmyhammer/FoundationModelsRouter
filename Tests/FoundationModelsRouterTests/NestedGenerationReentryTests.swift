@@ -944,18 +944,16 @@ struct NestedGenerationReentryTests {
         // the other passes in the lock, so in a test that passes no answer
         // ends first.
         let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
-        }
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
 
         // The pump of the waiter runs its answer, which has an identity; its
         // pass waits for the lock of the model.
         let waiterAnswer = Task { try await waiter.respond(to: Self.nestedPrompt) }
-        try await BoundedWait.run { try await lock.waitForWaiters(1) }
+        try await lock.waitForWaiters(1, endingOnEndOf: waiterAnswer)
         // A third pass waits for the lock behind the waiter's.
         let nextAnswer = Task { try await next.respond(to: Self.nextPrompt) }
-        try await BoundedWait.run { try await lock.waitForWaiters(2) }
+        try await lock.waitForWaiters(2, endingOnEndOf: nextAnswer)
 
         // The cancelAll() signal stops the running answer of the waiter. The
         // cancel does not wait for the lock, so the answer ends at once,
@@ -965,16 +963,16 @@ struct NestedGenerationReentryTests {
         // the end of the pump of the waiter. The abandoned pass keeps its
         // place in the lock, as a pass of MLX does, and leaves at its turn.
         let stop = waiter.cancelAll()
-        #expect(try await BoundedWait.run { try await waiter.awaitTerminal(of: stop) } == .signalDone(stop))
-        await #expect(throws: CancellationError.self) { try await BoundedWait.value(of: waiterAnswer) }
+        #expect(try await waiter.awaitTerminal(of: stop) == .signalDone(stop))
+        await #expect(throws: CancellationError.self) { try await waiterAnswer.value }
         #expect(await waiter.isIdleOnceThePumpEnds())
         #expect(await lock.waitingCount == 2)
 
         await fixture.latch.open()
-        #expect(try await BoundedWait.value(of: holderAnswer) == PassObservingModel.answer(to: Self.outerPrompt))
+        #expect(try await holderAnswer.value == PassObservingModel.answer(to: Self.outerPrompt))
         // The next pass ran after the holder, and the cancelled one never
         // ran.
-        #expect(try await BoundedWait.value(of: nextAnswer) == PassObservingModel.answer(to: Self.nextPrompt))
+        #expect(try await nextAnswer.value == PassObservingModel.answer(to: Self.nextPrompt))
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.outerPrompt, Self.nextPrompt])
         #expect(await lock.waitingCount == 0)
 

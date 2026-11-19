@@ -340,9 +340,7 @@ struct GGUFResolveTests {
             base: Self.source(mlxBytes: Self.smallBytes, ggufBytes: Self.smallBytes),
             holding: Self.ggufRef.repo, until: Self.drafterRef.repo)
 
-        let resolved = try await BoundedWait.run {
-            try await Self.resolve(Self.profile(standard: [ref]), source: source)
-        }
+        let resolved = try await Self.resolve(Self.profile(standard: [ref]), source: source)
 
         #expect(resolved.standard.chosen == ref)
     }

@@ -144,9 +144,9 @@ struct ToolResultCompactionTests {
         let (log, answer) = SessionEventLog.collect(
             await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil))
         // The drain ends with the stream of the answer. A self-deadlock never
-        // ends the answer, so the test then stops here at the limit of the
-        // wait.
-        try await BoundedWait.value(of: answer)
+        // ends the answer. The run then stops here, and the stacks of the test
+        // process show the summarizer call that waits behind its own session.
+        try await answer.value
         #expect(await fixture.session.pumpEnds())
 
         let events = await log.events

@@ -1,3 +1,5 @@
+import Testing
+
 @testable import FoundationModelsRouter
 
 /// The lock of one stub model: it gives one generation at a time, first in
@@ -42,6 +44,27 @@ actor FIFOGenerationLock {
     ///   first.
     nonisolated func waitForWaiters(_ count: Int) async throws {
         try await changes.wait(untilAtLeast: count, of: { await self.waitingCount })
+    }
+
+    /// Waits until at least `count` callers wait for the lock, or until
+    /// `task` ended (rule T1). When `task` ended first, the wait throws
+    /// ``FailureEventCameFirst``.
+    ///
+    /// In a test that passes, `task` must not end before the callers wait:
+    /// for example `task` is the answer whose pass the test waits for.
+    ///
+    /// - Parameters:
+    ///   - count: How many waiters to wait for.
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first, or
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
+    nonisolated func waitForWaiters<Success: Sendable, Failure: Error>(
+        _ count: Int, endingOnEndOf task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await changes.wait(
+            until: { await self.waitingCount >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 
     /// Takes the lock, or waits at the end of the line.

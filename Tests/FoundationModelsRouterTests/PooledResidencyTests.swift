@@ -429,10 +429,10 @@ struct PooledResidencyTests {
         // Let one call reach (and suspend inside) the shared model, and the
         // other wait for the shared lock, before releasing them, so the lock
         // — not scheduling luck — is what is under test.
-        try await BoundedWait.run { try await observer.changes.wait(until: { await observer.active == 1 }) }
+        try await observer.changes.wait(until: { await observer.active == 1 })
         // The two calls are `async let` children, not tasks, so no end of a
         // task is available to end this wait.
-        try await BoundedWait.run { try await lock.waitForWaiters(1) }
+        try await lock.waitForWaiters(1)
         #expect(await lock.waitingCount == 1)
         #expect(await observer.maxActive == 1)
 

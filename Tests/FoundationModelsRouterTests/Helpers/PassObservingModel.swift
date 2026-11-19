@@ -1,6 +1,7 @@
 import FoundationModels
 import FoundationModelsRouterTestSupport
 import Synchronization
+import Testing
 
 @testable import FoundationModelsRouter
 
@@ -43,6 +44,26 @@ final class ObservedPassLog: Sendable {
     ///   first.
     func waitForPasses(_ count: Int) async throws {
         try await changes.wait(untilAtLeast: count, of: { recorded.count })
+    }
+
+    /// Waits until `count` passes started, or until `task` ended (rule T1).
+    /// When `task` ended first, the wait throws ``FailureEventCameFirst``.
+    ///
+    /// In a test that passes, `task` must not end before the passes started:
+    /// for example `task` is the answer whose pass the test waits for.
+    ///
+    /// - Parameters:
+    ///   - count: How many passes to wait for.
+    ///   - task: The task whose end is the failure event.
+    ///   - sourceLocation: The place of the call, for the failure.
+    /// - Throws: ``FailureEventCameFirst`` when `task` ended first, or
+    ///   ``ConditionNeverHeld`` when the waiting task was cancelled first.
+    func waitForPasses<Success: Sendable, Failure: Error>(
+        _ count: Int, endingOnEndOf task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        try await changes.wait(
+            until: { recorded.count >= count }, endingOnEndOf: task, sourceLocation: sourceLocation)
     }
 
     /// Every pass so far, in the order it started.

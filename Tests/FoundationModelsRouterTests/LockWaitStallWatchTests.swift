@@ -21,8 +21,9 @@ import Testing
 /// an MLX model does.
 ///
 /// Each wait here waits for an event of the session, of the model, of the
-/// tool or of the clock, inside the limit of a ``BoundedWait``. A test does
-/// not wait for a time. The router of each test gives a `ManualRunClock` to
+/// tool or of the clock, and has no time limit. A wait for a state that an
+/// answer makes also ends when that answer ends (rule T1). A test does not
+/// wait for a time. The router of each test gives a `ManualRunClock` to
 /// the run plane of each session, and the stall watch runs on that clock, so
 /// the clock moves only when the test advances it. A test that checks that no
 /// report comes reads the state of the watch at a point of a fixed order. A
@@ -105,22 +106,25 @@ struct LockWaitStallWatchTests {
         }
     }
 
-    /// Waits until the stall watch of the model call in flight of `actor`
-    /// counts no time, while a tool body of that call holds.
+    /// Whether the stall watch of the model call in flight of `actor` counts
+    /// no time, while a tool body of that call holds.
     ///
     /// The pass that called the tool can end a short time after the body
-    /// started. Each recorded phase signals `phaseChanges`, so the wait reads
-    /// the watch again after each phase. With correct code the wait ends
-    /// while the body holds. With a defect, the body counts as time without
-    /// progress, and the wait ends only at the limit of its ``BoundedWait``.
+    /// started. So the read first waits until no pass is open: each recorded
+    /// phase signals `phaseChanges`, and the end of the pass is the last
+    /// phase before the body ends. Then it reads the watch one time, at that
+    /// fixed point. With correct code the watch counts no time there. With a
+    /// defect, the body counts as time without progress, and the read gives
+    /// `false`, so the test fails and does not wait.
     ///
     /// - Parameter actor: The session whose tool body holds.
+    /// - Returns: `true` when the watch counts no time.
     /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
-    private static func waitUntilNoTimeCounts(on actor: RoutedSessionActor) async throws {
-        try await actor.generationPassObserver.phaseChanges.wait(until: {
-            let watch = await actor.appliedStallWatch()
-            return watch != nil && watch?.measuredFrom == nil
-        })
+    private static func noTimeCountsInTheToolBody(of actor: RoutedSessionActor) async throws -> Bool {
+        let observer = actor.generationPassObserver
+        try await observer.phaseChanges.wait(until: { observer.openPassCount == 0 })
+        let watch = await actor.appliedStallWatch()
+        return watch != nil && watch?.measuredFrom == nil
     }
 
     /// Waits until the watch of the model call in flight of `actor` counts
@@ -136,10 +140,11 @@ struct LockWaitStallWatchTests {
     ///
     /// - Parameter actor: The session whose pass sent its first output.
     /// - Throws: ``ConditionNeverHeld`` when the test task was cancelled first.
-    private static func waitUntilTheFirstOutputCounts(on actor: RoutedSessionActor) async throws {
-        try await actor.generationPassObserver.phaseChanges.wait(until: {
-            await actor.appliedStallWatch()?.passOutputSince != nil
-        })
+    private static func waitUntilTheFirstOutputCounts<Success: Sendable, Failure: Error>(
+        on actor: RoutedSessionActor, endingOnEndOf answer: Task<Success, Failure>
+    ) async throws {
+        try await actor.generationPassObserver.phaseChanges.wait(
+            until: { await actor.appliedStallWatch()?.passOutputSince != nil }, endingOnEndOf: answer)
     }
 
     @Test("a call that waits for the lock behind the long generation of another session gives no stall")
@@ -159,12 +164,9 @@ struct LockWaitStallWatchTests {
         let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
         // The latch holds each pass, so neither answer can end before the
         // event that the test waits for.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: holdingAnswer)
-        }
+        try await fixture.passes.waitForPasses(1, endingOnEndOf: holdingAnswer)
         let (waitingLog, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
-        try await BoundedWait.run { try await fixture.lock.waitForWaiters(1) }
+        try await fixture.lock.waitForWaiters(1, endingOnEndOf: waitingAnswer)
         // The holding pass keeps the lock until the test opens the latch, so
         // the pass of the waiting session still waits. Its submission and
         // its pass started, and the watch of its call counts no time now, so
@@ -174,8 +176,8 @@ struct LockWaitStallWatchTests {
         #expect(watchDuringTheWait.measuredFrom == nil)
 
         await fixture.latch.open()
-        _ = try await BoundedWait.value(of: holdingAnswer)
-        try await BoundedWait.value(of: waitingAnswer)
+        _ = try await holdingAnswer.value
+        try await waitingAnswer.value
 
         // One start and one end for the one SDK call, and no stall.
         let waitingEvents = await waitingLog.events
@@ -208,13 +210,12 @@ struct LockWaitStallWatchTests {
         let (_, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
         // The tool gate holds the body, so the answer cannot end before the
         // body starts. An answer that ends first did not call the tool.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer)
-        }
-        try await BoundedWait.run { try await Self.waitUntilNoTimeCounts(on: actor) }
+        try await RecordedWaitResult.wait(
+            for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: answer)
+        let noTimeCounts = try await Self.noTimeCountsInTheToolBody(of: actor)
         toolGate.signal()
-        try await BoundedWait.value(of: answer)
+        try await answer.value
+        #expect(noTimeCounts)
         withExtendedLifetime(resolved) {}
     }
 
@@ -233,12 +234,12 @@ struct LockWaitStallWatchTests {
         let (log, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
         // The pass holds the lock, sent its first output, and holds until the
         // test opens the latch. The watch sleeps for its first interval.
-        try await BoundedWait.run { try await Self.waitUntilTheFirstOutputCounts(on: actor) }
-        try await BoundedWait.run { try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answer) }
+        try await Self.waitUntilTheFirstOutputCounts(on: actor, endingOnEndOf: answer)
+        try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: answer)
         clock.advance(by: Self.reportInterval)
-        try await BoundedWait.run { try await log.wait(until: { !Self.stalls(in: $0).isEmpty }) }
+        try await log.wait(until: { !Self.stalls(in: $0).isEmpty }, endingOnEndOf: answer)
         await fixture.latch.open()
-        try await BoundedWait.value(of: answer)
+        try await answer.value
 
         let stall = try #require(await log.stalls.first)
         // The session saw no fragment yet: the watch counts from the first
@@ -274,17 +275,14 @@ struct LockWaitStallWatchTests {
         let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
         // The step holds each pass, so neither answer can end before the
         // event that the test waits for.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.passes.waitForPasses(1) }, endingOnEndOf: holdingAnswer)
-        }
+        try await fixture.passes.waitForPasses(1, endingOnEndOf: holdingAnswer)
         let (log, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
         // The first pass of the waiting session waits for the lock, and its
         // watch sleeps for its first interval. The holding pass waits for its
         // step, so the pass still waits while the clock moves, and the watch
         // counts no time.
-        try await BoundedWait.run { try await fixture.lock.waitForWaiters(1) }
-        try await BoundedWait.run { try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: waitingAnswer) }
+        try await fixture.lock.waitForWaiters(1, endingOnEndOf: waitingAnswer)
+        try await clock.waitForSleepers(atLeast: 1, endingOnEndOf: waitingAnswer)
         clock.advance(by: Self.lockWaitTime)
         let watchDuringTheWait = try #require(await waitingActor.appliedStallWatch())
         #expect(watchDuringTheWait.measuredFrom == nil)
@@ -297,34 +295,26 @@ struct LockWaitStallWatchTests {
         step.signal()
         // The tool gate holds the body, so the waiting answer cannot end
         // before the body starts.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: waitingAnswer)
-        }
+        try await RecordedWaitResult.wait(
+            for: { try await toolLog.waitUntil { $0.contains(.toolBodyStarted) } }, endingOnEndOf: waitingAnswer)
         // The tool body counts no time while the clock moves.
-        try await BoundedWait.run { try await Self.waitUntilNoTimeCounts(on: waitingActor) }
+        #expect(try await Self.noTimeCountsInTheToolBody(of: waitingActor))
         clock.advance(by: Self.toolBodyTime)
         toolGate.signal()
         // The second pass sent its first output and holds for its step. Only
         // then does the clock move past the interval. Because the second pass
         // holds, the waiting answer cannot end first.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.passes.waitForPasses(Self.passesBeforeTheHeldPass) },
-                endingOnEndOf: waitingAnswer)
-        }
-        try await BoundedWait.run { try await Self.waitUntilTheFirstOutputCounts(on: waitingActor) }
-        try await BoundedWait.run {
-            try await waitingActor.generationProgressChanges.wait(until: {
-                await waitingActor.appliedStallWatch()?.lastProgressKind == .toolResult
-            })
-        }
+        try await fixture.passes.waitForPasses(Self.passesBeforeTheHeldPass, endingOnEndOf: waitingAnswer)
+        try await Self.waitUntilTheFirstOutputCounts(on: waitingActor, endingOnEndOf: waitingAnswer)
+        try await waitingActor.generationProgressChanges.wait(
+            until: { await waitingActor.appliedStallWatch()?.lastProgressKind == .toolResult },
+            endingOnEndOf: waitingAnswer)
         clock.advance(by: Self.reportInterval)
-        try await BoundedWait.run { try await log.wait(until: { !Self.stalls(in: $0).isEmpty }) }
+        try await log.wait(until: { !Self.stalls(in: $0).isEmpty }, endingOnEndOf: waitingAnswer)
         let stalls = await log.stalls
         step.signal()
-        _ = try await BoundedWait.value(of: holdingAnswer)
-        try await BoundedWait.value(of: waitingAnswer)
+        _ = try await holdingAnswer.value
+        try await waitingAnswer.value
 
         let stall = try #require(stalls.first)
         #expect(stall.lastProgress == .toolResult)

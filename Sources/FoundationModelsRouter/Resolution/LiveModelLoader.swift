@@ -632,14 +632,43 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         let (changes, change) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         var wakes = changes.makeAsyncIterator()
         repeat {
-            let entries = withObservationTracking(options: .didSet) {
-                Array(session.transcript)
-            } onChange: { event in
-                event.cancel()
-                change.yield()
-            }
+            let entries = readTrackingChanges(of: { Array(session.transcript) }, onChange: { change.yield() })
             guard read(entries) else { return }
         } while await wakes.next() != nil
+    }
+
+    /// Reads `value`, and calls `onChange` at the next change of what the
+    /// read touched, also a change that came before the observation started.
+    ///
+    /// `withObservationTracking` records what its body reads, and installs
+    /// the observation only after the body returned. A write from another
+    /// task between the read and the install has no observer, so it sends no
+    /// wake. The SDK writes the transcript on its own task, so such a write
+    /// can be the last write of a pass. The reader then waits for a change
+    /// that never comes, and the repetition watch never sees the last lines
+    /// of the pass (task ^szyxq9z). Thus this read reads `value` again after
+    /// the install: a value that differs from the tracked read was written
+    /// in that window, and `onChange` wakes the reader at once. A write after
+    /// the second read comes after the install, so the observation sees it.
+    ///
+    /// - Parameters:
+    ///   - value: Reads the observed state.
+    ///   - onChange: Wakes the reader. The reader must take more than one wake
+    ///     as one, as a stream that buffers only the newest wake does.
+    /// - Returns: What the tracked read of `value` read.
+    static func readTrackingChanges<Value: Equatable>(
+        of value: () -> Value, onChange: @escaping @Sendable () -> Void
+    ) -> Value {
+        let tracked = withObservationTracking(options: .didSet) {
+            value()
+        } onChange: { event in
+            event.cancel()
+            onChange()
+        }
+        if value() != tracked {
+            onChange()
+        }
+        return tracked
     }
 
     /// Records the usage of the last generation call of a generating method.

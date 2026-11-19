@@ -14,8 +14,8 @@ import Testing
 /// directly.
 ///
 /// Each test waits on real signals (a latch, a semaphore, a pass that waits
-/// for the lock of the model), never on the clock, inside the limit of a
-/// ``BoundedWait``. No network, no GPU.
+/// for the lock of the model), never on the clock, and no wait has a time
+/// limit. No network, no GPU.
 @Suite("The entry of a model in the pool: one load, and no queue of the router")
 struct PoolEntrySharingTests {
     // MARK: - Fixed values
@@ -183,12 +183,10 @@ struct PoolEntrySharingTests {
             let answer = Task { try await session.respond(to: prompt) }
             answers.append(answer)
             if index == 0 {
-                try await BoundedWait.run {
-                    try await RecordedWaitResult.wait(
-                        for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
-                }
+                try await RecordedWaitResult.wait(
+                    for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: answer)
             } else {
-                try await BoundedWait.run { try await fixture.lock.waitForWaiters(index) }
+                try await fixture.lock.waitForWaiters(index, endingOnEndOf: answer)
             }
             #expect(await fixture.observer.enteredCount == 1)
             #expect(await fixture.lock.waitingCount == index)
@@ -197,7 +195,7 @@ struct PoolEntrySharingTests {
 
         await fixture.latch.open()
         for (index, answer) in answers.enumerated() {
-            #expect(try await BoundedWait.value(of: answer) == PassObservingModel.answer(to: Self.prompts[index]))
+            #expect(try await answer.value == PassObservingModel.answer(to: Self.prompts[index]))
         }
         #expect(fixture.passes.recorded.map(\.prompt) == Self.prompts)
         #expect(await fixture.observer.maximumActive == 1)
@@ -236,15 +234,15 @@ struct PoolEntrySharingTests {
         let directEmbedder = try PooledEmbedder(hold: directHold)
         let directCall = Task { try await directEmbedder.embed(texts: Self.texts) }
         let entered = directLoader.embedding.entered
-        try await BoundedWait.run { try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall) }
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: directCall)
         let routerCall = Task { try await profile.embedding.embed(texts: Self.texts) }
-        try await BoundedWait.run { try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: routerCall) }
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: routerCall)
 
         directLoader.embedding.gate.signal()
         directLoader.embedding.gate.signal()
         let expected = [[Float](repeating: Self.vectorElement, count: RouterTestFixtures.stubDimension)]
-        #expect(try await BoundedWait.value(of: directCall) == expected)
-        #expect(try await BoundedWait.value(of: routerCall) == expected)
+        #expect(try await directCall.value == expected)
+        #expect(try await routerCall.value == expected)
         #expect(directLoader.embedding.peakActiveCalls == 2)
         withExtendedLifetime((router, profile, directHold)) {}
     }

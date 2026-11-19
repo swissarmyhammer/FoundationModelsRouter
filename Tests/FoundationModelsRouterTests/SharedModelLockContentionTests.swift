@@ -21,8 +21,8 @@ import Testing
 /// Each container is a ``LiveBackendContainer`` over a ``PassObservingModel``,
 /// whose passes hold its ``FIFOGenerationLock``. A pass reports what is
 /// concurrently inside the model and stays there until a latch opens, so the
-/// suite needs no network and no GPU, and it waits on no clock. Each wait
-/// that a regression can keep open is a ``BoundedWait``.
+/// suite needs no network and no GPU, and it waits on no clock. A wait for a
+/// state that an answer makes also ends when that answer ends (rule T1).
 @Suite("Contention for the lock of one model over one container")
 struct SharedModelLockContentionTests {
     // MARK: - Constants
@@ -67,23 +67,21 @@ struct SharedModelLockContentionTests {
         let holderAnswer = Task { try await holder.respond(to: Self.firstPrompt) }
         // The wait also ends when the holder answer ends (rule T1): the latch
         // holds its pass, so in a test that passes it cannot end first.
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(
-                for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
-        }
+        try await RecordedWaitResult.wait(
+            for: { try await fixture.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: holderAnswer)
 
         // The pass of the flash session now waits for the very same lock.
         // This is the contention: two handles, one container, one model.
         let waiterAnswer = Task { try await waiter.respond(to: Self.secondPrompt) }
-        try await BoundedWait.run { try await fixture.lock.waitForWaiters(1) }
+        try await fixture.lock.waitForWaiters(1, endingOnEndOf: waiterAnswer)
 
         // The waiting pass never reached the model, so one pass is in flight
         // rather than two.
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
-        #expect(try await BoundedWait.value(of: holderAnswer) == PassObservingModel.answer(to: Self.firstPrompt))
-        #expect(try await BoundedWait.value(of: waiterAnswer) == PassObservingModel.answer(to: Self.secondPrompt))
+        #expect(try await holderAnswer.value == PassObservingModel.answer(to: Self.firstPrompt))
+        #expect(try await waiterAnswer.value == PassObservingModel.answer(to: Self.secondPrompt))
         #expect(await fixture.observer.maximumActive == 1)
         #expect(await fixture.lock.waitingCount == 0)
     }

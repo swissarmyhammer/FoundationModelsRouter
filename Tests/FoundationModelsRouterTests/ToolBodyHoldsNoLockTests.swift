@@ -20,9 +20,10 @@ import Testing
 /// `NestedGenerationReentryTests`.
 ///
 /// Each wait waits for an event: a semaphore that a tool body signals, a pass
-/// that the model records, or a pass that waits for the lock. Each wait that a
-/// regression can keep open is a ``BoundedWait``. A test opens every latch and
-/// releases every step before it awaits an answer.
+/// that the model records, or a pass that waits for the lock. No wait has a
+/// clock. A wait for a state that an answer makes also ends when that answer
+/// ends (rule T1), so a regression fails the test and does not hang it. A test
+/// opens every latch and releases every step before it awaits an answer.
 @Suite("A tool body holds no lock of the model (tasks ^1psqdm9, ^qhgfajc)")
 struct ToolBodyHoldsNoLockTests {
     /// A tool whose body signals that it started, and then waits on a latch:
@@ -300,16 +301,14 @@ struct ToolBodyHoldsNoLockTests {
         defer { await SessionFixtureLifecycle.close([waiting, other], opening: [toolLatch]) }
 
         let waitingAnswerTask = Task { try await waiting.respond(to: Self.firstPrompt) }
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: waitingAnswerTask)
-        }
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: waitingAnswerTask)
 
         // The tool body waits now. The other session generates and answers.
-        let otherAnswer = try await BoundedWait.value(of: Task { try await other.respond(to: Self.secondPrompt) })
+        let otherAnswer = try await other.respond(to: Self.secondPrompt)
         let passesDuringTheToolBody = fixture.passes.recorded.map(\.prompt)
 
         await toolLatch.open()
-        let waitingAnswer = try await BoundedWait.value(of: waitingAnswerTask)
+        let waitingAnswer = try await waitingAnswerTask.value
 
         #expect(passesDuringTheToolBody == [Self.firstPrompt, Self.secondPrompt])
         #expect(otherAnswer == PassObservingModel.answer(to: Self.secondPrompt))
@@ -340,7 +339,7 @@ struct ToolBodyHoldsNoLockTests {
         }
 
         let firstAnswerTask = Task { try await first.respond(to: Self.firstPrompt) }
-        try await BoundedWait.run { try await passes.waitForPasses(1) }
+        try await passes.waitForPasses(1, endingOnEndOf: firstAnswerTask)
         let secondAnswerTask = Task { try await second.respond(to: Self.secondPrompt) }
 
         // Release one pass at a time. Before each release, the next pass of
@@ -349,14 +348,14 @@ struct ToolBodyHoldsNoLockTests {
         // holds on its step, so the count of the passes is exact at each
         // read.
         for released in 1..<allPasses {
-            try await BoundedWait.run { try await lock.waitForWaiters(1) }
+            try await lock.waitForWaiters(1)
             step.signal()
-            try await BoundedWait.run { try await passes.waitForPasses(released + 1) }
+            try await passes.waitForPasses(released + 1)
             #expect(passes.recorded.count == released + 1)
         }
         step.signal()
-        let firstAnswer = try await BoundedWait.value(of: firstAnswerTask)
-        let secondAnswer = try await BoundedWait.value(of: secondAnswerTask)
+        let firstAnswer = try await firstAnswerTask.value
+        let secondAnswer = try await secondAnswerTask.value
 
         let turns = (0..<passesPerSubmission).flatMap { _ in [Self.firstPrompt, Self.secondPrompt] }
         #expect(passes.recorded.map(\.prompt) == turns)
@@ -379,8 +378,9 @@ struct ToolBodyHoldsNoLockTests {
         defer { await SessionFixtureLifecycle.close([parent, child]) }
 
         // A regression that parks the child behind the call of its parent
-        // keeps this wait open until its limit.
-        let parentAnswer = try await BoundedWait.value(of: Task { try await parent.respond(to: Self.firstPrompt) })
+        // keeps this answer open: the stacks of the test process then show
+        // the child that waits for the call of its parent.
+        let parentAnswer = try await parent.respond(to: Self.firstPrompt)
 
         #expect(refusal.error == nil)
         // The child generated inside the tool body of the parent.
@@ -419,17 +419,17 @@ struct ToolBodyHoldsNoLockTests {
 
         // The parent's first pass holds the lock, on its step.
         let parentAnswerTask = Task { try await parent.respond(to: Self.firstPrompt) }
-        try await BoundedWait.run { try await fixture.passes.waitForPasses(1) }
+        try await fixture.passes.waitForPasses(1, endingOnEndOf: parentAnswerTask)
         // The pump of the child runs its own answer, and its pass waits for
         // the lock.
         let childAnswerTask = Task { try await child.respond(to: Self.childOwnPrompt) }
-        try await BoundedWait.run { try await fixture.lock.waitForWaiters(1) }
+        try await fixture.lock.waitForWaiters(1, endingOnEndOf: childAnswerTask)
 
         // The tool body of the parent now asks the busy child for an answer.
         // The child answers it after its own answer.
         for _ in 0..<Self.busyChildPassCount { step.signal() }
-        let parentAnswer = try await BoundedWait.value(of: parentAnswerTask)
-        let childAnswer = try await BoundedWait.value(of: childAnswerTask)
+        let parentAnswer = try await parentAnswerTask.value
+        let childAnswer = try await childAnswerTask.value
 
         #expect(refusal.error == nil)
         #expect(
@@ -458,9 +458,7 @@ struct ToolBodyHoldsNoLockTests {
         // A stream of events ends with its answer, and does not wait for the
         // background runs of that answer. The run waits on its latch, so the
         // answer ends before the run asks the child for an answer.
-        try await BoundedWait.run {
-            for try await _ in await parent.streamEvents(to: Self.firstPrompt) {}
-        }
+        for try await _ in await parent.streamEvents(to: Self.firstPrompt) {}
         let runs = await parent.runPlane.backgroundRuns()
 
         // Only now does the run ask the child for an answer.
@@ -468,7 +466,7 @@ struct ToolBodyHoldsNoLockTests {
         #expect(runs.count == 1)
         let token = try #require(runs.first?.completionToken)
         let runPlane = parent.runPlane
-        let outcome = try await BoundedWait.run { await runPlane.wait(completionToken: token, seconds: nil) }
+        let outcome = await runPlane.wait(completionToken: token, seconds: nil)
 
         var terminal: OperationEvent?
         if case .settled(let settled) = outcome {
@@ -479,7 +477,8 @@ struct ToolBodyHoldsNoLockTests {
 
         // The terminal is mail: the pump of the parent delivers it in one
         // more submission, with no caller call, and then ends.
-        try await BoundedWait.run { try await fixture.passes.waitForPasses(Self.passesBeforeDelivery + 1) }
+        try await fixture.passes.changes.wait(
+            until: { fixture.passes.recorded.count > Self.passesBeforeDelivery }, endingWhenWorkEnds: parent)
         #expect(await parent.becomesIdle())
         // The two passes of the ended answer, then the pass of the run on the
         // child, then the passes of the delivery submission, which carries
@@ -508,7 +507,7 @@ struct ToolBodyHoldsNoLockTests {
         // The pump of the session runs one answer at a time, so the answer the
         // tool body waits for could start only after the answer of the tool
         // body. The refusal ends the wait at once.
-        let answer = try await BoundedWait.value(of: Task { try await session.respond(to: Self.firstPrompt) })
+        let answer = try await session.respond(to: Self.firstPrompt)
 
         let refused = try #require(refusal.error as? RoutedSessionError)
         #expect(refused == .inBandWaitForOwnSession(sessionID: session.id))
@@ -536,16 +535,14 @@ struct ToolBodyHoldsNoLockTests {
 
         // The stream ends with its answer, and does not wait for the run. The
         // run waits on its latch, so the answer ends before the run asks.
-        try await BoundedWait.run {
-            for try await _ in await session.streamEvents(to: Self.firstPrompt) {}
-        }
+        for try await _ in await session.streamEvents(to: Self.firstPrompt) {}
         let runs = await session.runPlane.backgroundRuns()
 
         await runStart.open()
         #expect(runs.count == 1)
         let token = try #require(runs.first?.completionToken)
         let runPlane = session.runPlane
-        let outcome = try await BoundedWait.run { await runPlane.wait(completionToken: token, seconds: nil) }
+        let outcome = await runPlane.wait(completionToken: token, seconds: nil)
 
         var terminal: OperationEvent?
         if case .settled(let settled) = outcome {
@@ -574,7 +571,7 @@ struct ToolBodyHoldsNoLockTests {
         defer { await SessionFixtureLifecycle.close([session]) }
         target.set(session)
 
-        _ = try await BoundedWait.value(of: Task { try await session.respond(to: Self.firstPrompt) })
+        _ = try await session.respond(to: Self.firstPrompt)
 
         let read = try #require(bindings.read)
         #expect(

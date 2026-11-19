@@ -18,8 +18,9 @@ import Testing
 ///
 /// Each wait here waits for an event: the entry of a pass into the flash
 /// model, the pass of the summarizer call that waits for the lock of the
-/// flash model, or an event of the answer. Each wait that a regression can
-/// keep open is a ``BoundedWait``.
+/// flash model, or an event of the answer. No wait has a time limit. A wait
+/// for a state that an answer makes also ends when that answer ends (rule
+/// T1).
 @Suite("A summarizer call takes the lock of its model one pass at a time (tasks ^1psqdm9, ^qhgfajc)")
 struct SummarizerSubmissionTests {
     /// The suite's temp-directory prefix, handed to
@@ -134,17 +135,15 @@ struct SummarizerSubmissionTests {
             // ends when that answer ends (rule T1): the latch holds its pass,
             // so in a test that passes it cannot end first.
             let flashAnswer = Task { try await flashSession.respond(to: flashPrompt) }
-            try await BoundedWait.run {
-                try await RecordedWaitResult.wait(
-                    for: { try await flash.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: flashAnswer)
-            }
+            try await RecordedWaitResult.wait(
+                for: { try await flash.observer.waitUntil { $0.entered == 1 } }, endingOnEndOf: flashAnswer)
 
             // The next answer of the session over the trigger compacts first,
             // and the pass of its flash summarizer call waits for the lock of
             // the flash model. The summarizer call sends no event of the
             // session.
             let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: triggeringPrompt))
-            try await BoundedWait.run { try await flash.lock.waitForWaiters(1) }
+            try await flash.lock.waitForWaiters(1, endingOnEndOf: compactingAnswer)
             return WaitingSummarizer(
                 flash: flash, triggered: triggered,
                 flashSession: flashSession, flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer)
@@ -163,8 +162,8 @@ struct SummarizerSubmissionTests {
         let peakWhileTheSummarizerWaits = await flash.observer.maximumActive
 
         await flash.latch.open()
-        _ = try await BoundedWait.value(of: waiting.flashAnswer)
-        try await BoundedWait.value(of: waiting.compactingAnswer)
+        _ = try await waiting.flashAnswer.value
+        try await waiting.compactingAnswer.value
 
         #expect(peakWhileTheSummarizerWaits == 1)
         #expect(await flash.observer.maximumActive == 1)
@@ -192,12 +191,12 @@ struct SummarizerSubmissionTests {
         // lock: the cancel of the waiting summarizer call does not wait for
         // the lock.
         let log = waiting.log
-        try await BoundedWait.run { try await log.wait(until: { !$0.answerFailures.isEmpty }) }
+        try await log.wait(until: { !$0.answerFailures.isEmpty }, endingOnEndOf: waiting.compactingAnswer)
         let passesAfterTheClose = await flash.observer.enteredCount
 
         await flash.latch.open()
-        _ = try await BoundedWait.value(of: waiting.flashAnswer)
-        try await BoundedWait.run { await closing.value }
+        _ = try await waiting.flashAnswer.value
+        await closing.value
 
         #expect(passesAfterTheClose == 1)
         let events = await waiting.log.events
@@ -207,11 +206,11 @@ struct SummarizerSubmissionTests {
         // The compaction did not go on to the own-model tier.
         #expect(waiting.triggered.standard.generationLog.calls.count == standardCallsBeforeTheClose)
         await #expect(throws: CancellationError.self) {
-            try await BoundedWait.value(of: waiting.compactingAnswer)
+            try await waiting.compactingAnswer.value
         }
         // The abandoned pass left the lock at its turn, and never ran.
         let lock = flash.lock
-        try await BoundedWait.run { try await lock.changes.wait(until: { await lock.waitingCount == 0 }) }
+        try await lock.changes.wait(until: { await lock.waitingCount == 0 })
         #expect(await flash.observer.enteredCount == 1)
     }
 }

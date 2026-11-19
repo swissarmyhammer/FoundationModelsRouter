@@ -16,7 +16,7 @@ import Testing
 /// during that wait. The stub model gives one generation at a time, first in
 /// first out, as MLX does (``FIFOGenerationLock``).
 ///
-/// Each wait waits for an event, inside the limit of ``BoundedWait``.
+/// Each wait waits for an event, with no time limit.
 @Suite("A child session generates while a tool body of its parent waits (task ^qhgfajc)")
 struct ChildStarvationRegressionTests {
     /// A tool whose body signals that it started, and then waits on a latch:
@@ -63,17 +63,15 @@ struct ChildStarvationRegressionTests {
         defer { await SessionFixtureLifecycle.close([parent, child], opening: [toolLatch]) }
 
         let parentAnswerTask = Task { try await parent.respond(to: Self.parentPrompt) }
-        try await BoundedWait.run {
-            try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: parentAnswerTask)
-        }
+        try await RecordedWaitResult.wait(forPermitOf: entered, endingOnEndOf: parentAnswerTask)
 
         // The tool body of the parent waits now, inside the SDK call of the
         // parent. The child generates and answers in that wait.
-        let childAnswer = try await BoundedWait.value(of: Task { try await child.respond(to: Self.childPrompt) })
+        let childAnswer = try await child.respond(to: Self.childPrompt)
         let passesDuringTheToolBody = fixture.passes.recorded.map(\.prompt)
 
         await toolLatch.open()
-        let parentAnswer = try await BoundedWait.value(of: parentAnswerTask)
+        let parentAnswer = try await parentAnswerTask.value
 
         #expect(childAnswer == PassObservingModel.answer(to: Self.childPrompt))
         #expect(passesDuringTheToolBody == [Self.parentPrompt, Self.childPrompt])
