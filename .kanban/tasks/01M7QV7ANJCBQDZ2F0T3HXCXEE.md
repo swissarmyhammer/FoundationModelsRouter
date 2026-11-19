@@ -145,8 +145,27 @@ comments:
     - evidence: Sources: Recording/SessionRestoration.swift, Recording/SessionTreeRestoration.swift, Session/SessionHooks.swift; doc links only: Tracing/RouterTelemetry.swift, Session/RoutedSessionActorWorkEvents.swift. Tests: HookLineageTests (+4: a live source keeps its key for a sub-agent, gets no event, ends with one SessionEnd; nothing live starts only the fork), new RouterSessionDirectoryForkRunningTurnTests (3), Helpers/ForkFixtures.swift (`TurnCutForkingTool`). RED: the 4 hook tests failed before the fix (wrong sub-agent key, extra source events, end reasons not `[.completed]`, resumed starts not only the fork). `aCutBeforeTheRunningTurnIsThePromptOfTheRunningSubmission` failed with the `deliveredMail` write removed; the other 2 running-turn tests failed under mutations of `endOfCompleteTurn` and `Entry.prompt(delivering:)`; all reverted. Filtered: 6 suites, 108 tests passed. Full `swift test` one time: 3048 tests in 349 suites passed, exit 0; the one `warning:` line is the SwiftPM mlx bundle note (scratchpad/full-test-4.txt).
     - next: review
   timestamp: 2026-11-19T02:22:29.334257+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7rsym7ph9eet9ejq45wghym
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (1fe8c604). Engine: 0 findings (0 confirmed, 1 refuted, 7 attempted, 0 failed). 8 files reviewed. 4 `.kanban/` files are not reviewed because of `.reviewignore`.
+    - The check of item 1 (`orchestrator/d205-restore-fork-by-id`): `restoreSession(id:)` with a fork id now calls `restoreSessionTree(root: id, withForks: false)`. Thus it makes no session of the chain of sources and no fork under the fork. The hook parent of the fork comes from `RouterHooks.openSession(_:)` when the source is live. If the source is not live, it comes from `HookLineage.make` and no hooks start. Four new tests in `HookLineageTests` examine these items: the key of a sub-agent of the live source, one event for the live source, one `SessionEnd(.completed)` for the source, and only the hooks of the fork start when nothing is live. The restore of a root by id is not in scope. Task ^1vesqjj tracks it.
+    - The check of item 2 (`orchestrator/d205-running-turn-test`): `aCutBeforeTheRunningTurnIsThePromptOfTheRunningSubmission` expects `forkedAtHistoryOrdinal == 7`. If you remove `runningSubmission?.deliveredMail = deliveredMail`, `runningEntries(_:delivering:)` gets `[]`. Then the running prompt is not a turn, and `.beforeTurn(1)` gives `forkCutOutOfRange`, so the test fails. The reasoning of the implementer is correct. If the write is not there, there is no turn 1, so `.afterTurn(1)` and the `.beforeTurn(1)` of the run-mail test also give `forkCutOutOfRange`. Thus those two tests have the same result with the write and without it. They examine other mutations: a running turn that counts as complete, and a run-mail prompt that starts a turn.
+    - All the prior items are checked (2026-11-18 19:37: 4 of 4; 2026-11-18 20:06: 2 of 2).
+    - next: The task is in done. Push, and then send the sha to foundationmodelsacpagent-9e, foundationmodelsmultitool-89 and testudoapp-9a, as the "After" section tells.
+  timestamp: 2026-11-19T02:25:12.438569+00:00
+- actor: claude-code
+  id: 01m7rszcktd8q6dkm8b59k2zy0
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — SessionRestoration.swift, SessionTreeRestoration.swift, SessionHooks.swift; HookLineageTests +4, RouterSessionDirectoryForkRunningTurnTests (new, 3), ForkFixtures
+    - test: green — one full swift test run, 3048 tests in 349 suites, 0 failures
+    - commit: 1fe8c604
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T02:25:37.402405+00:00
+position_column: done
+position_ordinal: ffffffffffb580
 title: Fork a live session at a cut point in RouterSessionDirectory (D205)
 ---
 ## Goal
