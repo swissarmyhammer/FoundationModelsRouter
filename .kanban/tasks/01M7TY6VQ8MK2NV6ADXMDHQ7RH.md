@@ -61,6 +61,31 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Recording/TranscriptEventSource.swift (new, shared event builder), Sources/FoundationModelsRouter/Recording/TranscriptSessionWriter.swift (session and entry events through the source with `configuration.grammar`), Sources/FoundationModelsRouter/Session/RoutedSessionActor{Recording,MailRecords,AnswerExecution,GenerationCalls,Compaction,RepetitionWatch,RunJournal}.swift (`makePartialEvent` -> `eventSource.partialEvent`), Tests/FoundationModelsRouterTests/RecordSessionFromTranscriptTests.swift (2 new tests). RED: grammar test failed on HEAD; tool round-trip test failed under a mutation that dropped tool events from the writer (it passes on HEAD because tool entries were already mapped). Filtered `FoundationModelsRouterTests.RecordSessionFromTranscriptTests`: 11 passed. Full `swift test` once: 3213 tests in 363 suites, 52 in 28, 19 in 3 passed, exit 0, no Swift warnings (scratchpad/full-suite-r2.txt). Both review findings checked. No package pin changed.
     - next: /review
   timestamp: 2026-11-19T22:51:54.483298+00:00
+- actor: claude-code
+  id: 01m7v0ap0jxtxfrvee1p79b2dn
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD, 2 findings (2 confirmed, 6 refuted) — Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift:519, Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift:291. The 2 items of 16:36 are fixed and checked. The 5 identity fields that eventSource reads (routerId, id, parentId, slot, model) are `nonisolated let`, thus no call site reads actor state off the actor. Each of the 13 call sites gives the same arguments as before. The two events with no grammar (.toolCallStarted, the run-row .toolOutput) had no grammar before this change too. The change adds and removes no suspension point, and append and appendToRecorder did not change, thus the pump and cancellation invariants hold. No code was edited.
+    - next: implementer fixes the 2 items of 16:52; then review again.
+  timestamp: 2026-11-19T22:55:07.794421+00:00
+- actor: claude-code
+  id: 01m7v0bhaekjam21yh67svt72e
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — TranscriptEventSource.swift (new), TranscriptSessionWriter.swift, 7 RoutedSessionActor*.swift call-site files, RecordSessionFromTranscriptTests (+2)
+    - test: green — one full swift test run, 3213 tests in 363 suites (+52, +19), 0 failures
+    - commit: 1cc28e5e
+    - review: findings — RoutedSessionActorRecording.swift:519 (`.toolCallStarted` has no grammar), RoutedSessionActorRunJournal.swift:291 (the run-row `.toolOutput` has no grammar); the doc of TranscriptEventSource says "each event"
+
+    Orchestrator decision: fix the DOCS, not the live format. These two event kinds never had a grammar (also before this commit). A tool-call start and a background-run row are not model output, and the import writer writes neither. State in the doc of TranscriptEventSource, recordStart and makeRunEventPartial exactly which event kinds carry the grammar and that these two do not, and why.
+  timestamp: 2026-11-19T22:55:35.758528+00:00
+- actor: claude-code
+  id: 01m7v0fzz13gejg0yp8n6pwt9j
+  text: |-
+    ### implement — changed
+    - evidence: doc-only change, no live format change (orchestrator decision). Files: Sources/FoundationModelsRouter/Recording/TranscriptEventSource.swift (type doc lists the event kinds with and without grammar), Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift (recordStart doc), Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift (makeRunEventPartial doc). Search of every `partialEvent(` call site and every direct `TranscriptEvent.Partial(` build: WITH the session grammar: .session; the entry kinds .instructions, .prompt, .toolCalls, .toolOutput (of a submission), .response, .reasoning, .unknown (submission diff, compaction, writer, close of a failed submission); the live router-only kinds .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail, .promptStarted. WITHOUT grammar through the source: .toolCallStarted (recordStart) and the run-row .toolOutput (makeRunEventPartial); both are not model output and the writer writes neither. Also WITHOUT grammar, not through the source: the restore events .modelChanged and the .divergence of changed instructions (SessionTreeRestoration.appendRestoreEvent). Not written by any build: .embedding, .toolCall. `swift build`: Build complete, no compiler warnings (only the SwiftPM build-system line "missing creator for mutated node" for the mlx-swift_Cmlx bundle, which is not from the source). `swift test --filter FoundationModelsRouterTests.RecordSessionFromTranscriptTests`: 11 tests in 1 suite passed. No full `swift test`: the change is doc comments only. Both items of 16:52 are checked.
+    - next: /review
+  timestamp: 2026-11-19T22:58:01.825287+00:00
 position_column: doing
 position_ordinal: '80'
 title: A public writer makes a new session recording from a given model transcript, with no live session (D209 (h), part 1)
@@ -107,3 +132,13 @@ Push when green. Send the name, the signature and the sha to foundationmodelsacp
 
 - [x] `Tests/FoundationModelsRouterTests/RecordSessionFromTranscriptTests.swift:127` `completeness/inverse-operation-coverage` — The write maps every transcript entry kind through TranscriptDiffer.partials and the restore reads them back through the normal path, but the round-trip test only feeds instructions, prompt and response entries. Tool-call and tool-output entries are never written and read back, so a recording that loses or misreads them would pass this suite. The test name, 'restores to the given transcript', promises the full transcript. Add one round-trip test whose transcript includes a tool-call entry and a tool-output entry, and assert that the restored transcript equals the written one. This is a single added test, not a matrix.
 - [x] `Sources/FoundationModelsRouter/Recording/TranscriptSessionWriter.swift:176` `coordinator-check/live-session-form` — The written file is not the form that a live session writes. A live root session writes the `session` event and each entry event with `grammar: grammar?.source` (`RoutedSessionActorRecording.recordSessionMetaIfNeeded` and `recordTranscriptDelta`, through `makePartialEvent(kind:grammar:...)`). The writer makes the `session` event (line 176) and the entry events from `TranscriptDiffer.partials` (line 179) with no `grammar`. When `configuration.grammar` is set, each line of `transcript.jsonl` is different from the line of a live session. Set `grammar: configuration.grammar?.source` on the `session` event and on each entry event, and add a test that writes with a grammar and compares the `grammar` field of each event with the grammar of the configuration.
+
+## Review Findings (2026-11-19 16:52)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 10 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift:519` `completeness/invariant-propagation` — recordStart builds the .toolCallStarted event without grammar, while the other live event sites changed in this diff (recordPromptStart, recordRenderChange, recordWatchStop, appendDivergenceMarker, appendMailRecords, recordSessionMetaIfNeeded) pass it. The live session's tool-call-started events therefore have no grammar, although the change says every recorded event carries the grammar in force. Either pass the session grammar into recordStart, from the caller that holds it, and stamp it like the sibling sites, or record in the doc comment of TranscriptEventSource that .toolCallStarted events are the one kind that carries no grammar, so the stated invariant is not overstated.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift:291` `completeness/invariant-propagation` — makeRunEventPartial builds the .toolOutput run-row event through eventSource.partialEvent without grammar. The writer stamps grammar on every .toolOutput entry it writes (recordedEvents passes grammar to every partial), so a live run-row tool output and a written tool output of the same kind carry different grammar values. The change's stated invariant, the same grammar on each event as a live session writes, does not hold at this site. Thread the session grammar into makeRunEventPartial (closeOpenProgressRow and its callers have access to self.grammar) and pass grammar: grammar to partialEvent, so every .toolOutput event carries the same grammar whether it is live or written. If the omission is deliberate, state the reason in the doc comment of makeRunEventPartial and in TranscriptEventSource.

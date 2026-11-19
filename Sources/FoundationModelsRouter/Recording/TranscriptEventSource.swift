@@ -7,7 +7,44 @@ import Foundation
 /// ``RoutedModel/recordSession(from:configuration:)`` writes, goes through
 /// ``partialEvent(kind:grammar:text:since:entry:tokensIn:tokensCached:tokensOut:callTiming:callDuration:agentSpawn:)``.
 /// Thus a written recording has the same form as the recording of a live
-/// session, for example the same `grammar` on each event.
+/// session, for example the same `grammar` on each event that the writer
+/// writes.
+///
+/// ## The events that carry the grammar
+///
+/// These event kinds carry the guided-generation grammar of the session
+/// (`nil` when the session has no grammar), live and written:
+///
+/// - ``TranscriptEvent/Kind/session``.
+/// - The entry kinds of a submission, of a compaction and of the writer:
+///   ``TranscriptEvent/Kind/instructions``, ``TranscriptEvent/Kind/prompt``,
+///   ``TranscriptEvent/Kind/toolCalls``, ``TranscriptEvent/Kind/toolOutput``,
+///   ``TranscriptEvent/Kind/response``, ``TranscriptEvent/Kind/reasoning`` and
+///   ``TranscriptEvent/Kind/unknown``.
+/// - The live router-only kinds ``TranscriptEvent/Kind/divergence``,
+///   ``TranscriptEvent/Kind/generationCall``,
+///   ``TranscriptEvent/Kind/repeatedPartRemoval``,
+///   ``TranscriptEvent/Kind/watchStop``, ``TranscriptEvent/Kind/mail`` and
+///   ``TranscriptEvent/Kind/promptStarted``.
+///
+/// ## The events that carry no grammar
+///
+/// - ``TranscriptEvent/Kind/toolCallStarted``
+///   (``RoutedSessionActor/recordStart(of:correlationID:)``): the write-ahead
+///   marker of a tool call is not model output.
+/// - The ``TranscriptEvent/Kind/toolOutput`` row of a background run
+///   (``RoutedSessionActor/makeRunEventPartial(toolName:events:)``): the
+///   router writes the events of a run, and they are not model output.
+///   A `.toolOutput` entry of a submission carries the grammar.
+///
+/// The writer writes neither of these two events. Thus the grammar of each
+/// event of a written recording is equal to the grammar of the same event of
+/// a live session.
+///
+/// The events that a restore writes (``TranscriptEvent/Kind/modelChanged``
+/// and the ``TranscriptEvent/Kind/divergence`` of changed instructions) do not
+/// go through this source, and carry no grammar. No build writes
+/// ``TranscriptEvent/Kind/embedding`` or ``TranscriptEvent/Kind/toolCall``.
 struct TranscriptEventSource: Sendable, Equatable {
     /// The id of the router that records the session.
     let routerId: ULID

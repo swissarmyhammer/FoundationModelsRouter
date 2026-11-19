@@ -508,6 +508,9 @@ extension RoutedSessionActor {
     /// A restore uses it to find the run of an open call in the journal
     /// (``OpenToolCalls``).
     ///
+    /// The marker carries no grammar: it is not model output, and the
+    /// transcript writer does not write it (``TranscriptEventSource``).
+    ///
     /// - Parameters:
     ///   - call: The SDK tool call that starts.
     ///   - correlationID: The completion token of the run of the call.

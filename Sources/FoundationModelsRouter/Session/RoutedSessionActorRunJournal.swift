@@ -274,6 +274,10 @@ extension RoutedSessionActor: OperationEventJournal {
     /// text is the ``OperationEventSegment/renderedLine(for:)`` of each event,
     /// one line for each event.
     ///
+    /// The row carries no grammar: the router writes the events of a run, and
+    /// they are not model output. The transcript writer does not write a run
+    /// row (``TranscriptEventSource``).
+    ///
     /// - Parameters:
     ///   - toolName: The name of the tool that posted the events.
     ///   - events: The events of the row: one event, or the merged progress
