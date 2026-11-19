@@ -110,8 +110,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:withForks:)`` for what
     /// the restore re-applies and what it does not.
     ///
-    /// The recorded forks under a named root session are rebuilt too, and
-    /// are then released. Nothing in the returned value names one.
+    /// The id of a root session restores that session alone (^1vesqjj). The
+    /// restore makes, registers and hooks no session for a recorded fork
+    /// under it. A recorded fork is a top-level session (D205), and it can be
+    /// live in this router, for example in a tab of the host while the host
+    /// opens its source from a list of recorded sessions. The live fork keeps
+    /// its hooks and its entry in the session directory. A host opens a
+    /// recorded fork with a restore by the id of that fork. With
+    /// `switchingModel`, the recorded forks move on disk; see that parameter.
     ///
     /// The id of a recorded fork restores that fork alone (D205). Its history
     /// comes from the recordings of its chain of sources on disk, so the
@@ -161,9 +167,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     recorded value restores ``UserPresence/interactive``. The user
     ///     presence belongs to the current client, not to the recording. A
     ///     host that resumes an interactive session with no user gives
-    ///     ``UserPresence/headless`` here, and the reverse. The supplied value
-    ///     also replaces the recorded value on each recorded fork. The
-    ///     session's `index.md` on disk does not change. See
+    ///     ``UserPresence/headless`` here, and the reverse. The session's
+    ///     `index.md` on disk does not change. See
     ///     ``SessionConfiguration/userPresence``.
     ///   - hookSessionKey: The key of the hook lineage of the restored
     ///     session, or `nil` (the default) to give it its own id as its key,
@@ -172,15 +177,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     a key shared by the sessions of one working directory. The
     ///     recording does not hold the key, because it is for the hooks only,
     ///     so a host gives it again here. A recorded fork in the working
-    ///     directory of the session gets the key too, and so does a sub-agent
-    ///     that starts from the session while it is open. See
+    ///     directory of the session that a restore by its id restores while
+    ///     the session is open gets the key too, and so does a sub-agent that
+    ///     starts from the session while it is open. See
     ///     ``SessionConfiguration/hookSessionKey``.
     ///   - claimingRuns: The orphan runs that the host takes, or empty (the
     ///     default) to take none. The restore posts no `.lost` terminal for
     ///     a claimed run, and the session keeps the claim open until the host
     ///     completes the run
     ///     (``RoutedSession/completeClaimedRun(_:outcome:detail:)``) or the
-    ///     session closes. See
+    ///     session closes. A claimed run must be an orphan run of the restored
+    ///     session; a run of a recorded fork under it is claimed by a restore
+    ///     of that fork by its id. See
     ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:withForks:)``.
     ///   - transcriptReader: The reader of the recorded transcripts of
     ///     sessions, or `nil` (the default) for no reader. The recording does
@@ -212,13 +220,21 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session that is on this slot and this model already changes
     ///     nothing and writes no event.
     ///
-    ///     The recorded forks under the session move with it, to this same
-    ///     handle, because a fork is a part of the same conversation. A fork
-    ///     that stayed on the old model would fail with
-    ///     ``SessionTreeRestorationError/modelMismatch(session:slot:recorded:resident:)``.
-    ///     The restore releases the forks anyway. A restore of a recorded
-    ///     fork by its id moves that fork alone: its sources keep their
-    ///     model.
+    ///     The recorded forks under a root session move with it, to this
+    ///     same handle, because a fork is a part of the same conversation. A
+    ///     fork that stayed on the old model would fail with
+    ///     ``SessionTreeRestorationError/modelMismatch(session:slot:recorded:resident:)``
+    ///     at a later restore by its id. The restore restores no fork, so a
+    ///     fork moves on disk alone: it gets one
+    ///     ``TranscriptEvent/Kind/modelChanged`` event, and its `index.md`
+    ///     takes the new slot, model and context. The restore makes no
+    ///     session and fires no hook for it. A fork that is live in the
+    ///     router of this handle (in the session directory and not
+    ///     suspended) does not move, because its session owns its
+    ///     `index.md`. The host moves a live fork by its own restore, as it
+    ///     moves the root. A fork that the host suspended moves. A restore
+    ///     of a recorded fork by its id moves that fork alone: its sources
+    ///     and the forks under it keep their model.
     ///
     ///     The history can be larger than the context of the new model. The
     ///     restore calls no compaction. It re-applies the recorded
@@ -247,12 +263,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         transcriptReader: (any SessionTranscriptReader)? = nil,
         switchingModel: Bool = false
     ) async throws -> RestoredSession {
+        // Read before the restore, so that a failed read changes nothing.
+        let movingForks = switchingModel ? try forksMovingWithRoot(id, recordingRoot: recordingRoot) : []
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
             userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns,
-            transcriptReader: transcriptReader, switchingModel: switchingModel,
-            withForks: try !isRecordedFork(id, recordingRoot: recordingRoot))
+            transcriptReader: transcriptReader, switchingModel: switchingModel, withForks: false)
+        await moveRecordedForks(movingForks)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,
@@ -260,19 +278,24 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         )
     }
 
-    /// Tells if the recorded session `id` is a fork: its node has a source
-    /// (``SessionNode/parentId``).
+    /// The recorded forks that move with the recorded session `id` on a
+    /// restore with `switchingModel`: each recorded fork under it when it is
+    /// a root session (``SessionNode/forks``). A recorded fork moves alone,
+    /// so its forks do not move with it.
     ///
     /// - Parameters:
     ///   - id: The span id of a recorded session.
     ///   - recordingRoot: The exact directory to load from, or `nil` for the
     ///     nested `<recordingsRoot>/<routerId>/` layout.
-    /// - Returns: `true` for a recorded fork; `false` for a root session and
-    ///   for an id that the recording root does not hold, which the restore
-    ///   then refuses.
+    /// - Returns: The recorded forks under a root session; no fork for a
+    ///   recorded fork and for an id that the recording root does not hold,
+    ///   which the restore then refuses.
     /// - Throws: What ``transcriptTree(recordingRoot:)`` throws.
-    private func isRecordedFork(_ id: ULID, recordingRoot: URL?) throws -> Bool {
-        try transcriptTree(recordingRoot: recordingRoot).session(id)?.parentId != nil
+    private func forksMovingWithRoot(_ id: ULID, recordingRoot: URL?) throws -> [SessionNode] {
+        guard let node = try transcriptTree(recordingRoot: recordingRoot).session(id), node.parentId == nil else {
+            return []
+        }
+        return node.forks
     }
 
     /// The working directory one recorded session was vended with, read from

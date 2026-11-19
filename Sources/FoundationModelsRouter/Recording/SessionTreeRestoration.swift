@@ -528,7 +528,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 to: node, transcript: transcript, on: routedLLM)
 
             if movesModel {
-                await recordModelChange(of: node, to: routedLLM)
+                await Self.recordModelChange(of: node, to: routedLLM)
             }
 
             // The node's recorded configuration envelope (task ^ne5g9jn),
@@ -774,62 +774,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             return session
         }
 
-        /// Appends the ``TranscriptEvent/Kind/modelChanged`` event of one node
-        /// that restores onto another model or slot. The event is stamped with
-        /// the new slot and the new model, and its text names the old ones
-        /// (``RestoredSession/modelChangedText(from:to:)``). The recorded
-        /// events stay as they are, so the history keeps the model of each
-        /// answer.
-        ///
-        /// - Parameters:
-        ///   - node: The node being rebuilt.
-        ///   - routedLLM: The generation handle the node restores onto.
-        func recordModelChange(of node: SessionNode, to routedLLM: RoutedLLM) async {
-            await appendRestoreEvent(
-                kind: .modelChanged,
-                text: RestoredSession.modelChangedText(
-                    from: (node.record.slot, node.record.model),
-                    to: (routedLLM.slot, routedLLM.chosen)),
-                of: node, on: routedLLM, slot: routedLLM.slot, model: routedLLM.chosen)
-        }
-
-        /// Appends one event of the restore path to the directory of a node.
-        /// Every event the restore writes goes through here, so the event
-        /// shape lives in one place.
-        ///
-        /// - Parameters:
-        ///   - kind: The kind of the event.
-        ///   - text: The text of the event.
-        ///   - node: The node being rebuilt. Its id, parent and directory
-        ///     address the event.
-        ///   - routedLLM: The generation handle whose recorder writes the event.
-        ///   - slot: The slot stamped on the event.
-        ///   - model: The model stamped on the event.
-        func appendRestoreEvent(
-            kind: TranscriptEvent.Kind, text: String, of node: SessionNode,
-            on routedLLM: RoutedLLM, slot: ModelSlot, model: ModelRef
-        ) async {
-            await routedLLM.recorder.append(
-                TranscriptEvent.Partial(
-                    routerId: routedLLM.routerId,
-                    sessionId: node.id,
-                    parentId: node.parentId,
-                    slot: slot,
-                    model: model,
-                    kind: kind,
-                    text: text
-                ),
-                to: node.directory
-            )
-        }
-
         /// Applies this call's `instructions` override to one node.
         ///
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named session alone. Every recorded fork under a named
         /// root keeps its own recorded string, and
         /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``
-        /// releases those forks anyway.
+        /// restores no fork under a root.
         ///
         /// The model reads its instructions from the leading `.instructions`
         /// entry of the transcript its backend is seeded with.
@@ -866,7 +817,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // marker states the condition in the record itself. The write path
             // is the one ``RoutedSessionActor`` uses for its own
             // transcript-divergence markers.
-            await appendRestoreEvent(
+            await Self.appendRestoreEvent(
                 kind: .divergence,
                 text: RestoredSession.instructionsDivergenceText(
                     recorded: recorded, supplied: supplied),
@@ -888,7 +839,104 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     }
 }
 
+extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Moves recorded forks onto this handle on disk, with no session for
+    /// them (^1vesqjj). A restore of a root session by its id with
+    /// `switchingModel` calls this for the forks under the root, because a
+    /// fork is a part of the same conversation and the restore does not
+    /// restore it.
+    ///
+    /// A fork that is live in the router of this handle does not move: its
+    /// session owns its `index.md`, and the move makes no second instance
+    /// of it. A host moves a live fork by its own restore. A fork that the
+    /// host suspended is not live, so it moves. A fork that is on this slot
+    /// and this model already changes nothing.
+    ///
+    /// Each moved fork gets the same writes as a fork that a restore moves:
+    /// one ``TranscriptEvent/Kind/modelChanged`` event, and the slot, the
+    /// model and the context of this handle in its `index.md`. The restore
+    /// starts, registers and ends no hooks for it.
+    ///
+    /// - Parameter forks: The recorded forks, as the tree loaded them.
+    func moveRecordedForks(_ forks: [SessionNode]) async {
+        for fork in forks where !isLive(fork.id) && (fork.record.slot != slot || fork.record.model != chosen) {
+            await Self.recordModelChange(of: fork, to: self)
+            guard durableRecording?.indexWriter.writes == true else { continue }
+            var record = fork.record
+            record.slot = slot
+            record.model = chosen
+            record.context = resolution.contextTokens
+            SessionIndexFile.saveLoggingFailure(record, in: fork.directory)
+        }
+    }
+
+    /// Tells if the session `id` is live in the session directory of the
+    /// router of this handle: the directory holds it, and it is not
+    /// suspended.
+    ///
+    /// - Parameter id: The id of the session.
+    /// - Returns: `true` for a live session that is not suspended.
+    private func isLive(_ id: ULID) -> Bool {
+        sessionDirectory?.session(id: id).map { !$0.isSuspended } ?? false
+    }
+
+    /// Appends the ``TranscriptEvent/Kind/modelChanged`` event of one node
+    /// that restores or moves onto another model or slot. The event is
+    /// stamped with the new slot and the new model, and its text names the
+    /// old ones (``RestoredSession/modelChangedText(from:to:)``). The recorded
+    /// events stay as they are, so the history keeps the model of each
+    /// answer.
+    ///
+    /// - Parameters:
+    ///   - node: The node that moves.
+    ///   - routedLLM: The generation handle the node moves onto.
+    fileprivate static func recordModelChange(of node: SessionNode, to routedLLM: RoutedLLM) async {
+        await appendRestoreEvent(
+            kind: .modelChanged,
+            text: RestoredSession.modelChangedText(
+                from: (node.record.slot, node.record.model),
+                to: (routedLLM.slot, routedLLM.chosen)),
+            of: node, on: routedLLM, slot: routedLLM.slot, model: routedLLM.chosen)
+    }
+
+    /// Appends one event of the restore path to the directory of a node.
+    /// Every event the restore writes goes through here, so the event
+    /// shape lives in one place.
+    ///
+    /// - Parameters:
+    ///   - kind: The kind of the event.
+    ///   - text: The text of the event.
+    ///   - node: The node of the event. Its id, parent and directory address
+    ///     the event.
+    ///   - routedLLM: The generation handle whose recorder writes the event.
+    ///   - slot: The slot stamped on the event.
+    ///   - model: The model stamped on the event.
+    fileprivate static func appendRestoreEvent(
+        kind: TranscriptEvent.Kind, text: String, of node: SessionNode,
+        on routedLLM: RoutedLLM, slot: ModelSlot, model: ModelRef
+    ) async {
+        await routedLLM.recorder.append(
+            TranscriptEvent.Partial(
+                routerId: routedLLM.routerId,
+                sessionId: node.id,
+                parentId: node.parentId,
+                slot: slot,
+                model: model,
+                kind: kind,
+                text: text
+            ),
+            to: node.directory
+        )
+    }
+}
+
 extension SessionNode {
+    /// The recorded forks under this node: its children, and the forks
+    /// under each child, in depth-first order.
+    var forks: [SessionNode] {
+        children.flatMap { [$0] + $0.forks }
+    }
+
     /// The kind and the parent that a restored node registers with in the
     /// session directory. A recorded fork is a `fork` of its source. A node
     /// with no source is a `subagent` of the session its record's

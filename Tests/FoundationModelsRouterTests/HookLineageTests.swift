@@ -683,6 +683,112 @@ struct HookLineageTests {
         }
     }
 
+    // MARK: - A restore of a recorded root by its id
+
+    /// Makes a source with the hook key ``replacementKey`` and a fork of it
+    /// through the session directory, and closes the source. The fork is
+    /// then live, and its source is a recorded root that is not live.
+    ///
+    /// - Parameter hooked: The router with a dispatcher.
+    /// - Returns: The id of the recorded root and the live fork.
+    /// - Throws: What the fork throws.
+    private static func liveForkOfARecordedRoot(
+        in hooked: HookedProfile
+    ) async throws -> (rootID: ULID, fork: any RoutedSession) {
+        let source = hooked.profile.standard.makeSession(
+            configuration: SessionConfiguration(hookSessionKey: Self.replacementKey))
+        let summary = try await hooked.router.sessionDirectory.fork(
+            SessionForkRequest(
+                sourceID: source.id, cut: .lastCompletedTurn, forker: .user(clientID: "hook-test-client")))
+        let fork = try #require(hooked.router.sessionDirectory.session(id: summary.id))
+        await source.close()
+        return (source.id, fork)
+    }
+
+    /// The production change that makes this test fail: a restore of a root
+    /// id that registers a second instance of the live fork in the session
+    /// directory.
+    @Test("a restore of a recorded root by its id keeps the directory entry of its live fork")
+    func aRestoreOfARecordedRootKeepsTheDirectoryEntryOfItsLiveFork() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (rootID, fork) = try await Self.liveForkOfARecordedRoot(in: hooked)
+
+            let restored = try await hooked.profile.standard.restoreSession(id: rootID)
+
+            #expect(hooked.router.sessionDirectory.session(id: fork.id) as AnyObject? === fork as AnyObject)
+            await SessionFixtureLifecycle.close([restored.session, fork])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a root
+    /// id whose second instance of the live fork removes the hook session of
+    /// the live fork when the restore releases it.
+    @Test("a restore of a recorded root by its id keeps the key of its live fork for a sub-agent of the fork")
+    func aRestoreOfARecordedRootKeepsTheKeyOfItsLiveFork() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (rootID, fork) = try await Self.liveForkOfARecordedRoot(in: hooked)
+            let restored = try await hooked.profile.standard.restoreSession(id: rootID)
+
+            let child = hooked.profile.standard.makeSession(
+                configuration: SessionConfiguration(parentCall: .startAgentCall(of: fork)))
+            await hooked.dispatcher.drain()
+
+            #expect(try Self.start(of: child.id, in: hooked.visitor).session.sessionKey == Self.replacementKey)
+            await SessionFixtureLifecycle.close([child, restored.session, fork])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a root
+    /// id that starts and releases the hooks of a second instance of the
+    /// live fork.
+    @Test("a restore of a recorded root by its id sends no session event for its live fork")
+    func aRestoreOfARecordedRootSendsNoEventForItsLiveFork() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (rootID, fork) = try await Self.liveForkOfARecordedRoot(in: hooked)
+
+            let restored = try await hooked.profile.standard.restoreSession(id: rootID)
+            await hooked.dispatcher.drain()
+
+            #expect(hooked.visitor.events(of: fork.id).count == 1)
+            await SessionFixtureLifecycle.close([restored.session, fork])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a root
+    /// id whose second instance of the live fork sends a `SessionEnd` for it,
+    /// or removes its hook session before the close.
+    @Test("the live fork of a recorded root that a restore by id restored ends with one SessionEnd")
+    func theLiveForkOfARestoredRootEndsWithOneSessionEnd() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (rootID, fork) = try await Self.liveForkOfARecordedRoot(in: hooked)
+            let restored = try await hooked.profile.standard.restoreSession(id: rootID)
+
+            await SessionFixtureLifecycle.close([restored.session, fork])
+            await hooked.dispatcher.drain()
+
+            #expect(Self.endReasons(of: fork.id, in: hooked.visitor) == [.completed])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a root
+    /// id that restores and releases the recorded forks under the root, and
+    /// starts and ends their hooks.
+    @Test("a restore of a recorded root by its id with nothing live sends session events for the root only")
+    func aRestoreOfARecordedRootSendsEventsForTheRootOnly() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (rootID, fork) = try await Self.liveForkOfARecordedRoot(in: hooked)
+            await fork.close()
+            await hooked.dispatcher.drain()
+            let earlierEventCount = hooked.visitor.events.count
+
+            let restored = try await hooked.profile.standard.restoreSession(id: rootID)
+            await hooked.dispatcher.drain()
+
+            #expect(hooked.visitor.events.dropFirst(earlierEventCount).map(\.sessionID) == [rootID.description])
+            await restored.session.close()
+        }
+    }
+
     // MARK: - The lineage function
 
     @Test("a restored fork node whose directory differs only in its form gets the key of its parent")

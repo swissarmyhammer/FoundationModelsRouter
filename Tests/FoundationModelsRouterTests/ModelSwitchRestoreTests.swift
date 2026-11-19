@@ -345,6 +345,75 @@ struct ModelSwitchRestoreTests {
         }
     }
 
+    /// Records one answer, forks the session through the session directory,
+    /// and suspends the source as a host does before a switch. The fork
+    /// stays live.
+    ///
+    /// - Parameter workspace: The workspace of the test.
+    /// - Returns: The suspended source and the live fork.
+    /// - Throws: What the answer and the fork throw.
+    private static func suspendedSourceWithALiveFork(
+        in workspace: Workspace
+    ) async throws -> (source: any RoutedSession, fork: any RoutedSession) {
+        let directory = try workspace.sessionDirectory
+        let source = workspace.profile.standard.makeSession(configuration: SessionConfiguration())
+        _ = try await source.respond(to: Self.firstPrompt)
+        let summary = try await directory.fork(
+            SessionForkRequest(
+                sourceID: source.id, cut: .lastCompletedTurn, forker: .user(clientID: "model-switch-client")))
+        let fork = try #require(directory.session(id: summary.id))
+        source.suspend()
+        return (source, fork)
+    }
+
+    /// The production change that makes this test fail: a switch that
+    /// restores a second instance of a live fork onto the new model, which
+    /// rewrites the `index.md` of the live fork.
+    @Test("a live fork of the session keeps its model when its root moves")
+    func aLiveForkKeepsItsModel() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, fork) = try await Self.suspendedSourceWithALiveFork(in: workspace)
+
+            let restored = try await workspace.switchToFlash(source.id)
+
+            let record = try #require(try SessionIndexFile.read(in: try workspace.folder(of: fork.id)))
+            #expect(record.model == Self.oldModel)
+            await SessionFixtureLifecycle.close([restored.session, fork])
+        }
+    }
+
+    /// A guard of the move rule: a fork that the host suspended is not live,
+    /// so it moves with its root. This test passed before ^1vesqjj too.
+    @Test("a suspended fork of the session moves to the new model with its root")
+    func aSuspendedForkMovesWithTheRoot() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, fork) = try await Self.suspendedSourceWithALiveFork(in: workspace)
+            fork.suspend()
+
+            let restored = try await workspace.switchToFlash(source.id)
+
+            let record = try #require(try SessionIndexFile.read(in: try workspace.folder(of: fork.id)))
+            #expect(record.model == Self.newModel)
+            await restored.session.close()
+        }
+    }
+
+    /// The production change that makes this test fail: a switch that
+    /// registers a second instance of a suspended fork in the session
+    /// directory, in place of the fork object that the host holds.
+    @Test("a suspended fork of the session keeps its directory entry when its root moves")
+    func aSuspendedForkKeepsItsDirectoryEntry() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, fork) = try await Self.suspendedSourceWithALiveFork(in: workspace)
+            fork.suspend()
+
+            let restored = try await workspace.switchToFlash(source.id)
+
+            #expect(try workspace.sessionDirectory.session(id: fork.id) as AnyObject? === fork as AnyObject)
+            await restored.session.close()
+        }
+    }
+
     // MARK: - The directory of the process
 
     /// The production change that makes this test fail: a registration that
