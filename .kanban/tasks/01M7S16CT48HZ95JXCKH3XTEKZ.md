@@ -111,8 +111,27 @@ comments:
     - evidence: 3 files — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/ForkPromptCacheCopySupport.swift, GGUFForkPromptCacheIntegrationTests.swift, ForkPromptCacheCopyIntegrationTests.swift. `swift build --package-path IntegrationTests --build-tests`: Build complete, no compiler warnings (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, which is not from this code). FoundationModelsLlamaCpp pin stays c11b800 in both Package.resolved files. `--filter GGUFForkPromptCacheIntegrationTests`: 2 tests in 1 suite passed. `--filter ForkPromptCacheCopyIntegrationTests`: 11 tests in 1 suite passed. No file outside IntegrationTests changed, so a full root `swift test` was not run.
     - next: /review. The task stays in doing.
   timestamp: 2026-11-19T09:23:52.682240+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7sj0k990pj74645hzk2c93b
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (b0a41efc): 0 findings, 0 confirmed, 0 refuted; 3 files reviewed, 4 `.kanban/` files not reviewed (ignore rule). All items of the 03:06 and 03:17 sections are checked.
+    - The 03:17 item is fixed: `Fixture.makeSource` and the GGUF `makeAnsweredSource` both call the shared `RoutedModel.makeRoutedSessionActor(instructions:tools:)` in Support/ForkPromptCacheCopySupport.swift.
+    - The moved helpers keep the same behavior: the instructions text is the same, the reply ceiling is the same (`GatedRealModelBudget.responseTokenCeiling`), `tools: []` is the default of `SessionConfiguration.init`, and `withForkingRouter` makes the same greedy, durable router with the same default probe.
+    - The MLX suite now evicts the prompt-cache store before `IsolatedPoolRouter` is made. This is safe: `IsolatedPoolRouter.init` and `Router.init` are synchronous, load no model, make no session, and do not refer to `ExecutorPromptCacheStore`. The eviction still occurs before the resolve and before the first generation.
+    - next: none. The task moved to done.
+  timestamp: 2026-11-19T09:25:42.825615+00:00
+- actor: claude-code
+  id: 01m7sj1188c3yczvwz7fb6c7ss
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — Support/ForkPromptCacheCopySupport.swift, GGUFForkPromptCacheIntegrationTests.swift, ForkPromptCacheCopyIntegrationTests.swift (shared session, answer and router setup)
+    - test: green — GGUF suite 2/2 and MLX fork suite 11/11, each alone; no file outside IntegrationTests changed after the last full unit run (3104 tests)
+    - commit: b0a41efc
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T09:25:57.128894+00:00
+position_column: done
+position_ordinal: ffffffffffbd80
 title: 'A GGUF fork keeps the cache of its source: the FoundationModelsLlamaCpp pin and tests (D205 (f), part 3)'
 ---
 ## Goal
