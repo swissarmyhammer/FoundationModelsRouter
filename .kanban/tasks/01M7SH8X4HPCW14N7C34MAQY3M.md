@@ -121,10 +121,27 @@ comments:
     - Tests: `swift build --package-path IntegrationTests --build-tests`: build complete, no compiler warnings (only the known mlx bundle note). `swift test --package-path IntegrationTests --skip-build --filter SessionRecapIntegrationTests`, one run: 1 test in 1 suite passed (3.19 s).
     - next: review (the task stays in doing; not committed)
   timestamp: 2026-11-19T11:54:45.040606+00:00
+- actor: claude-code
+  id: 01m7stksnpqbhgm4zv7pz94qz4
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (be6cd0f0): 0 findings, 0 confirmed, 0 refuted, 7 validator runs, 0 failed. 1 file reviewed (`SessionRecapIntegrationTests.swift`). All items of the 3 prior `## Review Findings` sections are checked.
+    - orchestrator check: the integration host now calls `steps.start()`, then `steps.finish()`, and records the recap only after `finish()` gives `true`. This is the same order as the unit host in `Tests/FoundationModelsRouterTests/Helpers/RecapFixtures.swift`. The reason for no shared helper is correct: `SessionRecapper` and its `Host` are internal. The integration target sees them only through `@testable import FoundationModelsRouter`. `FoundationModelsRouterTestSupport` is a normal target with a library product and no `@testable` import, so it cannot name these types. The integration tests were not run (as the orchestrator asked).
+    - next: none. The task is in done. The "After" step (push and send the sha and the policy API) is still to do.
+  timestamp: 2026-11-19T11:56:00.566429+00:00
+- actor: claude-code
+  id: 01m7stmaqpvagvaf929ys3s3sv
+  text: |-
+    ### finish iteration 4 — clean
+    - implement: changed — SessionRecapIntegrationTests.swift (the host calls finish before it records)
+    - test: green — SessionRecapIntegrationTests alone 1/1; no file outside IntegrationTests changed after the last full unit run (3191 tests)
+    - commit: be6cd0f0
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T11:56:18.038292+00:00
 depends_on:
 - 01M7SH8C0CNGBFPYPYT3566RVS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffbf80
 title: The session directory makes a recap on the flash slot after 20 s of idle time after a turn that is not trivial (D206)
 ---
 ## Goal
