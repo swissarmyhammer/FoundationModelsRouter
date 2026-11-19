@@ -52,8 +52,24 @@ comments:
     - full `swift test` once: 3094 tests in 352 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx bundle warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-swift-test-findings.txt
     - next: /review. Not committed (orders of this run). Task stays in doing.
   timestamp: 2026-11-19T04:58:13.069692+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7s2tz3t591zwdwjd87ka54t
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (75ecac1f): 0 findings, 0 confirmed, 1 refuted, 3 files reviewed. All 2 items of "## Review Findings (2026-11-18 22:46)" are checked. Item 1 is fixed: `PromptCacheCopyCall` records the outcome, and `promptCacheUsage` changes only after a `.copied` outcome. Item 2 is fixed: the two no-copy tests expect one copy with their outcome, and `theBudgetIsSentAgainOnlyAfterACopyThatCopied` counts the budget sends of a hand-built handle for each outcome (1, 0, 0). This test fails if the `guard outcome == .copied` is removed (0 becomes 1 for the two no-copy outcomes), and it fails if the budget is not sent after `.copied`. `swift test --filter ForkPromptCacheCopyTests`: 12 tests in 1 suite passed.
+    - next: none. The task is done.
+  timestamp: 2026-11-19T05:00:29.690647+00:00
+- actor: claude-code
+  id: 01m7s2vrrfgjag8y3a0f2s1nty
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — PromptCacheScopeRecordingModel.swift, ForkPromptCacheCopyTests.swift, HandBuiltProfileFixtures.swift (the budget test failed without the guard)
+    - test: green — one full swift test run, 3094 tests in 352 suites (+50, +19), 0 failures
+    - commit: 75ecac1f
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T05:00:55.951751+00:00
+position_column: done
+position_ordinal: ffffffffffba80
 title: 'A fork copies the prompt cache of its source: the protocol, the copy at the fork, and the budget (D205 (f), part 1)'
 ---
 ## Goal
