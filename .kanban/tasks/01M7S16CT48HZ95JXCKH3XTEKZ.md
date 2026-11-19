@@ -78,6 +78,39 @@ comments:
       - Full `swift test` once: 3104 tests in 353 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx.bundle "missing creator" warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-suite-2.txt
     - next: /review. Not committed; task stays in doing.
   timestamp: 2026-11-19T09:16:31.302339+00:00
+- actor: claude-code
+  id: 01m7shkrycr8a95515ngdg72y4
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD; 1 finding (1 confirmed, 2 refuted) — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:159. The 4 items of "## Review Findings (2026-11-19 03:06)" are fixed in f9ffd69c. Item 3: the test has a new bound on the next turn of the fork, and the doc comment names the production change (FoundationModelsLlamaCpp before c11b800). IntegrationTests/Package.resolved pins FoundationModelsLlamaCpp at c11b800b08f898ad5fcf1b970763497559468b9b.
+    - next: implement the item of "## Review Findings (2026-11-19 03:17)": move the session construction and the RoutedSessionActor cast into the support file, and call it from Fixture.makeSource and the GGUF makeAnsweredSource.
+  timestamp: 2026-11-19T09:18:42.636535+00:00
+- actor: claude-code
+  id: 01m7shmattzxnxm2tjtt67nayz
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — Support/ForkPromptCacheCopySupport.swift, GGUFForkPromptCacheIntegrationTests.swift, ForkPromptCacheCopyIntegrationTests.swift, LiveLLMContainerGGUFTests.swift (the new bound failed with llama.cpp 2a6b9d8)
+    - test: green — one full swift test run, 3104 tests in 353 suites (+50, +19); GGUF suite 2/2 and MLX fork suite 11/11, each alone
+    - commit: f9ffd69c
+    - review: findings — GGUFForkPromptCacheIntegrationTests.swift:159 (the session construction and cast are still copied in both suites)
+  timestamp: 2026-11-19T09:19:00.954570+00:00
+- actor: claude-code
+  id: 01m7shx4d04swtcqctc860xcrk
+  text: |-
+    Finding (2026-11-19 03:17, GGUFForkPromptCacheIntegrationTests.swift:159) fixed. Support/ForkPromptCacheCopySupport.swift now holds each step that both fork cache suites copied:
+    - `RoutedModel<any LoadedLLMContainer>.makeRoutedSessionActor(instructions:tools:)` makes the session and casts it to RoutedSessionActor. `Fixture.makeSource` and the GGUF `makeAnsweredSource` call it. It is an extension member, not a top-level function (swift/immutability rule).
+    - `AnsweredSource.instructions`: the terse instructions string. The two suites had the same string in two copies.
+    - `MeasuredAnswer.replyTokenCeiling` (= GatedRealModelBudget.responseTokenCeiling). `MeasuredAnswer.answer(to:on:)` and `AnsweredSource.answering(_:then:on:)` no longer take `maxTokens`. The private `answer(_:on:)` wrapper and the `replyTokenCeiling` constant of each suite are deleted. The tests call `MeasuredAnswer.answer(to:on:)`.
+    - `IsolatedPoolRouter.withForkingRouter(label:probe:resolving:_:)` makes the greedy router that records durably, runs `defer removeRoot()`, and calls `withResolved`. The GGUF `withProfile` and the fork `withFixture` call it. The fork suite now evicts the executor store before it makes the router; this order has no effect, because the router does not touch the store.
+    The per-suite prompts and `Fixture.fork` (one forwarding line to `liveFork`) are not changed.
+  timestamp: 2026-11-19T09:23:49.280546+00:00
+- actor: claude-code
+  id: 01m7shx7qas5hq0kee27ccdxhf
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/ForkPromptCacheCopySupport.swift, GGUFForkPromptCacheIntegrationTests.swift, ForkPromptCacheCopyIntegrationTests.swift. `swift build --package-path IntegrationTests --build-tests`: Build complete, no compiler warnings (only the SwiftPM "missing creator for mutated node" note for the mlx-swift_Cmlx bundle, which is not from this code). FoundationModelsLlamaCpp pin stays c11b800 in both Package.resolved files. `--filter GGUFForkPromptCacheIntegrationTests`: 2 tests in 1 suite passed. `--filter ForkPromptCacheCopyIntegrationTests`: 11 tests in 1 suite passed. No file outside IntegrationTests changed, so a full root `swift test` was not run.
+    - next: /review. The task stays in doing.
+  timestamp: 2026-11-19T09:23:52.682240+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'A GGUF fork keeps the cache of its source: the FoundationModelsLlamaCpp pin and tests (D205 (f), part 3)'
@@ -116,3 +149,12 @@ Push when green. Send the sha to testudoapp-9a. #d205
 - [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:181` `reuse/reuse` — The `close(_:)` helper reimplements the `close(_:)` helper of ForkPromptCacheCopyIntegrationTests with the same body. Two copies of the same loop can drift apart, and a later change to close handling must be made twice. Move `close(_:)` into a shared extension in Support/ForkPromptCacheCopySupport.swift, such as `extension RoutedSession { static func close(_ sessions: [any RoutedSession]) async }`, or as a free function. Both suites then call the one helper and the private copies are deleted.
 - [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:198` `driver/fail-check` — `aForkAtTheLastCompletedTurnReusesTheHistoryAndTheSourceStaysAFullHit` cannot fail with the old llama.cpp behavior (FoundationModelsLlamaCpp 2a6b9d8). At 2a6b9d8, a hit takes the live record and keeps its usable prefix in the sequence. In this test, the fork takes the record of the source (a full hit at 2a6b9d8 and at c11b800). Then the next turn of the source takes the record of the fork and cuts it to the shared history, so its first call reuses the whole history of the source. Both bounds pass at 2a6b9d8. The doc comment says that "a fork that leaves the source no record, so the next turn of the source prefills its history again" makes the test fail; that is not true, because the source reuses the record of the fork. The only difference at c11b800 is that the record of the fork stays live (the source gets a "live_copy"). Add an assertion that only c11b800 satisfies: for example, after the source answered, a next turn of the fork reuses the whole history of the fork less `templateSeamTokens` (at 2a6b9d8 the source cut that record to the shared history). Then correct the doc comment so that it names the production change that makes the test fail.
 - [x] `Tests/FoundationModelsRouterTests/LiveLLMContainerGGUFTests.swift:150` `reuse/reuse` — The new test builds a session backend with `LiveLLMContainer.make(wrapping:ref:)`, `makeSession`, and a cast to `MLXFoundationModelsSessionBackend`. The same three steps are already in `reasoningOffCallOnAGGUFContainerStatesTheNoThinkLevel`, so the setup is written twice in one file. Add a private helper in this suite, such as `makeBackend(of model: LlamaLanguageModel) throws -> MLXFoundationModelsSessionBackend`, that performs these three steps. Use it in both tests.
+
+## Review Findings (2026-11-19 03:17)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 8 not reviewed.
+
+> 8 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 8 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:159` `reuse/reuse` — The new GGUF `makeAnsweredSource` rebuilds the session by calling `model.makeSession(configuration:)` and then `#require(session as? RoutedSessionActor)`. The same construction and cast are in `Fixture.makeSource` in ForkPromptCacheCopyIntegrationTests.swift. This change moved the answering step into the shared `AnsweredSource.answering` but left this session-building step copied in both suites, so a later fix to one copy will not reach the other. Move the session construction into the support file next to `AnsweredSource`, for example `makeRoutedSessionActor(on model: RoutedLLM, instructions: String, tools: [any Tool] = [])`, and call it from both `Fixture.makeSource` and the GGUF `makeAnsweredSource`.

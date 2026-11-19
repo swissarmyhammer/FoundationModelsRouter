@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
@@ -117,18 +118,20 @@ struct MeasuredAnswer {
     /// The usage of each generation call, in order.
     let calls: [GenerationCallUsage]
 
-    /// Answers `prompt` on `session`, and reads the reply and the usage of
-    /// each call from the events of the answer.
+    /// The reply ceiling of each answer of the fork cache suites.
+    static let replyTokenCeiling = GatedRealModelBudget.responseTokenCeiling
+
+    /// Answers `prompt` on `session` with ``replyTokenCeiling``, and reads
+    /// the reply and the usage of each call from the events of the answer.
     ///
     /// - Parameters:
     ///   - prompt: The prompt.
     ///   - session: The session that answers.
-    ///   - maxTokens: The reply ceiling of the answer.
     /// - Returns: The answer.
     /// - Throws: What the answer throws, or the `#require` failure of an
     ///   answer with no final reply.
-    static func answer(to prompt: String, on session: any RoutedSession, maxTokens: Int) async throws -> Self {
-        let events = try await session.streamEvents(to: prompt, maxTokens: maxTokens)
+    static func answer(to prompt: String, on session: any RoutedSession) async throws -> Self {
+        let events = try await session.streamEvents(to: prompt, maxTokens: replyTokenCeiling)
             .reduce(into: [SessionEvent]()) { $0.append($1) }
         let replies = events.compactMap { event -> String? in
             guard case .answered(let answer) = event else { return nil }
@@ -192,21 +195,66 @@ struct AnsweredSource {
     /// The answer of the second prompt.
     let second: MeasuredAnswer
 
+    /// The instructions of each source that does not fork itself.
+    static let instructions = "You are a terse assistant. Follow each instruction exactly."
+
     /// Answers `firstPrompt` and then `secondPrompt` on `session`.
     ///
     /// - Parameters:
     ///   - firstPrompt: The prompt of the first turn.
     ///   - secondPrompt: The prompt of the second turn.
     ///   - session: The source.
-    ///   - maxTokens: The reply ceiling of each answer.
     /// - Returns: The source and its two answers.
     /// - Throws: What an answer throws.
     static func answering(
-        _ firstPrompt: String, then secondPrompt: String, on session: RoutedSessionActor, maxTokens: Int
+        _ firstPrompt: String, then secondPrompt: String, on session: RoutedSessionActor
     ) async throws -> Self {
-        let first = try await MeasuredAnswer.answer(to: firstPrompt, on: session, maxTokens: maxTokens)
-        let second = try await MeasuredAnswer.answer(to: secondPrompt, on: session, maxTokens: maxTokens)
+        let first = try await MeasuredAnswer.answer(to: firstPrompt, on: session)
+        let second = try await MeasuredAnswer.answer(to: secondPrompt, on: session)
         return Self(session: session, first: first, second: second)
+    }
+}
+
+extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Makes a session on this model with `instructions` and `tools`, as the
+    /// Router session actor that the fork cache suites fork.
+    ///
+    /// - Parameters:
+    ///   - instructions: The instructions of the session.
+    ///   - tools: The tools of the session.
+    /// - Returns: The session.
+    /// - Throws: The `#require` failure for a session that is not a Router
+    ///   session actor.
+    func makeRoutedSessionActor(
+        instructions: String = AnsweredSource.instructions, tools: [any Tool] = []
+    ) throws -> RoutedSessionActor {
+        let session = makeSession(configuration: SessionConfiguration(instructions: instructions, tools: tools))
+        return try #require(session as? RoutedSessionActor)
+    }
+}
+
+extension IsolatedPoolRouter {
+    /// Makes a greedy router that records durably, over a pool of its own,
+    /// resolves `profile` on it, and runs `body`. At the end, it removes the
+    /// directory of the router. `body` closes each session that it made, so
+    /// the pool evicts each model at the end.
+    ///
+    /// - Parameters:
+    ///   - label: The prefix of the name of the cache directory, usually the
+    ///     name of the suite.
+    ///   - probe: The machine probe of the router.
+    ///   - profile: The authored profile.
+    ///   - body: The test, with the router and the resolved profile.
+    /// - Throws: What the resolve or `body` throws.
+    static func withForkingRouter(
+        label: String, probe: any MachineProbe = SystemMachineProbe(), resolving profile: ProfileDefinition,
+        _ body: (IsolatedPoolRouter, LanguageModelProfile) async throws -> Void
+    ) async throws {
+        let isolated = IsolatedPoolRouter(label: label, samplingMode: .greedy, probe: probe, recordsDurably: true)
+        defer { isolated.removeRoot() }
+        try await isolated.withResolved(profile) { resolved in
+            try await body(isolated, resolved)
+        }
     }
 }
 

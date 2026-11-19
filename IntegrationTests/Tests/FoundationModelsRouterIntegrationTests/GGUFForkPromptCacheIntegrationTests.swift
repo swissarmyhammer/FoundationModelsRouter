@@ -80,9 +80,6 @@ private let ggufForkProfile = ProfileDefinition(
     .exclusiveRealModel
 )
 struct GGUFForkPromptCacheIntegrationTests {
-    /// The instructions of each source.
-    private static let instructions = "You are a terse assistant. Follow each instruction exactly."
-
     /// The code word that the first prompt of the source of the fork at the
     /// last completed turn gives.
     private static let lastCompletedTurnCodeWord = "BRAVO-4"
@@ -123,9 +120,6 @@ struct GGUFForkPromptCacheIntegrationTests {
     /// The client that asks for each fork.
     private static let forkClientID = "gguf-fork-test"
 
-    /// The ceiling of each reply.
-    private static let replyTokenCeiling = GatedRealModelBudget.responseTokenCeiling
-
     // MARK: - Fixture
 
     /// Resolves ``ggufForkProfile`` on a router over a pool of its own, and
@@ -138,10 +132,9 @@ struct GGUFForkPromptCacheIntegrationTests {
     private static func withProfile(
         _ body: (RoutedLLM, RouterSessionDirectory) async throws -> Void
     ) async throws {
-        let isolated = IsolatedPoolRouter(
-            label: "GGUFForkPromptCacheIntegrationTests", samplingMode: .greedy, recordsDurably: true)
-        defer { isolated.removeRoot() }
-        try await isolated.withResolved(ggufForkProfile) { profile in
+        try await IsolatedPoolRouter.withForkingRouter(
+            label: "GGUFForkPromptCacheIntegrationTests", resolving: ggufForkProfile
+        ) { isolated, profile in
             try await body(profile.standard, isolated.router.sessionDirectory)
         }
     }
@@ -156,21 +149,8 @@ struct GGUFForkPromptCacheIntegrationTests {
     /// - Throws: What an answer throws, or the `#require` failure for a
     ///   session that is not a Router session actor.
     private static func makeAnsweredSource(on model: RoutedLLM, codeWord: String) async throws -> AnsweredSource {
-        let session = model.makeSession(configuration: SessionConfiguration(instructions: instructions))
-        return try await AnsweredSource.answering(
-            firstSourcePrompt(codeWord: codeWord), then: secondSourcePrompt,
-            on: try #require(session as? RoutedSessionActor), maxTokens: replyTokenCeiling)
-    }
-
-    /// Answers `prompt` on `session` with the reply ceiling of the suite.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt.
-    ///   - session: The session that answers.
-    /// - Returns: The answer.
-    /// - Throws: What the answer throws.
-    private static func answer(_ prompt: String, on session: any RoutedSession) async throws -> MeasuredAnswer {
-        try await MeasuredAnswer.answer(to: prompt, on: session, maxTokens: replyTokenCeiling)
+        try await AnsweredSource.answering(
+            firstSourcePrompt(codeWord: codeWord), then: secondSourcePrompt, on: model.makeRoutedSessionActor())
     }
 
     // MARK: - The fork and the next turn of the source
@@ -196,9 +176,9 @@ struct GGUFForkPromptCacheIntegrationTests {
             let fork = try await directory.liveFork(
                 of: source.session, at: .lastCompletedTurn, clientID: Self.forkClientID)
 
-            let forkAnswer = try await Self.answer(Self.forkPrompt, on: fork)
-            let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
-            let forkFollowUp = try await Self.answer(Self.forkFollowUpPrompt, on: fork)
+            let forkAnswer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
+            let sourceAnswer = try await MeasuredAnswer.answer(to: Self.sourceFollowUpPrompt, on: source.session)
+            let forkFollowUp = try await MeasuredAnswer.answer(to: Self.forkFollowUpPrompt, on: fork)
 
             let sourceBound = MeasuredAnswer.reuseBound(of: try source.second.historyTokens())
             let forkBound = MeasuredAnswer.reuseBound(of: try forkAnswer.historyTokens())
@@ -226,8 +206,8 @@ struct GGUFForkPromptCacheIntegrationTests {
             let fork = try await directory.liveFork(
                 of: source.session, at: .historyPosition(position), clientID: Self.forkClientID)
 
-            let forkAnswer = try await Self.answer(Self.forkPrompt, on: fork)
-            let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
+            let forkAnswer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
+            let sourceAnswer = try await MeasuredAnswer.answer(to: Self.sourceFollowUpPrompt, on: source.session)
 
             let forkBound = MeasuredAnswer.reuseBound(of: try source.first.historyTokens())
             let sourceBound = MeasuredAnswer.reuseBound(of: try source.second.historyTokens())

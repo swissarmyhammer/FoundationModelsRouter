@@ -70,9 +70,6 @@ private let forkCopyProfile = ProfileDefinition(
     .exclusiveRealModel
 )
 struct ForkPromptCacheCopyIntegrationTests {
-    /// The instructions of each source that does not fork itself.
-    private static let instructions = "You are a terse assistant. Follow each instruction exactly."
-
     /// The instructions of the source that forks itself from a tool call.
     private static let checkpointInstructions = """
         You are a terse assistant. When the user asks for a checkpoint, call the \
@@ -105,9 +102,6 @@ struct ForkPromptCacheCopyIntegrationTests {
     /// The prompt of a later turn of a fork.
     private static let forkFollowUpPrompt = "Say my code word one more time. Reply with just the code word."
 
-    /// The ceiling of each reply.
-    private static let replyTokenCeiling = GatedRealModelBudget.responseTokenCeiling
-
     // MARK: - Fixture
 
     /// A router of this suite with the resolved profile.
@@ -131,11 +125,9 @@ struct ForkPromptCacheCopyIntegrationTests {
         /// - Throws: The `#require` failure for a session that is not a
         ///   Router session actor.
         func makeSource(
-            instructions: String = ForkPromptCacheCopyIntegrationTests.instructions, tools: [any Tool] = []
+            instructions: String = AnsweredSource.instructions, tools: [any Tool] = []
         ) throws -> RoutedSessionActor {
-            let session = profile.standard.makeSession(
-                configuration: SessionConfiguration(instructions: instructions, tools: tools))
-            return try #require(session as? RoutedSessionActor)
+            try profile.standard.makeRoutedSessionActor(instructions: instructions, tools: tools)
         }
 
         /// Makes a source that answered ``firstSourcePrompt`` and then
@@ -146,8 +138,7 @@ struct ForkPromptCacheCopyIntegrationTests {
         func makeAnsweredSource() async throws -> AnsweredSource {
             try await AnsweredSource.answering(
                 ForkPromptCacheCopyIntegrationTests.firstSourcePrompt,
-                then: ForkPromptCacheCopyIntegrationTests.secondSourcePrompt, on: makeSource(),
-                maxTokens: ForkPromptCacheCopyIntegrationTests.replyTokenCeiling)
+                then: ForkPromptCacheCopyIntegrationTests.secondSourcePrompt, on: makeSource())
         }
 
         /// Forks `source` at `cut`, and gives the live fork.
@@ -175,24 +166,12 @@ struct ForkPromptCacheCopyIntegrationTests {
     private static func withFixture(
         probe: any MachineProbe = SystemMachineProbe(), _ body: (Fixture) async throws -> Void
     ) async throws {
-        let isolated = IsolatedPoolRouter(
-            label: "ForkPromptCacheCopyIntegrationTests", samplingMode: .greedy, probe: probe, recordsDurably: true)
-        defer { isolated.removeRoot() }
         await ExecutorPromptCacheStore.current.evict(modelID: nil)
-        try await isolated.withResolved(forkCopyProfile) { profile in
+        try await IsolatedPoolRouter.withForkingRouter(
+            label: "ForkPromptCacheCopyIntegrationTests", probe: probe, resolving: forkCopyProfile
+        ) { isolated, profile in
             try await body(Fixture(isolated: isolated, profile: profile))
         }
-    }
-
-    /// Answers `prompt` on `session` with the reply ceiling of the suite.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt.
-    ///   - session: The session that answers.
-    /// - Returns: The answer.
-    /// - Throws: What the answer throws.
-    private static func answer(_ prompt: String, on session: any RoutedSession) async throws -> MeasuredAnswer {
-        try await MeasuredAnswer.answer(to: prompt, on: session, maxTokens: replyTokenCeiling)
     }
 
     /// The prompt-cache usage once no entry is being written to disk.
@@ -224,7 +203,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             let source = try await fixture.makeAnsweredSource()
             let fork = try await fixture.fork(source.session, at: .lastCompletedTurn)
 
-            let answer = try await Self.answer(Self.forkPrompt, on: fork)
+            let answer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
 
             let history = try source.second.historyTokens()
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
@@ -242,7 +221,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             let position = try await source.session.positionOfSecondPrompt()
             let fork = try await fixture.fork(source.session, at: .historyPosition(position))
 
-            let answer = try await Self.answer(Self.forkPrompt, on: fork)
+            let answer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
 
             let history = try source.first.historyTokens()
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
@@ -260,11 +239,11 @@ struct ForkPromptCacheCopyIntegrationTests {
         try await Self.withFixture { fixture in
             let tool = CheckpointForkingTool(directory: fixture.directory)
             let source = try fixture.makeSource(instructions: Self.checkpointInstructions, tools: [tool])
-            let sourceAnswer = try await Self.answer(Self.checkpointPrompt, on: source)
+            let sourceAnswer = try await MeasuredAnswer.answer(to: Self.checkpointPrompt, on: source)
             let forkID = try #require(tool.madeForkID)
             let fork = try #require(fixture.directory.session(id: forkID))
 
-            let answer = try await Self.answer(Self.arithmeticPrompt, on: fork)
+            let answer = try await MeasuredAnswer.answer(to: Self.arithmeticPrompt, on: fork)
 
             let toolCallPass = try #require(sourceAnswer.calls.first { $0.entryKind == .toolCall })
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: toolCallPass.tokensIn))
@@ -283,7 +262,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             await source.session.releasePromptCache()
             let fork = try await fixture.fork(source.session, at: .lastCompletedTurn)
 
-            let answer = try await Self.answer(Self.forkPrompt, on: fork)
+            let answer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
 
             #expect(try answer.cachedTokensOfFirstCall() == 0)
             #expect(answer.reply.contains(Self.codeWord))
@@ -299,11 +278,11 @@ struct ForkPromptCacheCopyIntegrationTests {
         try await Self.withFixture { fixture in
             let source = try await fixture.makeAnsweredSource()
             let copied = try await fixture.fork(source.session, at: .lastCompletedTurn)
-            let copiedAnswer = try await Self.answer(Self.forkPrompt, on: copied)
+            let copiedAnswer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: copied)
             await source.session.releasePromptCache()
             let uncopied = try await fixture.fork(source.session, at: .lastCompletedTurn)
 
-            let uncopiedAnswer = try await Self.answer(Self.forkPrompt, on: uncopied)
+            let uncopiedAnswer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: uncopied)
 
             #expect(try copiedAnswer.cachedTokensOfFirstCall() > 0)
             #expect(try uncopiedAnswer.cachedTokensOfFirstCall() == 0)
@@ -324,9 +303,9 @@ struct ForkPromptCacheCopyIntegrationTests {
             let source = try await fixture.makeAnsweredSource()
             let position = try await source.session.positionOfSecondPrompt()
             let fork = try await fixture.fork(source.session, at: .historyPosition(position))
-            _ = try await Self.answer(Self.forkPrompt, on: fork)
+            _ = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
 
-            let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
+            let sourceAnswer = try await MeasuredAnswer.answer(to: Self.sourceFollowUpPrompt, on: source.session)
 
             let history = try source.second.historyTokens()
             #expect(try sourceAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
@@ -341,10 +320,10 @@ struct ForkPromptCacheCopyIntegrationTests {
         try await Self.withFixture { fixture in
             let source = try await fixture.makeAnsweredSource()
             let fork = try await fixture.fork(source.session, at: .lastCompletedTurn)
-            let firstForkAnswer = try await Self.answer(Self.forkPrompt, on: fork)
-            _ = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
+            let firstForkAnswer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
+            _ = try await MeasuredAnswer.answer(to: Self.sourceFollowUpPrompt, on: source.session)
 
-            let forkAnswer = try await Self.answer(Self.forkFollowUpPrompt, on: fork)
+            let forkAnswer = try await MeasuredAnswer.answer(to: Self.forkFollowUpPrompt, on: fork)
 
             let history = try firstForkAnswer.historyTokens()
             #expect(try forkAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
@@ -399,7 +378,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             await fork.close()
 
             let afterClose = await Self.settledPromptCacheUsage()
-            let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
+            let sourceAnswer = try await MeasuredAnswer.answer(to: Self.sourceFollowUpPrompt, on: source.session)
             let history = try source.second.historyTokens()
             #expect(withCopy.totalBytes == 2 * before.totalBytes)
             #expect(afterClose.totalBytes == before.totalBytes)
@@ -420,7 +399,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             await source.session.close()
 
             let afterClose = await Self.settledPromptCacheUsage()
-            let answer = try await Self.answer(Self.forkPrompt, on: fork)
+            let answer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
             let history = try source.second.historyTokens()
             #expect(2 * afterClose.totalBytes == withCopy.totalBytes)
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
@@ -439,7 +418,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             let source = try await fixture.makeAnsweredSource()
             let fork = try await fixture.fork(source.session, at: .lastCompletedTurn)
 
-            let answer = try await Self.answer(Self.forkPrompt, on: fork)
+            let answer = try await MeasuredAnswer.answer(to: Self.forkPrompt, on: fork)
 
             let history = try source.second.historyTokens()
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))

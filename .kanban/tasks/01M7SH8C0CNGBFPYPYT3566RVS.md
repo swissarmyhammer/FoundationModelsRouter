@@ -1,6 +1,18 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7shh91p4467h531z04z5080
+  text: |-
+    Unblocked: Extras D206 is on origin/main at f99b111 (code commit e8212b9), from foundationmodelsextras-9e on 2026-11-19.
+    - `SessionSummary.recap: String?` and `SessionSummary.recapAt: Date?`, both default nil in the initializer (trailing arguments after `archivedAt`); Codable, old JSON decodes as nil.
+    - No new event: a new recap goes out as `factsChanged`. `lastSummary` and `stateChanged` do not change.
+    - Extras has no `SessionFacts` and no index.md: the record facts are the Router's.
+    - No new public enum cases; no API break.
+    - `InMemorySessionDirectory` has the test hook `setRecap(of:_:at:)`; an archive and an unarchive keep the recap (match this).
+    Update the pin after ^h3xtekz ends, with `swift package --manifest-cache local update FoundationModelsExtras`.
+  timestamp: 2026-11-19T09:17:20.822611+00:00
 depends_on:
 - 01M7S16CT48HZ95JXCKH3XTEKZ
 position_column: todo
