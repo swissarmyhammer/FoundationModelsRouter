@@ -17,10 +17,27 @@ comments:
     - evidence: new `public func makeFork(tools: [any Tool], additionalDirectories: [URL]) async throws -> any RoutedSession` on `SessionLaunchForkRequest`. Files: Sources/FoundationModelsRouter/Directory/SessionLaunchForkRequest.swift, Directory/SessionLauncher.swift (docs), Directory/RouterSessionDirectory.swift (docs), Recording/SessionIndexWriter.swift, RoutedLLMForking.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorForking.swift, Session/RoutedSessionActorPromptCache.swift (doc link); Tests ForkBuildTests.swift, ForkPromptCacheCopyTests.swift, Helpers/ForkLauncherFixtures.swift (ForkLaunchingLauncher additionalDirectories, CallerMarkLauncher, ForkCallerMark), RouterSessionDirectoryForkLauncherTests.swift (5 new tests). Suites: 38 tests in 3 suites passed. Full `swift test` once: 3099 tests in 352 suites passed; 50 in 26 and 19 in 3 passed; no compiler warnings. Output: scratchpad/full.txt.
     - next: /review. Push and the message to foundationmodelsacpagent-9e come after commit.
   timestamp: 2026-11-19T05:12:06.273286+00:00
+- actor: claude-code
+  id: 01m7s3pw1f1g9fk5rmzx8ksawp
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (f446bafe): 0 findings, 0 confirmed, 0 refuted, 12 files reviewed (2 .kanban files ignored). swift test --filter 'RouterSessionDirectoryForkLauncherTests|ForkBuildTests|ForkPromptCacheCopyTests': 38 tests in 3 suites passed.
+    - added checks: fork(_:) -> launchFork(_:) -> forkSession(_:) has only awaits and no new task. The same-task test fails if the launcher call goes into Task.detached. The two forks are held in a fixed order by firstCallEntered and releaseFirstCall, with no sleep, and a defer releases the gate if the second fork throws. The restart test reads the directories from the restored record. makeFork(tools:additionalDirectories:) goes through ForkBuild.make(surface:), so forkAlreadyMade and requestClosed still apply. The docs of forkSession(_:), fork(_:) and launchFork(_:) agree with the code. SessionForkRequest in Extras has no change.
+    - next: push, and send the API names and the sha to foundationmodelsacpagent-9e.
+  timestamp: 2026-11-19T05:15:44.047092+00:00
+- actor: claude-code
+  id: 01m7s3qjnw8knxkj1zam87tee1
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — SessionLaunchForkRequest.swift, SessionLauncher.swift, RouterSessionDirectory.swift, SessionIndexWriter.swift, RoutedLLMForking.swift, 3 session actor files; RouterSessionDirectoryForkLauncherTests (+5), ForkLauncherFixtures, ForkBuildTests, ForkPromptCacheCopyTests
+    - test: green — one full swift test run, 3099 tests in 352 suites (+50, +19), 0 failures
+    - commit: f446bafe
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T05:16:07.228429+00:00
 depends_on:
 - 01M7S15T37N1RG9ECXB2QM6EAS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffbb80
 title: A host fork can give additional directories to the fork record, and the launcher call runs in the task of the fork caller (D205)
 ---
 ## Goal
