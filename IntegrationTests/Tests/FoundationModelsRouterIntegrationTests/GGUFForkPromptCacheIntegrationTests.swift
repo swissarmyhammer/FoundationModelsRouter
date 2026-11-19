@@ -58,6 +58,9 @@ private let ggufForkProfile = ProfileDefinition(
 /// - After the fork answered, the next turn of the source is a full hit: its
 ///   first call reuses the whole history of the source, so it does not
 ///   prefill its history again.
+/// - After the source answered, the next turn of a fork at the last
+///   completed turn is also a full hit: the copy for the source left the
+///   record of the fork live with the whole history of the fork.
 ///
 /// ## Why the coverage is gated
 ///
@@ -103,7 +106,16 @@ struct GGUFForkPromptCacheIntegrationTests {
 
     /// The first prompt of each fork. The history of each fork holds the
     /// answer.
-    private static let forkPrompt = "What is my code word? Reply with just the code word."
+    ///
+    /// The prompt is long, and its first word is not the first word of
+    /// ``sourceFollowUpPrompt``. Thus the history of a fork is more than
+    /// ``MeasuredAnswer/templateSeamTokens`` longer than the history that it
+    /// shares with the next turn of its source.
+    private static let forkPrompt =
+        "Please tell me the code word that I gave you at the start of this conversation. Reply with just the code word."
+
+    /// The prompt of the next turn of a fork, after its source answered.
+    private static let forkFollowUpPrompt = "Say my code word one more time. Reply with just the code word."
 
     /// The prompt of the next turn of each source, after its fork answered.
     private static let sourceFollowUpPrompt = "What is my favorite animal? Reply with just the animal."
@@ -115,21 +127,6 @@ struct GGUFForkPromptCacheIntegrationTests {
     private static let replyTokenCeiling = GatedRealModelBudget.responseTokenCeiling
 
     // MARK: - Fixture
-
-    /// A source that answered its two turns.
-    private struct AnsweredSource {
-        /// The source.
-        let session: any RoutedSession
-
-        /// The code word that the first prompt of the source gave.
-        let codeWord: String
-
-        /// The answer of the first turn.
-        let first: MeasuredAnswer
-
-        /// The answer of the second turn.
-        let second: MeasuredAnswer
-    }
 
     /// Resolves ``ggufForkProfile`` on a router over a pool of its own, and
     /// runs `body` with the standard model and the session directory. The
@@ -156,12 +153,13 @@ struct GGUFForkPromptCacheIntegrationTests {
     ///   - model: The standard model.
     ///   - codeWord: The code word of the first prompt of the source.
     /// - Returns: The source and its two answers.
-    /// - Throws: What an answer throws.
+    /// - Throws: What an answer throws, or the `#require` failure for a
+    ///   session that is not a Router session actor.
     private static func makeAnsweredSource(on model: RoutedLLM, codeWord: String) async throws -> AnsweredSource {
-        let source = model.makeSession(configuration: SessionConfiguration(instructions: instructions))
-        let first = try await answer(firstSourcePrompt(codeWord: codeWord), on: source)
-        let second = try await answer(secondSourcePrompt, on: source)
-        return AnsweredSource(session: source, codeWord: codeWord, first: first, second: second)
+        let session = model.makeSession(configuration: SessionConfiguration(instructions: instructions))
+        return try await AnsweredSource.answering(
+            firstSourcePrompt(codeWord: codeWord), then: secondSourcePrompt,
+            on: try #require(session as? RoutedSessionActor), maxTokens: replyTokenCeiling)
     }
 
     /// Answers `prompt` on `session` with the reply ceiling of the suite.
@@ -175,26 +173,23 @@ struct GGUFForkPromptCacheIntegrationTests {
         try await MeasuredAnswer.answer(to: prompt, on: session, maxTokens: replyTokenCeiling)
     }
 
-    /// Closes each session of `sessions`.
-    ///
-    /// - Parameter sessions: The sessions that the test made.
-    private static func close(_ sessions: [any RoutedSession]) async {
-        for session in sessions {
-            await session.close()
-        }
-    }
-
     // MARK: - The fork and the next turn of the source
 
     /// The production change that makes this test fail: a GGUF fork whose
-    /// first prompt does not find the live record of its source, or a fork
-    /// that leaves the source no record, so the next turn of the source
-    /// prefills its history again.
+    /// first prompt does not find the live record of its source, or a next
+    /// turn of the source that takes and cuts the record of the fork instead
+    /// of a copy of it (FoundationModelsLlamaCpp before c11b800), so the next
+    /// turn of the fork prefills its own turn again.
     ///
     /// The fork holds the whole record of the source to the end of its last
-    /// user message, so it takes the record. The next turn of the source then
-    /// gets a copy of the record of the fork, up to the prompt of the fork.
-    @Test("a GGUF fork at the last completed turn reuses the history, and the next turn of the source is a full hit")
+    /// user message, so it takes the record. The next turn of the source
+    /// holds the record of the fork only up to the prompt of the fork, so it
+    /// gets a copy of the record, and the record of the fork stays live with
+    /// the whole history of the fork. Before c11b800, the source took the
+    /// record of the fork and cut it to the shared history. The first two
+    /// bounds pass also then; only the bound of the next turn of the fork
+    /// fails.
+    @Test("a GGUF fork at the last completed turn reuses the history, and the next turns of the source and the fork are full hits")
     func aForkAtTheLastCompletedTurnReusesTheHistoryAndTheSourceStaysAFullHit() async throws {
         try await Self.withProfile { model, directory in
             let source = try await Self.makeAnsweredSource(on: model, codeWord: Self.lastCompletedTurnCodeWord)
@@ -203,12 +198,15 @@ struct GGUFForkPromptCacheIntegrationTests {
 
             let forkAnswer = try await Self.answer(Self.forkPrompt, on: fork)
             let sourceAnswer = try await Self.answer(Self.sourceFollowUpPrompt, on: source.session)
+            let forkFollowUp = try await Self.answer(Self.forkFollowUpPrompt, on: fork)
 
-            let reuseBound = MeasuredAnswer.reuseBound(of: try source.second.historyTokens())
-            #expect(try forkAnswer.cachedTokensOfFirstCall() >= reuseBound)
-            #expect(forkAnswer.reply.contains(source.codeWord))
-            #expect(try sourceAnswer.cachedTokensOfFirstCall() >= reuseBound)
-            await Self.close([source.session, fork])
+            let sourceBound = MeasuredAnswer.reuseBound(of: try source.second.historyTokens())
+            let forkBound = MeasuredAnswer.reuseBound(of: try forkAnswer.historyTokens())
+            #expect(try forkAnswer.cachedTokensOfFirstCall() >= sourceBound)
+            #expect(forkAnswer.reply.contains(Self.lastCompletedTurnCodeWord))
+            #expect(try sourceAnswer.cachedTokensOfFirstCall() >= sourceBound)
+            #expect(try forkFollowUp.cachedTokensOfFirstCall() >= forkBound)
+            await closeEach([source.session, fork])
         }
     }
 
@@ -234,9 +232,9 @@ struct GGUFForkPromptCacheIntegrationTests {
             let forkBound = MeasuredAnswer.reuseBound(of: try source.first.historyTokens())
             let sourceBound = MeasuredAnswer.reuseBound(of: try source.second.historyTokens())
             #expect(try forkAnswer.cachedTokensOfFirstCall() >= forkBound)
-            #expect(forkAnswer.reply.contains(source.codeWord))
+            #expect(forkAnswer.reply.contains(Self.historyPositionCodeWord))
             #expect(try sourceAnswer.cachedTokensOfFirstCall() >= sourceBound)
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 }

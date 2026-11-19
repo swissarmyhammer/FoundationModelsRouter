@@ -110,18 +110,6 @@ struct ForkPromptCacheCopyIntegrationTests {
 
     // MARK: - Fixture
 
-    /// A source that answered its two turns.
-    private struct AnsweredSource {
-        /// The source.
-        let session: RoutedSessionActor
-
-        /// The answer of the first turn.
-        let first: MeasuredAnswer
-
-        /// The answer of the second turn.
-        let second: MeasuredAnswer
-    }
-
     /// A router of this suite with the resolved profile.
     private struct Fixture {
         /// The router, its pool, its probe and its folder.
@@ -156,12 +144,10 @@ struct ForkPromptCacheCopyIntegrationTests {
         /// - Returns: The source and its two answers.
         /// - Throws: What an answer throws.
         func makeAnsweredSource() async throws -> AnsweredSource {
-            let source = try makeSource()
-            let first = try await ForkPromptCacheCopyIntegrationTests.answer(
-                ForkPromptCacheCopyIntegrationTests.firstSourcePrompt, on: source)
-            let second = try await ForkPromptCacheCopyIntegrationTests.answer(
-                ForkPromptCacheCopyIntegrationTests.secondSourcePrompt, on: source)
-            return AnsweredSource(session: source, first: first, second: second)
+            try await AnsweredSource.answering(
+                ForkPromptCacheCopyIntegrationTests.firstSourcePrompt,
+                then: ForkPromptCacheCopyIntegrationTests.secondSourcePrompt, on: makeSource(),
+                maxTokens: ForkPromptCacheCopyIntegrationTests.replyTokenCeiling)
         }
 
         /// Forks `source` at `cut`, and gives the live fork.
@@ -228,15 +214,6 @@ struct ForkPromptCacheCopyIntegrationTests {
         Int64(entryBytes + entryBytes / 2)
     }
 
-    /// Closes each session of `sessions`.
-    ///
-    /// - Parameter sessions: The sessions that the test made.
-    private static func close(_ sessions: [any RoutedSession]) async {
-        for session in sessions {
-            await session.close()
-        }
-    }
-
     // MARK: - The cut
 
     /// The production change that makes this test fail: a fork that copies
@@ -251,7 +228,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let history = try source.second.historyTokens()
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 
@@ -270,7 +247,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             let history = try source.first.historyTokens()
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
             #expect(answer.reply.contains(Self.codeWord))
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 
@@ -291,7 +268,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let toolCallPass = try #require(sourceAnswer.calls.first { $0.entryKind == .toolCall })
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: toolCallPass.tokensIn))
-            await Self.close([source, fork])
+            await closeEach([source, fork])
         }
     }
 
@@ -310,7 +287,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             #expect(try answer.cachedTokensOfFirstCall() == 0)
             #expect(answer.reply.contains(Self.codeWord))
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 
@@ -331,7 +308,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             #expect(try copiedAnswer.cachedTokensOfFirstCall() > 0)
             #expect(try uncopiedAnswer.cachedTokensOfFirstCall() == 0)
             #expect(copiedAnswer.reply == uncopiedAnswer.reply)
-            await Self.close([source.session, copied, uncopied])
+            await closeEach([source.session, copied, uncopied])
         }
     }
 
@@ -353,7 +330,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let history = try source.second.historyTokens()
             #expect(try sourceAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 
@@ -371,7 +348,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let history = try firstForkAnswer.historyTokens()
             #expect(try forkAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 
@@ -403,7 +380,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             #expect(after.diskBytes > 0, "the copy pushed the source to disk")
             #expect(after.residentBytes <= budget)
             #expect(fixture.isolated.pool.footprint.totalBytes + Int64(after.residentBytes) <= workingSet)
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 
@@ -427,7 +404,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             #expect(withCopy.totalBytes == 2 * before.totalBytes)
             #expect(afterClose.totalBytes == before.totalBytes)
             #expect(try sourceAnswer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
-            await Self.close([source.session])
+            await closeEach([source.session])
         }
     }
 
@@ -447,7 +424,7 @@ struct ForkPromptCacheCopyIntegrationTests {
             let history = try source.second.historyTokens()
             #expect(2 * afterClose.totalBytes == withCopy.totalBytes)
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
-            await Self.close([fork])
+            await closeEach([fork])
         }
     }
 
@@ -466,7 +443,7 @@ struct ForkPromptCacheCopyIntegrationTests {
 
             let history = try source.second.historyTokens()
             #expect(try answer.cachedTokensOfFirstCall() >= MeasuredAnswer.reuseBound(of: history))
-            await Self.close([source.session, fork])
+            await closeEach([source.session, fork])
         }
     }
 }

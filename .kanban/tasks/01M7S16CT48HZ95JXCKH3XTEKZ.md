@@ -43,6 +43,41 @@ comments:
       - Full `swift test` once: 3104 tests in 353 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx.bundle "missing creator" warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-suite.txt
     - next: /review. Not committed; task stays in doing.
   timestamp: 2026-11-19T09:04:46.174775+00:00
+- actor: claude-code
+  id: 01m7sh2n8hvz2gbfzkzsw15raw
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD`: engine counts findings 3, confirmed 3, refuted 3. The driver checks added 1 finding. Total 4 findings: GGUFForkPromptCacheIntegrationTests.swift:160, GGUFForkPromptCacheIntegrationTests.swift:181, GGUFForkPromptCacheIntegrationTests.swift:198, LiveLLMContainerGGUFTests.swift:150.
+    - Driver checks:
+      - A GGUF slot cannot reach a copy: LiveLLMContainer.copyPromptCache casts the model to SessionPromptCacheCopying, and only MLXLanguageModel conforms. backendOfAGGUFContainerCopiesNoPromptCache fails with a conformance. Correct.
+      - Fail check: with no prefix reuse, the first call of the fork caches 0 and both tests fail. With 2a6b9d8, the history-position test fails (the fork takes and cuts the source record to the first turn, so the source reuses only the first turn). The last-completed-turn test does not fail with 2a6b9d8 (finding at :198).
+      - Code words: BRAVO-4 and CHARLIE-9 are different, and each test makes its own isolated pool. A record of the earlier test shares only the instructions and "My code word is" with the later test. Correct.
+      - Docs (PromptCacheBudget, GGUFCacheSizing, SessionPromptCacheCopying, takePromptCacheCopy, suite doc) agree with the FoundationModelsLlamaCpp rules in the task comments: copy with llama_memory_seq_cp into a free sequence, the source record stays live, a prompt to the end of its last user message takes the record, makeRoom counts shared cells one time.
+    - next: implement the 4 open findings; task stays in review.
+  timestamp: 2026-11-19T09:09:21.809738+00:00
+- actor: claude-code
+  id: 01m7sh3dc4n0sm6pfjx3vk42fm
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — PromptCacheBudget.swift, GGUFCacheSizing.swift, SessionPromptCache.swift, RoutedSessionActorPromptCache.swift (docs only); LiveLLMContainerGGUFTests (+1 unit test); GGUFForkPromptCacheIntegrationTests (new, 2); shared integration support
+    - test: green — one full swift test run, 3104 tests in 353 suites (+50, +19), 0 failures; GGUFForkPromptCacheIntegrationTests 2/2 alone; ForkPromptCacheCopyIntegrationTests 11/11 (orchestrator run after the helper move)
+    - commit: d3ce7d34
+    - review: findings — GGUFForkPromptCacheIntegrationTests.swift:160, :181 (copied helpers), :198 (the last-completed-turn test passes with the old llama.cpp 2a6b9d8), LiveLLMContainerGGUFTests.swift:150 (copied backend setup)
+  timestamp: 2026-11-19T09:09:46.500572+00:00
+- actor: claude-code
+  id: 01m7shfrp6paedv50tj1b7jn18
+  text: |-
+    ### implement — changed
+    - evidence:
+      - Findings 1 and 2: Support/ForkPromptCacheCopySupport.swift now has `AnsweredSource` (session: RoutedSessionActor, first, second) with `answering(_:then:on:maxTokens:)`, and the free function `closeEach(_:)`. Both fork suites use them; their private `AnsweredSource` and `close(_:)` copies are deleted. The GGUF suite gives its prompts (with its own code word) as parameters.
+      - Finding 3: the last-completed-turn GGUF test now also answers `forkFollowUpPrompt` on the fork after the next turn of the source, and expects its first call to reuse `reuseBound(of: forkAnswer.historyTokens())`. `forkPrompt` is longer and starts with a word that is not the first word of `sourceFollowUpPrompt`, so the history of the fork is more than `templateSeamTokens` longer than the history that it shares with the source. Doc comments of the test and of the suite now name the production change (a next turn of the source that takes and cuts the record of the fork, as before c11b800).
+      - Old-pin proof: IntegrationTests/Package.resolved set to FoundationModelsLlamaCpp 2a6b9d8 (`swift package --manifest-cache local resolve`), `swift build --build-tests` OK, the one test alone: 1 issue, only `forkFollowUp.cachedTokensOfFirstCall() >= forkBound` failed (the other three expectations passed). Pin set back to c11b800 (resolve, checkout at c11b800), build OK.
+      - Finding 4: LiveLLMContainerGGUFTests has `private static func makeBackend(of:)`; both backend tests use it.
+      - Unit: `swift test --filter FoundationModelsRouterTests.LiveLLMContainerGGUFTests` 11 tests in 1 suite passed.
+      - Integration (c11b800): GGUFForkPromptCacheIntegrationTests alone 2 tests passed; ForkPromptCacheCopyIntegrationTests alone 11 tests passed.
+      - Full `swift test` once: 3104 tests in 353 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx.bundle "missing creator" warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-suite-2.txt
+    - next: /review. Not committed; task stays in doing.
+  timestamp: 2026-11-19T09:16:31.302339+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'A GGUF fork keeps the cache of its source: the FoundationModelsLlamaCpp pin and tests (D205 (f), part 3)'
@@ -69,3 +104,15 @@ FoundationModelsLlamaCpp on `main`: the copy of the sequence on a partial live h
 ## After
 
 Push when green. Send the sha to testudoapp-9a. #d205
+
+## Review Findings (2026-11-19 03:06)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:160` `reuse/reuse` — `makeAnsweredSource(on:codeWord:)` repeats the flow of `Fixture.makeAnsweredSource()` in the fork suite: make a session, answer the first prompt, answer the second prompt, and return the source with its two answers. The same sequence of steps is written twice. Move the answered-source setup into the shared support file as one function that takes the session and the code word, and have both suites call it. Keep the per-suite prompts as parameters, so the GGUF suite passes its own code word.
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:181` `reuse/reuse` — The `close(_:)` helper reimplements the `close(_:)` helper of ForkPromptCacheCopyIntegrationTests with the same body. Two copies of the same loop can drift apart, and a later change to close handling must be made twice. Move `close(_:)` into a shared extension in Support/ForkPromptCacheCopySupport.swift, such as `extension RoutedSession { static func close(_ sessions: [any RoutedSession]) async }`, or as a free function. Both suites then call the one helper and the private copies are deleted.
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/GGUFForkPromptCacheIntegrationTests.swift:198` `driver/fail-check` — `aForkAtTheLastCompletedTurnReusesTheHistoryAndTheSourceStaysAFullHit` cannot fail with the old llama.cpp behavior (FoundationModelsLlamaCpp 2a6b9d8). At 2a6b9d8, a hit takes the live record and keeps its usable prefix in the sequence. In this test, the fork takes the record of the source (a full hit at 2a6b9d8 and at c11b800). Then the next turn of the source takes the record of the fork and cuts it to the shared history, so its first call reuses the whole history of the source. Both bounds pass at 2a6b9d8. The doc comment says that "a fork that leaves the source no record, so the next turn of the source prefills its history again" makes the test fail; that is not true, because the source reuses the record of the fork. The only difference at c11b800 is that the record of the fork stays live (the source gets a "live_copy"). Add an assertion that only c11b800 satisfies: for example, after the source answered, a next turn of the fork reuses the whole history of the fork less `templateSeamTokens` (at 2a6b9d8 the source cut that record to the shared history). Then correct the doc comment so that it names the production change that makes the test fail.
+- [x] `Tests/FoundationModelsRouterTests/LiveLLMContainerGGUFTests.swift:150` `reuse/reuse` — The new test builds a session backend with `LiveLLMContainer.make(wrapping:ref:)`, `makeSession`, and a cast to `MLXFoundationModelsSessionBackend`. The same three steps are already in `reasoningOffCallOnAGGUFContainerStatesTheNoThinkLevel`, so the setup is written twice in one file. Add a private helper in this suite, such as `makeBackend(of model: LlamaLanguageModel) throws -> MLXFoundationModelsSessionBackend`, that performs these three steps. Use it in both tests.

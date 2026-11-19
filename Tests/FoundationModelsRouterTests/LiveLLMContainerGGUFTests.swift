@@ -127,10 +127,21 @@ struct LiveLLMContainerGGUFTests {
         #expect(try await Self.reasoningControl(of: Self.makeModel()) == .none)
     }
 
+    /// The session backend of a live container over `model`, as the router
+    /// makes it for a session with no instructions.
+    ///
+    /// - Parameter model: The GGUF model of the container.
+    /// - Returns: The backend.
+    /// - Throws: The error of the container, or the `#require` failure for a
+    ///   backend that is not an ``MLXFoundationModelsSessionBackend``.
+    private static func makeBackend(of model: LlamaLanguageModel) throws -> MLXFoundationModelsSessionBackend {
+        let container = try LiveLLMContainer.make(wrapping: model, ref: ref)
+        return try #require(container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend)
+    }
+
     @Test("the first pass of a reasoning-off call on a thinking GGUF container states the no_think level")
     func reasoningOffCallOnAGGUFContainerStatesTheNoThinkLevel() async throws {
-        let container = try LiveLLMContainer.make(wrapping: Self.makeThinkingModel(), ref: Self.ref)
-        let backend = try #require(container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend)
+        let backend = try Self.makeBackend(of: Self.makeThinkingModel())
 
         let level = try await ReasoningOffRequest.$isRequested.withValue(true) {
             try await backend.firstPassReasoningLevel()
@@ -146,8 +157,7 @@ struct LiveLLMContainerGGUFTests {
     /// partial live hit, and the router calls no copy.
     @Test("the backend of a GGUF container copies no prompt cache for a fork")
     func backendOfAGGUFContainerCopiesNoPromptCache() async throws {
-        let container = try LiveLLMContainer.make(wrapping: Self.makeModel(), ref: Self.ref)
-        let backend = try #require(container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend)
+        let backend = try Self.makeBackend(of: Self.makeModel())
 
         let outcome = await backend.copyPromptCache(
             fromSession: ULID.generate().description, toSession: ULID.generate().description)

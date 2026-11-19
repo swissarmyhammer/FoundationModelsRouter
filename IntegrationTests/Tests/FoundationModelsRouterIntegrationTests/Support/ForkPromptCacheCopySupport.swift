@@ -180,6 +180,45 @@ extension MeasuredAnswer {
     }
 }
 
+/// A source that answered its first two prompts: the source of each fork of
+/// the fork cache suites.
+struct AnsweredSource {
+    /// The source.
+    let session: RoutedSessionActor
+
+    /// The answer of the first prompt.
+    let first: MeasuredAnswer
+
+    /// The answer of the second prompt.
+    let second: MeasuredAnswer
+
+    /// Answers `firstPrompt` and then `secondPrompt` on `session`.
+    ///
+    /// - Parameters:
+    ///   - firstPrompt: The prompt of the first turn.
+    ///   - secondPrompt: The prompt of the second turn.
+    ///   - session: The source.
+    ///   - maxTokens: The reply ceiling of each answer.
+    /// - Returns: The source and its two answers.
+    /// - Throws: What an answer throws.
+    static func answering(
+        _ firstPrompt: String, then secondPrompt: String, on session: RoutedSessionActor, maxTokens: Int
+    ) async throws -> Self {
+        let first = try await MeasuredAnswer.answer(to: firstPrompt, on: session, maxTokens: maxTokens)
+        let second = try await MeasuredAnswer.answer(to: secondPrompt, on: session, maxTokens: maxTokens)
+        return Self(session: session, first: first, second: second)
+    }
+}
+
+/// Closes each session of `sessions`, in order.
+///
+/// - Parameter sessions: The sessions that a test made.
+func closeEach(_ sessions: [any RoutedSession]) async {
+    for session in sessions {
+        await session.close()
+    }
+}
+
 extension GenerationCallUsage {
     /// The tokens of the history that this call left in the prompt cache:
     /// the tokens of its prompt and of its reply.
