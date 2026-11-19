@@ -93,6 +93,34 @@ comments:
       Filtered changed suites: 82 tests in 8 suites passed (with the existing held-write tests). Full `swift test`, one run after the last change: 3191 tests in 361 suites, plus 50 and 19, exit 0, only the known mlx bundle note. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-suite-write-steps-2.txt
     - next: review (the task stays in doing; not committed)
   timestamp: 2026-11-19T11:47:28.129828+00:00
+- actor: claude-code
+  id: 01m7stdz83v7ckc5egc38ehkhj
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (0813c581): engine counts findings 1, confirmed 1, refuted 3. IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SessionRecapIntegrationTests.swift:108 (the integration host records the recap before `steps.finish()`; the RecapFixtures host records it only after `finish()` returns true).
+    - The 2 items of "## Review Findings (2026-11-19 04:56)" are fixed. The orchestrator checks found no finding: no step after the record write throws on the recorded path or the live path; a write that throws keeps the prompts and `endCall` clears the `.writing` job; no lock is nested in `writeRecap` (registry lock, released, then recapper lock); no file write or `await` under a Mutex; a cancel during the write does not cancel the write and gives no `factsChanged`; the new tests use a host hook and an `AsyncSemaphore` gate, and no thread blocks on a lock.
+    - next: implement the 1 open item of "## Review Findings (2026-11-19 05:48)", then review again. The task stays in review.
+  timestamp: 2026-11-19T11:52:49.667339+00:00
+- actor: claude-code
+  id: 01m7stek27bgf9h5scw3ctz7y4
+  text: |-
+    ### finish iteration 3 — findings
+    - implement: changed — SessionRecapper.swift (WriteSteps), RouterSessionDirectory.swift (writeRecap), RecapFixtures.swift, SessionRecapperTests.swift (+2), RouterSessionDirectoryRecapWriteTests.swift (new, 3), SessionRecapIntegrationTests.swift
+    - test: green — one full swift test run after the last change, 3191 tests in 361 suites (+50, +19), 0 failures (the first run hung in the first version of a new test; stacks saved; the test was redesigned)
+    - commit: 0813c581
+    - review: findings — SessionRecapIntegrationTests.swift:108 (the test host records the recap before steps.finish())
+  timestamp: 2026-11-19T11:53:09.959948+00:00
+- actor: claude-code
+  id: 01m7sthfxgj27ktx9zc58ptzse
+  text: |-
+    ### implement — changed
+    - evidence: IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SessionRecapIntegrationTests.swift. The write closure of the test host now does `guard steps.start(), steps.finish() else { return false }`, then `writes.record(recap)`, then `return true`. A recap counts as written only when `finish()` gives true, as in the `FakeRecapHost.host` of RecapFixtures.swift. The doc of `WriteLog` now says "wrote with no cancel".
+    - Shared helper: not possible without a root source change. `SessionRecapper` and its `Host` and `WriteSteps` are internal, and FoundationModelsRouterTestSupport (the only target that both test packages share) sees only the public and `package` surface. A shared helper would need a wider access level on production types. Also, the unit host runs its write gate between `start` and `finish`, so one helper does not fit both hosts. Thus both hosts keep the same order: start, finish, then record.
+    - No change outside IntegrationTests, so the full root `swift test` was not run.
+    - TDD: no RED run. The change is in a test host, and no unit test can make a real-model integration host fail in a cancel window.
+    - Tests: `swift build --package-path IntegrationTests --build-tests`: build complete, no compiler warnings (only the known mlx bundle note). `swift test --package-path IntegrationTests --skip-build --filter SessionRecapIntegrationTests`, one run: 1 test in 1 suite passed (3.19 s).
+    - next: review (the task stays in doing; not committed)
+  timestamp: 2026-11-19T11:54:45.040606+00:00
 depends_on:
 - 01M7SH8C0CNGBFPYPYT3566RVS
 position_column: doing
@@ -172,3 +200,21 @@ Checks that the orchestrator asked for (in addition to the engine):
 - [x] `Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:2964` `orchestrator/live-write-outcome` — The live path also has a throwing step after the commit. `unregister(_:)` is `nonisolated` and takes only the registry lock, so a close on another thread can remove the entry after `writeRecap` releases the lock and before `changeLiveRecord` reads the summary. Then `actor.updateRecord` writes the recap, `recordFactsChange` finds no entry and sends no `factsChanged`, and `requireLiveSummary` throws `unknownSession`. `makeRecap` catches the error and logs "a recap call failed; the session keeps its previous recap", but the record holds the new recap. The doc of `writeRecap` says that a committed recap of a live session goes to that session also when it closes just after the commit. Make the outcome true: when the commit holds and `updateRecord` ran, the write must not throw and must not log a failure (for example, write through `updateRecord` and `recordFactsChange` and do not require a live summary after the commit). Fix this together with the item above, so that no step after the commit can throw on either path.
 
 Lock-order check (asked by the orchestrator), with no finding: the recapper never takes the registry lock and never calls the host under its own lock (`commit`, `forget`, `cancelAll`, `turnStarted`, `startWait`, `enqueue`, `startNextCall`, `endCall`, `snapshot` only change its state and make tasks; `Task.cancel` and `jobChanges.signal()` run after its lock). The order is always registry lock, then recapper lock (`recordState` → `observe`, `unregister` → `forget`, `writeRecap` → `commit`). The cancel handlers that a cancel under the registry lock can run (`ChangeSignal.waitForChange`, the clock sleep, the flash backend call) take only their own locks. `writeRecap` runs no file write and no `await` under the registry lock; `changeLiveRecord` is synchronous and does not call into the session actor with an `await`. The held-write tests use an `AsyncSemaphore` gate and the jobs signal, not a clock, and each fails when the job check of `commit` is removed.
+
+## Review Findings (2026-11-19 05:48)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SessionRecapIntegrationTests.swift:108` `completeness/invariant-propagation` — The test write closure records the recap before it calls steps.finish(). If a cancel came during the write, finish() returns false and the recap is still counted as written. The sibling host in RecapFixtures.swift records only after steps.finish() returns true. The two write paths disagree about what counts as a written recap, so this test cannot catch a regression in the cancel rule it is meant to mirror. Call steps.finish() first and return false when it fails. Record the write only after finish() returns true, as the RecapFixtures host does. Then writes.all reflects only recaps that the recapper sent out.
+
+Checks that the orchestrator asked for (in addition to the engine), with no finding:
+
+- The 2 items of 2026-11-19 04:56 are fixed. `writeRecap` calls `steps.start()` before the write and `steps.finish()` only after a write that succeeded. On the recorded path, only `changeRecordedRecord` can throw, and it throws before `finish`; `finish`, `recordedSummary` and `emit` do not throw. On the live path, only `recordOwner` can throw, and it throws before `updateRecord`; `finish` and `recordFactsChange` (`try?`) do not throw, and no `requireLiveSummary` comes after the write.
+- A write that throws calls no `finish`, so the prompts, the tool calls and the turns stay. `endCall` then clears the job in the `.writing` phase, so the job does not stay. The failure log is the new warning "a recap write failed", which is separate from the call-failure log.
+- Lock order: `writeRecap` reads the live session with `session(id:)` (the registry lock only, then released), then calls `start` (the recapper lock only). `finish` releases the recapper lock before `recordFactsChange` or `emit` takes the registry lock. No lock is nested in `writeRecap`. `unregister` → `forget` keeps the order registry lock, then recapper lock. `startWrite` and `finishWrite` call no host and make no task.
+- No file write and no `await` is under a Mutex. The recorded save runs on the directory actor. The live write uses `RoutedSessionActor.updateRecord`, as before.
+- A cancel during the write: `takeJob` gives no task for `.writing`, so the write is not cancelled, and `finishWrite` finds the job gone and gives `false`. This agrees with the decided rule.
+- Tests: the directory close test runs `unregister` from the `afterStart` hook of the host on the task of the write, after `start` released the recapper lock. No thread blocks on a lock. The recapper tests use the `AsyncSemaphore` gate and the jobs signal. The implementer reports each new test red before the fix (the comment of 2026-11-19 11:47).

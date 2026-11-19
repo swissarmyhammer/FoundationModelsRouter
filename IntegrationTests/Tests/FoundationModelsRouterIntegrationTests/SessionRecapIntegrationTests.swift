@@ -23,7 +23,8 @@ import Testing
     .exclusiveRealModel
 )
 struct SessionRecapIntegrationTests {
-    /// The recaps that the host of the recapper got, in order.
+    /// The recaps that the host of the recapper wrote with no cancel, in
+    /// order.
     private final class WriteLog: Sendable {
         /// The recaps, behind one lock: the recapper writes from a task of
         /// its own.
@@ -103,9 +104,11 @@ struct SessionRecapIntegrationTests {
             host: SessionRecapper.Host(
                 target: { _ in target }, isModelBusy: { _ in false },
                 write: { recap, _, _, steps in
-                    guard steps.start() else { return false }
+                    // A recap counts as written only when no cancel came
+                    // during the write, as in the host of the unit tests.
+                    guard steps.start(), steps.finish() else { return false }
                     writes.record(recap)
-                    return steps.finish()
+                    return true
                 }))
         let session = ULID.generate()
         recapper.observe(.workStarted, of: session, isIdle: false, getsRecap: true)
