@@ -87,6 +87,14 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// before `makeSession` returns; with `nil` it registers nowhere.
     let sessionDirectory: RouterSessionDirectory?
 
+    /// Sends the prompt-cache budget of the resolving router again
+    /// (``PromptCacheSizing/sendBudgetAgain()``), or `nil` for a hand-built
+    /// handle that no router resolved. A fork calls it after it copied the
+    /// prompt cache of its source (D205 (f)). The router gives a closure that
+    /// holds its sizing weakly, so a handle does not keep the sizing alive
+    /// after the router.
+    let promptCacheBudgetSender: (@Sendable () async -> Void)?
+
     /// The router's durable transcripts root, or `nil` when recording to
     /// memory or none.
     var recordingsRoot: URL? { durableRecording?.root }
@@ -166,6 +174,9 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     for a handle whose sessions send no hook event.
     ///   - sessionDirectory: The session directory of the resolving router,
     ///     or `nil` (the default) for a handle whose sessions register nowhere.
+    ///   - promptCacheBudgetSender: The operation that sends the
+    ///     prompt-cache budget of the resolving router again, or `nil` (the
+    ///     default) for a handle that no router resolved.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -180,8 +191,10 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         residencyHolds: [ModelHold] = [],
         runClock: any RunClock = ContinuousRunClock(),
         hooks: RouterHooks? = nil,
-        sessionDirectory: RouterSessionDirectory? = nil
+        sessionDirectory: RouterSessionDirectory? = nil,
+        promptCacheBudgetSender: (@Sendable () async -> Void)? = nil
     ) {
+        self.promptCacheBudgetSender = promptCacheBudgetSender
         self.runClock = runClock
         self.hooks = hooks
         self.sessionDirectory = sessionDirectory

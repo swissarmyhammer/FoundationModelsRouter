@@ -357,17 +357,20 @@ enum RouterTestFixtures {
     ///     can restore the sessions.
     ///   - hooks: The hook dispatcher of the router, or `nil` (the default)
     ///     for a router with no hooks.
+    ///   - loader: The loader of the router, or `nil` (the default) for a
+    ///     ``StubModelLoader`` over `container`. A loader that a test gives
+    ///     must vend `container` for each generation slot.
     /// - Returns: The router and the profile it resolved. A caller that has
     ///   to keep the router alive for the whole test keeps both.
     /// - Throws: What the resolve throws.
     static func resolveStandardProfile(
         over container: any LoadedLLMContainer, cacheDir: URL, runClock: (any RunClock)? = nil,
-        recordingsDir: URL? = nil, hooks: HookDispatcher? = nil
+        recordingsDir: URL? = nil, hooks: HookDispatcher? = nil, loader: (any ModelLoader)? = nil
     ) async throws -> (router: Router, profile: LanguageModelProfile) {
         let router = makeRouter(
             cacheDir: cacheDir, recordingsDir: recordingsDir,
             recorder: recordingsDir.map { JSONLRecorder(directory: $0) } ?? InMemoryRecorder(),
-            loader: StubModelLoader(container: container, dimension: stubDimension), hooks: hooks)
+            loader: loader ?? StubModelLoader(container: container, dimension: stubDimension), hooks: hooks)
         if let runClock {
             await router.useRunClock(runClock)
         }

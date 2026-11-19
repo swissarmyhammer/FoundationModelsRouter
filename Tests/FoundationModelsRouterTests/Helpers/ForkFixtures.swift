@@ -314,13 +314,17 @@ struct ForkFixture<Container: LoadedLLMContainer> {
     /// gets the recording root of the router, as a host gives it, so it
     /// finds a recorded session that is not live.
     ///
-    /// - Parameter container: The container of the sessions.
+    /// - Parameters:
+    ///   - container: The container of the sessions.
+    ///   - loader: The loader of the router, or `nil` (the default) for a
+    ///     ``StubModelLoader`` over `container`.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws.
-    static func make(over container: Container) async throws -> Self {
+    static func make(over container: Container, loader: (any ModelLoader)? = nil) async throws -> Self {
         let directories = TestDirectories(prefix: "RouterSessionDirectoryForkTests")
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
+            over: container, cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir,
+            loader: loader)
         return await make(router: router, profile: profile, over: container, in: directories)
     }
 

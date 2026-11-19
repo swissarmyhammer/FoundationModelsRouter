@@ -502,6 +502,11 @@ enum RouterTelemetry {
         /// for the audit.
         static let forker = prefix + "session.forked_by"
 
+        /// The outcome of the copy of the prompt cache of the source of a
+        /// fork to the key of the fork (``PromptCacheCopyOutcome``), beside
+        /// the id of the fork in ``forkSessionId``.
+        static let forkPromptCacheCopy = prefix + "session.fork_prompt_cache_copy"
+
         /// The id of a transcript entry.
         static let entryId = prefix + "entry.id"
 
@@ -632,7 +637,7 @@ enum RouterTelemetry {
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,
-            spanName, toolCallId, mailId, forkSessionId, forker,
+            spanName, toolCallId, mailId, forkSessionId, forker, forkPromptCacheCopy,
         ]
     }
 

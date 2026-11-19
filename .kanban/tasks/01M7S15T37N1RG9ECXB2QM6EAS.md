@@ -1,0 +1,57 @@
+---
+assignees:
+- claude-code
+comments:
+- actor: claude-code
+  id: 01m7s1h6yz2v7bdj099styfp18
+  text: |-
+    Research (implement, part 1).
+    - Both build paths reach `RoutedSessionActor.makeFork(id:seed:tools:)` through `ForkBuild` (Directory/SessionLaunchForkRequest.swift). The directory mails the first prompt only after `launchFork` returns, so a copy that `makeFork` awaits is done before the first prompt.
+    - The fork is made by the handle of the slot of the source (`forkHandle()`), so the slot and the model are equal by construction on this path. The guard is still necessary (task spec), and a test reaches it through a hand-built handle with another slot or model.
+    - A session has no reference to the router. The budget goes through a new closure on `RoutedModel` that the router sets with a weak capture of its `PromptCacheSizing`, so a handle does not keep the sizing alive after the router.
+    - The router is the only conformer of `SessionPromptCacheScoping` (`MLXFoundationModelsSessionBackend`). No test helper conforms.
+    - Log capture: `TelemetryCapture.run` + `useCaptureLogger(for:)` on the source; the fork takes the explicit logger of its source in `useTelemetry` before the copy.
+    - A stored property on the fork for the outcome would be filled after init (rule "no stored property waits for a later method"), so the fork logs the outcome itself, with the fork id metadata of the fork log, through the logger of the session (category SessionDirectory).
+  timestamp: 2026-11-19T04:37:41.471013+00:00
+- actor: claude-code
+  id: 01m7s202yspsz4vexja5avanv9
+  text: |-
+    ### implement — changed
+    - evidence: names: protocol `SessionPromptCacheCopying.copyPromptCache(fromSession:toSession:) async -> PromptCacheCopyOutcome`; Router result `PromptCacheCopyOutcome` (String raw: `copied`, `sourceNotFound`, `sourceInUse`; not named PromptCacheCopyResult, so it does not hide the mlx-swift-lm type in part 2); `SessionPromptCacheScoping.copyPromptCache(fromSession:toSession:) async -> PromptCacheCopyOutcome?` (nil when the model does not conform) on `MLXFoundationModelsSessionBackend`; `RoutedSessionActor.takePromptCacheCopy(of:through:)` (guard same slot + model, log, budget after `.copied`), called by `makeFork(id:seed:tools:)` before it returns; `RoutedModel.promptCacheBudgetSender` (Router sets it with a weak capture of its sizing); `PromptCacheSizing.sendBudgetAgain()`; log key `RouterTelemetry.LogMetadataKey.forkPromptCacheCopy` ("session.fork_prompt_cache_copy"), record "a fork asked for a copy of the prompt cache of its source" with session id + fork id, category SessionDirectory. No MLXLanguageModel conformance, no pin change.
+    - files: Sources/FoundationModelsRouter/{Concurrency/SessionPromptCache.swift, Resolution/LiveModelLoader.swift, Session/RoutedSessionActorPromptCache.swift, Session/RoutedSessionActorForking.swift, LanguageModelProfile.swift, Router.swift, Sizing/PromptCacheSizing.swift, Sizing/PromptCacheBudget.swift (doc: MLX copy / GGUF live sequence), Directory/RouterSessionDirectory.swift (doc of fork(_:)), Tracing/RouterTelemetry.swift}; Tests: new ForkPromptCacheCopyTests.swift (11 tests), new Helpers/PromptCacheLogLoader.swift, Helpers/PromptCacheScopeRecordingModel.swift (copy log + conformance), Helpers/ForkFixtures.swift and Helpers/RouterTestFixtures.swift (optional loader).
+    - RED: with declaration stubs, 4 failed (default-path copy, launcher copy, budget, log); then without the guard, the 2 slot/model tests failed; then all 11 passed. 5 tests passed at the stub stage because they pin existing behavior or the nil branch: aBackendOverAModelThatDoesNotCopyGivesNoOutcome, aForkWhoseSourceHasNoCacheAnswers, aForkWhoseSourceCacheIsInUseAnswers, aClosedForkReleasesOnlyItsOwnKey, aClosedSourceDoesNotReleaseTheKeyOfTheFork.
+    - filtered: 10 suites (ForkPromptCacheCopyTests, SessionPromptCacheKeyTests, SummarizerPromptCacheTests, the 4 directory fork suites, ForkBuildTests, RouterTelemetryLoggingTests, PromptCacheBudgetTests): 95 tests passed.
+    - full `swift test` once: 3093 tests in 352 suites passed, plus 50 and 19; 0 failures; only the known mlx-swift_Cmlx bundle warning. Output: /private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/9f2cfbe4-77ae-4086-bbe8-c47c9f2c5409/scratchpad/full-swift-test.txt
+    - next: /review. Not committed or pushed (orders of this run).
+  timestamp: 2026-11-19T04:45:48.889042+00:00
+position_column: doing
+position_ordinal: '80'
+title: 'A fork copies the prompt cache of its source: the protocol, the copy at the fork, and the budget (D205 (f), part 1)'
+---
+## Goal
+
+When the Router makes a fork, the prompt cache of the fork starts as a copy of the cache of the source. The first pass of the fork does not prefill the copied history. The source and the fork stay independent. The user approved this on 2026-11-18 ("Yes, do it"). Brief: `../.briefs/fork-kv/router-brief.md`, overview `overview.md`; research on the closed task ^3x07j46.
+
+This part needs no new pin. It uses a fake copying model in the tests. The MLX conformance and the real-cache tests are part 2; the GGUF tests are part 3.
+
+## Change
+
+1. A new protocol `SessionPromptCacheCopying` (or a requirement on `SessionPromptCacheReleasing`, `Concurrency/SessionPromptCache.swift:14`): `copyPromptCache(fromSession:toSession:) async -> PromptCacheCopyResult`, with a Router-side result type that maps to the mlx-swift-lm `PromptCacheCopyResult` later (`copied`, `sourceNotFound`, `sourceInUse`). Add `copyPromptCache(fromSession:toSession:) async` to `SessionPromptCacheScoping` (`:26`), implemented on `MLXFoundationModelsSessionBackend` as `releasePromptCache(ofSession:)` is (`Resolution/LiveModelLoader.swift:994`): it calls the model only when the model conforms.
+2. The copy at the fork: in `RoutedSessionActor.makeFork(id:seed:tools:)` (`Session/RoutedSessionActorForking.swift:90`), after the fork adopts its backend and before the function returns, copy the cache of the source (`promptCacheSessionID`) to the id of the fork. Only when the source and the fork use the same slot and the same model reference. Thus the copy is done before `fork(_:)` mails the first prompt, on both build paths (the host launcher and the default). Log the result with the fork log.
+3. The cut: the copy holds the whole cache of the source. The reuse rules of the model rewind it to the common prefix at the first pass. The Router does not count tokens.
+4. The memory budget: after a copy, send the prompt-cache budget again (as `PromptCacheSizing.sendBudget` does at an acquire, `Sizing/PromptCacheSizing.swift:180`). Write in the doc of `PromptCacheBudget` (`Sizing/PromptCacheBudget.swift`) that the MLX copy is in the prompt-cache store and its budget, and that the GGUF copy is a live sequence inside the KV of the context.
+5. Close: `releasePromptCache()` of the fork (`Session/RoutedSessionActorPromptCache.swift:40`) releases only the copy. A close of the source does not release the copy.
+
+Read `routed-session-cancellation-invariants` in the memory folder before a change in `Session/RoutedSessionActor*.swift`.
+
+## Tests (with a fake copying model)
+
+- [x] A fork calls the copy one time, from the source id to the fork id, before the first prompt of the fork starts. Both build paths (the default and a host launcher).
+- [x] No copy when the slot or the model reference differs, or when the model does not conform.
+- [x] `sourceNotFound` and `sourceInUse`: the fork works and answers.
+- [x] The budget is sent again after a copy.
+- [x] A close of the fork releases the fork id only; a close of the source does not release the fork id.
+
+## After
+
+Push when green. Send the sha to testudoapp-9a. #d205

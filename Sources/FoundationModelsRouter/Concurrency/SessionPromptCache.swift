@@ -16,6 +16,40 @@ protocol SessionPromptCacheReleasing: Sendable {
 
 extension MLXLanguageModel: SessionPromptCacheReleasing {}
 
+/// The outcome of a copy of the prompt cache of one session to the key of
+/// another session (D205 (f)).
+enum PromptCacheCopyOutcome: String, Sendable, Equatable {
+    /// The cache of the source is now also under the key of the target.
+    case copied
+
+    /// The model keeps no cache for the source.
+    case sourceNotFound
+
+    /// A pass of the source holds its cache now, so the model copied nothing.
+    case sourceInUse
+}
+
+/// A raw model that keeps a prompt cache for each session, and can copy the
+/// cache of one session to the key of another session (D205 (f)). A fork
+/// calls it through ``SessionPromptCacheScoping/copyPromptCache(fromSession:toSession:)``.
+///
+/// The copy and the source are independent: a pass of one does not change
+/// the cache of the other, and a release of one key does not release the
+/// other key. No model of the router conforms yet: `MLXLanguageModel` gets
+/// the copy in a later mlx-swift-lm release (task ^jx6ng3r). The GGUF cache
+/// has no session key, so the GGUF model does not conform.
+protocol SessionPromptCacheCopying: Sendable {
+    /// Copies the prompt cache of session `sourceSessionID` to the key of
+    /// session `targetSessionID`.
+    ///
+    /// - Parameters:
+    ///   - sourceSessionID: The session id whose cache the copy reads.
+    ///   - targetSessionID: The session id that the copy writes.
+    /// - Returns: The outcome of the copy.
+    func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
+        -> PromptCacheCopyOutcome
+}
+
 /// A session backend whose passes key the prompt cache of its model by the
 /// id of the session that owns the backend.
 ///
@@ -40,4 +74,15 @@ protocol SessionPromptCacheScoping: AnyObject, Sendable {
     ///
     /// - Parameter sessionID: The id that the passes of the session bound.
     func releasePromptCache(ofSession sessionID: String) async
+
+    /// Copies the prompt cache of `sourceSessionID` to the key of
+    /// `targetSessionID` on the model of this backend.
+    ///
+    /// - Parameters:
+    ///   - sourceSessionID: The session id whose cache the copy reads.
+    ///   - targetSessionID: The session id that the copy writes.
+    /// - Returns: The outcome of the copy, or `nil` when the model copies
+    ///   no cache.
+    func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
+        -> PromptCacheCopyOutcome?
 }

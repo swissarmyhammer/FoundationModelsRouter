@@ -1460,7 +1460,7 @@ public actor Router {
 
     /// Builds a routed model handle for `slot` over `container`, with this
     /// router's id, recorder, tracer, sampling mode, transcripts root, hooks,
-    /// and session directory.
+    /// session directory, and the sender of its prompt-cache budget.
     ///
     /// The footprint of the handle is the footprint that the acquire of the
     /// slot charged, so a slot that shares the model of another slot reports
@@ -1497,7 +1497,8 @@ public actor Router {
             residencyHolds: admitted.holds,
             runClock: runClock,
             hooks: hooks,
-            sessionDirectory: sessionDirectory
+            sessionDirectory: sessionDirectory,
+            promptCacheBudgetSender: { [weak promptCacheSizing] in await promptCacheSizing?.sendBudgetAgain() }
         )
     }
 

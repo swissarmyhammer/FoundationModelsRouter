@@ -76,7 +76,9 @@ extension RoutedSessionActor {
     /// this session, and the history of the seed. It records as a fork node
     /// in the recording folder of this session, with the cut of the seed in
     /// its record (``SessionRecord/forkedAtHistoryOrdinal``), and it copies
-    /// no recorded history. The caller registers it
+    /// no recorded history. Before this call returns, the prompt cache of
+    /// the fork starts as a copy of the prompt cache of this session
+    /// (``takePromptCacheCopy(of:through:)``). The caller registers it
     /// (``RouterSessionDirectory/fork(_:)``).
     ///
     /// - Parameters:
@@ -88,10 +90,12 @@ extension RoutedSessionActor {
     /// - Throws: `SessionDirectoryError.forkUnsupported` when this session
     ///   runs on a slot that has no session.
     func makeFork(id: ULID, seed: ForkSeed, tools: [any Tool]?) async throws -> RoutedSessionActor {
-        let fork = try forkHandle().makeFork(of: self, id: id, seed: seed, tools: tools)
+        let handle = try forkHandle()
+        let fork = handle.makeFork(of: self, id: id, seed: seed, tools: tools)
         // Host settings, as the other settings of the fork are.
         await fork.setGenerationStallReportInterval(generationStallReportInterval)
         await fork.useTelemetry(logger: explicitLogger, metricsFactory: explicitMetricsFactory)
+        await fork.takePromptCacheCopy(of: self, through: handle)
         return fork
     }
 

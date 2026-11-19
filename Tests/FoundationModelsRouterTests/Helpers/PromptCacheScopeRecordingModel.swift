@@ -19,8 +19,22 @@ struct ScopedPass: Sendable, Equatable {
     let firstEntryID: String?
 }
 
-/// The passes and the cache releases of one ``PromptCacheScopeRecordingModel``,
-/// in the order they occurred.
+/// One copy of the prompt cache of a session that a
+/// ``PromptCacheScopeRecordingModel`` received.
+struct PromptCacheCopyCall: Sendable, Equatable {
+    /// The session id whose cache the copy read.
+    let sourceSessionID: String
+
+    /// The session id that the copy wrote.
+    let targetSessionID: String
+
+    /// The count of the passes with the `.session` scope of
+    /// ``targetSessionID`` that started before the copy.
+    let targetPassesBefore: Int
+}
+
+/// The passes, the cache releases and the cache copies of one
+/// ``PromptCacheScopeRecordingModel``, in the order they occurred.
 ///
 /// A `Mutex`, not an actor: an executor records its pass before its first
 /// suspension, so the order of the log is the order the passes started.
@@ -30,6 +44,46 @@ final class PromptCacheScopeLog: Sendable {
 
     /// The session ids whose cache the model released, in order.
     private let releases = Mutex<[String]>([])
+
+    /// The copies so far, in order.
+    private let copies = Mutex<[PromptCacheCopyCall]>([])
+
+    /// The usage that ``promptCacheUsage`` reports after the first copy.
+    private let usageAfterCopy: PromptCacheUsage
+
+    /// Makes a log.
+    ///
+    /// - Parameter usageAfterCopy: The usage that ``promptCacheUsage``
+    ///   reports after the first copy. The default is no usage.
+    init(usageAfterCopy: PromptCacheUsage = .zero) {
+        self.usageAfterCopy = usageAfterCopy
+    }
+
+    /// Records one copy of the cache of `sourceSessionID` to
+    /// `targetSessionID`, with the count of the passes of the target so far.
+    ///
+    /// - Parameters:
+    ///   - sourceSessionID: The session id whose cache the copy reads.
+    ///   - targetSessionID: The session id that the copy writes.
+    func recordCopy(from sourceSessionID: String, to targetSessionID: String) {
+        let targetPasses = recordedPasses.filter { $0.scope == .session(targetSessionID) }.count
+        copies.withLock {
+            $0.append(
+                PromptCacheCopyCall(
+                    sourceSessionID: sourceSessionID, targetSessionID: targetSessionID,
+                    targetPassesBefore: targetPasses))
+        }
+    }
+
+    /// Every copy so far, in order.
+    var recordedCopies: [PromptCacheCopyCall] { copies.withLock { $0 } }
+
+    /// The prompt-cache usage of the model: no usage before the first copy,
+    /// and the usage of the initializer after it. A loader reports it
+    /// (``PromptCacheLogLoader``), so a budget shows the copy.
+    var promptCacheUsage: PromptCacheUsage {
+        recordedCopies.isEmpty ? .zero : usageAfterCopy
+    }
 
     /// Records one pass.
     ///
@@ -94,24 +148,29 @@ final class PromptCacheScopeLog: Sendable {
     }
 }
 
-/// A scripted `LanguageModel` that records the prompt-cache scope of each pass
-/// and each release of the cache of a session, with no GPU.
+/// A scripted `LanguageModel` that records the prompt-cache scope of each pass,
+/// each release and each copy of the cache of a session, with no GPU.
 ///
 /// Each pass records the `MLXLanguageModel.promptCacheScope` that its task
 /// sees, and then answers ``answer``. The model takes the place of the raw
-/// `MLXLanguageModel` of a container: it releases the cache of a session
-/// through the same ``SessionPromptCacheReleasing`` requirement.
+/// model of a container: it releases the cache of a session through the
+/// ``SessionPromptCacheReleasing`` requirement, and copies it through the
+/// ``SessionPromptCacheCopying`` requirement with the outcome that the test
+/// gives.
 ///
 /// A model made with a ``reportedInputTokens`` above zero also reports that
 /// input count as the usage of each pass, so the session measures its
 /// context and its automatic compaction can start.
-struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasing {
-    /// The log each pass and each release records into.
+struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasing, SessionPromptCacheCopying {
+    /// The log each pass, each release and each copy records into.
     let log: PromptCacheScopeLog
 
     /// The input token count that each pass reports as its usage, or zero
     /// when the passes report no usage.
     let reportedInputTokens: Int
+
+    /// The outcome that each copy gives.
+    let copyOutcome: PromptCacheCopyOutcome
 
     /// The text of every answer. It is short, so a summary that it writes
     /// shrinks the live context of a compaction.
@@ -120,12 +179,15 @@ struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasin
     /// Makes a model over `log`.
     ///
     /// - Parameters:
-    ///   - log: The log each pass and each release records into.
+    ///   - log: The log each pass, each release and each copy records into.
     ///   - reportedInputTokens: The input token count that each pass reports
     ///     as its usage. The default, zero, reports no usage.
-    init(log: PromptCacheScopeLog, reportedInputTokens: Int = 0) {
+    ///   - copyOutcome: The outcome that each copy gives. The default is
+    ///     `.copied`.
+    init(log: PromptCacheScopeLog, reportedInputTokens: Int = 0, copyOutcome: PromptCacheCopyOutcome = .copied) {
         self.log = log
         self.reportedInputTokens = reportedInputTokens
+        self.copyOutcome = copyOutcome
     }
 
     /// The model answers text only.
@@ -142,6 +204,20 @@ struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasin
     /// - Parameter sessionID: The session id whose cache is released.
     func releasePromptCache(sessionID: String) async {
         log.recordRelease(of: sessionID)
+    }
+
+    /// Records the copy of the cache of `sourceSessionID` to
+    /// `targetSessionID`, and gives ``copyOutcome``.
+    ///
+    /// - Parameters:
+    ///   - sourceSessionID: The session id whose cache the copy reads.
+    ///   - targetSessionID: The session id that the copy writes.
+    /// - Returns: ``copyOutcome``.
+    func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
+        -> PromptCacheCopyOutcome
+    {
+        log.recordCopy(from: sourceSessionID, to: targetSessionID)
+        return copyOutcome
     }
 
     /// The executor that records the scope of each pass and answers.

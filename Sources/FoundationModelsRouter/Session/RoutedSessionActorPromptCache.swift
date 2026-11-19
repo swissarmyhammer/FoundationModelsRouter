@@ -18,6 +18,9 @@
 /// - All backends of one session run over one raw model, because
 ///   `replacingTranscript` keeps the model. The release through the current
 ///   ``backend`` thus reaches each model that the session used.
+/// - A fork has its own ULID, so its own key. Its cache starts as a copy of
+///   the cache of its source (D205 (f), ``takePromptCacheCopy(of:through:)``),
+///   and the close of each session releases only its own key.
 extension RoutedSessionActor {
     /// The id that keys the prompt cache of the passes of this session: the
     /// string form of ``id``.
@@ -39,5 +42,57 @@ extension RoutedSessionActor {
     /// a key that the model does not know is a no-op.
     func releasePromptCache() async {
         await (backend as? any SessionPromptCacheScoping)?.releasePromptCache(ofSession: promptCacheSessionID)
+    }
+
+    /// Starts the prompt cache of this fork as a copy of the prompt cache of
+    /// `source` (D205 (f)): the model copies the cache of
+    /// ``promptCacheSessionID`` of `source` to the key of this fork.
+    /// ``makeFork(id:seed:tools:)`` of `source` calls it before it returns,
+    /// so the copy ends before the directory mails the first prompt of the
+    /// fork.
+    ///
+    /// The copy holds the whole cache of `source`. The first pass of the
+    /// fork renders the history up to the cut, and the reuse rules of the
+    /// model rewind the copy to the common prefix. The Router counts no
+    /// tokens. After the copy the two keys are independent: a close of this
+    /// fork releases only its own key (``releasePromptCache()``), and a close
+    /// of `source` releases only the key of `source`.
+    ///
+    /// The copy runs only when this fork and `source` run on the same slot
+    /// and the same model reference: the cache of a different model is of
+    /// no use to this fork.
+    ///
+    /// The outcome goes to the log with the id of this fork. After a copy,
+    /// `handle` sends the prompt-cache budget again, so the next budget
+    /// counts the copy.
+    ///
+    /// - Parameters:
+    ///   - source: The session that this fork comes from.
+    ///   - handle: The handle that made this fork.
+    func takePromptCacheCopy(of source: RoutedSessionActor, through handle: RoutedLLM) async {
+        guard slot == source.slot, model == source.model,
+            let outcome = await (backend as? any SessionPromptCacheScoping)?.copyPromptCache(
+                fromSession: source.promptCacheSessionID, toSession: promptCacheSessionID)
+        else { return }
+        logPromptCacheCopy(outcome, from: source)
+        guard outcome == .copied else { return }
+        await handle.promptCacheBudgetSender?()
+    }
+
+    /// Logs the outcome of the copy of the prompt cache of `source` to this
+    /// fork, with the ids of `source` and of this fork, as the fork log of
+    /// ``RouterSessionDirectory/fork(_:)`` names them.
+    ///
+    /// - Parameters:
+    ///   - outcome: The outcome of the copy.
+    ///   - source: The session that this fork comes from.
+    private func logPromptCacheCopy(_ outcome: PromptCacheCopyOutcome, from source: RoutedSessionActor) {
+        sessionLogger(.sessionDirectory).info(
+            "a fork asked for a copy of the prompt cache of its source",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(source.id.description)",
+                RouterTelemetry.LogMetadataKey.forkSessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.forkPromptCacheCopy: "\(outcome.rawValue)",
+            ])
     }
 }

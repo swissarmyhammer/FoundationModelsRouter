@@ -994,6 +994,22 @@ extension MLXFoundationModelsSessionBackend: SessionPromptCacheScoping {
     func releasePromptCache(ofSession sessionID: String) async {
         await (model as? any SessionPromptCacheReleasing)?.releasePromptCache(sessionID: sessionID)
     }
+
+    /// Copies the prompt cache of `sourceSessionID` to the key of
+    /// `targetSessionID` on ``model``, when ``model`` can copy the cache of a
+    /// session.
+    ///
+    /// - Parameters:
+    ///   - sourceSessionID: The session id whose cache the copy reads.
+    ///   - targetSessionID: The session id that the copy writes.
+    /// - Returns: The outcome of the copy, or `nil` when ``model`` copies no
+    ///   cache.
+    func copyPromptCache(fromSession sourceSessionID: String, toSession targetSessionID: String) async
+        -> PromptCacheCopyOutcome?
+    {
+        await (model as? any SessionPromptCacheCopying)?.copyPromptCache(
+            fromSession: sourceSessionID, toSession: targetSessionID)
+    }
 }
 
 /// The router container of an embedding model that the model loader of

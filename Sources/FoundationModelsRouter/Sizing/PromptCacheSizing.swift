@@ -53,6 +53,13 @@ import Synchronization
 /// An eviction publishes its value when its job ends. The last release of a
 /// key puts the eviction job in the admission queue, so the resize for the
 /// freed weights comes after the admission jobs before it in the queue.
+///
+/// ## A copy of a prompt cache
+///
+/// A fork that copied the prompt cache of its source sends the budget again
+/// (``sendBudgetAgain()``), with the rule of the footprints task: no budget
+/// while an acquire of the router runs, because that acquire sends the
+/// budget when it ends.
 final class PromptCacheSizing: Sendable {
     /// The task that reads the footprints of the pool and resizes the prompt
     /// cache for each value. It ends when this sizing is released.
@@ -82,6 +89,16 @@ final class PromptCacheSizing: Sendable {
 
     deinit {
         footprintsTask.cancel()
+    }
+
+    /// Sends the budget of the footprint of the pool again, unless an
+    /// acquire of the router runs now; that acquire sends the budget when it
+    /// ends. A fork calls it after it copied the prompt cache of its source
+    /// (D205 (f)): the copy adds entries to the prompt cache, and an
+    /// eviction that the copy causes can add spilling bytes, so the next
+    /// budget reads the usage after the copy.
+    func sendBudgetAgain() async {
+        await resizer.resizeForFootprintChange()
     }
 
     /// Runs `body`, an acquire of the router, with a budget less

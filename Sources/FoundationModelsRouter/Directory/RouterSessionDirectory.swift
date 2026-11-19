@@ -1456,7 +1456,13 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   of the fork.
     ///
     /// The forker of `request` goes to the log, for the audit. It is not a
-    /// fact of the fork. The KV cache of the source is not reused.
+    /// fact of the fork.
+    ///
+    /// The prompt cache of the fork starts as a copy of the prompt cache of
+    /// the source, when both run on the same slot and model and the model can
+    /// copy a cache (``RoutedSessionActor/takePromptCacheCopy(of:through:)``).
+    /// The copy ends before the first prompt is mailed, on both build paths,
+    /// and its outcome goes to the log with the id of the fork.
     ///
     /// - Parameter request: The source, the cut, the first prompt, the
     ///   client and the forker.

@@ -84,6 +84,22 @@ public struct PromptCacheUsage: Sendable, Equatable {
 /// after each acquire of the router. ``PromptCacheSizing`` records the order
 /// of these resizes and its limit.
 ///
+/// ## The copy of a fork
+///
+/// A fork starts with a copy of the prompt cache of its source (D205 (f)). The
+/// footprint of the pool does not change: it counts one KV estimate for each
+/// hold, and the copy is in the prompt cache, not in a hold.
+///
+/// - The MLX copy is an entry of the prompt-cache store of mlx-swift-lm, so
+///   ``PromptCacheUsage`` counts it, and the store applies this budget to it
+///   at the copy. After a copy the router sends the budget again
+///   (``PromptCacheSizing/sendBudgetAgain()``), so the spilling bytes of an
+///   eviction that the copy causes are in the next budget.
+/// - The GGUF copy is a live sequence of the same llama.cpp context. It is
+///   inside the KV of the context, and inside the recurrent estimate for
+///   `LlamaLanguageModel.Options.defaultMaxLiveSequences` sequences
+///   (``GGUFCacheSizing``), so the fit does not change.
+///
 /// ## More than one pool
 ///
 /// The prompt cache of the fork is one store for the whole process, but each
