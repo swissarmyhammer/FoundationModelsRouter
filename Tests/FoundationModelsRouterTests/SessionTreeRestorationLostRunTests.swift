@@ -250,7 +250,7 @@ struct SessionTreeRestorationLostRunTests {
             await recorded.close()
         }
 
-        #expect(restored.session(rootId) != nil)
+        #expect(restored.root.id == rootId)
     }
 
     // MARK: - Orphaned run -> manufactured .lost
@@ -470,8 +470,9 @@ struct SessionTreeRestorationLostRunTests {
     /// posts `afterTheCut` with a second answer when it is not empty. Writes
     /// a recorded fork of the root, cut after the first answer, whose own
     /// history is one answer (``RecordedForkFixtures``). Then restores the
-    /// tree under a second router with the same recording root. The recorded
-    /// root stays open, as the session of a crashed process does.
+    /// root and the fork, each by its id, under a second router with the
+    /// same recording root. The recorded root stays open, as the session of
+    /// a crashed process does.
     ///
     /// - Parameters:
     ///   - beforeTheCut: The events posted before the first answer.
@@ -479,15 +480,15 @@ struct SessionTreeRestorationLostRunTests {
     ///     cut. Empty gives no second answer.
     ///   - cacheDir: The disposable cache directory.
     ///   - recordingsDir: The durable recordings root.
-    /// - Returns: The restored tree, the id of the recorded fork and the
-    ///   recorded root. The caller closes the restored tree and the root.
+    /// - Returns: The restored root, the restored fork and the recorded
+    ///   root. The caller closes the three sessions.
     /// - Throws: What an answer, the write of the fork or the restore throws.
     private static func recordForkAndRestore(
         beforeTheCut: [OperationEvent],
         afterTheCut: [OperationEvent],
         cacheDir: URL,
         recordingsDir: URL
-    ) async throws -> (restored: RestoredSessionTree, forkId: ULID, recorded: any RoutedSession) {
+    ) async throws -> (restored: RestoredSessionTree, restoredFork: any RoutedSession, recorded: any RoutedSession) {
         let router1 = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
@@ -520,7 +521,8 @@ struct SessionTreeRestorationLostRunTests {
             let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
             let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
             let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-            return (restored, donor.id, root)
+            let restoredFork = try await profile2.standard.restoreSessionTree(root: donor.id).root
+            return (restored, restoredFork, root)
         }
     }
 
@@ -536,16 +538,14 @@ struct SessionTreeRestorationLostRunTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let (restored, forkId, recorded) = try await Self.recordForkAndRestore(
+        let (restored, restoredFork, recorded) = try await Self.recordForkAndRestore(
             beforeTheCut: [Self.event(correlationID: "run-1", kind: .progress, detail: "dangling")],
             afterTheCut: [],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir)
         defer {
-            await SessionFixtureLifecycle.close(restored)
-            await recorded.close()
+            await SessionFixtureLifecycle.close([restored.root, restoredFork, recorded])
         }
-        let restoredFork = try #require(restored.session(forkId))
 
         // The dangling .progress is in the effective stream of both nodes
         // (the fork inherits it in its prefix), so each restored node gets
@@ -570,7 +570,7 @@ struct SessionTreeRestorationLostRunTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let (restored, forkId, recorded) = try await Self.recordForkAndRestore(
+        let (restored, restoredFork, recorded) = try await Self.recordForkAndRestore(
             beforeTheCut: [Self.event(correlationID: "run-1", kind: .progress, detail: "running")],
             afterTheCut: [
                 Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded)
@@ -578,10 +578,8 @@ struct SessionTreeRestorationLostRunTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir)
         defer {
-            await SessionFixtureLifecycle.close(restored)
-            await recorded.close()
+            await SessionFixtureLifecycle.close([restored.root, restoredFork, recorded])
         }
-        let restoredFork = try #require(restored.session(forkId))
 
         // The view of the parent holds the terminal, so nothing is made. The
         // view of the fork ends on the dangling .progress: from its

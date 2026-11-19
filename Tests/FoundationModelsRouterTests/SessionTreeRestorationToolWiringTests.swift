@@ -366,8 +366,8 @@ struct SessionTreeRestorationToolWiringTests {
     }
 
     /// The production change that makes this test fail: a restore that
-    /// shares one outbox or one mount wrapper across the nodes of a tree.
-    @Test("each restored node of a recorded fork tree gets its own fresh outbox with its own mount wrapper")
+    /// shares one outbox or one mount wrapper across the restored sessions.
+    @Test("a root and its recorded fork restored by their ids each get their own fresh outbox with their own mount wrapper")
     @MainActor
     func eachRestoredNodeGetsItsOwnOutboxAndMountWrapper() async throws {
         let cacheDir = Self.makeTempDir()
@@ -385,11 +385,11 @@ struct SessionTreeRestorationToolWiringTests {
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let emitter = AmbientEventPostingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: recorded.rootId, tools: [emitter])
-        defer { await SessionFixtureLifecycle.close(restored) }
-        let restoredFork = try #require(restored.session(recorded.forkId))
+        let restoredFork = try await profile2.standard.restoreSessionTree(root: recorded.forkId, tools: [emitter]).root
+        defer { await SessionFixtureLifecycle.close([restored.root, restoredFork]) }
 
         #expect(restored.root.outbox !== restoredFork.outbox)
-        // The restore walks the root first, then its fork.
+        // The root restores first, then its fork.
         try #require(container2.threadedToolsByCall.count == 2)
         let rootMounted = try #require(
             failureDeliveryPeeled(container2.threadedToolsByCall[0].first) as? RunToCompletionRunner<AmbientToolArguments>)
@@ -409,10 +409,10 @@ struct SessionTreeRestorationToolWiringTests {
     }
 
     /// The production change that makes this test fail: a restore that
-    /// shares one binding wrapper across the nodes of a tree, or one token
+    /// shares one binding wrapper across the restored sessions, or one token
     /// across their calls.
     @Test(
-        "each restored node of a recorded fork tree gets its own ContextBindingTool for a non-String-output tool, posting to its own outbox under its own call's correlationID"
+        "a root and its recorded fork restored by their ids each get their own ContextBindingTool for a non-String-output tool, posting to their own outbox under their own call's correlationID"
     )
     @MainActor
     func eachRestoredNodeGetsItsOwnOutboxAndBindingWrapperForNonStringOutput() async throws {
@@ -431,8 +431,8 @@ struct SessionTreeRestorationToolWiringTests {
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: recorded.rootId, tools: [emitter])
-        defer { await SessionFixtureLifecycle.close(restored) }
-        let restoredFork = try #require(restored.session(recorded.forkId))
+        let restoredFork = try await profile2.standard.restoreSessionTree(root: recorded.forkId, tools: [emitter]).root
+        defer { await SessionFixtureLifecycle.close([restored.root, restoredFork]) }
 
         #expect(restored.root.outbox !== restoredFork.outbox)
         try #require(container2.threadedToolsByCall.count == 2)

@@ -366,11 +366,10 @@ import Testing
         await source.close()
         await fork.close()
 
-        let tree = try await fixture.profile.standard.restoreSessionTree(root: source.id)
+        let tree = try await fixture.profile.standard.restoreSessionTree(root: fork.id)
 
-        let restored = try #require(tree.session(fork.id))
-        #expect(await restored.transcript.promptTexts == [Self.firstPrompt, Self.forkPrompt])
-        await fixture.end([tree.root] + tree.children(of: source.id))
+        #expect(await tree.root.transcript.promptTexts == [Self.firstPrompt, Self.forkPrompt])
+        await fixture.end([tree.root])
     }
 
     @Test func aRestartRestoresTheForkAsAFork() async throws {
@@ -380,12 +379,12 @@ import Testing
         await source.close()
         await fork.close()
 
-        let tree = try await fixture.profile.standard.restoreSessionTree(root: source.id)
+        let tree = try await fixture.profile.standard.restoreSessionTree(root: fork.id)
 
         let summary = try #require(try await fixture.directory.summary(of: fork.id))
         #expect(summary.kind == .fork)
         #expect(summary.parentID == source.id)
-        await fixture.end([tree.root] + tree.children(of: source.id))
+        await fixture.end([tree.root])
     }
 
     /// Makes a named source with one fork, closes both, and restarts the

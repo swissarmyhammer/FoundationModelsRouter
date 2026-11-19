@@ -503,9 +503,9 @@ struct HookLineageTests {
 
     /// The production change that makes this test fail: a restore that does
     /// not give a recorded fork the fork rule against its restored parent,
-    /// or that gives a restored node an origin that is not `resumed`.
-    @Test("restoreSessionTree gives one resumed SessionStart for each node, and a recorded fork in another directory gets its own id as its key")
-    func restoreSessionTreeGivesOneResumedStartForEachSession() async throws {
+    /// or that gives a restored session an origin that is not `resumed`.
+    @Test("a restore of a root and then of its recorded fork by their ids gives one resumed SessionStart for each, and a recorded fork in another directory gets its own id as its key")
+    func aRestoreOfARootAndItsForkGivesOneResumedStartForEach() async throws {
         try await Self.withHookedProfile { hooked in
             let root = hooked.profile.standard.makeSession()
             await root.close()
@@ -514,6 +514,7 @@ struct HookLineageTests {
             let forkId = try #require(ULID(forkDirectory.lastPathComponent))
 
             let tree = try await hooked.profile.standard.restoreSessionTree(root: root.id)
+            let fork = try await hooked.profile.standard.restoreSessionTree(root: forkId)
             await hooked.dispatcher.drain()
 
             let resumed = Self.resumedSessions(in: hooked.visitor.events)
@@ -522,7 +523,7 @@ struct HookLineageTests {
             #expect(restoredFork.parentSessionID == root.id.description)
             // The fork works in its own folder, not in the folder of its parent.
             #expect(restoredFork.sessionKey == forkId.description)
-            await SessionFixtureLifecycle.close(tree)
+            await SessionFixtureLifecycle.close([fork.root, tree.root])
         }
     }
 
@@ -556,6 +557,7 @@ struct HookLineageTests {
             let forkId = try #require(ULID(forkDirectory.lastPathComponent))
 
             let tree = try await hooked.profile.standard.restoreSessionTree(root: root.id)
+            let fork = try await hooked.profile.standard.restoreSessionTree(root: forkId)
             await hooked.dispatcher.drain()
 
             let resumed = Self.resumedSessions(in: hooked.visitor.events)
@@ -565,15 +567,16 @@ struct HookLineageTests {
             #expect(restoredRoot.rootSessionID == root.id.description)
             #expect(restoredFork.kind == .fork)
             #expect(restoredFork.rootSessionID == root.id.description)
-            await SessionFixtureLifecycle.close(tree)
+            await SessionFixtureLifecycle.close([fork.root, tree.root])
         }
     }
 
-    /// The production change that makes this test fail: a restore that
-    /// gives the supplied key to the root only, so a recorded fork in the
-    /// working directory of the root loses the key of its parent.
-    @Test("restoreSessionTree with a hook key gives it to the root and to a recorded fork in the root's directory")
-    func restoreSessionTreeWithAHookKeyGivesItToTheRootAndASameDirectoryFork() async throws {
+    /// The production change that makes this test fail: a restore of a
+    /// recorded fork by its id that does not take the key of its open
+    /// restored source, so a recorded fork in the working directory of the
+    /// root loses the key of its parent.
+    @Test("a restore of a root with a hook key, and then of its recorded fork in the root's directory by its id, gives the key to both")
+    func aRestoreWithAHookKeyGivesItToTheRootAndASameDirectoryFork() async throws {
         try await Self.withHookedProfile { hooked in
             let root = hooked.profile.standard.makeSession(workingDirectory: hooked.directory)
             await root.close()
@@ -584,6 +587,7 @@ struct HookLineageTests {
 
             let tree = try await hooked.profile.standard.restoreSessionTree(
                 root: root.id, hookSessionKey: Self.replacementKey)
+            let fork = try await hooked.profile.standard.restoreSessionTree(root: forkId)
             await hooked.dispatcher.drain()
 
             let resumed = Self.resumedSessions(in: hooked.visitor.events)
@@ -592,7 +596,7 @@ struct HookLineageTests {
             #expect(restoredRoot.sessionKey == Self.replacementKey)
             #expect(restoredFork.sessionKey == Self.replacementKey)
             #expect(restoredFork.parentSessionID == root.id.description)
-            await SessionFixtureLifecycle.close(tree)
+            await SessionFixtureLifecycle.close([fork.root, tree.root])
         }
     }
 

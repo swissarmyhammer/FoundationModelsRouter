@@ -92,12 +92,13 @@ struct RelayedQuestionContextTests {
         }
     }
 
-    /// Restores the session tree of the root `rootID` with a second router
+    /// Restores the recorded session `rootID` by its id with a second router
     /// over the recording root of `fixture`, runs `body`, and then closes
-    /// each restored session. The close comes also when `body` throws.
+    /// the restored session. The close comes also when `body` throws.
     ///
     /// - Parameters:
-    ///   - rootID: The id of the recorded root session to restore.
+    ///   - rootID: The id of the recorded session to restore: a root
+    ///     session or a recorded fork.
     ///   - fixture: The fixture whose router recorded the root.
     ///   - recordingsDir: The durable transcripts root.
     ///   - body: The checks of the test.
@@ -144,17 +145,15 @@ struct RelayedQuestionContextTests {
         let question = try #require(asked)
         let childID = try #require(fixture.box.children.first).session.id
 
-        try await Self.withRestoredTree(root: fixture.session.id, of: fixture, recordingsDir: recordingsDir) { tree in
-            let root = try #require(tree.session(fixture.session.id))
-            let rootContext = await root.transcript
+        try await Self.withRestoredTree(root: fixture.session.id, of: fixture, recordingsDir: recordingsDir) { tree throws in
+            let rootContext = await tree.root.transcript
             #expect(try Self.holds(question, in: rootContext) == false)
             #expect(Self.holdsTerminal(ofRun: question.correlationID, in: rootContext))
         }
         // The child is a root session of its own. It asked the question
         // itself, so its context keeps it.
-        try await Self.withRestoredTree(root: childID, of: fixture, recordingsDir: recordingsDir) { tree in
-            let child = try #require(tree.session(childID))
-            #expect(try Self.holds(question, in: await child.transcript))
+        try await Self.withRestoredTree(root: childID, of: fixture, recordingsDir: recordingsDir) { tree throws in
+            #expect(try Self.holds(question, in: await tree.root.transcript))
         }
     }
 
@@ -193,9 +192,8 @@ struct RelayedQuestionContextTests {
             .effectiveEntryEvents(forSession: forkId).flatMap(\.operationEvents)
         #expect(inherited.contains { $0.elicitation?.elicitationId == elicitationId })
 
-        try await Self.withRestoredTree(root: fixture.session.id, of: fixture, recordingsDir: recordingsDir) { tree in
-            let restoredFork = try #require(tree.session(forkId))
-            #expect(try Self.holds(question, in: await restoredFork.transcript) == false)
+        try await Self.withRestoredTree(root: forkId, of: fixture, recordingsDir: recordingsDir) { tree throws in
+            #expect(try Self.holds(question, in: await tree.root.transcript) == false)
         }
     }
 }

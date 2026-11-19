@@ -34,8 +34,8 @@ public struct RestoredSession: Sendable {
     /// envelopes.
     public let configurationReport: SessionConfigurationRestorationReport
 
-    /// Every restored session whose recorded working context differs from the
-    /// live resolution, in walk order, or empty.
+    /// The restored session when its recorded working context differs from
+    /// the live resolution, or empty.
     public let contextMismatches: [ContextMismatch]
 }
 
@@ -107,7 +107,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// ``SessionRecord`` against this call's owning profile, and a mismatch
     /// is a typed error. With `switchingModel`, the session restores onto
     /// this handle instead, and it keeps its id. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:withForks:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The id of a root session restores that session alone (^1vesqjj). The
@@ -117,7 +117,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// opens its source from a list of recorded sessions. The live fork keeps
     /// its hooks and its entry in the session directory. A host opens a
     /// recorded fork with a restore by the id of that fork. With
-    /// `switchingModel`, the recorded forks move on disk; see that parameter.
+    /// `switchingModel`, a recorded fork with no session moves on disk; see
+    /// that parameter.
     ///
     /// The id of a recorded fork restores that fork alone (D205). Its history
     /// comes from the recordings of its chain of sources on disk, so the
@@ -189,7 +190,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session closes. A claimed run must be an orphan run of the restored
     ///     session; a run of a recorded fork under it is claimed by a restore
     ///     of that fork by its id. See
-    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:withForks:)``.
+    ///     ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
     ///   - transcriptReader: The reader of the recorded transcripts of
     ///     sessions, or `nil` (the default) for no reader. The recording does
     ///     not hold the reader, because it is a live object, so a host gives
@@ -220,21 +221,25 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session that is on this slot and this model already changes
     ///     nothing and writes no event.
     ///
-    ///     The recorded forks under a root session move with it, to this
-    ///     same handle, because a fork is a part of the same conversation. A
-    ///     fork that stayed on the old model would fail with
+    ///     A recorded fork under a root session that has no session in the
+    ///     session directory of the router of this handle moves with the
+    ///     root, to this same handle, because a fork is a part of the same
+    ///     conversation. A fork that stayed on the old model would fail with
     ///     ``SessionTreeRestorationError/modelMismatch(session:slot:recorded:resident:)``
-    ///     at a later restore by its id. The restore restores no fork, so a
-    ///     fork moves on disk alone: it gets one
+    ///     at a later restore by its id. The restore restores no fork, so
+    ///     such a fork moves on disk alone: it gets one
     ///     ``TranscriptEvent/Kind/modelChanged`` event, and its `index.md`
     ///     takes the new slot, model and context. The restore makes no
-    ///     session and fires no hook for it. A fork that is live in the
-    ///     router of this handle (in the session directory and not
-    ///     suspended) does not move, because its session owns its
-    ///     `index.md`. The host moves a live fork by its own restore, as it
-    ///     moves the root. A fork that the host suspended moves. A restore
-    ///     of a recorded fork by its id moves that fork alone: its sources
-    ///     and the forks under it keep their model.
+    ///     session and fires no hook for it.
+    ///
+    ///     A recorded fork that has a session in that session directory,
+    ///     live or suspended, does not move: it gets no event, and it keeps
+    ///     the slot, the model and the context of its `index.md`. Its
+    ///     session holds its record in memory and owns its `index.md`, so a
+    ///     move on disk would not be durable. The host moves such a fork by
+    ///     its own restore, as it moves the root. A restore of a recorded
+    ///     fork by its id moves that fork alone: its sources and the forks
+    ///     under it keep their model.
     ///
     ///     The history can be larger than the context of the new model. The
     ///     restore calls no compaction. It re-applies the recorded
@@ -269,7 +274,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
             userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns,
-            transcriptReader: transcriptReader, switchingModel: switchingModel, withForks: false)
+            transcriptReader: transcriptReader, switchingModel: switchingModel)
         await moveRecordedForks(movingForks)
         return RestoredSession(
             session: tree.root,

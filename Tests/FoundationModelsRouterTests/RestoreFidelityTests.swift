@@ -358,9 +358,9 @@ struct RestoreFidelityTests {
         )
         let profile2 = try await router2.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let restored = try await profile2.standard.restoreSessionTree(root: parent.id)
+        let restored = try await profile2.standard.restoreSessionTree(root: forkId)
         defer { await SessionFixtureLifecycle.close(restored) }
-        let restoredFork = try #require(restored.session(forkId))
+        let restoredFork = restored.root
 
         let reply = try await restoredFork.respond(to: "tell me what the tool told you earlier")
         #expect(reply == inheritedAnswer)

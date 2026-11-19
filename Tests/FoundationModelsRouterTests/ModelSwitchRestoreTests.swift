@@ -34,6 +34,11 @@ struct ModelSwitchRestoreTests {
     /// The model of the slot the session is restored onto.
     private static let newModel: ModelRef = "org/flash-a"
 
+    /// The context that the `index.md` of a recorded fork records before
+    /// the switch. It differs from the context of each handle of the
+    /// profile.
+    private static let recordedForkContext = 4096
+
     /// The model of the standard slot of the other profile.
     private static let otherModel: ModelRef = "org/std-b"
 
@@ -109,10 +114,13 @@ struct ModelSwitchRestoreTests {
             return (other, profile)
         }
 
-        /// The `modelChanged` events of the session `id`.
+        /// The `modelChanged` events of the session `id` itself. The
+        /// effective events of a fork also hold events of its source after
+        /// the cut, such as the `modelChanged` event of a moved source, so
+        /// the filter keeps the events with the id of the session alone.
         func modelChangedEvents(of id: ULID) throws -> [TranscriptEvent] {
             try loadTree().effectiveEntryEvents(forSession: id, alongWith: [.modelChanged])
-                .filter { $0.kind == .modelChanged }
+                .filter { $0.kind == .modelChanged && $0.sessionId == id }
         }
     }
 
@@ -326,18 +334,38 @@ struct ModelSwitchRestoreTests {
 
     // MARK: - Forks
 
+    /// Records one answer, suspends the session, and writes a recorded fork
+    /// of it with no session. The `index.md` of the fork records
+    /// ``recordedForkContext``, so a move that writes the context of the
+    /// new handle shows in it.
+    ///
+    /// - Parameter workspace: The workspace of the test.
+    /// - Returns: The suspended source, the id of the fork and the folder of
+    ///   the fork.
+    /// - Throws: What the answer, the read and the writes throw.
+    private static func suspendedSourceWithARecordedFork(
+        in workspace: Workspace
+    ) async throws -> (source: any RoutedSession, forkID: ULID, forkFolder: URL) {
+        let source = try await workspace.recordAndSuspend()
+        let cut = try RecordedForkFixtures.cut(atEndOf: source.id, under: workspace.routerDirectory)
+        let forkID = ULID.generate()
+        let forkFolder = try RecordedForkFixtures.writeFork(
+            id: forkID, under: try workspace.folder(of: source.id), cut: cut)
+        var record = try #require(try SessionIndexFile.read(in: forkFolder))
+        record.context = Self.recordedForkContext
+        try SessionIndexFile.save(record, in: forkFolder)
+        return (source, forkID, forkFolder)
+    }
+
     /// The production change that makes this test fail: a switch that moves
     /// the root and leaves a recorded fork on the old model, so the fork
     /// throws modelMismatch.
     @Test("a recorded fork of the session moves to the new model with its root")
     func aForkMovesWithTheRoot() async throws {
         try await Self.withWorkspace { workspace in
-            let old = try await workspace.recordAndSuspend()
-            let rootFolder = try workspace.folder(of: old.id)
-            let cut = try RecordedForkFixtures.cut(atEndOf: old.id, under: workspace.routerDirectory)
-            let forkFolder = try RecordedForkFixtures.writeFork(under: rootFolder, cut: cut)
+            let (source, _, forkFolder) = try await Self.suspendedSourceWithARecordedFork(in: workspace)
 
-            let restored = try await workspace.switchToFlash(old.id)
+            let restored = try await workspace.switchToFlash(source.id)
             await restored.session.close()
 
             let record = try #require(try SessionIndexFile.read(in: forkFolder))
@@ -345,15 +373,76 @@ struct ModelSwitchRestoreTests {
         }
     }
 
+    /// The production change that makes this test fail: a move of a recorded
+    /// fork that writes no `modelChanged` event, or more than one.
+    @Test("a recorded fork that moves with its root gets one modelChanged event")
+    func aMovedForkGetsOneEvent() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, forkID, _) = try await Self.suspendedSourceWithARecordedFork(in: workspace)
+
+            let restored = try await workspace.switchToFlash(source.id)
+            await restored.session.close()
+
+            #expect(try workspace.modelChangedEvents(of: forkID).count == 1)
+        }
+    }
+
+    /// The production change that makes this test fail: a move of a recorded
+    /// fork whose event is stamped with the old model or the old slot.
+    @Test("the modelChanged event of a moved fork is stamped with the new model and slot")
+    func theEventOfAMovedForkIsStampedWithTheNewModel() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, forkID, _) = try await Self.suspendedSourceWithARecordedFork(in: workspace)
+
+            let restored = try await workspace.switchToFlash(source.id)
+            await restored.session.close()
+
+            let event = try #require(try workspace.modelChangedEvents(of: forkID).first)
+            #expect(event.model == Self.newModel && event.slot == .flash)
+        }
+    }
+
+    /// The production change that makes this test fail: a move of a recorded
+    /// fork that leaves the old slot in its `index.md`.
+    @Test("the index.md of a moved fork records the new slot")
+    func theIndexOfAMovedForkRecordsTheNewSlot() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, _, forkFolder) = try await Self.suspendedSourceWithARecordedFork(in: workspace)
+
+            let restored = try await workspace.switchToFlash(source.id)
+            await restored.session.close()
+
+            let record = try #require(try SessionIndexFile.read(in: forkFolder))
+            #expect(record.slot == .flash)
+        }
+    }
+
+    /// The production change that makes this test fail: a move of a recorded
+    /// fork that leaves the recorded context in its `index.md`.
+    @Test("the index.md of a moved fork records the context of the new handle")
+    func theIndexOfAMovedForkRecordsTheNewContext() async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, _, forkFolder) = try await Self.suspendedSourceWithARecordedFork(in: workspace)
+
+            let restored = try await workspace.switchToFlash(source.id)
+            await restored.session.close()
+
+            let record = try #require(try SessionIndexFile.read(in: forkFolder))
+            #expect(record.context == workspace.profile.flash.resolution.contextTokens)
+        }
+    }
+
     /// Records one answer, forks the session through the session directory,
     /// and suspends the source as a host does before a switch. The fork
-    /// stays live.
+    /// stays live, or the host suspends it too.
     ///
-    /// - Parameter workspace: The workspace of the test.
-    /// - Returns: The suspended source and the live fork.
+    /// - Parameters:
+    ///   - workspace: The workspace of the test.
+    ///   - suspendsFork: `true` to suspend the fork too.
+    /// - Returns: The suspended source and the fork.
     /// - Throws: What the answer and the fork throw.
-    private static func suspendedSourceWithALiveFork(
-        in workspace: Workspace
+    private static func suspendedSourceWithAForkSession(
+        in workspace: Workspace, suspendsFork: Bool = false
     ) async throws -> (source: any RoutedSession, fork: any RoutedSession) {
         let directory = try workspace.sessionDirectory
         let source = workspace.profile.standard.makeSession(configuration: SessionConfiguration())
@@ -363,38 +452,61 @@ struct ModelSwitchRestoreTests {
                 sourceID: source.id, cut: .lastCompletedTurn, forker: .user(clientID: "model-switch-client")))
         let fork = try #require(directory.session(id: summary.id))
         source.suspend()
+        if suspendsFork {
+            fork.suspend()
+        }
         return (source, fork)
     }
 
-    /// The production change that makes this test fail: a switch that
-    /// restores a second instance of a live fork onto the new model, which
-    /// rewrites the `index.md` of the live fork.
-    @Test("a live fork of the session keeps its model when its root moves")
-    func aLiveForkKeepsItsModel() async throws {
+    /// The production change that makes this test fail: a switch that moves
+    /// a fork that has a session in the session directory, live or
+    /// suspended. Its session owns its `index.md`, and a later write of that
+    /// session puts the old model back.
+    @Test("a fork with a session keeps its model when its root moves", arguments: [false, true])
+    func aForkWithASessionKeepsItsModel(suspendsFork: Bool) async throws {
         try await Self.withWorkspace { workspace in
-            let (source, fork) = try await Self.suspendedSourceWithALiveFork(in: workspace)
+            let (source, fork) = try await Self.suspendedSourceWithAForkSession(
+                in: workspace, suspendsFork: suspendsFork)
 
             let restored = try await workspace.switchToFlash(source.id)
+            await SessionFixtureLifecycle.close([restored.session, fork])
 
             let record = try #require(try SessionIndexFile.read(in: try workspace.folder(of: fork.id)))
             #expect(record.model == Self.oldModel)
-            await SessionFixtureLifecycle.close([restored.session, fork])
         }
     }
 
-    /// A guard of the move rule: a fork that the host suspended is not live,
-    /// so it moves with its root. This test passed before ^1vesqjj too.
-    @Test("a suspended fork of the session moves to the new model with its root")
-    func aSuspendedForkMovesWithTheRoot() async throws {
+    /// The production change that makes this test fail: a switch that writes
+    /// the slot or the context of the new handle into the `index.md` of a
+    /// fork that has a session.
+    @Test("a fork with a session keeps its slot and context when its root moves", arguments: [false, true])
+    func aForkWithASessionKeepsItsSlotAndContext(suspendsFork: Bool) async throws {
         try await Self.withWorkspace { workspace in
-            let (source, fork) = try await Self.suspendedSourceWithALiveFork(in: workspace)
-            fork.suspend()
+            let (source, fork) = try await Self.suspendedSourceWithAForkSession(
+                in: workspace, suspendsFork: suspendsFork)
+            let folder = try workspace.folder(of: fork.id)
+            let before = try #require(try SessionIndexFile.read(in: folder))
 
             let restored = try await workspace.switchToFlash(source.id)
+            await SessionFixtureLifecycle.close([restored.session, fork])
 
-            let record = try #require(try SessionIndexFile.read(in: try workspace.folder(of: fork.id)))
-            #expect(record.model == Self.newModel)
-            await restored.session.close()
+            let after = try #require(try SessionIndexFile.read(in: folder))
+            #expect(after.slot == before.slot && after.context == before.context)
+        }
+    }
+
+    /// The production change that makes this test fail: a switch that writes
+    /// a `modelChanged` event for a fork that has a session.
+    @Test("a fork with a session gets no modelChanged event when its root moves", arguments: [false, true])
+    func aForkWithASessionGetsNoEvent(suspendsFork: Bool) async throws {
+        try await Self.withWorkspace { workspace in
+            let (source, fork) = try await Self.suspendedSourceWithAForkSession(
+                in: workspace, suspendsFork: suspendsFork)
+
+            let restored = try await workspace.switchToFlash(source.id)
+            await SessionFixtureLifecycle.close([restored.session, fork])
+
+            #expect(try workspace.modelChangedEvents(of: fork.id).isEmpty)
         }
     }
 
@@ -404,8 +516,7 @@ struct ModelSwitchRestoreTests {
     @Test("a suspended fork of the session keeps its directory entry when its root moves")
     func aSuspendedForkKeepsItsDirectoryEntry() async throws {
         try await Self.withWorkspace { workspace in
-            let (source, fork) = try await Self.suspendedSourceWithALiveFork(in: workspace)
-            fork.suspend()
+            let (source, fork) = try await Self.suspendedSourceWithAForkSession(in: workspace, suspendsFork: true)
 
             let restored = try await workspace.switchToFlash(source.id)
 

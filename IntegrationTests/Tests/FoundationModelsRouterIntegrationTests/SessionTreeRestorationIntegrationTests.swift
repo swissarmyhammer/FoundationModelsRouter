@@ -340,7 +340,6 @@ struct SessionTreeRestorationIntegrationTests {
         // is the whole reason `RealModelHarness.make` takes a `routerId`.
         #expect(restored.root.routerId == original.routerId)
         #expect(restored.root.parentId == nil)
-        #expect(restored.children(of: original.rootId).isEmpty)
 
         // Each node's own recorded answers are unchanged from what was
         // observed on disk before restoration.

@@ -124,21 +124,23 @@ struct RepetitionStopRestoreTests {
         }
     }
 
-    /// Restores the tree that `stopped` recorded, over a model that plays
-    /// ``restoredScript``.
+    /// Restores a session of the tree that `stopped` recorded, over a model
+    /// that plays ``restoredScript``.
     ///
     /// - Parameters:
     ///   - stopped: The live session and its router.
+    ///   - id: The id of the recorded session to restore, or `nil` (the
+    ///     default) for the session of `stopped`.
     ///   - log: The log the restored model writes.
     ///   - directories: The cache and recording directories.
     /// - Returns: The restored tree, and the profile that keeps it alive.
     /// - Throws: Whatever the restore throws.
     private static func restore(
-        _ stopped: StoppedSession, log: RenderProbeLog, directories: TestDirectories
+        _ stopped: StoppedSession, id: ULID? = nil, log: RenderProbeLog, directories: TestDirectories
     ) async throws -> (tree: RestoredSessionTree, profile: LanguageModelProfile) {
         let (_, profile) = try await resolveProfile(
             routerId: stopped.router.id, script: restoredScript, log: log, directories: directories)
-        let tree = try await profile.standard.restoreSessionTree(root: stopped.session.id)
+        let tree = try await profile.standard.restoreSessionTree(root: id ?? stopped.session.id)
         return (tree, profile)
     }
 
@@ -351,9 +353,10 @@ struct RepetitionStopRestoreTests {
                 atEndOf: stopped.session.id, under: Self.routerDirectory(of: stopped, directories: directories)))
         let forkId = try #require(ULID(forkDirectory.lastPathComponent))
 
-        let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
+        let (restored, profile) = try await Self.restore(
+            stopped, id: forkId, log: RenderProbeLog(), directories: directories)
         defer { await SessionFixtureLifecycle.close(restored) }
-        let restoredFork = try #require(restored.session(forkId) as? RoutedSessionActor)
+        let restoredFork = try #require(restored.root as? RoutedSessionActor)
         let restoredForkRender = await restoredFork.backend.transcriptEntries()
         withExtendedLifetime(profile) {}
 

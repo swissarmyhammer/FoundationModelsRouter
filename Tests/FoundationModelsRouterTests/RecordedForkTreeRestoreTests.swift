@@ -327,18 +327,16 @@ struct RecordedForkTreeRestoreTests {
         #expect(try tree.effectiveEntryEvents(forSession: ids[1]) == Array(rootEntries.prefix(2)))
         #expect(try tree.effectiveEntryEvents(forSession: ids[2]) == rootEntries)
 
-        // The restore seeds each fork with the same cut.
+        // A restore of each fork by its id seeds it with the same cut.
         let (router2, profile2) = try await recording.restoringProfile()
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        defer {
-            await SessionFixtureLifecycle.close(restored)
-            withExtendedLifetime(router2) {}
-        }
+        defer { withExtendedLifetime(router2) {} }
         let rootTranscript = Array(try tree.effectiveTranscript(forSession: root.id))
         let expected = [Array(rootTranscript.prefix(2)), Array(rootTranscript.prefix(2)), rootTranscript]
         for (id, entries) in zip(ids, expected) {
-            let fork = try #require(restored.session(id))
-            #expect(Array(await fork.transcript) == entries)
+            let fork = try await profile2.standard.restoreSessionTree(root: id)
+            let transcript = Array(await fork.root.transcript)
+            await SessionFixtureLifecycle.close(fork)
+            #expect(transcript == entries)
         }
     }
 
@@ -404,33 +402,32 @@ struct RecordedForkTreeRestoreTests {
 
     // MARK: - The restore of the tree
 
-    /// The production change that makes this test fail: a restore that does
-    /// not walk the recorded forks, that gives two nodes one work registry,
-    /// or that starts the persisted count of a restored fork at zero.
-    @Test("restoring a recorded 4-node tree reproduces its shape and the effective entry count of each node")
+    /// The production change that makes this test fail: a restore by id
+    /// that loses the parent of a recorded fork, that gives two nodes one
+    /// work registry, or that starts the persisted count of a restored fork
+    /// at zero.
+    @Test("restoring each node of a recorded 4-node tree by its id keeps its parent and the effective entry count of each node")
     @MainActor
-    func restoringReproducesTreeShapeAndEntryCounts() async throws {
+    func restoringEachNodeKeepsItsParentAndEntryCounts() async throws {
         let recording = try await Self.makeRecording()
         defer { recording.directories.remove() }
         let ids = try await Self.recordBranchingTree(in: recording, forkBAnswers: 0)
         let all = [ids.root, ids.forkA, ids.forkB, ids.grandfork]
 
         let (router2, profile2) = try await recording.restoringProfile()
-        let restored = try await profile2.standard.restoreSessionTree(root: ids.root)
+        var restored: [any RoutedSession] = []
+        for id in all {
+            restored.append(try await profile2.standard.restoreSessionTree(root: id).root)
+        }
         defer {
             await SessionFixtureLifecycle.close(restored)
             withExtendedLifetime(router2) {}
         }
 
-        #expect(restored.root.id == ids.root)
-        #expect(restored.root.parentId == nil)
-        #expect(Set(restored.children(of: ids.root).map(\.id)) == [ids.forkA, ids.forkB])
-        #expect(restored.children(of: ids.forkA).map(\.id) == [ids.grandfork])
-        #expect(restored.children(of: ids.forkB).isEmpty)
-        #expect(restored.session(ids.forkA)?.parentId == ids.root)
-        #expect(restored.session(ids.grandfork)?.parentId == ids.forkA)
+        #expect(restored.map(\.id) == all)
+        #expect(restored.map(\.parentId) == [nil, ids.root, ids.root, ids.forkA])
         // Each restored node owns a work registry of its own, under its own id.
-        let registries = all.compactMap { restored.session($0)?.runPlane.workRegistry }
+        let registries = restored.map(\.runPlane.workRegistry)
         #expect(registries.map(\.sessionID) == all)
         #expect(Set(registries.map(ObjectIdentifier.init)).count == registries.count)
 
@@ -442,7 +439,7 @@ struct RecordedForkTreeRestoreTests {
         // A first answer of a restored fork that never answered persists
         // only its own entries: its persisted count starts at the count it
         // inherited, not at zero.
-        let restoredForkB = try #require(restored.session(ids.forkB))
+        let restoredForkB = restored[2]
         _ = try await restoredForkB.respond(to: "forkB's first message, after the restore")
         #expect(try recording.tree().effectiveEntryEvents(forSession: ids.forkB).count == 4)
         #expect(try recording.tree().events(forSession: ids.forkB).filter(\.kind.isEntryKind).count == 2)
@@ -484,30 +481,32 @@ struct RecordedForkTreeRestoreTests {
 
         let (router2, profile2) = try await recording.restoringProfile()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        let restoredFork = try await profile2.standard.restoreSessionTree(root: donor.id)
         defer {
-            await SessionFixtureLifecycle.close(restored)
+            await SessionFixtureLifecycle.close([restored.root, restoredFork.root])
             withExtendedLifetime(router2) {}
         }
         #expect(Array(await restored.root.transcript) == rootEntries)
-        let restoredFork = try #require(restored.session(donor.id))
-        #expect(Array(await restoredFork.transcript) == rootAtCut + donorEntries)
+        #expect(Array(await restoredFork.root.transcript) == rootAtCut + donorEntries)
     }
 
-    /// The production change that makes this test fail: a restore that
-    /// takes any session id as the root of a tree.
-    @Test("restoring by the id of a recorded fork throws notARootSession")
+    /// The production change that makes this test fail: a restore by the
+    /// id of a recorded fork that also restores the fork under it, so the
+    /// directory of the router holds the grandfork.
+    @Test("restoring by the id of a recorded fork restores no fork under it")
     @MainActor
-    func restoringByAForkIdThrowsNotARootSession() async throws {
+    func restoringByAForkIdRestoresNoForkUnderIt() async throws {
         let recording = try await Self.makeRecording()
         defer { recording.directories.remove() }
         let ids = try await Self.recordBranchingTree(in: recording)
 
         let (router2, profile2) = try await recording.restoringProfile()
         defer { withExtendedLifetime(router2) {} }
-        await #expect(throws: SessionTreeRestorationError.notARootSession(ids.forkA)) {
-            // A restore that does not throw fails the test; its nodes close.
-            await SessionFixtureLifecycle.close(try await profile2.standard.restoreSessionTree(root: ids.forkA))
-        }
+        let restored = try await profile2.standard.restoreSessionTree(root: ids.forkA)
+        let grandfork = try #require(profile2.standard.sessionDirectory).session(id: ids.grandfork)
+        await SessionFixtureLifecycle.close(restored)
+
+        #expect(grandfork == nil)
     }
 
     /// The production change that makes this test fail: a restore that
@@ -533,8 +532,8 @@ struct RecordedForkTreeRestoreTests {
 
         let (router2, profile2) = try await recording.restoringProfile()
         defer { withExtendedLifetime(router2) {} }
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-        let settings = (restored.session(forkId) as? RoutedSessionActor).map {
+        let restored = try await profile2.standard.restoreSessionTree(root: forkId)
+        let settings = (restored.root as? RoutedSessionActor).map {
             ($0.repetitionDetection, $0.mailOnlyAnswerLimit, $0.inlineSettleGrace, $0.runPlane.userPresence)
         }
         await SessionFixtureLifecycle.close(restored)
@@ -544,9 +543,9 @@ struct RecordedForkTreeRestoreTests {
         #expect(restoredGrace == grace)
         #expect(restoredPresence == .headless)
 
-        let overridden = try await profile2.standard.restoreSessionTree(root: root.id, userPresence: .interactive)
+        let overridden = try await profile2.standard.restoreSessionTree(root: forkId, userPresence: .interactive)
         defer { await SessionFixtureLifecycle.close(overridden) }
-        let overriddenFork = try #require(overridden.session(forkId) as? RoutedSessionActor)
+        let overriddenFork = try #require(overridden.root as? RoutedSessionActor)
         #expect(overriddenFork.runPlane.userPresence == .interactive)
         // The restore writes no index.md: the record of the fork keeps its
         // recorded presence.
@@ -602,13 +601,12 @@ struct RecordedForkTreeRestoreTests {
 
         let (router2, profile2) = try await recording.restoringProfile(
             over: RetainingLLMContainer(responseText: Self.longAnswer))
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        let restored = try await profile2.standard.restoreSessionTree(root: fork.id)
         defer {
             await SessionFixtureLifecycle.close(restored)
             withExtendedLifetime(router2) {}
         }
-        let restoredFork = try #require(restored.session(fork.id))
-        let restoredIds = await restoredFork.transcript.map(\.id)
+        let restoredIds = await restored.root.transcript.map(\.id)
         #expect(restoredIds == expectedIds)
         #expect(Set(checkpoint.content.compactedEntryIds).isDisjoint(with: restoredIds))
     }
@@ -627,10 +625,10 @@ struct RecordedForkTreeRestoreTests {
             let forkDirectory = try RecordedForkFixtures.writeFork(
                 under: sourceDirectory, cut: RecordedForkCut(historyOrdinal: 0, entryCount: 0))
             let written = try #require(try SessionIndexFile.read(in: forkDirectory)).facts
+            let forkId = try #require(ULID(forkDirectory.lastPathComponent))
 
-            let tree = try await profile.standard.restoreSessionTree(root: source.id)
-            let restoredFork = try #require(tree.children(of: source.id).first)
-            let restoredFacts = restoredFork.facts
+            let tree = try await profile.standard.restoreSessionTree(root: forkId)
+            let restoredFacts = tree.root.facts
             await SessionFixtureLifecycle.close(tree)
 
             #expect(restoredFacts == written)
@@ -656,7 +654,7 @@ struct RecordedForkTreeRestoreTests {
                 under: sourceDirectory, cut: RecordedForkCut(historyOrdinal: 0, entryCount: 0))
             let forkId = try #require(ULID(forkDirectory.lastPathComponent))
 
-            let tree = try await profile.standard.restoreSessionTree(root: source.id)
+            let tree = try await profile.standard.restoreSessionTree(root: forkId)
             let summary = try await SessionDirectorySummaries.summary(of: forkId, in: directory)
             await SessionFixtureLifecycle.close(tree)
 
@@ -666,11 +664,11 @@ struct RecordedForkTreeRestoreTests {
     }
 
     /// The production change that makes this test fail: a restore that
-    /// opens one span for the whole tree, or a span of a fork that names no
-    /// parent.
-    @Test("restoring a recorded tree opens one restored session span per node, and the span of the fork names its parent")
+    /// opens no span or two spans for one session, or a span of a fork that
+    /// names no parent.
+    @Test("restoring a root and its fork by their ids opens one restored session span for each, and the span of the fork names its parent")
     @MainActor
-    func restoringATreeOpensOneSpanPerNode() async throws {
+    func restoringARootAndAForkOpensOneSpanEach() async throws {
         let recording = try await Self.makeRecording()
         defer { recording.directories.remove() }
         let root = try await Self.recordClosedSession(answering: ["remember 42"], in: recording)
@@ -680,8 +678,9 @@ struct RecordedForkTreeRestoreTests {
         let tracer = InMemoryTracer()
         let (router2, profile2) = try await recording.restoringProfile(tracer: tracer)
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        let restoredFork = try await profile2.standard.restoreSessionTree(root: forkId)
         defer {
-            await SessionFixtureLifecycle.close(restored)
+            await SessionFixtureLifecycle.close([restored.root, restoredFork.root])
             withExtendedLifetime(router2) {}
         }
 
@@ -728,14 +727,14 @@ struct RecordedForkTreeRestoreTests {
         let (router2, profile2) = try await recording.restoringProfile(
             over: BasicLLMContainer(usageIncrement: (input: 100, output: 50)))
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        let restoredFork = try await profile2.standard.restoreSessionTree(root: forkId)
         defer {
-            await SessionFixtureLifecycle.close(restored)
+            await SessionFixtureLifecycle.close([restored.root, restoredFork.root])
             withExtendedLifetime(router2) {}
         }
 
         #expect(liveFill > 0)
         #expect(await restored.root.contextFill == liveFill)
-        let restoredFork = try #require(restored.session(forkId))
-        #expect(await restoredFork.contextFill == liveFill)
+        #expect(await restoredFork.root.contextFill == liveFill)
     }
 }

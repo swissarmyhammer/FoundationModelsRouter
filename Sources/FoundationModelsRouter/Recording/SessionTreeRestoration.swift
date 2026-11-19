@@ -5,17 +5,13 @@ import FoundationModelsHooks
 
 /// A failure to restore recorded sessions from disk, through
 /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:withForks:)``.
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
 /// happens before any restoration-specific check. Catch both types to tell a
 /// deleted session from every other restore failure.
 public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
-    /// The id names a session in the loaded tree that is not a root. Only a
-    /// whole tree is restored, from its root id.
-    case notARootSession(ULID)
-
     /// The router has no durable transcripts root, so there is nothing on
     /// disk to restore.
     case noDurableRecordingsRoot
@@ -40,11 +36,6 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// A localized message describing what error occurred.
     public var errorDescription: String? {
         switch self {
-        case .notARootSession(let id):
-            return """
-                Session \(id.description) is not a root session; restoreSessionTree(root:) \
-                restores only whole trees rooted at a root session's id.
-                """
         case .noDurableRecordingsRoot:
             return "This model has no durable transcripts root (recording to memory/none); there is nothing on disk to restore."
         case .slotNotInProfile(let session, let slot):
@@ -85,69 +76,32 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
         public let toolName: String
     }
 
-    /// Every recorded tool name that no supplied tool matched, in walk order
-    /// (each parent before its children), or empty.
+    /// Every recorded tool name that no supplied tool matched, in the order
+    /// of the recorded envelope, or empty.
     public let missingTools: [MissingTool]
 
     /// `true` when ``missingTools`` is empty.
     public var isComplete: Bool { missingTools.isEmpty }
 }
 
-/// A restored fork tree: every session under a router's recorded root,
-/// reconstructed as live ``RoutedSession``s synced with what is on disk.
+/// One restored session, a root session or a recorded fork, reconstructed
+/// as a live ``RoutedSession`` synced with what is on disk, and the two
+/// restore reports.
 ///
-/// This type stays internal. A caller resumes a session by an id it holds,
-/// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` is the
-/// published surface.
+/// This type stays internal.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``
+/// is the published surface.
 struct RestoredSessionTree: Sendable {
-    /// The restored root session.
+    /// The restored session, a root session or a recorded fork.
     let root: any RoutedSession
 
     /// What the restore could not re-apply from the recorded configuration
     /// envelopes.
     let configurationReport: SessionConfigurationRestorationReport
 
-    /// Every restored session whose recorded working context differs from
-    /// the live resolution, in walk order, or empty.
+    /// The restored session when its recorded working context differs from
+    /// the live resolution, or empty.
     let contextMismatches: [RestoredSession.ContextMismatch]
-
-    /// Every restored session, keyed by id.
-    private let sessionsById: [ULID: any RoutedSession]
-
-    /// The loaded tree, used for its parent/child linkage.
-    private let tree: TranscriptTree
-
-    /// Creates a restored session tree.
-    init(
-        root: any RoutedSession,
-        sessionsById: [ULID: any RoutedSession],
-        tree: TranscriptTree,
-        configurationReport: SessionConfigurationRestorationReport,
-        contextMismatches: [RestoredSession.ContextMismatch]
-    ) {
-        self.root = root
-        self.sessionsById = sessionsById
-        self.tree = tree
-        self.configurationReport = configurationReport
-        self.contextMismatches = contextMismatches
-    }
-
-    /// Looks up a restored session by its id.
-    ///
-    /// - Parameter id: The session's span id.
-    /// - Returns: The restored session, or `nil` if `id` is not in the tree.
-    func session(_ id: ULID) -> (any RoutedSession)? {
-        sessionsById[id]
-    }
-
-    /// A restored session's direct forks, ordered by id.
-    ///
-    /// - Parameter id: The parent session's span id.
-    /// - Returns: Its restored children, or empty if `id` is unknown or a leaf.
-    func children(of id: ULID) -> [any RoutedSession] {
-        tree.children(of: id).compactMap { sessionsById[$0.id] }
-    }
 }
 
 extension RoutedModel {
@@ -176,11 +130,18 @@ extension RoutedModel {
 }
 
 extension RoutedModel where Container == any LoadedLLMContainer {
-    /// Restores a whole session tree from disk, rooted at a root session's id.
+    /// Restores one recorded session from disk, by its id: a root session or
+    /// a recorded fork (D205).
     ///
-    /// Each node keeps its original id, parent id, and recording directory,
-    /// so a submission on a restored node appends to its existing transcript.
-    /// Each node's model and slot resolve from its ``SessionRecord``, as its
+    /// The restore restores the named session alone. It makes no session of
+    /// a recorded fork under it (^1vesqjj), and for a recorded fork it makes
+    /// no session of the chain of sources of the fork. It starts, registers
+    /// and ends no hooks of another session. The history of a recorded fork
+    /// comes from the recordings of its sources on disk.
+    ///
+    /// The session keeps its original id, parent id, and recording
+    /// directory, so a submission on it appends to its existing transcript.
+    /// Its model and slot resolve from its ``SessionRecord``, as its
     /// `index.md` holds it, against this call's owning profile. A mismatch is
     /// a typed error. `instructions`, ``Grammar``, and the recorded
     /// configuration envelope are re-applied. A recorded grammar always
@@ -190,82 +151,81 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// restored. A recorded context that differs from the live one is
     /// reported in ``RestoredSessionTree/contextMismatches``.
     ///
-    /// The restore writes no `index.md`: each restored node holds the record
-    /// read from its own, and a later change of a restored session (its
-    /// facts, its activity, its compactions) rewrites that `index.md`,
-    /// keeping its body. For each
-    /// node, one terminal `.completed` event with outcome
-    /// ``OperationOutcome/lost`` is posted to the node's outbox per orphaned
-    /// journaled run. See ``TranscriptTree/lostRunTerminalEvents(in:)``.
+    /// The restore writes no `index.md`, except for a move with
+    /// `switchingModel`: the restored session holds the record read from its
+    /// own, and a later change of the restored session (its facts, its
+    /// activity, its compactions) rewrites that `index.md`, keeping its
+    /// body. One terminal `.completed` event with outcome
+    /// ``OperationOutcome/lost`` is posted to the outbox of the session per
+    /// orphaned journaled run. See ``TranscriptTree/lostRunTerminalEvents(in:)``.
     ///
-    /// Each restored node registers in the session directory of the router
-    /// of its handle (``SessionNode/directoryLineage``): the root as a root,
-    /// or as a subagent when its record holds an agent spawn, and each
-    /// recorded fork as a fork of its source. The directory holds each node
-    /// weakly, so a node that no caller keeps leaves the live list.
+    /// The restored session registers in the session directory of the router
+    /// of its handle (``SessionNode/directoryLineage``): a root session as a
+    /// root, or as a subagent when its record holds an agent spawn, and a
+    /// recorded fork as a fork of its source. The directory holds the session
+    /// weakly, so a session that no caller keeps leaves the live list.
     ///
     /// - Parameters:
-    ///   - rootId: The root session's span id, or with `withForks` `false`
-    ///     the span id of any recorded session.
+    ///   - rootId: The span id of the recorded session: a root session or a
+    ///     recorded fork.
     ///   - recordingRoot: The exact directory to load the tree from, or `nil`
     ///     for the nested `<recordingsRoot>/<routerId>/` layout. Pass the
     ///     same root a session was vended with.
-    ///   - instructions: Instructions that replace the recorded ones on the
-    ///     root node alone, or `nil` (the default) to keep every node's own
-    ///     recorded string. A recorded fork under the root always keeps its
-    ///     own. The override reaches the root's own backend, because it
-    ///     replaces the leading `.instructions` entry of the transcript that
-    ///     backend is seeded from. The recorded `transcript.jsonl` on disk
-    ///     keeps the entry it already holds. A supplied string that differs
-    ///     from the recorded one appends one
-    ///     ``TranscriptEvent/Kind/divergence`` event to the root's
-    ///     transcript. See
+    ///   - instructions: Instructions that replace the recorded ones, or
+    ///     `nil` (the default) to keep the recorded string. The override
+    ///     reaches the backend of the session, because it replaces the
+    ///     leading `.instructions` entry of the transcript that backend is
+    ///     seeded from. The recorded `transcript.jsonl` on disk keeps the
+    ///     entry it already holds. A supplied string that differs from the
+    ///     recorded one appends one ``TranscriptEvent/Kind/divergence`` event
+    ///     to the transcript of the session. See
     ///     ``RestoredSession/instructionsDivergenceText(recorded:supplied:)``
     ///     and this function's own `applyInstructionsOverride(to:transcript:on:)`.
-    ///   - tools: The tools every restored node's model can call. Each node
-    ///     gets its own per-session tool instances. Every recorded tool name
-    ///     with no supplied instance is reported in
+    ///   - tools: The tools the model of the restored session can call. The
+    ///     session gets its own per-session tool instances. Every recorded
+    ///     tool name with no supplied instance is reported in
     ///     ``RestoredSessionTree/configurationReport``.
     ///   - toolOutputProtection: The host rule whose protected tool outputs
-    ///     every compaction on every restored node keeps word for word, or `nil`
-    ///     (the default) to protect nothing. No recording holds it, because it
-    ///     is a closure; the host gives it here, as it gives the tools.
-    ///   - isNoOpToolCall: The host check that marks a tool call of every
-    ///     restored node as a no-op, or
+    ///     every compaction on the restored session keeps word for word, or
+    ///     `nil` (the default) to protect nothing. No recording holds it,
+    ///     because it is a closure; the host gives it here, as it gives the
+    ///     tools.
+    ///   - isNoOpToolCall: The host check that marks a tool call of the
+    ///     restored session as a no-op, or
     ///     ``SessionConfiguration/defaultIsNoOpToolCall`` (the default) to
     ///     mark no call. No recording holds it, because it is a closure; the
     ///     host gives it here, as it gives the tools.
-    ///   - userPresence: The user presence of every restored node, or `nil`
-    ///     (the default) to give each node its recorded value. A node with
-    ///     no recorded value restores ``UserPresence/interactive``. The user
-    ///     presence belongs to the current client, not to the recording, and
-    ///     one client owns the whole restored tree. Thus a supplied value
-    ///     replaces the recorded value on the root and on each recorded
-    ///     fork. The recorded `index.md` files on disk do not change.
-    ///   - hookSessionKey: The key of the hook lineage of the root node (or
-    ///     of the session that `withForks` `false` restores alone), or `nil`
-    ///     (the default) to give the root its recorded id as its key.
-    ///     A recorded fork under the root keeps the fork rule against its
-    ///     restored parent: a fork in the working directory of its parent
-    ///     gets the key of its parent, so it gets this key too. A sub-agent
-    ///     that starts from the restored root, live or restored, gets the
-    ///     key of the root while the root is open. The recording does not
-    ///     hold the key, because it is for the hooks only, so a host gives it
-    ///     again here. See ``SessionConfiguration/hookSessionKey``.
+    ///   - userPresence: The user presence of the restored session, or `nil`
+    ///     (the default) to give it its recorded value. A record with no
+    ///     recorded value restores ``UserPresence/interactive``. The user
+    ///     presence belongs to the current client, not to the recording, so a
+    ///     supplied value replaces the recorded value. The recorded
+    ///     `index.md` on disk does not change.
+    ///   - hookSessionKey: The key of the hook lineage of the restored
+    ///     session, or `nil` (the default) to let its lineage give the key:
+    ///     its recorded id for a root session. A recorded fork with no key
+    ///     follows the fork rule against the hook session of its source: the
+    ///     open session in this router when the source is live, else the
+    ///     lineage that the record of the source gives. Thus a live source
+    ///     keeps its hooks and its entry in the session directory. A
+    ///     sub-agent that starts from the restored session gets its key while
+    ///     it is open. The recording does not hold the key, because it is for
+    ///     the hooks only, so a host gives it again here. See
+    ///     ``SessionConfiguration/hookSessionKey``.
     ///   - claimingRuns: The orphan runs that the host takes, or empty (the
     ///     default) to take none. The restore posts no `.lost` terminal for a
-    ///     claimed run. The first restored session, in walk order, whose
-    ///     recorded events hold the orphan run keeps the claim open: it is
-    ///     work (``RoutedSession/awaitIdle()``) until the host completes the run
+    ///     claimed run. The restored session keeps the claim open: it is work
+    ///     (``RoutedSession/awaitIdle()``) until the host completes the run
     ///     (``RoutedSession/completeClaimedRun(_:outcome:detail:)``), or the
     ///     session closes and ends the run as `.lost`. A host finds the keys
     ///     with ``RouterSessionDirectory/runStatuses(of:)``. A claimed key
-    ///     that is not an orphan run of the tree throws
-    ///     ``SessionTreeRestorationError/runNotClaimable(_:)`` before any
-    ///     session is restored. A run with no journal event is also
-    ///     claimable when an unended recorded child of a restored session
-    ///     holds its token (``RecordedChild/parentToolCallId``): a crash can
-    ///     come after the write-ahead record of the call and before the first
+    ///     that is not an orphan run of the restored session throws
+    ///     ``SessionTreeRestorationError/runNotClaimable(_:)`` before the
+    ///     session is restored. A run of a recorded fork is claimed by a
+    ///     restore of that fork by its id. A run with no journal event is
+    ///     also claimable when an unended recorded child of the session holds
+    ///     its token (``RecordedChild/parentToolCallId``): a crash can come
+    ///     after the write-ahead record of the call and before the first
     ///     event of the run. The open tool call of a claimed run gets the
     ///     placeholder output ``OpenToolCalls/runningOutput``, and the real
     ///     result arrives as run mail with the same run key. The open call of
@@ -273,31 +233,21 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     and an open call with no run in the journal gets
     ///     ``OpenToolCalls/unrecordedOutput``.
     ///   - transcriptReader: The reader of the recorded transcripts of
-    ///     sessions, or `nil` (the default) for no reader. Every restored node
-    ///     gets it. The recording does not hold the reader, because it is a
-    ///     live object, so a host gives it again here, as it gives the tools.
-    ///     See ``SessionConfiguration/transcriptReader``.
-    ///   - switchingModel: `false` (the default) to restore each node onto
-    ///     the model of its recorded slot. `true` to restore the root and each
-    ///     recorded fork under it onto THIS handle, also when the recorded
-    ///     model or slot is another one. Each moved node appends one
-    ///     ``TranscriptEvent/Kind/modelChanged`` event and rewrites the slot,
-    ///     the model and the context of its `index.md`. It keeps its id, its
-    ///     folder and its lineage. A node that is on this slot and this model
-    ///     already changes nothing. The restore calls no compaction. See
+    ///     sessions, or `nil` (the default) for no reader. The restored
+    ///     session gets it. The recording does not hold the reader, because
+    ///     it is a live object, so a host gives it again here, as it gives the
+    ///     tools. See ``SessionConfiguration/transcriptReader``.
+    ///   - switchingModel: `false` (the default) to restore the session onto
+    ///     the model of its recorded slot. `true` to restore it onto THIS
+    ///     handle, also when the recorded model or slot is another one. A
+    ///     moved session appends one ``TranscriptEvent/Kind/modelChanged``
+    ///     event and rewrites the slot, the model and the context of its
+    ///     `index.md`. It keeps its id, its folder and its lineage. A session
+    ///     that is on this slot and this model already changes nothing. The
+    ///     restore calls no compaction, and it moves no recorded fork under
+    ///     the session. See
     ///     ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
-    ///   - withForks: `true` (the default) to restore each recorded fork
-    ///     under the named session too, and to refuse a named session that is
-    ///     a fork. `false` to restore the named session alone, also when it
-    ///     is a recorded fork (D205). Then the restore makes no session of
-    ///     the chain of sources of the fork and no fork under it, and it
-    ///     starts, registers and ends no hooks of another session. The
-    ///     history of the fork comes from the recordings of its sources on
-    ///     disk. Its hook parent is the hook session of its source: the open
-    ///     session in this router when the source is live, else the lineage
-    ///     that the record of the source gives. Thus a live source keeps its
-    ///     hooks and its entry in the session directory.
-    /// - Returns: The restored tree, rooted at the session named by `rootId`.
+    /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
     ///   for what ``TranscriptTree/load(under:)`` or
@@ -313,8 +263,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         hookSessionKey: String? = nil,
         claimingRuns: Set<RunKey> = [],
         transcriptReader: (any SessionTranscriptReader)? = nil,
-        switchingModel: Bool = false,
-        withForks: Bool = true
+        switchingModel: Bool = false
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -330,40 +279,32 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         guard let rootNode = tree.session(rootId) else {
             throw TranscriptTreeError.sessionNotFound(rootId)
         }
-        guard !withForks || rootNode.parentId == nil else {
-            throw SessionTreeRestorationError.notARootSession(rootId)
-        }
-
-        try Self.requireClaimable(claimingRuns, in: rootNode, withForks: withForks, of: tree)
-        // The claimed runs whose open claim no restored node holds yet. The
-        // first node whose events hold an orphan run keeps its claim.
+        try Self.requireClaimable(claimingRuns, in: rootNode, of: tree)
+        // The claimed runs whose open claim the restored session does not
+        // hold yet, so that the lost terminal and the eventless scan place
+        // each claim one time only.
         var unplacedClaims = claimingRuns
 
-        var sessionsById: [ULID: any RoutedSession] = [:]
-        // The rehydration match (task ^ne5g9jn): each node's recorded tool
-        // names are checked against the supplied instances' names, and every
-        // recorded name with no supplied instance is collected here — one
-        // row per node and name, in walk order — for the returned
+        // The rehydration match (task ^ne5g9jn): the recorded tool names of
+        // the session are checked against the supplied instances' names, and
+        // every recorded name with no supplied instance is collected here —
+        // one row per name — for the returned
         // ``SessionConfigurationRestorationReport``.
         let suppliedToolNames = Set(tools.map(\.name))
         var missingTools: [SessionConfigurationRestorationReport.MissingTool] = []
-        // The recorded-context check (task ^xky3j8w): a node whose recorded
-        // ``SessionRecord/context`` differs from the live resolution's is
-        // collected here — one row per node, in walk order — for the
-        // returned ``RestoredSessionTree/contextMismatches``. See
+        // The recorded-context check (task ^xky3j8w): a session whose
+        // recorded ``SessionRecord/context`` differs from the live
+        // resolution's is collected here — one row — for the returned
+        // ``RestoredSessionTree/contextMismatches``. See
         // ``RestoredSession/ContextMismatch`` for why this is a typed
         // warning rather than a `modelMismatch`-style error.
         var contextMismatches: [RestoredSession.ContextMismatch] = []
-        // The hooks of each restored node, so that a recorded fork finds the
-        // hooks of its parent. The walk restores a parent before its forks.
-        var hooksById: [ULID: SessionHooks] = [:]
 
-        /// The hooks of one restored node, or `nil` when the router has no
+        /// The hooks of the restored session, or `nil` when the router has no
         /// hook dispatcher. The origin is `.resumed`. The parent is
-        /// ``hookParent(of:in:)``. The key of the named session is this
-        /// call's `hookSessionKey`, else its lineage gives it: its recorded
-        /// id for a root, the same key as before the restore. Every other
-        /// node derives its key from its lineage.
+        /// ``hookParent(of:in:)``. The key is this call's `hookSessionKey`,
+        /// else its lineage gives it: its recorded id for a root, the same
+        /// key as before the restore.
         ///
         /// - Parameters:
         ///   - node: The loaded node.
@@ -374,8 +315,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             let hooks = routerHooks.makeSessionHooks(
                 sessionID: node.id, workingDirectory: node.record.workingDirectory,
                 parent: hookParent(of: node, in: routerHooks),
-                requestedKey: node.id == rootId ? hookSessionKey : nil, isRestored: true)
-            hooksById[node.id] = hooks
+                requestedKey: hookSessionKey, isRestored: true)
             return hooks
         }
 
@@ -396,11 +336,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
 
         /// The hook session of the source of a recorded fork. A source that
-        /// this restore restored gives its restored hooks. Else a source
-        /// that is open in this router gives its open hook session, so that
-        /// a fork restored alone takes the key of its live source. Else the
-        /// lineage of the record of the source gives it, with the same rules
-        /// as a restore of that source, and nothing starts.
+        /// is open in this router gives its open hook session, so that the
+        /// restored fork takes the key of its live source. Else the lineage
+        /// of the record of the source gives it, with the same rules as a
+        /// restore of that source, and nothing starts.
         ///
         /// - Parameters:
         ///   - id: The id of the source.
@@ -408,7 +347,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Returns: The hook session of the source, or `nil` when the
         ///   loaded tree holds no source with this id.
         func sourceHookSession(_ id: ULID, in routerHooks: RouterHooks) -> HookSession? {
-            if let restored = hooksById[id] { return restored.session }
             if let open = routerHooks.openSession(id) { return open }
             guard let source = tree.session(id) else { return nil }
             return HookLineage.make(
@@ -471,16 +409,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             ) {
                 try await rebuild(node, on: routedLLM)
             }
-            sessionsById[node.id] = session
             // Before the restore returns, so a query right after it finds
-            // the node, in the directory of the router of its handle.
+            // the session, in the directory of the router of its handle.
             let lineage = node.directoryLineage
             routedLLM.sessionDirectory?.register(session, kind: lineage.kind, parentID: lineage.parentID)
-            // A session restored alone restores no fork under it.
-            guard withForks else { return session }
-            for child in node.children {
-                _ = try await restore(child)
-            }
             return session
         }
 
@@ -497,10 +429,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // The slot and the model of the handle this node restores onto.
             // Without the switch, `restore(_:)` checked that they are the
             // recorded ones. With the switch, they can differ from the
-            // recorded ones, and the node moves (see `recordModelChange`).
+            // recorded ones, and the node moves (see `recordModelChange` and
+            // ``SessionRecord/moveModel(to:)``).
             let slot = routedLLM.slot
             let model = routedLLM.chosen
-            let movesModel = node.record.slot != slot || node.record.model != model
+            let movesModel = node.record.movesModel(to: routedLLM)
 
             // The restored session runs against the live resolution's
             // context — the physical window `routedLLM`'s backend was
@@ -553,10 +486,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // envelope holds none gets the default.
             let inlineSettleGrace = configuration?.inlineSettleGrace ?? ToolMount.defaultInlineSettleGrace
 
-            // Per-node event wiring plus per-session tool instancing —
-            // the shared helper mints every restored node its own fresh
-            // outbox and run plane, so a tool's events post to *this* node's
-            // own outbox rather than a sibling or ancestor's, and background
+            // Per-session event wiring plus per-session tool instancing —
+            // the shared helper mints the restored session its own fresh
+            // outbox and run plane, so a tool's events post to *this*
+            // session's own outbox rather than another session's, and background
             // runs and pending elicitations never survive a restore (see
             // ``RoutedSessionActor/runPlane``).
             // This site's chain is mount only, plus capping when the
@@ -566,8 +499,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // root site's mount → cap (task ^k4nygqa; see
             // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:userPresence:)``).
             // The run plane gets the user presence that this call supplies
-            // (task ^58gn0mt), on each node, because one client owns the
-            // whole restored tree. With no supplied value, the run plane
+            // (task ^58gn0mt), because the client that restores the session
+            // owns it. With no supplied value, the run plane
             // gets the recorded user presence (task ^0hps8jg), so a restored
             // headless session stays headless. A record with no envelope,
             // with no presence, or with a presence that this version does
@@ -754,11 +687,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             if movesModel {
                 // The `index.md` follows the event: the slot, the model and
                 // the context that the node runs against now.
-                session.updateRecord {
-                    $0.slot = slot
-                    $0.model = model
-                    $0.context = resolvedContextTokens
-                }
+                session.updateRecord { $0.moveModel(to: routedLLM) }
             }
             // Crash-edge mail durability (`mailbox.md`, section 5, problem
             // 14): each mail of this node that the transcript holds as queued
@@ -776,11 +705,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         /// Applies this call's `instructions` override to one node.
         ///
-        /// A caller resumes one session by the id it holds, so the override
-        /// reaches the named session alone. Every recorded fork under a named
-        /// root keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``
-        /// restores no fork under a root.
+        /// A caller resumes one session by the id it holds, and the restore
+        /// restores that session alone, so the override reaches it alone.
         ///
         /// The model reads its instructions from the leading `.instructions`
         /// entry of the transcript its backend is seeded with.
@@ -804,10 +730,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         func applyInstructionsOverride(
             to node: SessionNode, transcript: Transcript, on routedLLM: RoutedLLM
         ) async -> (instructions: String?, seedTranscript: Transcript) {
-            let overrideForNode = node.id == rootId ? instructions : nil
             let recorded = node.record.instructions
-            guard let supplied = overrideForNode, supplied != recorded else {
-                return (overrideForNode ?? recorded, transcript)
+            guard let supplied = instructions, supplied != recorded else {
+                return (instructions ?? recorded, transcript)
             }
             // The divergence goes into the journal rather than into the return
             // value, because the reader who needs it is not the caller. A
@@ -831,8 +756,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let root = try await restore(rootNode)
         return RestoredSessionTree(
             root: root,
-            sessionsById: sessionsById,
-            tree: tree,
             configurationReport: SessionConfigurationRestorationReport(missingTools: missingTools),
             contextMismatches: contextMismatches
         )
@@ -846,11 +769,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// fork is a part of the same conversation and the restore does not
     /// restore it.
     ///
-    /// A fork that is live in the router of this handle does not move: its
-    /// session owns its `index.md`, and the move makes no second instance
-    /// of it. A host moves a live fork by its own restore. A fork that the
-    /// host suspended is not live, so it moves. A fork that is on this slot
-    /// and this model already changes nothing.
+    /// A fork that has a session in the session directory of the router of
+    /// this handle does not move, also when the host suspended it: its
+    /// session holds its record in memory and owns its `index.md`. A later
+    /// write of that session would put the old slot, model and context back,
+    /// and its later events would name the old model after a
+    /// `modelChanged` event that names the new one. The move also makes no
+    /// second instance of it. A host moves such a fork by its own restore. A
+    /// fork that is on this slot and this model already changes nothing.
     ///
     /// Each moved fork gets the same writes as a fork that a restore moves:
     /// one ``TranscriptEvent/Kind/modelChanged`` event, and the slot, the
@@ -859,25 +785,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Parameter forks: The recorded forks, as the tree loaded them.
     func moveRecordedForks(_ forks: [SessionNode]) async {
-        for fork in forks where !isLive(fork.id) && (fork.record.slot != slot || fork.record.model != chosen) {
+        for fork in forks where !hasSession(fork.id) && fork.record.movesModel(to: self) {
             await Self.recordModelChange(of: fork, to: self)
             guard durableRecording?.indexWriter.writes == true else { continue }
             var record = fork.record
-            record.slot = slot
-            record.model = chosen
-            record.context = resolution.contextTokens
+            record.moveModel(to: self)
             SessionIndexFile.saveLoggingFailure(record, in: fork.directory)
         }
     }
 
-    /// Tells if the session `id` is live in the session directory of the
-    /// router of this handle: the directory holds it, and it is not
-    /// suspended.
+    /// Tells if the session directory of the router of this handle holds a
+    /// session with the id `id`, live or suspended.
     ///
     /// - Parameter id: The id of the session.
-    /// - Returns: `true` for a live session that is not suspended.
-    private func isLive(_ id: ULID) -> Bool {
-        sessionDirectory?.session(id: id).map { !$0.isSuspended } ?? false
+    /// - Returns: `true` when the directory holds the session.
+    private func hasSession(_ id: ULID) -> Bool {
+        sessionDirectory?.session(id: id) != nil
     }
 
     /// Appends the ``TranscriptEvent/Kind/modelChanged`` event of one node
@@ -947,6 +870,29 @@ extension SessionNode {
 }
 
 extension SessionRecord {
+    /// Tells if a session with this record moves when it restores onto
+    /// `routedLLM`: the slot or the model of the handle is not the recorded
+    /// one.
+    ///
+    /// - Parameter routedLLM: The generation handle of the restore.
+    /// - Returns: `true` when the recorded slot or model differs from the
+    ///   handle.
+    func movesModel(to routedLLM: RoutedLLM) -> Bool {
+        slot != routedLLM.slot || model != routedLLM.chosen
+    }
+
+    /// Sets the slot, the model and the context of `routedLLM` in this
+    /// record: the fields of the `index.md` of a session that moves onto
+    /// the handle. A restored session writes them through its own record,
+    /// and a recorded fork with no session writes them to its file.
+    ///
+    /// - Parameter routedLLM: The generation handle the session moves onto.
+    mutating func moveModel(to routedLLM: RoutedLLM) {
+        slot = routedLLM.slot
+        model = routedLLM.chosen
+        context = routedLLM.resolution.contextTokens
+    }
+
     /// The kind and the parent of a session in the session directory, for a
     /// restored node and for a recorded summary (``RecordedSessions``). A
     /// session with a source is a `fork` of that source. A session with no
@@ -1019,36 +965,25 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     }
 
     /// Checks that each run of `claims` can be claimed: it is an orphan run
-    /// in the recorded events of `rootNode` or of a node below it, or it wrote
-    /// no event there and an unended child of such a node holds its token. It
-    /// reads the events and restores nothing, so a failed check leaves no
-    /// restored session.
+    /// in the recorded events of `node`, or it wrote no event there and an
+    /// unended child of `node` holds its token. It reads the events and
+    /// restores nothing, so a failed check leaves no restored session.
     ///
     /// - Parameters:
     ///   - claims: The runs that the host claims.
-    ///   - rootNode: The root of the tree to restore.
-    ///   - withForks: `true` to check the forks under `rootNode` too, as the
-    ///     restore restores them; `false` to check `rootNode` alone.
+    ///   - node: The node of the session to restore.
     ///   - tree: The loaded tree.
     /// - Throws: ``SessionTreeRestorationError/runNotClaimable(_:)`` for the
     ///   first claimed run, in order of tool and `correlationID`, that can not
     ///   be claimed; the errors of
     ///   ``TranscriptTree/effectiveEntryEvents(forSession:)``.
     fileprivate static func requireClaimable(
-        _ claims: Set<RunKey>, in rootNode: SessionNode, withForks: Bool, of tree: TranscriptTree
+        _ claims: Set<RunKey>, in node: SessionNode, of tree: TranscriptTree
     ) throws {
         guard !claims.isEmpty else { return }
-        var claimable: Set<RunKey> = []
-        var pending = [rootNode]
-        while let node = pending.popLast() {
-            let events = try tree.effectiveEntryEvents(forSession: node.id)
-            claimable.formUnion(OrphanRunScan(scanning: events).orphanedRuns)
-            claimable.formUnion(
-                eventlessClaims(claims, in: events, spawnTokens: tree.unendedSpawnTokens(of: node.id)))
-            if withForks {
-                pending += node.children
-            }
-        }
+        let events = try tree.effectiveEntryEvents(forSession: node.id)
+        let claimable = Set(OrphanRunScan(scanning: events).orphanedRuns).union(
+            eventlessClaims(claims, in: events, spawnTokens: tree.unendedSpawnTokens(of: node.id)))
         let unclaimable = claims.subtracting(claimable).sorted {
             ($0.tool, $0.correlationID) < ($1.tool, $1.correlationID)
         }
