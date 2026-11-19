@@ -78,12 +78,24 @@ extension SessionRecapModel {
 ///   reasoning off and at most ``outputTokenLimit`` output tokens. One
 ///   ``RouterTelemetry/SpanName/recap`` span records it.
 /// - The cleaned output (``SessionRecapOutput``) goes to the record through
-///   ``Host/write``. The host commits the write only when the job of the
-///   recap is still current: the check and the change of the record are one
-///   step (``Host/write``), so a cancel that comes while the write goes to
-///   the host writes nothing, and the next recap keeps the prompts. A
-///   failure, or an output with no words, writes nothing, so the record
-///   keeps its previous recap. The span records the error.
+///   ``Host/write``, in three steps (``WriteSteps``). (1) The write starts
+///   only when the job of the recap is still current, and the job is then
+///   marked as writing. A cancel that comes before the start writes
+///   nothing. (2) The host writes the record. (3) Only after a write that
+///   succeeded, and only when no cancel came during the write, the recapper
+///   removes what the recap covers, the host sends `factsChanged` one time,
+///   and the recapper logs the success. A write that throws removes
+///   nothing, so the next recap covers the same prompts, and the recapper
+///   logs the failure of the write.
+/// - A cancel during the write (a new turn, an archive, a close or a
+///   shutdown, after the start and before the end of the write) does not
+///   stop the write: it only takes the job, so step 3 finds the job
+///   cancelled. The record keeps the recap, because a written record is not
+///   taken back; the next recap gets it as its previous recap. The prompts,
+///   the tool calls and the turns stay for the next recap, the host sends no
+///   `factsChanged`, and the recapper logs no success and no failure.
+/// - A failure of the call, or an output with no words, writes nothing, so
+///   the record keeps its previous recap. The span records the error.
 /// - ``forget(_:)`` (an archive, a close) cancels the wait and the call of
 ///   the session and drops what the recapper keeps of it.
 ///
@@ -133,22 +145,47 @@ final class SessionRecapper: Sendable {
         let isModelBusy: @Sendable (_ model: ModelRef) -> Bool
 
         /// Writes `recap`, made at `instant`, to the record of the session
-        /// `id`, when `commit` returns `true`.
+        /// `id`, in the steps of `steps`.
         ///
-        /// The host calls `commit` one time, in one step with the change of
-        /// the record: with no suspension point between the two, and under
-        /// the lock or on the actor that orders the write with the archive
-        /// and the close of the session. `commit` reads, under the lock of
-        /// the recapper, whether the job of the recap is still current, and
-        /// it then removes what the recap covers. When it returns `false` (a
-        /// new turn, an archive, a close or a shutdown cancelled the job),
-        /// the host writes nothing and sends no event.
+        /// The host calls ``WriteSteps/start`` one time before it writes, and
+        /// writes nothing when it returns `false`. After a write that
+        /// succeeded, it calls ``WriteSteps/finish`` one time, and sends
+        /// `factsChanged` only when that returns `true` and the record
+        /// changed. No step after the write throws: a session that left the
+        /// directory during the write gets no event, and the write still
+        /// counts.
+        ///
+        /// - Returns: `true` when the recap went out: the write succeeded and
+        ///   ``WriteSteps/finish`` returned `true`.
+        /// - Throws: The error of the write. The host then calls no
+        ///   ``WriteSteps/finish``.
         let write:
-            @Sendable (_ recap: String, _ instant: Date, _ id: ULID, _ commit: @escaping @Sendable () -> Bool)
-                async throws -> Void
+            @Sendable (_ recap: String, _ instant: Date, _ id: ULID, _ steps: WriteSteps) async throws -> Bool
 
         /// The host before the owner gives its own: no session gets a recap.
-        static let none = Host(target: { _ in nil }, isModelBusy: { _ in false }, write: { _, _, _, _ in })
+        static let none = Host(target: { _ in nil }, isModelBusy: { _ in false }, write: { _, _, _, _ in false })
+    }
+
+    /// The steps of one recap write that the host calls around its write
+    /// of the record (``Host/write``).
+    struct WriteSteps: Sendable {
+        /// Starts the write: under the lock of the recapper, checks that the
+        /// job of the recap is still current, and marks it as writing.
+        /// Returns `false` when a new turn, an archive, a close or a
+        /// shutdown cancelled the job; the host then writes nothing. A
+        /// cancel after the start does not cancel the task of the write.
+        ///
+        /// It takes only the lock of the recapper, and it calls no host, so
+        /// the host can call it under its own lock (the lock order is then
+        /// the lock of the host, then the lock of the recapper).
+        let start: @Sendable () -> Bool
+
+        /// Ends a write that succeeded: under the lock of the recapper,
+        /// checks that no cancel came during the write, and then removes
+        /// what the recap covers. Returns `false` when a cancel came during
+        /// the write; the prompts then stay for the next recap, and the host
+        /// sends no `factsChanged`.
+        let finish: @Sendable () -> Bool
     }
 
     /// The facts of the turn that runs or ran last.
@@ -179,6 +216,9 @@ final class SessionRecapper: Sendable {
 
         /// The call, in its task.
         case running(Task<Void, Never>)
+
+        /// The write of the record, which a cancel does not stop.
+        case writing
     }
 
     /// The one recap of a session that waits, queues or runs.
@@ -355,8 +395,9 @@ final class SessionRecapper: Sendable {
     }
 
     /// Cancels the wait and the call of the session `id`, and drops what the
-    /// recapper keeps of it: the session was archived or closed. An
-    /// unarchive starts nothing.
+    /// recapper keeps of it: the session was archived or closed. A write that
+    /// started goes on to its end and then sends no `factsChanged`
+    /// (``WriteSteps``). An unarchive starts nothing.
     ///
     /// - Parameter id: The session id.
     func forget(_ id: ULID) {
@@ -370,7 +411,8 @@ final class SessionRecapper: Sendable {
     }
 
     /// Cancels each wait and each call, and drops what the recapper keeps:
-    /// the directory shuts down.
+    /// the directory shuts down. A write that started goes on to its end and
+    /// then sends no `factsChanged` (``WriteSteps``).
     func cancelAll() {
         let tasks = state.withLock { current -> [Task<Void, Never>] in
             let tasks = current.tracks.keys.compactMap { current.takeJob(of: $0) }
@@ -386,7 +428,9 @@ final class SessionRecapper: Sendable {
     // MARK: - Turns
 
     /// A turn of the session `id` starts: its wait, its place in the queue
-    /// or its call ends, and the facts of the new turn start empty.
+    /// or its call ends, and the facts of the new turn start empty. A write
+    /// that started goes on to its end, removes nothing and sends no
+    /// `factsChanged` (``WriteSteps``).
     ///
     /// - Parameter id: The session id.
     private func turnStarted(_ id: ULID) {
@@ -546,7 +590,7 @@ final class SessionRecapper: Sendable {
 
     /// Makes the recap of the session `id`: waits until no session on the
     /// flash model has a running turn, calls the flash model, and writes the
-    /// recap. A cancel at any step writes nothing.
+    /// recap. A cancel before the start of the write writes nothing.
     ///
     /// - Parameters:
     ///   - id: The session id.
@@ -560,15 +604,43 @@ final class SessionRecapper: Sendable {
         else { return }
         var input = snapshot.input
         input.previousRecap = current.previousRecap
+        let recap: String
         do {
-            let recap = try await Self.call(current.model, with: input, of: id)
+            recap = try await Self.call(current.model, with: input, of: id)
             try Task.checkCancellation()
-            try await host.write(recap, Date(), id) { [weak self] in
-                self?.commit(snapshot, of: id, job: jobID) ?? false
-            }
         } catch {
             RouterSessionDirectory.logSession(
                 .notice, "a recap call failed; the session keeps its previous recap", session: id, error: error)
+            return
+        }
+        await write(recap, covering: snapshot, of: id, job: jobID, through: host)
+    }
+
+    /// Writes `recap` through the host in the steps of ``WriteSteps``, and
+    /// logs the success or the failure of the write. A write that a cancel
+    /// met logs nothing.
+    ///
+    /// - Parameters:
+    ///   - recap: The recap.
+    ///   - snapshot: The snapshot of the input of the recap: what the recap
+    ///     covers.
+    ///   - id: The session id.
+    ///   - jobID: The id of the job.
+    ///   - host: The host.
+    private func write(
+        _ recap: String, covering snapshot: Snapshot, of id: ULID, job jobID: UInt64, through host: Host
+    ) async {
+        let steps = WriteSteps(
+            start: { [weak self] in self?.startWrite(of: id, job: jobID) ?? false },
+            finish: { [weak self] in self?.finishWrite(snapshot, of: id, job: jobID) ?? false })
+        do {
+            guard try await host.write(recap, Date(), id, steps) else { return }
+            RouterSessionDirectory.logSession(.debug, "wrote a recap", session: id)
+        } catch {
+            RouterSessionDirectory.logSession(
+                .warning,
+                "a recap write failed; the session keeps its previous recap, and the next recap covers the same prompts",
+                session: id, error: error)
         }
     }
 
@@ -592,22 +664,43 @@ final class SessionRecapper: Sendable {
         }
     }
 
-    /// Commits the write of the recap of the job `jobID` of the session
-    /// `id`: when the job is still current, removes what the recap covers
-    /// (the prompts, the tool calls and the turns of its input) and gives
-    /// `true`. What came after the snapshot stays for the next recap.
+    /// Starts the write of the recap of the job `jobID` of the session `id`
+    /// (``WriteSteps/start``): when the job is still current, marks it as
+    /// writing and gives `true`. A cancel of a job that writes takes the job
+    /// and does not cancel its task (``State/takeJob(of:)``).
+    ///
+    /// The check and the mark are one step under the lock of the recapper,
+    /// which each cancel of a job takes too.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - jobID: The id of the job.
+    /// - Returns: `true` when the host can write the recap; `false` when a
+    ///   new turn, an archive, a close or a shutdown cancelled the job.
+    private func startWrite(of id: ULID, job jobID: UInt64) -> Bool {
+        state.withLock { current in
+            guard current.tracks[id]?.job?.id == jobID else { return false }
+            current.tracks[id]?.job?.phase = .writing
+            return true
+        }
+    }
+
+    /// Ends the write of the recap of the job `jobID` of the session `id`
+    /// (``WriteSteps/finish``), after a write that succeeded: when no cancel
+    /// came during the write, removes what the recap covers (the prompts,
+    /// the tool calls and the turns of its input) and gives `true`. What came
+    /// after the snapshot stays for the next recap.
     ///
     /// The check and the removal are one step under the lock of the
-    /// recapper, which each cancel of a job takes too. The host calls it in
-    /// one step with its write (``Host/write``).
+    /// recapper, which each cancel of a job takes too.
     ///
     /// - Parameters:
     ///   - snapshot: The snapshot of the recap.
     ///   - id: The session id.
     ///   - jobID: The id of the job.
-    /// - Returns: `true` when the host can write the recap; `false` when a
-    ///   new turn, an archive, a close or a shutdown cancelled the job.
-    private func commit(_ snapshot: Snapshot, of id: ULID, job jobID: UInt64) -> Bool {
+    /// - Returns: `true` when the recap went out; `false` when a new turn, an
+    ///   archive, a close or a shutdown cancelled the job during the write.
+    private func finishWrite(_ snapshot: Snapshot, of id: ULID, job jobID: UInt64) -> Bool {
         state.withLock { current in
             guard var track = current.tracks[id], track.job?.id == jobID else { return false }
             track.prompts.removeFirst(min(snapshot.promptCount, track.prompts.count))
@@ -656,16 +749,21 @@ enum SessionRecapError: Error, Equatable {
 extension SessionRecapper.Job {
     /// Whether the job waits for its idle time or waits in the queue.
     fileprivate var isWaitingOrQueued: Bool {
-        if case .running = phase { return false }
-        return true
+        switch phase {
+        case .waiting, .queued:
+            return true
+        case .running, .writing:
+            return false
+        }
     }
 
-    /// The task of the job, or `nil` for a job in the queue.
+    /// The task that a cancel of the job cancels, or `nil` for a job in the
+    /// queue or a job that writes: a cancel does not stop a write.
     fileprivate var task: Task<Void, Never>? {
         switch phase {
         case .waiting(let task), .running(let task):
             return task
-        case .queued:
+        case .queued, .writing:
             return nil
         }
     }
@@ -676,8 +774,8 @@ extension SessionRecapper.State {
     ///
     /// - Parameter id: The session id.
     /// - Returns: The task of the job, for the caller to cancel outside the
-    ///   lock, or `nil` when the session has no job or its job is in the
-    ///   queue.
+    ///   lock, or `nil` when the session has no job, or its job is in the
+    ///   queue or writes.
     fileprivate mutating func takeJob(of id: ULID) -> Task<Void, Never>? {
         let job = tracks[id]?.job
         tracks[id]?.job = nil

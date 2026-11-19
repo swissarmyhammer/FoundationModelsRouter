@@ -102,9 +102,10 @@ struct SessionRecapIntegrationTests {
         recapper.use(
             host: SessionRecapper.Host(
                 target: { _ in target }, isModelBusy: { _ in false },
-                write: { recap, _, _, commit in
-                    guard commit() else { return }
+                write: { recap, _, _, steps in
+                    guard steps.start() else { return false }
                     writes.record(recap)
+                    return steps.finish()
                 }))
         let session = ULID.generate()
         recapper.observe(.workStarted, of: session, isIdle: false, getsRecap: true)

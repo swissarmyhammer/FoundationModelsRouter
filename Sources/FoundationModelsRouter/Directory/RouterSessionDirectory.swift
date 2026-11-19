@@ -437,8 +437,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             host: SessionRecapper.Host(
                 target: { [weak self] id in self?.recapTarget(of: id) },
                 isModelBusy: { [weak self] model in self?.isRecapModelBusy(model) ?? false },
-                write: { [weak self] recap, instant, id, commit in
-                    try await self?.writeRecap(recap, at: instant, of: id, ifCommitted: commit)
+                write: { [weak self] recap, instant, id, steps in
+                    try await self?.writeRecap(recap, at: instant, of: id, steps: steps) ?? false
                 }))
     }
 
@@ -757,8 +757,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     nonisolated func unregister(_ id: ULID) {
         let releasedFork = state.withLock { registry -> (any RoutedSession)? in
             // Under the lock, in one step with the removal, so a recap write
-            // that commits under this lock (``writeRecap(_:at:of:ifCommitted:)``)
-            // either finds the session live or finds its job gone (D206).
+            // (``writeRecap(_:at:of:steps:)``) that read the session as live
+            // finds its job gone at its start or at its end (D206).
             recapper.forget(id)
             let releasedFork = registry.heldForks.removeValue(forKey: id)
             guard let entry = registry.entries.removeValue(forKey: id) else { return releasedFork }
@@ -2905,7 +2905,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// Writes the recap of the session `id` and its time to the facts of its
     /// record (D206), and sends `factsChanged` with its summary: the Extras
     /// port has no recap event. The recap maker of the directory writes
-    /// through ``writeRecap(_:at:of:ifCommitted:)``, which makes the same
+    /// through ``writeRecap(_:at:of:steps:)``, which makes the same
     /// change.
     ///
     /// The write goes through ``changeRecord(of:_:)``, thus a live session
@@ -2932,36 +2932,59 @@ public actor RouterSessionDirectory: SessionDirectory {
     }
 
     /// Writes a recap of the recapper (``SessionRecapper/Host/write``), as
-    /// ``recordRecap(_:at:of:)`` does, only when `commit` returns `true`.
+    /// ``recordRecap(_:at:of:)`` does, in the steps of `steps`.
     ///
-    /// `commit` runs under the lock of the registry, which also takes the
-    /// session off the live list and forgets its recap job
-    /// (``unregister(_:)``), and the call reads the live session under the
-    /// same lock. The archive and the shutdown forget the job on this actor,
-    /// and no suspension point comes between the commit and the write to a
-    /// live session. So a recap job that a new turn, an archive, a close or a
-    /// shutdown cancelled writes nothing and sends no `factsChanged`, and a
-    /// committed recap of a live session goes to that session, also when it
-    /// closes just after the commit.
+    /// 1. The call reads the live session under the lock of the registry,
+    ///    and then starts the write (``SessionRecapper/WriteSteps/start``)
+    ///    under the lock of the recapper only. A close takes the session off
+    ///    the live list and forgets its recap job under the lock of the
+    ///    registry (``unregister(_:)``), so a close before the read or
+    ///    between the read and the start makes the start fail. A job that a
+    ///    new turn, an archive, a close or a shutdown cancelled before the
+    ///    start writes nothing.
+    /// 2. The call writes the record: through the live session, with no
+    ///    suspension point, or to the `index.md` of a recorded session that
+    ///    is not live.
+    /// 3. After the write, the call ends the write
+    ///    (``SessionRecapper/WriteSteps/finish``), and sends `factsChanged`
+    ///    one time, only when that returns `true` and the record changed.
+    ///
+    /// No step after the write throws. A close on another thread can take
+    /// the session off the live list after the start: the record of the
+    /// session then keeps the recap, the close cancelled the job, so step 3
+    /// removes nothing, and the session gets no event.
     ///
     /// - Parameters:
     ///   - recap: The recap.
     ///   - instant: The instant the recap was made.
     ///   - id: The session id.
-    ///   - commit: Tells whether the job of the recap is still current, and
-    ///     removes what the recap covers when it is.
-    /// - Throws: What ``recordRecap(_:at:of:)`` throws.
+    ///   - steps: The steps of the recapper around the write.
+    /// - Returns: `true` when the recap went out: the write succeeded and no
+    ///   cancel came before its end.
+    /// - Throws: Before the end of the write only, and then no recap went
+    ///   out: `SessionDirectoryError.unknownSession` when the live session is
+    ///   not a ``RoutedSessionActor``, or what the write of a recorded session
+    ///   throws (``changeRecordedRecord(of:_:)``).
     func writeRecap(
-        _ recap: String, at instant: Date, of id: ULID, ifCommitted commit: @Sendable () -> Bool
-    ) async throws {
-        let (isCommitted, live) = state.withLock { registry in (commit(), registry.entries[id]?.session) }
-        guard isCommitted else { return }
+        _ recap: String, at instant: Date, of id: ULID, steps: SessionRecapper.WriteSteps
+    ) async throws -> Bool {
+        let live = session(id: id)
+        guard steps.start() else { return false }
         let change = Self.recapChange(recap, at: instant)
         guard let live else {
-            _ = try await changeRecord(of: id, change)
-            return
+            let (summary, changed) = try await changeRecordedRecord(of: id, change)
+            guard steps.finish() else { return false }
+            if changed {
+                emit(.factsChanged(summary))
+            }
+            return true
         }
-        _ = try changeLiveRecord(of: live, change)
+        let changed = try Self.applyLiveRecordChange(of: live, change)
+        guard steps.finish() else { return false }
+        if changed {
+            recordFactsChange(of: id)
+        }
+        return true
     }
 
     /// The change of a record that writes `recap` and its time.
@@ -3070,17 +3093,35 @@ public actor RouterSessionDirectory: SessionDirectory {
     private func changeLiveRecord(
         of session: any RoutedSession, _ change: @Sendable (inout SessionRecord) -> Void
     ) throws -> SessionSummary {
-        let actor = try Self.recordOwner(of: session)
+        if try Self.applyLiveRecordChange(of: session, change) {
+            recordFactsChange(of: session.id)
+        }
+        return try requireLiveSummary(of: session.id)
+    }
+
+    /// Changes the record of a live session through the session itself
+    /// (``RoutedSessionActor/updateRecord(_:)``), which saves its `index.md`
+    /// best effort. The call sends no event and reads no summary, so it
+    /// throws nothing after the change.
+    ///
+    /// - Parameters:
+    ///   - session: The live session.
+    ///   - change: The change to apply to the record.
+    /// - Returns: Whether the change altered the record.
+    /// - Throws: `SessionDirectoryError.unknownSession` when the session is
+    ///   not a ``RoutedSessionActor`` (``recordOwner(of:)``), before any
+    ///   change.
+    private static func applyLiveRecordChange(
+        of session: any RoutedSession, _ change: @Sendable (inout SessionRecord) -> Void
+    ) throws -> Bool {
+        let actor = try recordOwner(of: session)
         var changed = false
         actor.updateRecord { record in
             let before = record
             change(&record)
             changed = record != before
         }
-        if changed {
-            recordFactsChange(of: session.id)
-        }
-        return try requireLiveSummary(of: session.id)
+        return changed
     }
 
     /// The live session as the one type that can change its record.

@@ -159,16 +159,32 @@ final class RecapProbeBackend: LanguageModelSessionBackend {
 ///
 /// The host gives each session that the test lets in (``admit(_:previousRecap:)``)
 /// the fake flash model, tells whether that model is busy
-/// (``setBusy(_:)``), and records each recap write that the recapper
-/// commits. Each busy check and each
+/// (``setBusy(_:)``), and records each recap write that goes out: the write
+/// started and ended with no cancel. Each busy check and each
 /// write signals the signal of the host, which is the signal of the jobs of
 /// the recapper, so a test waits for all of them on one signal.
 ///
 /// A host that holds its writes stops each write at a gate until the test
-/// opens it (``openWriteGate()``), as the hop of a write to the directory
-/// actor can take time. The gate does not obey a cancel, as that hop does
-/// not, so a test can cancel the job of the recap while its write waits.
+/// opens it (``openWriteGate()``). The gate is before the start of the write
+/// (``WriteHold/beforeTheStart``), as the hop of a write to the directory
+/// actor can take time, or after the start (``WriteHold/afterTheStart``), as
+/// the write of the record can take time. The gate does not obey a cancel,
+/// as the hop and the write do not, so a test can cancel the job of the
+/// recap while its write waits.
 final class FakeRecapHost: Sendable {
+    /// Where the gate of the writes stops each write.
+    enum WriteHold: Sendable, Equatable {
+        /// No gate: each write goes on at once.
+        case none
+
+        /// Before the start of the write: the hop to the directory actor.
+        case beforeTheStart
+
+        /// After the start of the write and before its end: the write of
+        /// the record.
+        case afterTheStart
+    }
+
     /// One recap write.
     struct Write: Sendable, Equatable {
         /// The recap.
@@ -194,6 +210,14 @@ final class FakeRecapHost: Sendable {
 
         /// The number of writes that came to the gate of the writes.
         var heldWrites = 0
+
+        /// The number of writes whose task was cancelled when they passed
+        /// the gate after their start.
+        var cancelledWrites = 0
+
+        /// The number of writes through a directory
+        /// (``host(writingThrough:)``) that started.
+        var startedWrites = 0
     }
 
     /// The model reference of the fake flash model.
@@ -218,6 +242,9 @@ final class FakeRecapHost: Sendable {
     /// write. It does not obey a cancel.
     private let writeGate: AsyncSemaphore?
 
+    /// Where ``writeGate`` stops each write.
+    private let writeHold: WriteHold
+
     /// Makes a host whose flash model answers `output`.
     ///
     /// - Parameters:
@@ -227,14 +254,15 @@ final class FakeRecapHost: Sendable {
     ///   - changes: The signal of the jobs of the recapper under test.
     ///   - spanTracer: The tracer of the recap spans, or `nil` (the default)
     ///     for ``tracer``.
-    ///   - holdsWrites: `true` to stop each write at a gate until the test
-    ///     opens it (``openWriteGate()``).
+    ///   - writeHold: Where a gate stops each write until the test opens it
+    ///     (``openWriteGate()``). The default is no gate.
     init(
         output: String, isHeld: Bool = false, changes: ChangeSignal, spanTracer: (any Tracer)? = nil,
-        holdsWrites: Bool = false
+        writeHold: WriteHold = .none
     ) {
         self.changes = changes
-        writeGate = holdsWrites ? AsyncSemaphore(value: 0) : nil
+        writeGate = writeHold == .none ? nil : AsyncSemaphore(value: 0)
+        self.writeHold = writeHold
         backend = RecapProbeBackend(output: output, isHeld: isHeld, changes: changes)
         let ownTracer = InMemoryTracer()
         tracer = ownTracer
@@ -267,6 +295,14 @@ final class FakeRecapHost: Sendable {
     /// The number of writes that came to the gate of the writes.
     var heldWrites: Int { state.withLock { $0.heldWrites } }
 
+    /// The number of writes whose task was cancelled when they passed the
+    /// gate after their start.
+    var cancelledWrites: Int { state.withLock { $0.cancelledWrites } }
+
+    /// The number of writes through a directory (``host(writingThrough:)``)
+    /// that started.
+    var startedWrites: Int { state.withLock { $0.startedWrites } }
+
     /// Opens the gate of the writes for good: the write that waits goes on,
     /// and each later write passes at once.
     func openWriteGate() {
@@ -278,23 +314,73 @@ final class FakeRecapHost: Sendable {
         SessionRecapper.Host(
             target: { [self] id in target(of: id) },
             isModelBusy: { [self] model in isBusy(model) },
-            write: { [self] recap, _, id, commit in
-                await passWriteGate()
-                guard commit() else { return }
+            write: { [self] recap, _, id, steps in
+                await passWriteGate(at: .beforeTheStart)
+                guard steps.start() else { return false }
+                await passWriteGate(at: .afterTheStart)
+                noteCancelledWrite()
+                guard steps.finish() else { return false }
                 record(Write(recap: recap, id: id))
+                return true
             })
     }
 
+    /// The host closures of a recapper that writes through `directory`: the
+    /// fake flash model and its busy check, and the recap write of the
+    /// directory (``RouterSessionDirectory/writeRecap(_:at:of:steps:)``).
+    /// Each write that starts counts (``startedWrites``), runs `afterStart`,
+    /// and signals.
+    ///
+    /// - Parameters:
+    ///   - directory: The directory that writes the recaps.
+    ///   - afterStart: What the test does after the start of each write and
+    ///     before the write of the record, with the session id. The default
+    ///     does nothing.
+    /// - Returns: The host.
+    func host(
+        writingThrough directory: RouterSessionDirectory,
+        afterStart: @escaping @Sendable (_ id: ULID) -> Void = { _ in }
+    ) -> SessionRecapper.Host {
+        SessionRecapper.Host(
+            target: { [self] id in target(of: id) },
+            isModelBusy: { [self] model in isBusy(model) },
+            write: { [self] recap, instant, id, steps in
+                let counted = SessionRecapper.WriteSteps(
+                    start: { [self] in
+                        guard steps.start() else { return false }
+                        afterStart(id)
+                        noteStartedWrite()
+                        return true
+                    },
+                    finish: steps.finish)
+                return try await directory.writeRecap(recap, at: instant, of: id, steps: counted)
+            })
+    }
+
+    /// Counts one write that started, and signals.
+    private func noteStartedWrite() {
+        state.withLock { $0.startedWrites += 1 }
+        changes.signal()
+    }
+
     /// Counts one write at the gate, signals, and waits until the gate is
-    /// open. The wait does not obey a cancel. A host that holds no write
-    /// goes on at once.
-    private func passWriteGate() async {
-        guard let writeGate else { return }
+    /// open, when the gate stops the writes at `hold`. The wait does not obey
+    /// a cancel. A host that holds no write there goes on at once.
+    ///
+    /// - Parameter hold: The place of the write.
+    private func passWriteGate(at hold: WriteHold) async {
+        guard hold == writeHold, let writeGate else { return }
         state.withLock { $0.heldWrites += 1 }
         changes.signal()
         await writeGate.wait()
         // The gate stays open: the permit goes on to the next write.
         writeGate.signal()
+    }
+
+    /// Counts the write when its task is cancelled.
+    private func noteCancelledWrite() {
+        guard Task.isCancelled else { return }
+        state.withLock { $0.cancelledWrites += 1 }
     }
 
     /// The target of the session `id`: the fake flash model and the previous
@@ -397,5 +483,32 @@ struct RecapProbeContainer<Sessions: LoadedLLMContainer>: LoadedLLMContainer {
     /// A session of ``sessions`` seeded from `transcript`, with `tools`.
     func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         sessions.makeSession(transcript: transcript, tools: tools)
+    }
+}
+
+extension SessionRecapper {
+    /// Gives the recapper the events of one turn of the session `id`, as the
+    /// directory gives them: its start, its delivered prompt, its answer and
+    /// its end with the state idle.
+    ///
+    /// - Parameters:
+    ///   - id: The session id.
+    ///   - prompt: The user prompt of the turn.
+    ///   - reply: The final reply of the turn.
+    ///   - toolCalls: The tool calls of the turn.
+    ///   - getsRecap: Whether the directory gives the session a recap.
+    func feedTurn(
+        of id: ULID, prompt: String, reply: String, toolCalls: [ToolCallEntry] = [], getsRecap: Bool = true
+    ) {
+        observe(.workStarted, of: id, isIdle: false, getsRecap: true)
+        let mail = MailID()
+        noteDelivered([DeliveredPrompt(mail: mail, text: prompt)], of: id)
+        observe(
+            .answered(
+                SessionAnswer(
+                    reply: reply, mailIds: [mail], usage: nil, compactions: [], toolCalls: toolCalls,
+                    toolInvocations: [])),
+            of: id, isIdle: false, getsRecap: true)
+        observe(.workEnded, of: id, isIdle: true, getsRecap: getsRecap)
     }
 }

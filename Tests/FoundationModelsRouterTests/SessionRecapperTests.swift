@@ -38,16 +38,7 @@ struct SessionRecapperTests {
         ///   - toolCalls: The tool calls of the turn.
         ///   - getsRecap: Whether the directory gives the session a recap.
         func runTurn(prompt: String, reply: String, toolCalls: [ToolCallEntry] = [], getsRecap: Bool = true) {
-            startTurn()
-            let mail = MailID()
-            recapper.noteDelivered([DeliveredPrompt(mail: mail, text: prompt)], of: session)
-            recapper.observe(
-                .answered(
-                    SessionAnswer(
-                        reply: reply, mailIds: [mail], usage: nil, compactions: [], toolCalls: toolCalls,
-                        toolInvocations: [])),
-                of: session, isIdle: false, getsRecap: true)
-            recapper.observe(.workEnded, of: session, isIdle: true, getsRecap: getsRecap)
+            recapper.feedTurn(of: session, prompt: prompt, reply: reply, toolCalls: toolCalls, getsRecap: getsRecap)
         }
 
         /// Gives the recapper the start of a turn of ``session``.
@@ -109,16 +100,16 @@ struct SessionRecapperTests {
     ///   - output: The text each recap call answers.
     ///   - isHeld: `true` to hold each recap call until the test releases it
     ///     or its task is cancelled.
-    ///   - holdsWrites: `true` to stop each write at the gate of the host
-    ///     until the test opens it.
+    ///   - writeHold: Where the gate of the host stops each write until the
+    ///     test opens it. The default is no gate.
     /// - Returns: The fixture.
-    private static func makeFixture(output: String = recap, isHeld: Bool = false, holdsWrites: Bool = false)
-        -> Fixture
-    {
+    private static func makeFixture(
+        output: String = recap, isHeld: Bool = false, writeHold: FakeRecapHost.WriteHold = .none
+    ) -> Fixture {
         let clock = ManualRunClock()
         let recapper = SessionRecapper(clock: clock)
         let host = FakeRecapHost(
-            output: output, isHeld: isHeld, changes: recapper.jobChanges, holdsWrites: holdsWrites)
+            output: output, isHeld: isHeld, changes: recapper.jobChanges, writeHold: writeHold)
         recapper.use(host: host.host)
         let session = ULID.generate()
         host.admit(session)
@@ -412,10 +403,12 @@ struct SessionRecapperTests {
     /// the write of the recap waits at the gate of the host. The call ended
     /// and the job was not cancelled, so the write is the next step.
     ///
+    /// - Parameter hold: Where the gate stops the write. The default is
+    ///   before its start: the hop to the directory actor.
     /// - Returns: The fixture, with its write at the gate.
     /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first.
-    private static func holdTheWrite() async throws -> Fixture {
-        let fixture = makeFixture(holdsWrites: true)
+    private static func holdTheWrite(at hold: FakeRecapHost.WriteHold = .beforeTheStart) async throws -> Fixture {
+        let fixture = makeFixture(writeHold: hold)
         fixture.runTurn(prompt: firstPrompt, reply: reply, toolCalls: [toolCall])
         fixture.clock.advance(by: SessionRecapper.idleTime)
         try await fixture.recapper.jobChanges.wait(
@@ -484,5 +477,35 @@ struct SessionRecapperTests {
         try await Self.openTheWrite(of: fixture)
 
         #expect(fixture.host.writes.isEmpty)
+    }
+
+    // MARK: - A cancel after the start of the write
+
+    /// The production change that makes this test fail: a write that
+    /// removes the prompts of its input when it starts, so a cancel that
+    /// comes before its end loses them for the next recap.
+    @Test("a new turn after the start of the write keeps the prompts for the next recap")
+    func aNewTurnAfterTheStartOfTheWriteKeepsThePrompts() async throws {
+        let fixture = try await Self.holdTheWrite(at: .afterTheStart)
+        fixture.startTurn()
+        try await Self.openTheWrite(of: fixture)
+
+        fixture.runTurn(prompt: Self.secondPrompt, reply: Self.reply, toolCalls: [Self.toolCall])
+        try await fixture.passTheIdleTime()
+
+        #expect(fixture.host.backend.calls.last?.prompt.contains(Self.firstPrompt) == true)
+    }
+
+    /// The production change that makes this test fail: a new turn that
+    /// cancels the task of a write that started, so the write can stop half
+    /// way.
+    @Test("a new turn after the start of the write does not cancel the write")
+    func aNewTurnAfterTheStartOfTheWriteDoesNotCancelIt() async throws {
+        let fixture = try await Self.holdTheWrite(at: .afterTheStart)
+
+        fixture.startTurn()
+        try await Self.openTheWrite(of: fixture)
+
+        #expect(fixture.host.cancelledWrites == 0)
     }
 }
