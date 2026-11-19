@@ -596,6 +596,11 @@ actor RoutedSessionActor: RoutedSession {
     /// nothing observes it. See ``observeMailFate(_:)``.
     nonisolated let mailFateObserver = Mutex<MailFateObserver?>(nil)
 
+    /// The observer of the prompt text of each user-type mail that an answer
+    /// of this session delivers, or `nil` when nothing observes it. See
+    /// ``observeDeliveredPrompts(_:)``.
+    nonisolated let deliveredPromptObserver = Mutex<DeliveredPromptObserver?>(nil)
+
     /// The serial chain that writes the mail records of this session in the
     /// order of the calls (``recordMail(_:)``). See
     /// `RoutedSessionActorMailRecords.swift`.

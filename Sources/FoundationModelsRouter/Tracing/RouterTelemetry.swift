@@ -112,6 +112,15 @@ enum RouterTelemetry {
         /// session is written on the span as
         /// ``RouterTelemetry/AttributeKey/sessionOrigin``.
         static let session = prefix + "session"
+
+        /// One recap call of a session (D206): a call of the `flash` slot in
+        /// a new blank session, which the recap maker of the session
+        /// directory makes after the idle time (``SessionRecapper``). It
+        /// carries ``AttributeKey/sessionId``, ``AttributeKey/slot``,
+        /// ``AttributeKey/modelRef``, ``AttributeKey/tokensIn``,
+        /// ``AttributeKey/tokensOut`` when the model answered, and
+        /// ``AttributeKey/errorType`` when the call failed.
+        static let recap = prefix + "recap"
     }
 
     /// The key of every attribute a router span carries.

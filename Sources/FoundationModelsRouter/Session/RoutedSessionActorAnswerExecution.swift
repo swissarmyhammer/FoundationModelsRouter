@@ -117,6 +117,9 @@ extension RoutedSessionActor {
     ) async {
         let emit = answerEventSink()
         answerReducer = SessionAnswerReducer()
+        // The observer of the prompts gets the text of the user-type mail
+        // before the delivery events (D206).
+        reportDeliveredPrompts(of: deliveredMail)
         // The model sees each mail of the answer from now on. The delivery
         // comes before each other event of the answer.
         for mailID in deliveredMailIds {
@@ -338,6 +341,7 @@ extension RoutedSessionActor {
             return try await runOpenedSubmission(attempt, deliveredMail: deliveredMail, sessionText: sessionText, body)
         }
         let joining = takeMailJoiningTheAnswer()
+        reportDeliveredPrompts(of: joining)
         await recordPromptStart(of: joining)
         await notifySubmissionBoundaryTools()
         let joiningIds = joining.map(\.id)

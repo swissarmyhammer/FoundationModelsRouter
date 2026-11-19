@@ -38,8 +38,10 @@ import FoundationModelsExtras
 /// ``SessionFacts/lastSummary`` before it sends the answer
 /// (``RoutedSessionActor/recordLastSummary(of:)``), so a recorded session
 /// gives it after a restart. A live session whose tracking has no answer yet
-/// gives the last summary of its facts. The recap of the session (``SessionFacts/recap``, D206) is not a
-/// part of the tracking: the directory writes it to the facts.
+/// gives the last summary of its facts. The recap of the session
+/// (``SessionFacts/recap``, D206) is not a part of the tracking: the recap
+/// maker of the directory (``SessionRecapper``) writes it to the facts, and
+/// reads ``hasWork`` of each session on the flash model before its call.
 ///
 /// A form answer of the client (``RoutedSession/respond(elicitationId:response:)``)
 /// sends no event that names its question. So at each work end the directory
@@ -66,8 +68,10 @@ struct SessionStateTracking: Sendable {
     }
 
     /// Whether the session has work: a ``SessionEvent/workStarted`` came
-    /// after the last ``SessionEvent/workEnded``.
-    private var hasWork = false
+    /// after the last ``SessionEvent/workEnded``. The recap maker of the
+    /// directory reads it: a recap call waits while a session on the flash
+    /// model has work (D206).
+    private(set) var hasWork = false
 
     /// The questions of the session that are open: asked, and not yet ended
     /// or completed.

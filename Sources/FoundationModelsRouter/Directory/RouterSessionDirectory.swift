@@ -32,6 +32,15 @@ import Synchronization
 /// with neither (``SessionFacts/forFork``). The live and the recorded
 /// summary give the last summary, the recap and the time of the recap.
 ///
+/// The directory makes the recap itself (D206): its recapper
+/// (``SessionRecapper``) reads the events of each live root session and fork
+/// and the prompts that each answer delivered, and after the idle time that
+/// follows a turn that is not trivial, it calls the `flash` slot in a new
+/// blank session and writes the recap. A subagent gets no recap. An archive
+/// and a close cancel the wait and the call; an unarchive starts nothing. The
+/// host turns the recap on or off for each working folder
+/// (``useRecapPolicy(_:)``).
+///
 /// For each registered durable session, one watcher also reads the `inbox/`
 /// folder of the session folder (``SessionInboxWatcher``). A file that
 /// arrives there is delivered as a message (``scanInbox(of:)``). The watcher
@@ -405,12 +414,106 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// replaces the entry, so a session holds one entry at most.
     private var turnSends: [ULID: TurnSends] = [:]
 
+    /// The recap maker of the directory (D206): it makes the recap of each
+    /// live root session and fork after the idle time that follows a turn
+    /// that is not trivial (``SessionRecapper``). The directory gives it the
+    /// events of each session (``recordState(after:of:)``) and the prompts
+    /// that each answer delivered (``register(_:kind:parentID:requestedByClient:)``).
+    nonisolated let recapper = SessionRecapper()
+
+    /// The recap policy of the host (``useRecapPolicy(_:)``): whether the
+    /// sessions of a working folder get a recap. The default turns the recap
+    /// on for each folder. A lock keeps it, because the recapper reads it from
+    /// its own tasks.
+    private let recapPolicy = Mutex<@Sendable (URL) -> Bool>({ _ in true })
+
     /// Makes an empty directory.
     ///
     /// - Parameter limits: The loop guards of each send. The default is the
     ///   default guards of ``SessionMessageLimits``; a test lowers them.
     public init(limits: SessionMessageLimits = SessionMessageLimits()) {
         self.limits = limits
+        recapper.use(
+            host: SessionRecapper.Host(
+                target: { [weak self] id in self?.recapTarget(of: id) },
+                isModelBusy: { [weak self] model in self?.isRecapModelBusy(model) ?? false },
+                write: { [weak self] recap, instant, id in
+                    _ = try await self?.recordRecap(recap, at: instant, of: id)
+                }))
+    }
+
+    // MARK: - Recap
+
+    /// Gives the directory the recap policy of its host (D206): for the
+    /// working folder of a session, whether the session gets a recap. The
+    /// host reads it from its settings at each call, so a folder can turn it
+    /// on or off at any time (FoundationModelsACPAgent gives the setting
+    /// `sessions.recap`). A later call replaces the policy.
+    ///
+    /// The directory asks the policy at the end of each turn of a live root
+    /// session or fork, and again before the recap call. With the policy off,
+    /// no wait starts and no call runs; the recap that the record holds
+    /// stays. With no policy, each session gets a recap.
+    ///
+    /// - Parameter isRecapOn: Tells for the working folder of a session
+    ///   whether the session gets a recap. It must not wait.
+    public func useRecapPolicy(_ isRecapOn: @escaping @Sendable (_ workingDirectory: URL) -> Bool) {
+        recapPolicy.withLock { $0 = isRecapOn }
+    }
+
+    /// Gives the recapper the clock of its waits. ``Router/useRunClock(_:)``
+    /// calls it, so a test ends the idle time with an advance of its clock.
+    ///
+    /// - Parameter clock: The clock.
+    nonisolated func useRecapClock(_ clock: any RunClock) {
+        recapper.use(clock: clock)
+    }
+
+    /// The target of the recap of the session `id`: the `flash` slot of its
+    /// profile and the recap of its record.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The target, or `nil` when the session gets no recap
+    ///   (``recapSession(of:)``).
+    nonisolated func recapTarget(of id: ULID) -> SessionRecapper.Target? {
+        guard let session = recapSession(of: id) else { return nil }
+        return SessionRecapper.Target(
+            model: SessionRecapModel(flash: session.profile.flash, tracer: session.tracer),
+            previousRecap: session.facts.recap)
+    }
+
+    /// The live session `id` when it gets a recap: a root session or a fork,
+    /// not archived, whose working folder has the recap policy on. A
+    /// subagent gets no recap.
+    ///
+    /// - Parameter id: The session id.
+    /// - Returns: The session, or `nil` when it gets no recap. The policy
+    ///   runs outside the lock of the registry.
+    private nonisolated func recapSession(of id: ULID) -> RoutedSessionActor? {
+        let live = state.withLock { registry -> (session: any RoutedSession, kind: SessionKind)? in
+            guard let entry = registry.entries[id], let session = entry.session else { return nil }
+            return (session, entry.kind)
+        }
+        guard let live, live.kind != .subagent, let session = live.session as? RoutedSessionActor,
+            session.facts.archivedAt == nil
+        else { return nil }
+        let isRecapOn = recapPolicy.withLock { $0 }
+        return isRecapOn(session.workingDirectory) ? session : nil
+    }
+
+    /// Whether a live session on the model `model` has a running turn: its
+    /// work started and did not end (``SessionStateTracking/hasWork``). The
+    /// recap call waits until no session on the flash model has one, because
+    /// the model runs one generation at a time.
+    ///
+    /// - Parameter model: The flash model of a recap.
+    /// - Returns: `true` while such a turn runs.
+    nonisolated func isRecapModelBusy(_ model: ModelRef) -> Bool {
+        state.withLock { registry in
+            registry.entries.values.contains { entry in
+                entry.tracking.hasWork && (entry.session as? RoutedSessionActor)?.model == model
+            }
+        }
     }
 
     // MARK: - Registry
@@ -497,6 +600,10 @@ public actor RouterSessionDirectory: SessionDirectory {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
         let watcher = openInboxWatcher(of: session)
         (session as? RoutedSessionActor)?.observeMailFate { [weak self] fate in self?.sessionDidReport(fate) }
+        let id = session.id
+        (session as? RoutedSessionActor)?.observeDeliveredPrompts { [weak recapper] prompts in
+            recapper?.noteDelivered(prompts, of: id)
+        }
         let isNew = naming.withLock { _ in
             giveDefaultTitle(to: session, kind: kind, parentID: namingFork ? parentID : nil)
             return state.withLock { registry in
@@ -656,6 +763,7 @@ public actor RouterSessionDirectory: SessionDirectory {
             registry.forgetDeliveries(to: id)
             return releasedFork
         }
+        recapper.forget(id)
         // Released after the lock: the last release of a fork runs its
         // `deinit`, which must not run under the lock of the registry.
         withExtendedLifetime(releasedFork) {}
@@ -1179,6 +1287,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// fork runs its `deinit`.
     public func shutdown() {
         launcher = nil
+        recapper.cancelAll()
         let (openStreams, releasedForks) = state.withLock { registry in
             let releasedForks = registry.heldForks
             registry.heldForks = [:]
@@ -2465,7 +2574,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   - error: The error of a failure, or `nil` for an event that is not
     ///     a failure.
     ///   - metadata: The metadata that is specific to the event.
-    private static func logSession(
+    static func logSession(
         _ level: Logger.Level, _ message: String, session id: ULID,
         error: (any Error)? = nil, metadata: Logger.Metadata = [:]
     ) {
@@ -3303,7 +3412,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// 1. The directory starts to keep the mail of the session
     ///    (``Registry/startKeepingMail(of:)``), and no scan of its inbox
     ///    runs from now on (``isArchiving(_:)``): the files of its `inbox/`
-    ///    folder stay there. Then ``RoutedSession/cancelAll()`` stops the
+    ///    folder stay there. The recapper cancels the wait and the call of
+    ///    the recap of the session (``SessionRecapper/forget(_:)``, D206); the
+    ///    recap of the record stays. Then ``RoutedSession/cancelAll()`` stops the
     ///    running turn, as a cancel does, and takes each waiting mail out of
     ///    the queue, also the mail of a message that waits for the end of
     ///    the turn. Each such mail ends with no delivery, so the directory
@@ -3329,6 +3440,7 @@ public actor RouterSessionDirectory: SessionDirectory {
         guard session.facts.archivedAt == nil else { return try requireLiveSummary(of: session.id) }
         let actor = try Self.recordOwner(of: session)
         state.withLock { $0.startKeepingMail(of: session.id) }
+        recapper.forget(session.id)
         let stop = session.cancelAll()
         let archivedAt = MillisecondDate.rounded(Date())
         actor.updateRecord { $0.facts.archivedAt = archivedAt }
@@ -3764,11 +3876,18 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``SessionStateTracking``). An id with no live entry, and a task the
     /// directory cancelled, change nothing.
     ///
+    /// Under the same lock, before the `stateChanged` goes out, the recapper
+    /// gets the event (``SessionRecapper/observe(_:of:isIdle:getsRecap:)``,
+    /// D206), with whether the session gets a recap (``recapSession(of:)``,
+    /// read before the lock, because the policy of the host must not run
+    /// under it).
+    ///
     /// - Parameters:
     ///   - event: An event of the session.
     ///   - id: The session id.
     private nonisolated func recordState(after event: SessionEvent, of id: ULID) async {
         let openQuestions = event == .workEnded ? await openQuestions(of: id) : nil
+        let getsRecap = event == .workEnded && recapSession(of: id) != nil
         state.withLock { registry in
             guard !Task.isCancelled, var entry = registry.entries[id], entry.session != nil else { return }
             let before = (entry.tracking.state, entry.tracking.idleSummary)
@@ -3776,6 +3895,9 @@ public actor RouterSessionDirectory: SessionDirectory {
                 entry.tracking.replaceOpenQuestions(with: openQuestions)
             }
             entry.tracking.apply(event: event)
+            // Before the `stateChanged` goes out, so a reader of the idle
+            // state finds the wait of the recap started (D206).
+            recapper.observe(event, of: id, isIdle: entry.tracking.state == .idle, getsRecap: getsRecap)
             let after = (entry.tracking.state, entry.tracking.idleSummary)
             if after != before {
                 entry.updatedAt = Date()

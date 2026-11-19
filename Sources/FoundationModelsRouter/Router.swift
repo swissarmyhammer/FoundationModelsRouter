@@ -335,13 +335,16 @@ public actor Router {
     }
 
     /// Gives this router a clock for the run plane of each session that a
-    /// later resolve vends. Only the tests call it, before the resolve: a
-    /// test gives a `ManualRunClock`, and then ends each timer of its
+    /// later resolve vends, and for the idle time of the recap maker of its
+    /// session directory (D206). Only the tests call it, before the resolve:
+    /// a test gives a `ManualRunClock`, and then ends each timer of its
     /// sessions with an advance of that clock, in a fixed order.
     ///
-    /// - Parameter clock: The clock of the runs and of the stall watch.
+    /// - Parameter clock: The clock of the runs, of the stall watch and of
+    ///   the recap waits.
     func useRunClock(_ clock: any RunClock) {
         runClock = clock
+        sessionDirectory.useRecapClock(clock)
     }
 
     /// Opens one client span that can suspend for a long time, writes its
