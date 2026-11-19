@@ -109,11 +109,16 @@ struct SessionRecapperTests {
     ///   - output: The text each recap call answers.
     ///   - isHeld: `true` to hold each recap call until the test releases it
     ///     or its task is cancelled.
+    ///   - holdsWrites: `true` to stop each write at the gate of the host
+    ///     until the test opens it.
     /// - Returns: The fixture.
-    private static func makeFixture(output: String = recap, isHeld: Bool = false) -> Fixture {
+    private static func makeFixture(output: String = recap, isHeld: Bool = false, holdsWrites: Bool = false)
+        -> Fixture
+    {
         let clock = ManualRunClock()
         let recapper = SessionRecapper(clock: clock)
-        let host = FakeRecapHost(output: output, isHeld: isHeld, changes: recapper.jobChanges)
+        let host = FakeRecapHost(
+            output: output, isHeld: isHeld, changes: recapper.jobChanges, holdsWrites: holdsWrites)
         recapper.use(host: host.host)
         let session = ULID.generate()
         host.admit(session)
@@ -397,6 +402,86 @@ struct SessionRecapperTests {
         fixture.startTurn()
         fixture.host.backend.releaseHeldCalls()
         try await fixture.waitForTheEndOfTheJobs()
+
+        #expect(fixture.host.writes.isEmpty)
+    }
+
+    // MARK: - A cancel during the write
+
+    /// Runs a turn with a tool call, passes the idle time, and waits until
+    /// the write of the recap waits at the gate of the host. The call ended
+    /// and the job was not cancelled, so the write is the next step.
+    ///
+    /// - Returns: The fixture, with its write at the gate.
+    /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first.
+    private static func holdTheWrite() async throws -> Fixture {
+        let fixture = makeFixture(holdsWrites: true)
+        fixture.runTurn(prompt: firstPrompt, reply: reply, toolCalls: [toolCall])
+        fixture.clock.advance(by: SessionRecapper.idleTime)
+        try await fixture.recapper.jobChanges.wait(
+            until: { fixture.host.heldWrites == 1 }, endingOn: { fixture.recapper.jobCount == 0 })
+        return fixture
+    }
+
+    /// Opens the gate of the held write of `fixture` and waits for the end
+    /// of the jobs.
+    ///
+    /// - Parameter fixture: The fixture of ``holdTheWrite()``.
+    /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first.
+    private static func openTheWrite(of fixture: Fixture) async throws {
+        fixture.host.openWriteGate()
+        try await fixture.waitForTheEndOfTheJobs()
+    }
+
+    /// The production change that makes this test fail: a write that does
+    /// not check, in one step with the write, that a new turn did not cancel
+    /// the job.
+    @Test("a new turn of the session during the write of the recap writes nothing")
+    func aNewTurnDuringTheWriteWritesNothing() async throws {
+        let fixture = try await Self.holdTheWrite()
+
+        fixture.startTurn()
+        try await Self.openTheWrite(of: fixture)
+
+        #expect(fixture.host.writes.isEmpty)
+    }
+
+    /// The production change that makes this test fail: a cancelled write
+    /// that removes the prompts of its input, so the next recap loses them.
+    @Test("a new turn during the write of the recap keeps the prompts for the next recap")
+    func aNewTurnDuringTheWriteKeepsThePrompts() async throws {
+        let fixture = try await Self.holdTheWrite()
+        fixture.startTurn()
+        try await Self.openTheWrite(of: fixture)
+
+        fixture.runTurn(prompt: Self.secondPrompt, reply: Self.reply, toolCalls: [Self.toolCall])
+        try await fixture.passTheIdleTime()
+
+        #expect(fixture.host.backend.calls.last?.prompt.contains(Self.firstPrompt) == true)
+    }
+
+    /// The production change that makes this test fail: a write that does
+    /// not check, in one step with the write, that an archive or a close
+    /// (``SessionRecapper/forget(_:)``) did not cancel the job.
+    @Test("an archive or a close during the write of the recap writes nothing")
+    func anArchiveDuringTheWriteWritesNothing() async throws {
+        let fixture = try await Self.holdTheWrite()
+
+        fixture.recapper.forget(fixture.session)
+        try await Self.openTheWrite(of: fixture)
+
+        #expect(fixture.host.writes.isEmpty)
+    }
+
+    /// The production change that makes this test fail: a write that does
+    /// not check, in one step with the write, that a shutdown
+    /// (``SessionRecapper/cancelAll()``) did not cancel the job.
+    @Test("a shutdown during the write of the recap writes nothing")
+    func aShutdownDuringTheWriteWritesNothing() async throws {
+        let fixture = try await Self.holdTheWrite()
+
+        fixture.recapper.cancelAll()
+        try await Self.openTheWrite(of: fixture)
 
         #expect(fixture.host.writes.isEmpty)
     }

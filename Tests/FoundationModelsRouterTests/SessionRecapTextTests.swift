@@ -96,28 +96,33 @@ struct SessionRecapInputTests {
         marker + String(repeating: "x", count: length - marker.count)
     }
 
-    /// The production change that makes this test fail: an input that keeps
-    /// each prompt whole.
-    @Test("each user prompt is cut to 500 characters")
+    /// The production changes that make this test fail: an input that keeps
+    /// each prompt whole, and an input that keeps less than the first 500
+    /// characters of a prompt (also none).
+    @Test("each user prompt is cut to its first 500 characters")
     func eachPromptIsCutTo500Characters() {
         let long = String(repeating: "a", count: Self.promptLength)
 
         let rendered = Self.render(
             SessionRecapInput(previousRecap: nil, prompts: [long], toolCalls: [], lastMessage: nil))
 
-        #expect(rendered.contains(String(repeating: "a", count: SessionRecapInput.promptCharacterLimit + 1)) == false)
+        #expect(
+            rendered.contains(String(repeating: "a", count: SessionRecapInput.promptCharacterLimit))
+                && !rendered.contains(String(repeating: "a", count: SessionRecapInput.promptCharacterLimit + 1)))
     }
 
-    /// The production change that makes this test fail: an input that keeps
-    /// the last message whole.
-    @Test("the last message is cut to 2,000 characters")
+    /// The production changes that make this test fail: an input that keeps
+    /// the last message whole, and an input that keeps less than the first
+    /// 2,000 characters of the message (also an empty message).
+    @Test("the last message is cut to its first 2,000 characters")
     func theLastMessageIsCutTo2000Characters() {
         let long = String(repeating: "m", count: Self.messageLength)
 
         let rendered = Self.render(SessionRecapInput(previousRecap: nil, prompts: [], toolCalls: [], lastMessage: long))
 
         #expect(
-            rendered.contains(String(repeating: "m", count: SessionRecapInput.lastMessageCharacterLimit + 1)) == false)
+            rendered.contains(String(repeating: "m", count: SessionRecapInput.lastMessageCharacterLimit))
+                && !rendered.contains(String(repeating: "m", count: SessionRecapInput.lastMessageCharacterLimit + 1)))
     }
 
     /// The production change that makes this test fail: an input with no

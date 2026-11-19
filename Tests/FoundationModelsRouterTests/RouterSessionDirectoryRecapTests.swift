@@ -74,7 +74,40 @@ struct RouterSessionDirectoryRecapTests {
         /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first.
         func passTheIdleTime() async throws {
             clock.advance(by: SessionRecapper.idleTime)
+            try await waitForTheEndOfTheJobs()
+        }
+
+        /// Waits until no recap job of the directory waits, queues or runs.
+        ///
+        /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first.
+        func waitForTheEndOfTheJobs() async throws {
             try await directory.recapper.jobChanges.wait(until: { directory.recapper.jobCount == 0 })
+        }
+
+        /// Moves the clock past the idle time, and waits until the held call
+        /// of the fake flash model started. The fixture must hold its calls
+        /// (``RouterSessionDirectoryRecapTests/makeFixture(holdsFlashCalls:)``).
+        ///
+        /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first.
+        func holdTheCall() async throws {
+            clock.advance(by: SessionRecapper.idleTime)
+            // Rule T1 quiet state: a recapper that never calls the flash
+            // model hangs here, and the test never passes.
+            try await flash.changes.wait(until: { !flash.calls.isEmpty })
+        }
+
+        /// Lets the held call of the fake flash model go on, waits for the
+        /// end of the recap jobs, and reads the recap of the record of
+        /// `session` on disk.
+        ///
+        /// - Parameter session: The session of the held call.
+        /// - Returns: The recap of the record, or `nil`.
+        /// - Throws: ``ConditionNeverHeld`` when the test is cancelled first,
+        ///   or the error of the read of the record.
+        func releaseTheCall(andReadTheRecapOf session: any RoutedSession) async throws -> String? {
+            flash.releaseHeldCalls()
+            try await waitForTheEndOfTheJobs()
+            return try SessionRecordFixtures.recordOnDisk(in: session.recordingDirectory).facts.recap
         }
 
         /// Closes `sessions` and removes the folders of the test.
@@ -140,14 +173,16 @@ struct RouterSessionDirectoryRecapTests {
     /// Makes a router whose sessions call the marker tool in each turn, with
     /// a manual run clock.
     ///
+    /// - Parameter holdsFlashCalls: `true` to hold each call of the fake
+    ///   flash model until the test releases it or its task is cancelled.
     /// - Returns: The fixture.
     /// - Throws: What the resolve of the profile throws.
-    private static func makeFixture() async throws -> Fixture {
+    private static func makeFixture(holdsFlashCalls: Bool = false) async throws -> Fixture {
         let log = RenderProbeLog()
         let model = ScriptedRoundsModel(
             log: log, rounds: [[ScriptedRoundCall(name: MarkerEmittingTool.toolName, arguments: callArguments)]],
             replaysEachTurn: true)
-        let flash = RecapProbeBackend(output: recap, changes: ChangeSignal())
+        let flash = RecapProbeBackend(output: recap, isHeld: holdsFlashCalls, changes: ChangeSignal())
         let container = Container(sessions: LiveBackendContainer(model: model), recap: flash)
         let directories = TestDirectories(prefix: "RouterSessionDirectoryRecapTests")
         let clock = ManualRunClock()
@@ -285,6 +320,83 @@ struct RouterSessionDirectoryRecapTests {
         try await fixture.directory.archive(session.id, by: Self.user)
 
         #expect(fixture.directory.recapper.jobCount == 0)
+        await fixture.end([session])
+    }
+
+    /// The production change that makes this test fail: an archive that
+    /// does not cancel the running call (``SessionRecapper/forget(_:)``), so
+    /// its output is written.
+    @Test("an archive during the call writes no recap")
+    func anArchiveDuringTheCallWritesNoRecap() async throws {
+        let fixture = try await Self.makeFixture(holdsFlashCalls: true)
+        let session = fixture.makeRoot()
+        try await fixture.runTurn(of: session)
+        try await fixture.holdTheCall()
+
+        try await fixture.directory.archive(session.id, by: Self.user)
+
+        #expect(try await fixture.releaseTheCall(andReadTheRecapOf: session) == nil)
+        await fixture.end([session])
+    }
+
+    /// The production change that makes this test fail: a close that leaves
+    /// the wait of the session (``SessionRecapper/forget(_:)`` at the
+    /// unregister).
+    @Test("a close during the wait cancels the wait")
+    func aCloseCancelsTheWait() async throws {
+        let fixture = try await Self.makeFixture()
+        let session = fixture.makeRoot()
+        try await fixture.runTurn(of: session)
+
+        await session.close()
+
+        #expect(fixture.directory.recapper.jobCount == 0)
+        await fixture.end([session])
+    }
+
+    /// The production change that makes this test fail: a close that does
+    /// not cancel the running call (``SessionRecapper/forget(_:)`` at the
+    /// unregister), so its output is written to the recorded session.
+    @Test("a close during the call writes no recap")
+    func aCloseDuringTheCallWritesNoRecap() async throws {
+        let fixture = try await Self.makeFixture(holdsFlashCalls: true)
+        let session = fixture.makeRoot()
+        try await fixture.runTurn(of: session)
+        try await fixture.holdTheCall()
+
+        await session.close()
+
+        #expect(try await fixture.releaseTheCall(andReadTheRecapOf: session) == nil)
+        await fixture.end([session])
+    }
+
+    /// The production change that makes this test fail: a shutdown that
+    /// leaves the wait of a session (``SessionRecapper/cancelAll()``).
+    @Test("a shutdown during the wait cancels the wait")
+    func aShutdownCancelsTheWait() async throws {
+        let fixture = try await Self.makeFixture()
+        let session = fixture.makeRoot()
+        try await fixture.runTurn(of: session)
+
+        await fixture.directory.shutdown()
+
+        #expect(fixture.directory.recapper.jobCount == 0)
+        await fixture.end([session])
+    }
+
+    /// The production change that makes this test fail: a shutdown that
+    /// does not cancel the running call (``SessionRecapper/cancelAll()``),
+    /// so its output is written.
+    @Test("a shutdown during the call writes no recap")
+    func aShutdownDuringTheCallWritesNoRecap() async throws {
+        let fixture = try await Self.makeFixture(holdsFlashCalls: true)
+        let session = fixture.makeRoot()
+        try await fixture.runTurn(of: session)
+        try await fixture.holdTheCall()
+
+        await fixture.directory.shutdown()
+
+        #expect(try await fixture.releaseTheCall(andReadTheRecapOf: session) == nil)
         await fixture.end([session])
     }
 

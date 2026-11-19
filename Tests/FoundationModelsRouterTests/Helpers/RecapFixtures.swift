@@ -159,9 +159,15 @@ final class RecapProbeBackend: LanguageModelSessionBackend {
 ///
 /// The host gives each session that the test lets in (``admit(_:previousRecap:)``)
 /// the fake flash model, tells whether that model is busy
-/// (``setBusy(_:)``), and records each recap write. Each busy check and each
+/// (``setBusy(_:)``), and records each recap write that the recapper
+/// commits. Each busy check and each
 /// write signals the signal of the host, which is the signal of the jobs of
 /// the recapper, so a test waits for all of them on one signal.
+///
+/// A host that holds its writes stops each write at a gate until the test
+/// opens it (``openWriteGate()``), as the hop of a write to the directory
+/// actor can take time. The gate does not obey a cancel, as that hop does
+/// not, so a test can cancel the job of the recap while its write waits.
 final class FakeRecapHost: Sendable {
     /// One recap write.
     struct Write: Sendable, Equatable {
@@ -185,6 +191,9 @@ final class FakeRecapHost: Sendable {
 
         /// Each write so far, in order.
         var writes: [Write] = []
+
+        /// The number of writes that came to the gate of the writes.
+        var heldWrites = 0
     }
 
     /// The model reference of the fake flash model.
@@ -205,6 +214,10 @@ final class FakeRecapHost: Sendable {
     /// The tracer that the recap spans go to.
     private let spanTracer: any Tracer
 
+    /// The gate that each write waits at, or `nil` for a host that holds no
+    /// write. It does not obey a cancel.
+    private let writeGate: AsyncSemaphore?
+
     /// Makes a host whose flash model answers `output`.
     ///
     /// - Parameters:
@@ -214,8 +227,14 @@ final class FakeRecapHost: Sendable {
     ///   - changes: The signal of the jobs of the recapper under test.
     ///   - spanTracer: The tracer of the recap spans, or `nil` (the default)
     ///     for ``tracer``.
-    init(output: String, isHeld: Bool = false, changes: ChangeSignal, spanTracer: (any Tracer)? = nil) {
+    ///   - holdsWrites: `true` to stop each write at a gate until the test
+    ///     opens it (``openWriteGate()``).
+    init(
+        output: String, isHeld: Bool = false, changes: ChangeSignal, spanTracer: (any Tracer)? = nil,
+        holdsWrites: Bool = false
+    ) {
         self.changes = changes
+        writeGate = holdsWrites ? AsyncSemaphore(value: 0) : nil
         backend = RecapProbeBackend(output: output, isHeld: isHeld, changes: changes)
         let ownTracer = InMemoryTracer()
         tracer = ownTracer
@@ -245,12 +264,37 @@ final class FakeRecapHost: Sendable {
     /// Each write so far, in order.
     var writes: [Write] { state.withLock { $0.writes } }
 
+    /// The number of writes that came to the gate of the writes.
+    var heldWrites: Int { state.withLock { $0.heldWrites } }
+
+    /// Opens the gate of the writes for good: the write that waits goes on,
+    /// and each later write passes at once.
+    func openWriteGate() {
+        writeGate?.signal()
+    }
+
     /// The host closures that the recapper uses.
     var host: SessionRecapper.Host {
         SessionRecapper.Host(
             target: { [self] id in target(of: id) },
             isModelBusy: { [self] model in isBusy(model) },
-            write: { [self] recap, _, id in record(Write(recap: recap, id: id)) })
+            write: { [self] recap, _, id, commit in
+                await passWriteGate()
+                guard commit() else { return }
+                record(Write(recap: recap, id: id))
+            })
+    }
+
+    /// Counts one write at the gate, signals, and waits until the gate is
+    /// open. The wait does not obey a cancel. A host that holds no write
+    /// goes on at once.
+    private func passWriteGate() async {
+        guard let writeGate else { return }
+        state.withLock { $0.heldWrites += 1 }
+        changes.signal()
+        await writeGate.wait()
+        // The gate stays open: the permit goes on to the next write.
+        writeGate.signal()
     }
 
     /// The target of the session `id`: the fake flash model and the previous

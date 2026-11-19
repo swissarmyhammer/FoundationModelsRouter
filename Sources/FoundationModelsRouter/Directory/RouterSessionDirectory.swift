@@ -437,8 +437,8 @@ public actor RouterSessionDirectory: SessionDirectory {
             host: SessionRecapper.Host(
                 target: { [weak self] id in self?.recapTarget(of: id) },
                 isModelBusy: { [weak self] model in self?.isRecapModelBusy(model) ?? false },
-                write: { [weak self] recap, instant, id in
-                    _ = try await self?.recordRecap(recap, at: instant, of: id)
+                write: { [weak self] recap, instant, id, commit in
+                    try await self?.writeRecap(recap, at: instant, of: id, ifCommitted: commit)
                 }))
     }
 
@@ -744,8 +744,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// state, and stops the watcher of its inbox. Each message to it that
     /// waits for its delivery gives no event
     /// (``Registry/forgetDeliveries(to:)``). The directory releases its hold
-    /// on a fork that it made (``Registry/heldForks``). An id the directory
-    /// does not hold changes nothing.
+    /// on a fork that it made (``Registry/heldForks``). The recapper cancels
+    /// the wait and the call of the recap of the session, under the lock of
+    /// the registry (``SessionRecapper/forget(_:)``, D206). An id the
+    /// directory does not hold changes nothing.
     ///
     /// - Parameter id: The session id.
     ///
@@ -754,6 +756,10 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// it still throws.
     nonisolated func unregister(_ id: ULID) {
         let releasedFork = state.withLock { registry -> (any RoutedSession)? in
+            // Under the lock, in one step with the removal, so a recap write
+            // that commits under this lock (``writeRecap(_:at:of:ifCommitted:)``)
+            // either finds the session live or finds its job gone (D206).
+            recapper.forget(id)
             let releasedFork = registry.heldForks.removeValue(forKey: id)
             guard let entry = registry.entries.removeValue(forKey: id) else { return releasedFork }
             if entry.session?.isSuspended == true {
@@ -763,7 +769,6 @@ public actor RouterSessionDirectory: SessionDirectory {
             registry.forgetDeliveries(to: id)
             return releasedFork
         }
-        recapper.forget(id)
         // Released after the lock: the last release of a fork runs its
         // `deinit`, which must not run under the lock of the registry.
         withExtendedLifetime(releasedFork) {}
@@ -2899,7 +2904,9 @@ public actor RouterSessionDirectory: SessionDirectory {
 
     /// Writes the recap of the session `id` and its time to the facts of its
     /// record (D206), and sends `factsChanged` with its summary: the Extras
-    /// port has no recap event. The recap maker of the directory calls it.
+    /// port has no recap event. The recap maker of the directory writes
+    /// through ``writeRecap(_:at:of:ifCommitted:)``, which makes the same
+    /// change.
     ///
     /// The write goes through ``changeRecord(of:_:)``, thus a live session
     /// and a recorded session that is not live, also an archived one and a
@@ -2921,8 +2928,52 @@ public actor RouterSessionDirectory: SessionDirectory {
     ///   session.
     @discardableResult
     func recordRecap(_ recap: String, at instant: Date, of id: ULID) async throws -> SessionSummary {
+        try await changeRecord(of: id, Self.recapChange(recap, at: instant))
+    }
+
+    /// Writes a recap of the recapper (``SessionRecapper/Host/write``), as
+    /// ``recordRecap(_:at:of:)`` does, only when `commit` returns `true`.
+    ///
+    /// `commit` runs under the lock of the registry, which also takes the
+    /// session off the live list and forgets its recap job
+    /// (``unregister(_:)``), and the call reads the live session under the
+    /// same lock. The archive and the shutdown forget the job on this actor,
+    /// and no suspension point comes between the commit and the write to a
+    /// live session. So a recap job that a new turn, an archive, a close or a
+    /// shutdown cancelled writes nothing and sends no `factsChanged`, and a
+    /// committed recap of a live session goes to that session, also when it
+    /// closes just after the commit.
+    ///
+    /// - Parameters:
+    ///   - recap: The recap.
+    ///   - instant: The instant the recap was made.
+    ///   - id: The session id.
+    ///   - commit: Tells whether the job of the recap is still current, and
+    ///     removes what the recap covers when it is.
+    /// - Throws: What ``recordRecap(_:at:of:)`` throws.
+    func writeRecap(
+        _ recap: String, at instant: Date, of id: ULID, ifCommitted commit: @Sendable () -> Bool
+    ) async throws {
+        let (isCommitted, live) = state.withLock { registry in (commit(), registry.entries[id]?.session) }
+        guard isCommitted else { return }
+        let change = Self.recapChange(recap, at: instant)
+        guard let live else {
+            _ = try await changeRecord(of: id, change)
+            return
+        }
+        _ = try changeLiveRecord(of: live, change)
+    }
+
+    /// The change of a record that writes `recap` and its time.
+    ///
+    /// - Parameters:
+    ///   - recap: The recap.
+    ///   - instant: The instant the recap was made. The change rounds it to
+    ///     the millisecond, as the `index.md` keeps it.
+    /// - Returns: The change.
+    private static func recapChange(_ recap: String, at instant: Date) -> @Sendable (inout SessionRecord) -> Void {
         let recapAt = MillisecondDate.rounded(instant)
-        return try await changeRecord(of: id) { record in
+        return { record in
             record.facts.recap = recap
             record.facts.recapAt = recapAt
         }
