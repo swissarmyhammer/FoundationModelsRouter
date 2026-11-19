@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7s3rdbz2hedvx6h1754kjmn
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: stuck — not started. mlx-swift-lm origin/stable is at 94ce7e2b and has no `copyPromptCache(fromSession:toSession:)` (checked 2026-11-18). Part 1 (^2qm6eas) is done.
+    - next: start again when the mlx-swift-lm session sends the sha of the copy API on stable; then update the pin with `--manifest-cache local`.
+  timestamp: 2026-11-19T05:16:34.559312+00:00
 depends_on:
 - 01M7S15T37N1RG9ECXB2QM6EAS
 position_column: todo

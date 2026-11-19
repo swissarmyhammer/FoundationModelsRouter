@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m7s3rf571anz73fm84772msb
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: stuck — not started. FoundationModelsLlamaCpp origin/main is at 2a6b9d8, with no copy of the sequence on a partial live hit (checked 2026-11-18).
+    - next: start again when the FoundationModelsLlamaCpp session sends the sha; then update the pin with `--manifest-cache local`.
+  timestamp: 2026-11-19T05:16:36.391751+00:00
 position_column: todo
 position_ordinal: '8280'
 title: 'A GGUF fork keeps the cache of its source: the FoundationModelsLlamaCpp pin and tests (D205 (f), part 3)'
