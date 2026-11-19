@@ -526,6 +526,26 @@ struct HookLineageTests {
         }
     }
 
+    /// The production change that makes this test fail: a live fork that
+    /// takes the hooks of a root, or no hooks.
+    @Test("a live fork has the kind fork, the origin forked and its source as its parent")
+    func aLiveForkHasTheKindForkAndTheOriginForked() async throws {
+        try await Self.withHookedProfile { hooked in
+            let source = hooked.profile.standard.makeSession()
+            let forker = SessionMessageSender.user(clientID: "hook-test-client")
+            let summary = try await hooked.router.sessionDirectory.fork(
+                SessionForkRequest(sourceID: source.id, cut: .lastCompletedTurn, forker: forker))
+            let fork = try #require(hooked.router.sessionDirectory.session(id: summary.id))
+            await hooked.dispatcher.drain()
+
+            let start = try Self.start(of: summary.id, in: hooked.visitor)
+            #expect(start.origin == .forked)
+            #expect(start.session.kind == .fork)
+            #expect(start.session.parentSessionID == source.id.description)
+            await SessionFixtureLifecycle.close([source, fork])
+        }
+    }
+
     @Test("a restored fork has the kind fork and the root of its fork parent chain")
     func aRestoredForkHasTheKindForkAndTheRootOfItsParent() async throws {
         try await Self.withHookedProfile { hooked in

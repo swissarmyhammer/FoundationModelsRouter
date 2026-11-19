@@ -102,12 +102,13 @@ enum RouterTelemetry {
         static let load = prefix + "load"
 
         /// One session coming into existence: a session vended over a
-        /// resident model, or a session restored from disk.
+        /// resident model, a session restored from disk, or a fork of a live
+        /// session.
         ///
         /// The span covers the construction, and on the restore path the
         /// transcript-tree read the construction is built from. What the
         /// session then goes on to do is measured by its own ``submission``
-        /// and ``compact`` spans. Which of the two shapes made the
+        /// and ``compact`` spans. Which of the three shapes made the
         /// session is written on the span as
         /// ``RouterTelemetry/AttributeKey/sessionOrigin``.
         static let session = prefix + "session"
@@ -361,8 +362,8 @@ enum RouterTelemetry {
     /// The value ``AttributeKey/sessionOrigin`` carries: how a session came
     /// into existence.
     ///
-    /// Both shapes are built by one factory and open one span, so the
-    /// span alone cannot say which shape opened it. This attribute says so,
+    /// Each shape is built by one factory and opens one span, so the span
+    /// alone cannot say which shape opened it. This attribute says so,
     /// and it lets a query separate the cost of reassembling a session from
     /// disk from the cost of vending a fresh one.
     enum SessionOrigin: String {
@@ -374,6 +375,10 @@ enum RouterTelemetry {
         /// One node of a tree rebuilt from what is on disk, through
         /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
         case restored
+
+        /// A fork of a live session at a cut of its history, through
+        /// ``RouterSessionDirectory/fork(_:)`` (D205).
+        case forked
     }
 
     /// The tracer a call opens its span through.
@@ -486,6 +491,16 @@ enum RouterTelemetry {
         /// (``RouterSessionDirectory/unarchive(_:by:)``): a session id or a
         /// client id, for the audit.
         static let unarchivedBy = prefix + "session.unarchived_by"
+
+        /// The id of the fork that a fork of a session made
+        /// (``RouterSessionDirectory/fork(_:)``), beside the id of its source
+        /// in ``sessionId``.
+        static let forkSessionId = prefix + "session.fork_id"
+
+        /// The session or the UI client that forked a session
+        /// (``RouterSessionDirectory/fork(_:)``): a session id or a client id,
+        /// for the audit.
+        static let forker = prefix + "session.forked_by"
 
         /// The id of a transcript entry.
         static let entryId = prefix + "entry.id"
@@ -617,7 +632,7 @@ enum RouterTelemetry {
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,
-            spanName, toolCallId, mailId,
+            spanName, toolCallId, mailId, forkSessionId, forker,
         ]
     }
 

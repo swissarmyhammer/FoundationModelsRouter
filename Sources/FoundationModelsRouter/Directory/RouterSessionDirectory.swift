@@ -81,7 +81,10 @@ import Synchronization
 /// with no title gets a default name from its agent (D199 (b),
 /// ``SessionDefaultTitle``) when it registers, and a recorded root session
 /// with no title gets one when a read finds it. Only ``setTitle(_:of:)``
-/// changes the name after that.
+/// changes the name after that. ``fork(_:)`` makes a live fork of a session
+/// at a cut of its history (D205): a top-level session of kind `fork` with
+/// the name of its source and `-fork`, which the directory holds until it
+/// closes.
 public actor RouterSessionDirectory: SessionDirectory {
     /// The agent id of a session that recorded none, for example a session
     /// from before ROUTER-1: the default agent, the D71 fallback when neither
@@ -328,6 +331,14 @@ public actor RouterSessionDirectory: SessionDirectory {
         /// of an id removes the id: a restored session starts not suspended.
         var suspendedIDs: Set<ULID> = []
 
+        /// Each fork that ``RouterSessionDirectory/fork(_:)`` made and that is
+        /// still on the live list, by id (D205). The directory holds each
+        /// other session weakly, because its host holds it. No host holds a
+        /// fork that the directory made, so the directory holds it here until
+        /// it leaves the live list (``RouterSessionDirectory/unregister(_:)``:
+        /// its close, its archive) or until ``RouterSessionDirectory/shutdown()``.
+        var heldForks: [ULID: any RoutedSession] = [:]
+
         /// The store of the pin and the last use of each session (ROUTER-3,
         /// D186), or `nil` before ``RouterSessionDirectory/use(usageStore:)``.
         /// The lock keeps it, so a summary that the lock builds reads it.
@@ -438,10 +449,12 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// feed task and its own watcher, and the id is no more suspended.
     ///
     /// A root session with no title gets its default name before the lock
-    /// (``giveDefaultTitle(to:)``, D199 (b)), thus its `started` holds the
-    /// name. This covers each start of a root session: `session/new` of a
-    /// client, ``start(_:)`` and the start of an agent address, and also a
-    /// restored root session with no title.
+    /// (``giveDefaultTitle(to:kind:parentID:)``, D199 (b)), thus its `started`
+    /// holds the name. This covers each start of a root session:
+    /// `session/new` of a client, ``start(_:)`` and the start of an agent
+    /// address, and also a restored root session with no title. A fork that
+    /// ``fork(_:)`` makes gets the fork name of its source in the same way
+    /// (D205); a restored fork keeps the facts of its record.
     ///
     /// - Parameters:
     ///   - session: The live session.
@@ -454,13 +467,31 @@ public actor RouterSessionDirectory: SessionDirectory {
     nonisolated func register(
         _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String? = nil
     ) {
+        register(session, kind: kind, parentID: parentID, requestedByClient: requestedByClient, namingFork: false)
+    }
+
+    /// ``register(_:kind:parentID:requestedByClient:)``, with the choice to
+    /// give a new fork with no title its fork name (D205). Only
+    /// ``fork(_:)`` names a fork: a restored fork keeps the facts of its
+    /// record.
+    ///
+    /// - Parameters:
+    ///   - session: The live session.
+    ///   - kind: The kind of the session.
+    ///   - parentID: The parent of a subagent, or the original session of a
+    ///     fork; `nil` for a root session.
+    ///   - requestedByClient: The UI client that asked for the start, or
+    ///     `nil`.
+    ///   - namingFork: `true` to give a fork with no title its fork name.
+    private nonisolated func register(
+        _ session: any RoutedSession, kind: SessionKind, parentID: ULID?, requestedByClient: String?,
+        namingFork: Bool
+    ) {
         var entry = Entry(session: session, kind: kind, parentID: parentID, updatedAt: session.id.timestamp)
         let watcher = openInboxWatcher(of: session)
         (session as? RoutedSessionActor)?.observeMailFate { [weak self] fate in self?.sessionDidReport(fate) }
         let isNew = naming.withLock { _ in
-            if kind == .root {
-                giveDefaultTitle(to: session)
-            }
+            giveDefaultTitle(to: session, kind: kind, parentID: namingFork ? parentID : nil)
             return state.withLock { registry in
                 if let live = registry.entries[session.id], live.session === session {
                     entry.updatedAt = live.updatedAt
@@ -522,10 +553,12 @@ public actor RouterSessionDirectory: SessionDirectory {
         }
     }
 
-    /// Gives a root session with no title its default name
+    /// Gives a root session or a fork with no title its default name
     /// (``SessionDefaultTitle``), through its facts, which writes the name to
-    /// its `index.md`. A session with a title keeps it. The caller holds the
-    /// lock of ``naming``.
+    /// its `index.md`: the name of its agent for a root session, and the name
+    /// of its source with `-fork` for a fork (D205). A session with a title
+    /// keeps it, and a session of another kind gets no name. The caller holds
+    /// the lock of ``naming``.
     ///
     /// The used names come from the live sessions and from the sessions
     /// recorded in the recording root of the session and in the recording
@@ -537,9 +570,15 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// A session that cannot change its facts gets no default name. The
     /// failure is logged, and the registration goes on.
     ///
-    /// - Parameter session: The root session to register.
-    private nonisolated func giveDefaultTitle(to session: any RoutedSession) {
-        guard SessionDefaultTitle.isMissing(in: session.facts) else { return }
+    /// - Parameters:
+    ///   - session: The session to register.
+    ///   - kind: The kind of the session.
+    ///   - parentID: The source of a fork that ``fork(_:)`` makes, or `nil`.
+    ///     A fork with no source here gets no name: a restored fork keeps
+    ///     the facts of its record.
+    private nonisolated func giveDefaultTitle(to session: any RoutedSession, kind: SessionKind, parentID: ULID?) {
+        let namesFork = kind == .fork && parentID != nil
+        guard kind == .root || namesFork, SessionDefaultTitle.isMissing(in: session.facts) else { return }
         let actor: RoutedSessionActor
         do {
             actor = try Self.recordOwner(of: session)
@@ -550,22 +589,30 @@ public actor RouterSessionDirectory: SessionDirectory {
                 session: session.id, error: error)
             return
         }
-        let title = SessionDefaultTitle.make(
-            for: session.facts, of: session.id, in: session.workingDirectory,
-            among: liveSummaries() + recordedSummaries(besides: session))
+        let summaries = liveSummaries() + recordedSummaries(besides: session)
+        let title =
+            if namesFork, let parentID {
+                SessionDefaultTitle.makeFork(
+                    of: parentID, for: session.id, in: session.workingDirectory, among: summaries)
+            } else {
+                SessionDefaultTitle.make(
+                    for: session.facts, of: session.id, in: session.workingDirectory, among: summaries)
+            }
         actor.updateFacts { $0.title = title }
     }
 
     /// The summaries of the root sessions recorded in the recording root of
-    /// `session` and in the recording roots of the usage store, with no
-    /// `await`. A root that does not read is logged and gives no summary,
-    /// because the default name of a new session must not stop its
-    /// registration.
+    /// `session` (the root that holds its folder, also for a fork that nests
+    /// in the folder of its source) and in the recording roots of the usage
+    /// store, with no `await`. A root that does not read is logged and gives
+    /// no summary, because the default name of a new session must not stop
+    /// its registration.
     ///
-    /// - Parameter session: A root session that registers.
+    /// - Parameter session: A root session or a fork that registers.
     /// - Returns: The recorded summaries, in no order.
     private nonisolated func recordedSummaries(besides session: any RoutedSession) -> [SessionSummary] {
-        let roots = [session.recordingDirectory.deletingLastPathComponent()] + usageStoreRecordingRoots()
+        let ownRoot = TranscriptTree.recordingRoot(ofSessionIn: session.recordingDirectory)
+        let roots = [ownRoot] + usageStoreRecordingRoots()
         do {
             return try RecordedSessions(roots: roots).summaries()
         } catch {
@@ -580,8 +627,9 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// Takes a session off the live list, ends the task that follows its
     /// state, and stops the watcher of its inbox. Each message to it that
     /// waits for its delivery gives no event
-    /// (``Registry/forgetDeliveries(to:)``). An id the directory does not
-    /// hold changes nothing.
+    /// (``Registry/forgetDeliveries(to:)``). The directory releases its hold
+    /// on a fork that it made (``Registry/heldForks``). An id the directory
+    /// does not hold changes nothing.
     ///
     /// - Parameter id: The session id.
     ///
@@ -589,14 +637,19 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// (``Registry/suspendedIDs``), so a later ``markEnded(_:reason:)`` for
     /// it still throws.
     nonisolated func unregister(_ id: ULID) {
-        state.withLock { registry in
-            guard let entry = registry.entries.removeValue(forKey: id) else { return }
+        let releasedFork = state.withLock { registry -> (any RoutedSession)? in
+            let releasedFork = registry.heldForks.removeValue(forKey: id)
+            guard let entry = registry.entries.removeValue(forKey: id) else { return releasedFork }
             if entry.session?.isSuspended == true {
                 registry.suspendedIDs.insert(id)
             }
             entry.cancelFeeds()
             registry.forgetDeliveries(to: id)
+            return releasedFork
         }
+        // Released after the lock: the last release of a fork runs its
+        // `deinit`, which must not run under the lock of the registry.
+        withExtendedLifetime(releasedFork) {}
     }
 
     /// The summaries of every live session, in no order. An entry whose
@@ -1088,19 +1141,30 @@ public actor RouterSessionDirectory: SessionDirectory {
         self.launcher = launcher
     }
 
-    /// Releases the launcher and ends each open stream of ``events()``.
+    /// Releases the launcher and each fork that the directory holds
+    /// (``Registry/heldForks``), and ends each open stream of ``events()``.
     ///
     /// The directory holds the launcher, and the launcher makes surfaces that
     /// hold the directory, so the host calls this at shutdown to break that
-    /// loop. After the call, ``start(_:)`` throws `noLauncher` until the next
+    /// loop. A fork holds its profile, and the profile holds the directory,
+    /// so the release of the forks breaks that loop too. A host that closes
+    /// its sessions at shutdown finds each live fork with ``session(id:)``.
+    /// After the call, ``start(_:)`` throws `noLauncher` until the next
     /// ``use(launcher:)``. The streams end after the lock is released,
-    /// because the end of a stream takes the lock to leave the directory.
+    /// because the end of a stream takes the lock to leave the directory. The
+    /// forks are released after the lock too, because the last release of a
+    /// fork runs its `deinit`.
     public func shutdown() {
         launcher = nil
-        let openStreams = state.withLock { $0.fanout.removeAll() }
+        let (openStreams, releasedForks) = state.withLock { registry in
+            let releasedForks = registry.heldForks
+            registry.heldForks = [:]
+            return (registry.fanout.removeAll(), releasedForks)
+        }
         for continuation in openStreams {
             continuation.finish()
         }
+        withExtendedLifetime(releasedForks) {}
     }
 
     /// See `SessionDirectory.start(_:)`. Starts a new root session through
@@ -1276,8 +1340,8 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// The title of the request is the one exception: it replaces the title
     /// of `facts`. The session is new, thus its title is the title of the
     /// request or the default name that its registration gave
-    /// (``giveDefaultTitle(to:)``), and a request with a title keeps its
-    /// title. A request with no title, or with an empty title, keeps the
+    /// (``giveDefaultTitle(to:kind:parentID:)``), and a request with a title
+    /// keeps its title. A request with no title, or with an empty title, keeps the
     /// default name (``SessionDefaultTitle/given(_:)``).
     ///
     /// - Parameters:
@@ -1331,6 +1395,91 @@ public actor RouterSessionDirectory: SessionDirectory {
         let header = AgentMessageHeader(sender: sender, summary: liveSummary(of: sender), inReplyTo: inReplyTo)
         let content = AgentMessageContent(header: header, text: text).encoded
         return Mail(id: id, sender: .session(sender), body: .agentMessage(from: sender, content: content))
+    }
+
+    // MARK: - Fork
+
+    /// See `SessionDirectory.fork(_:)` (D205). Makes a live fork of the
+    /// source at the cut of `request` (``RoutedSessionActor/makeFork(at:)``),
+    /// registers it as a `fork` of the source, and mails its first prompt.
+    ///
+    /// - The source must be live, or recorded and not archived. A recorded
+    ///   source that is not live is restored first, through the launcher
+    ///   (``SessionLauncher/restoreSession(id:)``), and the fork comes from the
+    ///   restored session. This is the simpler path: a fork needs the tools
+    ///   of its source, and only the host can make them.
+    /// - The fork has the agent, the model profile, the slot, the
+    ///   instructions, the settings and the tools of the source, and the
+    ///   history of the source up to the cut (``ForkCutHistory``). Its record
+    ///   holds `forkParentId` and `forkedAtHistoryOrdinal`, and it records as
+    ///   a fork node in the recording folder of the source, so a restore of
+    ///   the source restores the fork with its prefix.
+    /// - The fork is a top-level session in the folder of its source: kind
+    ///   `fork`, the source as its parent, origin `fork`. It is no subagent,
+    ///   so it is not in ``unendedChildren(of:)`` of the source, and the end,
+    ///   the close or the archive of the source does not end it. The
+    ///   directory holds it until it leaves the live list
+    ///   (``Registry/heldForks``).
+    /// - Its default name is the name of the source with `-fork`
+    ///   (`SessionName.fork(sourceName:usedNames:)`), among the sessions of
+    ///   the folder that are not archived. Its `started` event holds the name
+    ///   and the client of `request`.
+    /// - The first prompt of `request`, when it is not `nil`, waits in the
+    ///   mail queue of the fork as a user message, after the registration,
+    ///   as the first message of ``start(_:)`` does. It starts the first turn
+    ///   of the fork.
+    ///
+    /// The forker of `request` goes to the log, for the audit. It is not a
+    /// fact of the fork. The KV cache of the source is not reused.
+    ///
+    /// - Parameter request: The source, the cut, the first prompt, the
+    ///   client and the forker.
+    /// - Returns: The summary of the fork.
+    /// - Throws: `SessionDirectoryError.unknownSession` when no live or
+    ///   recorded session has the source id, or when the fork closed before
+    ///   the call returns; `SessionDirectoryError.archivedSession` for an
+    ///   archived source; `SessionDirectoryError.noLauncher` for a recorded
+    ///   source when the directory has no launcher; the error of the restore;
+    ///   `SessionDirectoryError.forkUnsupported` for a source that records
+    ///   nothing durably; `SessionDirectoryError.forkCutOutOfRange` for a cut
+    ///   outside the history; the error of the read of the recording; or the
+    ///   refusal of the first prompt.
+    public func fork(_ request: SessionForkRequest) async throws -> SessionSummary {
+        let source = try await forkSource(of: request.sourceID)
+        let fork = try await Self.recordOwner(of: source).makeFork(at: request.cut)
+        register(
+            fork, kind: .fork, parentID: source.id, requestedByClient: request.requestedByClient, namingFork: true)
+        state.withLock { $0.heldForks[fork.id] = fork }
+        Self.logSession(
+            .info, "a session forked", session: source.id,
+            metadata: [
+                RouterTelemetry.LogMetadataKey.forkSessionId: "\(fork.id.description)",
+                RouterTelemetry.LogMetadataKey.forker: "\(request.forker)",
+            ])
+        if let firstPrompt = request.firstPrompt {
+            _ = try fork.mail(mail(carrying: firstPrompt, from: nil, inReplyTo: nil, userHeader: nil))
+        }
+        guard let summary = liveSummary(of: fork.id) else {
+            throw SessionDirectoryError.unknownSession(fork.id)
+        }
+        return summary
+    }
+
+    /// The live session that a fork of `id` comes from: the live session,
+    /// or the recorded session that the launcher restores.
+    ///
+    /// - Parameter id: The id of the source.
+    /// - Returns: The live source.
+    /// - Throws: What ``fork(_:)`` throws for the source.
+    private func forkSource(of id: ULID) async throws -> any RoutedSession {
+        if let live = session(id: id) {
+            guard live.facts.archivedAt == nil else { throw SessionDirectoryError.archivedSession(id) }
+            return live
+        }
+        guard let recorded = try await summary(of: id) else { throw SessionDirectoryError.unknownSession(id) }
+        guard recorded.state != .archived else { throw SessionDirectoryError.archivedSession(id) }
+        guard let launcher else { throw SessionDirectoryError.noLauncher }
+        return try await launcher.restoreSession(id: id)
     }
 
     // MARK: - Messages

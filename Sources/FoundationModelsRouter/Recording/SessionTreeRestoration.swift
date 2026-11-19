@@ -692,6 +692,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // The hooks of the restoring router: a `.resumed` start with
                 // the recorded id, and the fork or sub-agent lineage.
                 hooks: restoredHooks(for: node, on: routedLLM),
+                // The reader that the mount site of each tool holds, so a fork
+                // of this node mounts its tools with the same reader.
+                transcriptReader: transcriptReader,
                 // Restored, not new: the record read from the node's own
                 // `index.md`. Construction writes nothing.
                 record: .restored(node.record)

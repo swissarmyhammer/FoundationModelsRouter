@@ -188,6 +188,24 @@ package struct TranscriptTree: Sendable {
         return TranscriptTree(roots: roots, nodesById: nodesById)
     }
 
+    /// The router's recording root that holds the session folder `folder`:
+    /// the first folder above `folder` that is not a session folder (a folder
+    /// with no `index.md`). A root session sits directly in it, and a fork
+    /// sits in the folder of its parent. The call reads no `index.md`.
+    ///
+    /// - Parameter folder: The folder of a session.
+    /// - Returns: The recording root, as ``loadChain(ofSessionIn:under:)``
+    ///   takes it.
+    package static func recordingRoot(ofSessionIn folder: URL) -> URL {
+        var enclosing = folder.deletingLastPathComponent()
+        while FileManager.default.fileExists(atPath: SessionIndexFile.url(in: enclosing).path),
+            enclosing.path != enclosing.deletingLastPathComponent().path
+        {
+            enclosing = enclosing.deletingLastPathComponent()
+        }
+        return enclosing
+    }
+
     /// Throws ``TranscriptTreeError/duplicateSessionId(id:directories:)`` when
     /// any session id names more than one discovered directory.
     private static func checkForDuplicateIds(in rawNodes: [RawNode]) throws {
@@ -452,13 +470,15 @@ package struct TranscriptTree: Sendable {
     /// before the first marker whose entry is beyond the cut.
     ///
     /// A ``TranscriptEvent/Kind/toolCallStarted`` marker, or a
-    /// ``TranscriptEvent/Kind/promptStarted`` marker, after the last
-    /// entry-kind event that the prefix keeps is not in the prefix, unless it
-    /// is open and the cut counts its entries. Otherwise the marker belongs to
-    /// the submission of the next entry, which the fork does not inherit. The
-    /// entry that covers the marker is in that submission, so the marker alone
-    /// would make an open call, or an open user message, of a finished
-    /// submission (``OpenToolCalls``, ``OpenPrompts``).
+    /// ``TranscriptEvent/Kind/promptStarted`` marker, that the prefix leaves
+    /// open is not in the prefix, unless the cut counts its entries. The entry
+    /// that covers such a marker is beyond the cut: the entry of the next
+    /// submission, or a later entry of the same submission, because the
+    /// session records the markers of a submission when its calls start and
+    /// its entries when it ends. So the marker alone would make an open call,
+    /// or an open user message, that the parent never had (``OpenToolCalls``,
+    /// ``OpenPrompts``). A marker that an entry of the prefix covers stays:
+    /// the fold drops it.
     ///
     /// - Parameters:
     ///   - events: A parent's effective events, oldest first, with the
@@ -470,11 +490,12 @@ package struct TranscriptTree: Sendable {
         let origins = FoldedHistory.entryOrigins(of: events)
         let end = origins.dropFirst(cut).first ?? events.endIndex
         let countedMarkers = Set(origins.prefix(cut))
-        let lastKeptEntry = events.indices.last { $0 < end && events[$0].kind.isEntryKind }
-        let nextSubmissionStart = lastKeptEntry.map { $0 + 1 } ?? events.startIndex
-        return events[..<end].enumerated().compactMap { index, event in
-            let isLaterMarker = index >= nextSubmissionStart && Self.isWriteAheadMarker(event.kind)
-            return isLaterMarker && !countedMarkers.contains(index) ? nil : event
+        let candidate = Array(events[..<end])
+        let openMarkers = Set(FoldedHistory.entryOrigins(of: candidate)).filter {
+            Self.isWriteAheadMarker(candidate[$0].kind)
+        }
+        return candidate.enumerated().compactMap { index, event in
+            openMarkers.contains(index) && !countedMarkers.contains(index) ? nil : event
         }
     }
 

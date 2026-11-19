@@ -36,8 +36,37 @@ comments:
     - An index that does not exist, or `.afterTurn(n)` of a turn that still runs: `forkCutOutOfRange`.
     - Tests: a cut before and after a compaction; a cut in the folded range is refused.
   timestamp: 2026-11-18T18:20:40.118785+00:00
-position_column: todo
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m7rnst1rn0aadb4ny9399vek
+  text: |-
+    Research (implement step). Discoveries and decisions:
+    - The directory holds each session weakly. A fork that the directory makes has no other owner, so the directory holds each fork strongly (Registry.heldForks) until the fork leaves the live list (close, archive) or until shutdown(). Decision: no new SessionLauncher requirement.
+    - The recording of the source is the one source of the turn positions (every `.prompt` entry ever recorded, the compaction checkpoint is a `.prompt` event too and is not a turn). A source with no durable recording (persistsIndex false) cannot fork: forkUnsupported. Reason: the fork node and its cut live in the recording of the source.
+    - Seed of the fork: a cut at or after the settled recorded end comes from the settled transcript (SettledTranscript gets back its historyOrdinal); a cut before it is rendered from the recording, with the same forkPrefix + ContextRenderer path that a restore of the fork uses.
+    - Bug found in TranscriptTree.forkPrefix for a cut inside one submission (callingToolCall, historyPosition): the write-ahead markers of the later rounds of that submission come before the last kept entry, their covering entries are after the cut, so a restore of the fork folds them into an open call. Fix: drop a marker that is open in the prefix and that the cut does not count.
+    - Running turn: the actor records the history ordinal where the running answer started (pump runAnswer, one synchronous assignment, no new suspension point).
+    - `.callingToolCall` needs the open model call mark of the source (SessionCallMark); the live transcript is read only there (tool body, the SDK waits in the call).
+    - Recorded source that is not live and not archived: restore it first through the launcher (simpler path), then fork it.
+    - Fork facts: agent id and name of the source, origin `.fork`, no tags (the Extras in-memory directory gives none), title from SessionName.fork in the naming lock of register.
+    - First prompt: a user message (sender .user).
+  timestamp: 2026-11-19T01:12:40.248409+00:00
+- actor: claude-code
+  id: 01m7rq594qxhys74zfqk5m0ry3
+  text: |-
+    Implementation landed (not committed). Decisions:
+    - Seed backend: `container.makeSession(transcript:tools:samplingMode:)` of the handle of the slot of the source (the restore path), not `makeFork()`: makeFork() reads the live transcript and cannot cut.
+    - Restored forks keep their record facts: only `fork(_:)` names a fork (private register variant `namingFork`). The first full run failed RecordedForkTreeRestoreTests.aRestoredForkReadsItsFactsBack when register named every untitled fork; fixed.
+    - Recorded forks nest in the source folder, so after a restart they have no recorded summary and restore with the tree of their source (`restoreSessionTree(root:)`). A recorded fork that is not live does not count as a used name.
+    - Turn index counts every non-checkpoint `.prompt` entry, also continuation and run-mail prompts; ACPAgent must count the same.
+    - A cut inside the folded range (also `.historyPosition` before the end of the newest checkpoint) is out of range.
+    - TranscriptTree.forkPrefix now drops a write-ahead marker that is open in the prefix and that the cut does not count (fix for cuts inside one submission).
+
+    ### implement — changed
+    - evidence: new Sources: Recording/ForkCutHistory.swift, Session/RoutedSessionActorForking.swift, RoutedLLMForking.swift; changed: Directory/RouterSessionDirectory.swift, Directory/SessionDefaultTitle.swift, Recording/{FoldedHistory,SessionFacts,SessionTreeRestoration,TranscriptReconstruction,TranscriptTree}.swift, RoutedLLM.swift, Session/{RoutedSessionActor,RoutedSessionActorPump,SessionHooks,SettledTranscript}.swift, Tracing/RouterTelemetry.swift. Tests: ForkCutHistoryTests (18), RouterSessionDirectoryForkTests (27), RouterSessionDirectoryForkToolCallTests (4), RouterSessionDirectoryForkCompactionTests (4), HookLineageTests +1, WriteAheadToolCallTests +1, Helpers/ForkFixtures.swift. Full `swift test`: 3026 tests in 348 suites passed, exit 0, no warnings (scratchpad/full-test-2.txt).
+    - next: review
+  timestamp: 2026-11-19T01:36:24.727109+00:00
+position_column: doing
+position_ordinal: '80'
 title: Fork a live session at a cut point in RouterSessionDirectory (D205)
 ---
 ## Goal

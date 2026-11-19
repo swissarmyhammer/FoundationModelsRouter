@@ -12,8 +12,8 @@ enum HookParent: Sendable, Equatable {
     /// recorded spawn parent (``SessionRecord/AgentSpawn/parentSessionId``).
     case subagent(sessionID: String, sessionKey: String, rootSessionID: String)
 
-    /// The session that a restored fork node of a recording is a fork of,
-    /// with the working directory of that session.
+    /// The session that a fork is a fork of, live or restored from a
+    /// recording, with the working directory of that session.
     case fork(sessionID: String, sessionKey: String, rootSessionID: String, workingDirectory: URL)
 
     /// The id of the parent session.
@@ -56,14 +56,13 @@ struct HookLineage: Sendable, Equatable {
     /// Applies the lineage rules to one session.
     ///
     /// - The key is `requestedKey` when the host gives one. Else a sub-agent
-    ///   gets the key of its parent. A restored fork node of a recording gets
-    ///   the key of its parent only when its working directory is the working
-    ///   directory of its parent, so that one key never holds two work trees.
+    ///   gets the key of its parent. A fork gets the key of its parent only
+    ///   when its working directory is the working directory of its parent,
+    ///   so that one key never holds two work trees.
     ///   Each other session gets its own id.
     /// - The origin is `requestedOrigin` when the host gives one. Else a
-    ///   restored session is `.resumed`, a sub-agent is `.subagent`, a session
-    ///   with a fork parent that a restore did not make is `.forked`, and each
-    ///   other session is `.new`.
+    ///   restored session is `.resumed`, a sub-agent is `.subagent`, a live
+    ///   fork is `.forked`, and each other session is `.new`.
     /// - The parent session id is the id of `parent`, or `nil`.
     /// - The root session id is the root of `parent`, or the id of the
     ///   session when it has no parent.
@@ -303,11 +302,28 @@ final class SessionHooks: Sendable {
         lineage.session
     }
 
-    /// The parent that a restored fork node of this session has.
+    /// The parent that a fork of this session has: a live fork
+    /// (``makeForkHooks(sessionID:workingDirectory:)``), or a restored fork
+    /// node of a recording.
     var forkParent: HookParent {
         .fork(
             sessionID: session.sessionID, sessionKey: session.sessionKey, rootSessionID: session.rootSessionID,
             workingDirectory: session.workingDirectory)
+    }
+
+    /// Makes the hooks of a live fork of this session (D205): the kind
+    /// `.fork`, the origin `.forked`, this session as the parent, and the key
+    /// of this session when the fork works in the working directory of this
+    /// session (``HookLineage``).
+    ///
+    /// - Parameters:
+    ///   - sessionID: The id of the fork.
+    ///   - workingDirectory: The working directory of the fork.
+    /// - Returns: The hooks of the fork. They send nothing until
+    ///   ``start()``.
+    func makeForkHooks(sessionID: ULID, workingDirectory: URL) -> SessionHooks {
+        routerHooks.makeSessionHooks(
+            sessionID: sessionID, workingDirectory: workingDirectory, parent: forkParent, isRestored: false)
     }
 
     /// Records the session as open, and sends its `SessionStart` when the

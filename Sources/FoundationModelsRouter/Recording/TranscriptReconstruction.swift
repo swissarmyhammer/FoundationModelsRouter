@@ -219,6 +219,32 @@ extension TranscriptTree {
 }
 
 extension TranscriptTree {
+    /// The router-only kinds that the render of a restore reads besides the
+    /// entry kinds: the cuts of a repetition stop, the write-ahead markers,
+    /// and the mail records that end the mail of a marker.
+    static let renderKinds: Set<TranscriptEvent.Kind> = [
+        .repeatedPartRemoval, .toolCallStarted, .promptStarted, .mail,
+    ]
+
+    /// The transcript that a fork gets when it cuts `events` at `cut`: the
+    /// render of the restore view of the events before the cut
+    /// (``forkPrefix(of:entryCount:)``). A restore of a recorded fork with no
+    /// events of its own renders the same transcript, so a live fork starts
+    /// from what its restore gives (D205).
+    ///
+    /// - Parameters:
+    ///   - events: The effective events of the source, in order, with the
+    ///     kinds of ``renderKinds``. The other router-only kinds are not
+    ///     rendered.
+    ///   - cut: The cut, as a count of entries of the folded history.
+    /// - Returns: The transcript of the fork.
+    /// - Throws: ``TranscriptReconstructionError`` for an event that does not
+    ///   rebuild.
+    static func forkTranscript(of events: [TranscriptEvent], entryCount cut: Int) throws -> Transcript {
+        let prefix = forkPrefix(of: events, entryCount: cut)
+        return try ContextRenderer.context(of: prefix.filter { $0.kind.isEntryKind || renderKinds.contains($0.kind) })
+    }
+
     /// Reconstructs this session's whole effective conversation as a
     /// `FoundationModels.Transcript`, usable as a `LanguageModelSession` seed.
     /// Content recorded at ``RecordingLevel/full`` round-trips. Some fields
@@ -259,7 +285,7 @@ extension TranscriptTree {
         view: TranscriptReconstructionView = .restore,
         claimedRuns: Set<RunKey> = []
     ) throws -> Transcript {
-        let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: [.repeatedPartRemoval, .toolCallStarted, .promptStarted, .mail])
+        let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: Self.renderKinds)
         guard view == .restore else {
             return Transcript(entries: try Self.entries(of: renderEvents.filter(\.kind.isEntryKind)))
         }

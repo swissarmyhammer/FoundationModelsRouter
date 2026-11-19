@@ -269,6 +269,9 @@ extension RoutedSessionActor: SessionMailObserver {
         let options =
             batch.userMail.first.flatMap { SubmissionOptions(for: $0, isGuided: grammar != nil) } ?? .mailDelivery
         pumpWork?.kind = .answer(options: options)
+        // The start of the answer in the history, for the cut of a fork
+        // (D205). A synchronous write: no suspension point comes here.
+        answerStartHistoryOrdinal = historyOrdinal
         let callers = deliver(batch.mail)
         let callerContext = answerParentContext(of: batch, callers: callers)
         // The batch left the queue: the depth is synchronous, so it adds no

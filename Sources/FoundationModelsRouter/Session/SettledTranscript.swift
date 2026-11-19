@@ -1,7 +1,7 @@
 import FoundationModels
 
 /// The transcript of a session as of its last settled point, with the
-/// recording cut of that same point.
+/// recording cut and the history position of that same point.
 ///
 /// A settled point is a moment when no SDK call writes the backend
 /// transcript: the end of a submission, after its recording diff; a
@@ -19,6 +19,13 @@ struct SettledTranscript: Sendable {
     /// tool-result boundary, the entries of the running submission come after
     /// them: the session records them at the end of the submission.
     let recordedEntryCount: Int
+
+    /// The position of the session in its own recorded history at the
+    /// settled point (``RoutedSessionActor/historyOrdinal``). The first
+    /// ``recordedEntryCount`` entries are the render of that history, so a
+    /// fork that cuts at this position or after it takes its entries from
+    /// ``entries`` (``RoutedSessionActor/makeFork(at:)``).
+    let historyOrdinal: Int
 
     /// The entries as a transcript.
     var transcript: Transcript {

@@ -79,4 +79,15 @@ public struct SessionFacts: Sendable, Equatable {
         self.endedAt = endedAt
         self.endReason = endReason
     }
+
+    /// The first facts of a fork of a session with these facts (D205): the
+    /// agent id and the agent name of the source, and the origin
+    /// ``FoundationModelsExtras/SessionDirectoryOrigin/fork``. A fork gets no
+    /// tags, no `startedBy` and no archive date of its source, as the fork of
+    /// the Extras in-memory directory does. Its title is the fork name that
+    /// the directory gives it when it registers
+    /// (``RouterSessionDirectory/fork(_:)``).
+    var forFork: SessionFacts {
+        SessionFacts(agentID: agentID, agentName: agentName, origin: .fork)
+    }
 }

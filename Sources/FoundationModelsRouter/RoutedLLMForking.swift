@@ -1,0 +1,106 @@
+import Foundation
+import FoundationModels
+import FoundationModelsExtras
+
+/// The fork site of the generation handle ``RoutedLLM`` (D205): the third
+/// shape of a session, beside the vended root (`makeSession`) and the
+/// restored node (`restoreSessionTree`).
+extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Makes a fork of `source` over this resident model, from `seed`.
+    ///
+    /// The fork has a new id, `source` as its ``RoutedSession/parentId``, and
+    /// the working directory of `source`. Its recording directory nests in
+    /// the recording directory of `source`, so a restore of the recording of
+    /// `source` finds the fork as a fork node with its cut
+    /// (``TranscriptTree``). Its backend is a new session of this model,
+    /// seeded with ``ForkSeed/entries``, and each seeded entry counts as
+    /// recorded: the fork records only its own entries, and copies no
+    /// history of `source`.
+    ///
+    /// The tools are the original tools of `source`, each forked first
+    /// (`ForkableTool.forked()`, or the tool itself) and then mounted on the
+    /// own outbox and run plane of the fork, so a background run of the fork
+    /// never posts to `source`. The chain is fork → mount → cap. The fork is
+    /// a top-level session, so its mount site is a root site, and it gets the
+    /// delegation hint of `source` with a new count. Each setting of
+    /// `source` that a host gives (the compaction, the priming, the
+    /// protection, the repetition watch, the mail bound, the settle period,
+    /// the no-op check, the user presence, the transcript reader) carries
+    /// forward.
+    ///
+    /// The hooks of the fork have the kind `.fork`, the origin `.forked` and
+    /// `source` as the parent (``SessionHooks/makeForkHooks(sessionID:workingDirectory:)``).
+    /// The first facts are ``SessionFacts/forFork`` of the facts of `source`.
+    ///
+    /// - Parameters:
+    ///   - source: The session to fork. It runs on this handle.
+    ///   - seed: The transcript, the cut and the context counter of the fork.
+    /// - Returns: The fork, not registered.
+    func makeFork(of source: RoutedSessionActor, seed: ForkSeed) -> RoutedSessionActor {
+        let forkID = ULID.generate()
+        let forkedTools = source.originalTools.map { ($0 as? any ForkableTool)?.forked() ?? $0 }
+        let delegationAdvisor = AgentDelegationAdvisor.make(
+            hint: source.delegationAdvisorSlot.withLock { $0?.hint }, tools: forkedTools, isRoot: true)
+        let (outbox, runPlane, instancedTools, resultWitness) = wireSessionTools(
+            forkedTools,
+            sessionID: forkID,
+            cappedToTokenLimit: source.autoCompactionBudget?.toolOutputLimit,
+            inlineSettleGrace: source.inlineSettleGrace,
+            userPresence: source.runPlane.userPresence,
+            parentCall: nil,
+            recordedSpawn: nil,
+            delegationAdvisor: delegationAdvisor,
+            transcriptReader: source.transcriptReader)
+        let backend = container.makeSession(
+            transcript: Transcript(entries: seed.entries), tools: instancedTools, samplingMode: samplingMode)
+        let fork = makeRoutedSessionActor(
+            profile: source.profile,
+            routerId: routerId,
+            id: forkID,
+            parentId: source.id,
+            recordingDirectory: source.recordingDirectory.appendingPathComponent(forkID.description, isDirectory: true),
+            workingDirectory: source.workingDirectory,
+            backend: backend,
+            slot: slot,
+            model: chosen,
+            recorder: recorder,
+            instructions: source.instructions,
+            grammar: source.grammar,
+            tools: instancedTools,
+            // The originals of the source, not the forked copies: a fork of
+            // this fork forks each tool from its original state again.
+            originalTools: source.originalTools,
+            outbox: outbox,
+            runPlane: runPlane,
+            // Each entry of the seed is history of the source, so the fork
+            // records none of them again.
+            persistedEntryCount: seed.entries.count,
+            // The cut: the record of the fork holds it as
+            // `forkedAtHistoryOrdinal`.
+            historyOrdinal: seed.historyOrdinal,
+            indexWriter: source.indexWriter,
+            origin: .forked,
+            contextTokens: source.contextTokens,
+            usageState: seed.usageState,
+            autoCompactionBudget: source.autoCompactionBudget,
+            autoCompactionPrompt: source.autoCompactionPrompt,
+            // A fork carries no spawn: it is a top-level session.
+            agentSpawn: nil,
+            discoveryPriming: source.discoveryPriming,
+            toolOutputProtection: source.toolOutputProtection,
+            repetitionDetection: source.repetitionDetection,
+            mailOnlyAnswerLimit: source.mailOnlyAnswerLimit,
+            inlineSettleGrace: source.inlineSettleGrace,
+            isNoOpToolCall: source.isNoOpToolCall,
+            recordingRoot: source.record.configuration?.recordingRoot,
+            tokenCounter: container.tokenCounter,
+            tracer: tracer,
+            hooks: source.hooks?.makeForkHooks(sessionID: forkID, workingDirectory: source.workingDirectory),
+            transcriptReader: source.transcriptReader,
+            record: .new(source.facts.forFork)
+        )
+        fork.bind(delegationAdvisor: delegationAdvisor)
+        fork.bind(resultWitness: resultWitness)
+        return fork
+    }
+}

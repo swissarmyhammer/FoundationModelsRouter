@@ -9,7 +9,7 @@ import Tracing
 /// Writes one session's identity onto its ``RouterTelemetry/SpanName/session``
 /// span.
 ///
-/// One writer for both shapes, so every session span carries the same
+/// One writer for each shape, so every session span carries the same
 /// keys however the session was made. The parent key is written only when
 /// there is a parent, so a vended root names none.
 ///
@@ -49,11 +49,11 @@ private let sessionSpanKind: SpanKind = .internal
 /// brings a session into existence, and writes that session's identity onto
 /// it.
 ///
-/// Every session span the package opens comes from here — the vended root and
-/// the restored node alike — so the span's name, its kind and its attributes
-/// are written in one place and both shapes report the same way.
+/// Every session span the package opens comes from here — the vended root,
+/// the restored node and the fork alike — so the span's name, its kind and its
+/// attributes are written in one place and each shape reports the same way.
 ///
-/// Which of the two calls this helper, and when, follows from where the cost
+/// Which of the shapes calls this helper, and when, follows from where the cost
 /// sits. A restored node is the one shape whose cost is not the construction:
 /// before it can build anything it re-reads its own and its ancestors'
 /// transcript files from disk
@@ -61,9 +61,9 @@ private let sessionSpanKind: SpanKind = .internal
 /// exactly the work this span was added to make visible. So the restore path
 /// calls this helper itself, around that read *and* the rebuild that follows
 /// it, and `makeRoutedSessionActor` opens no second span for a
-/// ``RouterTelemetry/SessionOrigin/restored`` session. The vended root has
-/// nothing to measure before the construction, so the factory calls this
-/// helper for it.
+/// ``RouterTelemetry/SessionOrigin/restored`` session. The vended root and
+/// the fork have nothing to measure before the construction, so the factory
+/// calls this helper for them.
 ///
 /// - Parameters:
 ///   - routerId: The recording root id of the router the session belongs to.
@@ -154,9 +154,9 @@ func withSessionSpan<Result, Failure: Error>(
 /// ``RouterTelemetry/SpanName/session`` span. Each parameter but `origin`
 /// forwards unchanged to the ``RoutedSessionActor`` initializer.
 ///
-/// Every session comes into existence through this one factory — vended, or
-/// restored from disk — so a parameter added here reaches both shapes at
-/// once. `tracer` carries no default for that reason: a site that forgot it
+/// Every session comes into existence through this one factory — vended,
+/// restored from disk, or forked from a live session — so a parameter added
+/// here reaches each shape at once. `tracer` carries no default for that reason: a site that forgot it
 /// would leave its sessions silent, and the compiler says so. `origin`
 /// carries none for the same reason: a shape that cannot say how it was made
 /// would leave its span unreadable.
@@ -208,6 +208,7 @@ func makeRoutedSessionActor(
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?,
     hooks: SessionHooks?,
+    transcriptReader: (any SessionTranscriptReader)? = nil,
     record: SessionRecordSource
 ) -> RoutedSessionActor {
     // The construction itself, so the one parameter list below is written once
@@ -248,6 +249,7 @@ func makeRoutedSessionActor(
             tokenCounter: tokenCounter,
             tracer: tracer,
             hooks: hooks,
+            transcriptReader: transcriptReader,
             record: record
         )
     }
@@ -274,7 +276,7 @@ func makeRoutedSessionActor(
         session.writeFirstIndex()
     }
     // The session exists now, so its `SessionStart` goes out. Each shape
-    // (vended, restored) comes through here.
+    // (vended, restored, forked) comes through here.
     hooks?.start()
     return session
 }
@@ -346,7 +348,8 @@ actor RoutedSessionActor: RoutedSession {
     /// model call (``noteToolResult(_:)``).
     func settleTranscript() {
         settledTranscript = SettledTranscript(
-            entries: backend.transcriptEntries(), recordedEntryCount: persistedEntryCount)
+            entries: backend.transcriptEntries(), recordedEntryCount: persistedEntryCount,
+            historyOrdinal: historyOrdinal)
     }
 
     /// The slot this session's model fills, stamped onto recorded events.
@@ -878,9 +881,23 @@ actor RoutedSessionActor: RoutedSession {
     /// This session's position in its own append-only recorded history: how
     /// many entry-kind events its effective recorded stream holds, and for a
     /// restored session, the entries that the fold of its open markers makes
-    /// (``FoldedHistory``). Starts at `0` for a root, and at the reconstructed
-    /// count for a restored session. It never rewinds.
+    /// (``FoldedHistory``). Starts at `0` for a root, at the reconstructed
+    /// count for a restored session, and at the cut for a fork. It never
+    /// rewinds.
     var historyOrdinal: Int
+
+    /// The value of ``historyOrdinal`` when the pump started the answer that
+    /// runs now (D205). Each turn whose prompt comes at or after it belongs
+    /// to the running answer, so a fork does not take that turn as complete
+    /// (``ForkCutHistory/runningAnswerStart``). It is read only while
+    /// ``pumpWork`` is an answer.
+    var answerStartHistoryOrdinal = 0
+
+    /// The reader of the recorded transcripts of sessions that the tools of
+    /// this session read through, or `nil`. The mount site of each tool of
+    /// the session holds it, and a fork of this session gives it to the
+    /// mount site of each of its tools (``SessionConfiguration/transcriptReader``).
+    nonisolated let transcriptReader: (any SessionTranscriptReader)?
 
     /// The run-level facts of this session's `index.md`, or `nil` for a
     /// session that records nothing durably. See ``persistsIndex``.
@@ -990,9 +1007,11 @@ actor RoutedSessionActor: RoutedSession {
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?,
         hooks: SessionHooks? = nil,
+        transcriptReader: (any SessionTranscriptReader)? = nil,
         record: SessionRecordSource = .new(SessionFacts())
     ) {
         self.hooks = hooks
+        self.transcriptReader = transcriptReader
         switch record {
         case .restored(let restored):
             self.recordState = Mutex(restored)
@@ -1072,7 +1091,7 @@ actor RoutedSessionActor: RoutedSession {
             transcript: Transcript(entries: seedEntries.prefix(persistedEntryCount)))
         self.historyOrdinal = historyOrdinal
         self.settledTranscript = SettledTranscript(
-            entries: seedEntries, recordedEntryCount: persistedEntryCount)
+            entries: seedEntries, recordedEntryCount: persistedEntryCount, historyOrdinal: historyOrdinal)
         self.indexWriter = indexWriter
         self.contextTokens = contextTokens
         self.usageState = usageState

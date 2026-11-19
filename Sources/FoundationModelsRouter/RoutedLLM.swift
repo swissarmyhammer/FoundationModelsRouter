@@ -355,6 +355,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tracer: tracer,
             // The hooks of the router, with the lineage of this session.
             hooks: sessionHooks,
+            // The reader that the mount site of each tool holds, so a fork of
+            // this session mounts its tools with the same reader.
+            transcriptReader: transcriptReader,
             // The first facts, in the session's first `index.md`.
             record: .new(facts)
         )

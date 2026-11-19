@@ -26,8 +26,18 @@ enum FoldedHistory {
     ///   markers and the records of ``extraKinds``.
     /// - Returns: One index for each entry of the folded history, in order.
     static func entryOrigins(of events: [TranscriptEvent]) -> [Int] {
+        entries(of: events).map(\.seq)
+    }
+
+    /// The entries of the folded history of `events`, in order. The `seq` of
+    /// each entry is its place in `events`, as ``entryOrigins(of:)`` gives it.
+    ///
+    /// - Parameter events: The events of one session, in order, with the
+    ///   markers and the records of ``extraKinds``.
+    /// - Returns: One entry-kind event for each entry of the folded history.
+    static func entries(of events: [TranscriptEvent]) -> [TranscriptEvent] {
         let numbered = events.enumerated().map { index, event in event.numbered(index) }
-        return OpenToolCalls.folding(OpenPrompts.folding(numbered)).filter(\.kind.isEntryKind).map(\.seq)
+        return OpenToolCalls.folding(OpenPrompts.folding(numbered)).filter(\.kind.isEntryKind)
     }
 }
 

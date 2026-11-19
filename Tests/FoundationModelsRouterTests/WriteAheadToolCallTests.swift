@@ -645,6 +645,24 @@ struct WriteAheadToolCallTests {
         #expect(TranscriptTree.forkPrefix(of: events, entryCount: 2).map(\.seq) == [1, 2, 3])
     }
 
+    /// The production change that makes this test fail: a prefix that keeps
+    /// each marker before its last kept entry, so the marker of a later round
+    /// of the same submission, whose `.toolCalls` entry is beyond the cut,
+    /// folds into an open call of the fork.
+    @Test("a fork that cuts inside a submission keeps no marker of a call whose entry is beyond the cut")
+    func forkInsideASubmissionKeepsNoMarkerOfALaterRound() {
+        let events = [
+            Self.textEvent(seq: 1, kind: .prompt, entryID: "p1"),
+            Self.markerEvent(seq: 2, callID: Self.firstCallID),
+            Self.markerEvent(seq: 3, callID: Self.secondCallID),
+            Self.toolCallsEvent(seq: 4, callIDs: [Self.firstCallID]),
+            Self.toolOutputEvent(seq: 5, callID: Self.firstCallID),
+            Self.toolCallsEvent(seq: 6, callIDs: [Self.secondCallID]),
+        ]
+
+        #expect(TranscriptTree.forkPrefix(of: events, entryCount: 3).map(\.seq) == [1, 2, 4, 5])
+    }
+
     @Test("a fork keeps an open call marker at the end with its call and its output when its cut counts them")
     func forkKeepsAnOpenCallAtTheEnd() {
         let events = [
