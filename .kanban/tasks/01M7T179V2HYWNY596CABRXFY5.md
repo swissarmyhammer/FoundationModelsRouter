@@ -19,8 +19,24 @@ comments:
     - evidence: `public init(record: SessionRecord)` in `extension SessionSummary` (Sources/FoundationModelsRouter/Directory/RecordedSessionSummary.swift); `public static func recordedSummary(inSessionFolder folder: URL) throws -> SessionSummary?` on RouterSessionDirectory (RouterSessionDirectory.swift, beside recordedSessions(in:)). RecordedSessions.summary(of:) removed, callers changed (RecordedSessions.swift, RouterSessionDirectory.swift). Tests: Tests/FoundationModelsRouterTests/SessionSummaryRecordTests.swift (11 tests, `--filter FoundationModelsRouterTests.SessionSummaryRecordTests`: 11 passed), Tests/FoundationModelsRouterPublicSurfaceTests/RecordedSummaryPublicSurfaceTests.swift (1 test passed). RED: compile error of the missing members; the sibling test failed against a staged root-walk read (permission denied 257). Full `swift test` once: 3202 tests in 362 suites passed, 51 in 27 suites passed, 19 in 3 suites passed; no compiler warnings. Log: scratchpad/full-suite.txt.
     - next: /review. Not committed, not pushed.
   timestamp: 2026-11-19T13:59:57.679334+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7t1w8g6269k419th9tx5my5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (4fed6781): 0 findings, 0 confirmed, 0 refuted; 5 files reviewed, 4 .kanban files ignored. Added checks: the body of SessionSummary.init(record:) is the same as the removed RecordedSessions.summary(of:), and the two directory callers (namingUntitled, recordedSummary(of:)) only change the call; recordedSummary(inSessionFolder:) calls only SessionIndexFile.read(in:), which reads only folder/index.md (fileExists and one file read, no folder listing); the API docs agree with SessionIndexFile.read, SessionDefaultTitle.given and needsDefaultTitle (root only); RecordedSummaryPublicSurfaceTests uses a plain import of FoundationModelsRouter.
+    - next: none. The task is in done.
+  timestamp: 2026-11-19T14:02:57.926787+00:00
+- actor: claude-code
+  id: 01m7t1wr7zfx9ssrma3g0khhz7
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — RecordedSessionSummary.swift (new), RecordedSessions.swift, RouterSessionDirectory.swift; SessionSummaryRecordTests (new, 11), RecordedSummaryPublicSurfaceTests (new, 1)
+    - test: green — one full swift test run, 3202 tests in 362 suites (+51, +19), 0 failures
+    - commit: 4fed6781
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T14:03:14.047635+00:00
+position_column: done
+position_ordinal: ffffffffffc080
 title: Make the record-to-summary function public, and add a summary read of one session folder (D207, for ACPAgent)
 ---
 ## Goal
