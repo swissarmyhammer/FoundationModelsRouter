@@ -422,6 +422,9 @@ extension RoutedSessionActor {
         let rejectedCallRetries = settings.rejectedCallRetries
         let reasoningOff = settings.reasoningOff
         let composedPrompt = ContextRenderer.promptText(delivering: deliveredMail, followedBy: sessionText)
+        // The turns of the running submission, for the cut of a fork (D205).
+        // A synchronous write: no suspension point comes here.
+        runningSubmission?.deliveredMail = deliveredMail
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()

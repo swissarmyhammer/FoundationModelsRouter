@@ -12,6 +12,11 @@ struct RunningSubmission {
     /// Whether the session sent ``SessionEvent/submissionStarted(_:)`` for
     /// the submission.
     var hasStarted = false
+
+    /// The mail that the attempt that runs now delivers, in take order: the
+    /// mail that its recorded `.prompt` entry will hold. A fork reads it for
+    /// the turns of the running submission (``ForkCutHistory``).
+    var deliveredMail: [Mail] = []
 }
 
 /// ``RoutedSessionActor``'s events of a submission and of an answer, and the

@@ -38,7 +38,8 @@ extension RoutedSessionActor {
     /// - the recording of this session on disk, up to the position of the
     ///   last settled point (``settledTranscript``);
     /// - the entries of the running submission that the settled point holds
-    ///   and that the session did not record yet.
+    ///   and that the session did not record yet, with the mail that the
+    ///   submission delivers (``RunningSubmission/deliveredMail``).
     ///
     /// The fork reads nothing of the live backend transcript, with one
     /// exception: ``SessionForkCut/callingToolCall`` comes from a tool body of
@@ -116,7 +117,9 @@ extension RoutedSessionActor {
         let events = try recordedForkEvents()
         let history = ForkCutHistory(
             entries: Array(ForkCutHistory.recordedEntries(of: events).prefix(settled.historyOrdinal))
-                + settled.entries.dropFirst(settled.recordedEntryCount).map(ForkCutHistory.Entry.init),
+                + ForkCutHistory.runningEntries(
+                    settled.entries.dropFirst(settled.recordedEntryCount),
+                    delivering: runningSubmission?.deliveredMail ?? []),
             runningAnswerStart: runningAnswerHistoryStart)
         var position = try history.position(of: cut)
         var entries = try Self.forkEntries(at: position, of: settled, events: events)

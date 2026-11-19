@@ -12,13 +12,32 @@ import FoundationModelsExtras
 ///
 /// ## Turns
 ///
-/// A turn is one `.prompt` entry and all the entries after it, up to the
-/// next `.prompt` entry. A `.prompt` entry is a user message, or a delivered
-/// message that starts a submission. The checkpoint of a compaction is a
-/// `.prompt` event in the recording too, but it is not a turn. The turn index
-/// is 0-based, and it counts every `.prompt` entry that the source ever
-/// recorded, also the turns that a compaction folded. This is the count of the
-/// transcript of a client.
+/// A turn is one delivered mail whose body is a user message
+/// (`MailBody.userMessage`) or a message of another session
+/// (`MailBody.agentMessage`), from any route, in the order of delivery. This
+/// is the count of the transcript of a client: one turn for each user message
+/// and each delivered directory message. The count reads only the mail that
+/// the source got: the ``MailRecord/mailDelivered(_:)`` records of the
+/// `.prompt` events of the recording of the source, and the mail of the
+/// running submission. A message that the source sends (a tool call of the
+/// `sessions` or the `agents` tool) is not a turn of the source.
+///
+/// A `.prompt` entry that delivers no such mail starts no turn: a
+/// continuation prompt of an answer, a prompt of the result of a background
+/// run, an elicitation answer, a catalog change. It and its entries belong to
+/// the turn before it. The checkpoint of a compaction is a `.prompt` event in
+/// the recording too, and it is not a turn.
+///
+/// One `.prompt` entry can deliver more than one such mail (a batch). Each
+/// mail is a turn of its own, and a cut inside the batch rounds to the edges
+/// of the batch: ``SessionForkCut/beforeTurn(_:)`` of turn `n` cuts just
+/// before the prompt that delivers mail `n`, and
+/// ``SessionForkCut/afterTurn(_:)`` of turn `n` cuts at the end of the answer
+/// to that prompt: just before the prompt of the next turn, or the end of
+/// the history.
+///
+/// The turn index is 0-based, and it counts each turn that the source ever
+/// recorded, also the turns that a compaction folded.
 ///
 /// ## The folded range
 ///
@@ -34,13 +53,17 @@ import FoundationModelsExtras
 ///
 /// A turn whose prompt comes at or after ``runningAnswerStart`` belongs to
 /// the answer that runs now. It is not complete: ``SessionForkCut/afterTurn(_:)``
-/// of it is out of range, and ``SessionForkCut/lastCompletedTurn`` stops
-/// before it.
+/// of it is out of range. ``SessionForkCut/lastCompletedTurn`` stops before
+/// the first prompt of the running answer, also when that prompt starts no
+/// turn (an answer to the result of a background run), and the end of an
+/// earlier turn never comes after that prompt.
 struct ForkCutHistory: Sendable, Equatable {
     /// One entry of the history, as the cut reads it.
     enum Entry: Sendable, Equatable {
-        /// A `.prompt` entry: the start of a turn.
-        case prompt
+        /// A `.prompt` entry that is not a compaction checkpoint. `turns` is
+        /// the number of turns that it starts: its delivered mail that
+        /// starts a turn (``Mail/startsATurn``).
+        case prompt(turns: Int)
 
         /// The checkpoint of a compaction (``CompactionSegment``).
         case compactionCheckpoint
@@ -55,15 +78,38 @@ struct ForkCutHistory: Sendable, Equatable {
         /// The entry that a transcript entry is. A transcript entry is never
         /// a compaction checkpoint here: only the entries of the running
         /// submission come from a transcript, and a compaction reseeds the
-        /// backend and records its checkpoint before the next submission.
+        /// backend and records its checkpoint before the next submission. A
+        /// `.prompt` entry of a transcript holds no mail record, so it starts
+        /// no turn here (``ForkCutHistory/runningEntries(_:delivering:)``).
         ///
         /// - Parameter entry: A transcript entry.
         init(_ entry: Transcript.Entry) {
             switch entry {
-            case .prompt: self = .prompt
+            case .prompt: self = .prompt(turns: 0)
             case .toolCalls: self = .toolCalls
             default: self = .other
             }
+        }
+
+        /// The `.prompt` entry that delivers `mail`.
+        ///
+        /// - Parameter mail: The mail that the prompt delivers.
+        /// - Returns: A prompt with one turn for each mail that starts a turn.
+        static func prompt(delivering mail: [Mail]) -> Self {
+            .prompt(turns: mail.filter(\.startsATurn).count)
+        }
+
+        /// Whether the entry is a `.prompt` entry that is not a compaction
+        /// checkpoint.
+        var isPrompt: Bool {
+            guard case .prompt = self else { return false }
+            return true
+        }
+
+        /// The number of turns that the entry starts.
+        var turns: Int {
+            guard case .prompt(let turns) = self else { return 0 }
+            return turns
         }
     }
 
@@ -72,7 +118,8 @@ struct ForkCutHistory: Sendable, Equatable {
 
     /// The entries of the recorded history of a session: the folded history
     /// of `events` (``FoldedHistory``), the same entries that
-    /// ``RoutedSessionActor/historyOrdinal`` counts.
+    /// ``RoutedSessionActor/historyOrdinal`` counts. Each `.prompt` entry
+    /// counts the turns of its ``MailRecord/mailDelivered(_:)`` records.
     ///
     /// - Parameter events: The effective events of the session, in order,
     ///   with the markers and the records of ``FoldedHistory/extraKinds``.
@@ -82,10 +129,39 @@ struct ForkCutHistory: Sendable, Equatable {
         let checkpoints = Set(TranscriptTree.compactionCheckpoints(in: folded).map(\.index))
         return folded.indices.map { index in
             switch folded[index].kind {
-            case .prompt: checkpoints.contains(index) ? .compactionCheckpoint : .prompt
+            case .prompt where checkpoints.contains(index): .compactionCheckpoint
+            case .prompt: .prompt(delivering: deliveredMail(of: folded[index]))
             case .toolCalls: .toolCalls
             default: .other
             }
+        }
+    }
+
+    /// The entries of the running submission that the session did not
+    /// record yet. The last `.prompt` entry among them is the prompt of the
+    /// submission, and it delivers `mail`, as the record of the submission
+    /// does (``RoutedSessionActor/attachingDeliveredMailRecords(_:to:excluding:)``).
+    ///
+    /// - Parameters:
+    ///   - entries: The transcript entries that the session did not record.
+    ///   - mail: The mail that the running submission delivers.
+    /// - Returns: One entry for each entry of `entries`.
+    static func runningEntries(_ entries: some Collection<Transcript.Entry>, delivering mail: [Mail]) -> [Entry] {
+        var running = entries.map(Entry.init)
+        if let prompt = running.lastIndex(where: \.isPrompt) {
+            running[prompt] = .prompt(delivering: mail)
+        }
+        return running
+    }
+
+    /// The mail that a recorded `.prompt` event delivered, in take order.
+    ///
+    /// - Parameter event: A `.prompt` event.
+    /// - Returns: The mail of its ``MailRecord/mailDelivered(_:)`` records.
+    private static func deliveredMail(of event: TranscriptEvent) -> [Mail] {
+        event.mailRecords.compactMap { record in
+            guard case .mailDelivered(let mail) = record else { return nil }
+            return mail
         }
     }
 
@@ -93,9 +169,17 @@ struct ForkCutHistory: Sendable, Equatable {
     /// or `nil` when the source runs no answer.
     let runningAnswerStart: Int?
 
-    /// The position of the prompt of each turn, in order.
+    /// The position of the prompt of each turn, in order: one item for each
+    /// turn, so a prompt that starts more than one turn (a batch) is there
+    /// once for each of its turns.
     var turnStarts: [Int] {
-        entries.indices.filter { entries[$0] == .prompt }
+        entries.indices.flatMap { Array(repeating: $0, count: entries[$0].turns) }
+    }
+
+    /// The position of the first `.prompt` entry of the running answer, or
+    /// `nil` when no answer runs or it has no prompt yet.
+    private var runningPromptStart: Int? {
+        entries.indices.first { entries[$0].isPrompt && isRunning($0) }
     }
 
     /// The first position that a fork can cut at: the position after the
@@ -106,15 +190,17 @@ struct ForkCutHistory: Sendable, Equatable {
 
     /// The position of `cut` in the history.
     ///
-    /// - ``SessionForkCut/lastCompletedTurn``: the prompt of the first
-    ///   running turn, or the end of the history.
+    /// - ``SessionForkCut/lastCompletedTurn``: the first prompt of the
+    ///   running answer, or the end of the history.
     /// - ``SessionForkCut/callingToolCall``: the last `.toolCalls` entry of
     ///   the running answer, so the fork gets the history up to the call and
     ///   not the call.
     /// - ``SessionForkCut/historyPosition(_:)``: the position itself.
-    /// - ``SessionForkCut/afterTurn(_:)``: the prompt of the next turn, or
-    ///   the end of the history.
-    /// - ``SessionForkCut/beforeTurn(_:)``: the prompt of the turn.
+    /// - ``SessionForkCut/afterTurn(_:)``: the end of the answer to the
+    ///   prompt of the turn: the prompt of the next turn, or the end of the
+    ///   history.
+    /// - ``SessionForkCut/beforeTurn(_:)``: the prompt that delivers the
+    ///   mail of the turn.
     ///
     /// - Parameter cut: The cut of the fork.
     /// - Returns: The position, from ``foldedEnd`` to the end of the history.
@@ -135,7 +221,7 @@ struct ForkCutHistory: Sendable, Equatable {
     private func candidatePosition(of cut: SessionForkCut) -> Int? {
         switch cut {
         case .lastCompletedTurn:
-            return turnStarts.first(where: isRunning) ?? entries.count
+            return runningPromptStart ?? entries.count
         case .callingToolCall:
             return callingRoundPosition
         case .historyPosition(let position):
@@ -156,16 +242,17 @@ struct ForkCutHistory: Sendable, Equatable {
         return round
     }
 
-    /// The end of the turn `index`: the prompt of the next turn, or the end
-    /// of the history.
+    /// The end of the answer to the prompt of the turn `index`: the prompt
+    /// of the next turn after that prompt, or the end of the history. The
+    /// end never comes after the start of the running answer.
     ///
     /// - Parameter index: The turn index.
     /// - Returns: The end, or `nil` when the turn does not exist, is folded,
     ///   or still runs.
     private func endOfCompleteTurn(_ index: Int) -> Int? {
         guard let start = unfoldedTurnStart(index), !isRunning(start) else { return nil }
-        let starts = turnStarts
-        return starts.indices.contains(index + 1) ? starts[index + 1] : entries.count
+        let historyEnd = runningPromptStart ?? entries.count
+        return min(turnStarts.first { $0 > start } ?? historyEnd, historyEnd)
     }
 
     /// The prompt of the turn `index`.
@@ -186,5 +273,19 @@ struct ForkCutHistory: Sendable, Equatable {
     /// - Returns: `true` for a turn of the answer that runs now.
     private func isRunning(_ start: Int) -> Bool {
         runningAnswerStart.map { start >= $0 } ?? false
+    }
+}
+
+extension Mail {
+    /// Whether the mail starts a turn of the session that gets it (D205,
+    /// ``ForkCutHistory``): its body is a user message or a message of
+    /// another session, from any route.
+    var startsATurn: Bool {
+        switch body {
+        case .userMessage, .agentMessage:
+            return true
+        case .runEvent, .elicitationAnswer, .catalogChange:
+            return false
+        }
     }
 }

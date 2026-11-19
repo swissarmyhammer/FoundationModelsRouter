@@ -1,9 +1,9 @@
 import Foundation
 import FoundationModelsExtras
 
-/// The root sessions on disk under the recording roots of the host: the
-/// record of past sessions that ``RouterSessionDirectory`` owns (ROUTER-3,
-/// D72).
+/// The root sessions and the forks on disk under the recording roots of the
+/// host: the record of past sessions that ``RouterSessionDirectory`` owns
+/// (ROUTER-3, D72, D205).
 ///
 /// Each recording root holds the recording folder of each of its root
 /// sessions, named by the session id. A listing reads the folders of each
@@ -12,8 +12,11 @@ import FoundationModelsExtras
 /// The ``SessionRecord`` in the frontmatter of that `index.md` is all a
 /// listing reads, and a summary made from it is never live:
 ///
-/// - The kind is `root`, or `subagent` of the spawning session when the
-///   record holds an ``SessionRecord/agentSpawn``.
+/// - The kind is `fork` of the source when the record holds a
+///   ``SessionRecord/forkParentId``, else `subagent` of the spawning session
+///   when the record holds an ``SessionRecord/agentSpawn``, else `root`. This
+///   is the lineage of a restored node
+///   (``SessionRecord/directoryLineage(forkSource:agentSpawn:)``).
 /// - The state is `archived` when the facts hold `archivedAt`, else `idle`.
 /// - The title is the title of the facts; an empty title counts as none.
 /// - The working folder is ``SessionRecord/workingDirectory``.
@@ -22,8 +25,11 @@ import FoundationModelsExtras
 /// - A record with no agent or no origin maps to the default agent and the
 ///   client origin.
 ///
-/// A fork or a subagent whose folder sits inside the folder of its parent is
-/// not an entry of the root, so it has no recorded summary. If two roots hold
+/// A fork is a top-level session (D205), so the listing also reads each
+/// recorded fork at any depth, though its folder sits inside the folder of
+/// its source (``listedEntries()``). A subagent whose folder sits inside the
+/// folder of its parent is not an entry of the root, so it has no recorded
+/// summary. If two roots hold
 /// a folder with one id, the first root wins, as
 /// ``RouterSessionDirectory`` reads the ledger of a recorded session from the
 /// first root that holds its folder.
@@ -83,12 +89,30 @@ struct RecordedSessions {
         let folder: URL
     }
 
-    /// The summaries of the root sessions recorded under ``roots``.
+    /// The sessions that a listing shows: the root sessions recorded under
+    /// ``roots``, and each recorded fork at any depth (a record with a
+    /// ``SessionRecord/forkParentId``). A fork is a top-level session, also
+    /// when its folder sits inside the folder of its source.
     ///
-    /// - Returns: One summary for each recorded root session, newest first.
-    /// - Throws: What ``records()`` throws.
+    /// - Returns: One entry for each listed session, newest first.
+    /// - Throws: What ``records()`` and ``nestedRecords()`` throw.
+    func listedEntries() throws -> [Entry] {
+        let rootEntries = try entries()
+        let rootIDs = Set(rootEntries.map(\.record.sessionId))
+        let forks = try nestedEntries().filter { entry in
+            entry.record.forkParentId != nil && !rootIDs.contains(entry.record.sessionId)
+        }
+        return (rootEntries + forks).sorted { $0.record.sessionId > $1.record.sessionId }
+    }
+
+    /// The summaries of the sessions that a listing shows
+    /// (``listedEntries()``).
+    ///
+    /// - Returns: One summary for each recorded root session and each
+    ///   recorded fork, newest first.
+    /// - Throws: What ``listedEntries()`` throws.
     func summaries() throws -> [SessionSummary] {
-        try records().map(Self.summary(of:))
+        try listedEntries().map { Self.summary(of: $0.record) }
     }
 
     /// The summary of a recorded session, made from its record alone.
@@ -98,7 +122,7 @@ struct RecordedSessions {
     ///   ``SessionSummary/archivedAt`` is the `archivedAt` of the facts.
     static func summary(of record: SessionRecord) -> SessionSummary {
         let facts = record.facts
-        let spawn = record.agentSpawn
+        let lineage = SessionRecord.directoryLineage(forkSource: record.forkParentId, agentSpawn: record.agentSpawn)
         return SessionSummary(
             id: record.sessionId,
             agentID: facts.agentID ?? RouterSessionDirectory.defaultAgentID,
@@ -106,9 +130,9 @@ struct RecordedSessions {
             workingDirectory: record.workingDirectory,
             title: SessionDefaultTitle.given(facts.title),
             tags: facts.tags,
-            kind: spawn == nil ? .root : .subagent,
+            kind: lineage.kind,
             state: facts.archivedAt == nil ? .idle : .archived,
-            parentID: spawn?.parentSessionId,
+            parentID: lineage.parentID,
             startedBy: facts.startedBy,
             origin: facts.origin ?? RouterSessionDirectory.defaultOrigin,
             createdAt: record.sessionId.timestamp,

@@ -601,10 +601,12 @@ public actor RouterSessionDirectory: SessionDirectory {
         actor.updateFacts { $0.title = title }
     }
 
-    /// The summaries of the root sessions recorded in the recording root of
-    /// `session` (the root that holds its folder, also for a fork that nests
-    /// in the folder of its source) and in the recording roots of the usage
-    /// store, with no `await`. A root that does not read is logged and gives
+    /// The summaries of the root sessions and the forks recorded in the
+    /// recording root of `session` (the root that holds its folder, also for
+    /// a fork that nests in the folder of its source) and in the recording
+    /// roots of the usage store, with no `await`
+    /// (``RecordedSessions/summaries()``). A recorded fork that is not live
+    /// counts, so a new fork of the same source does not get its name. A root that does not read is logged and gives
     /// no summary, because the default name of a new session must not stop
     /// its registration.
     ///
@@ -837,23 +839,27 @@ public actor RouterSessionDirectory: SessionDirectory {
         return checks.allSatisfy { $0 ?? true }
     }
 
-    /// The summaries of the root sessions on disk under the recording roots
-    /// of the host (``useRecordingRoots(_:)``) and of the usage store
-    /// (``allRecordingRoots()``), each with the pin and the last use of the
-    /// usage store. A recorded root session with no title gets its default
-    /// name here (``namingUntitled(_:)``).
+    /// The summaries of the root sessions and the forks on disk under the
+    /// recording roots of the host (``useRecordingRoots(_:)``) and of the
+    /// usage store (``allRecordingRoots()``), each with the pin and the last
+    /// use of the usage store (``RecordedSessions/listedEntries()``). A
+    /// recorded fork is a `fork` of its source, also when its folder sits
+    /// inside the folder of its source (D205). A recorded root session with
+    /// no title gets its default name here (``namingUntitled(_:)``).
     ///
-    /// - Returns: One summary for each recorded root session, in no order.
+    /// - Returns: One summary for each recorded root session and each
+    ///   recorded fork, in no order.
     /// - Throws: The error of the recording roots of the host, or of a read
     ///   of the record of past sessions.
     private func recordedSummaries() async throws -> [SessionSummary] {
         let usages = currentUsageStore()?.usages() ?? [:]
-        let entries = try RecordedSessions(roots: try await allRecordingRoots()).entries()
+        let entries = try RecordedSessions(roots: try await allRecordingRoots()).listedEntries()
         return naming.withLock { _ in namingUntitled(entries) }
             .map { Self.withUsage($0, usages[$0.id]) }
     }
 
-    /// The summaries of recorded root sessions. Each root session with no
+    /// The summaries of recorded sessions (``RecordedSessions/listedEntries()``).
+    /// Each root session with no
     /// title that is not live gets its default name (``SessionDefaultTitle``,
     /// D199 (b)), and the name is written to its `index.md`, thus the next
     /// read gives the same name. A save that fails is logged, and the summary
@@ -861,7 +867,7 @@ public actor RouterSessionDirectory: SessionDirectory {
     /// each name counts for the next. A live session got its name when it
     /// registered. The caller holds the lock of ``naming``.
     ///
-    /// - Parameter entries: The recorded root sessions, newest first.
+    /// - Parameter entries: The recorded sessions, newest first.
     /// - Returns: One summary for each entry, in the order of `entries`.
     private nonisolated func namingUntitled(_ entries: [RecordedSessions.Entry]) -> [SessionSummary] {
         let live = liveSummaries()

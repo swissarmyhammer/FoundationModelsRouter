@@ -194,6 +194,24 @@ final class ForkingTool: Tool, Sendable {
     }
 }
 
+/// The one place where the fork suites map a thrown error to a
+/// `SessionDirectoryError`.
+enum DirectoryErrorCapture {
+    /// Gives the error of `body`, or `nil` when it throws none.
+    ///
+    /// - Parameter body: The work that can throw.
+    /// - Returns: The error as a directory error, or `nil` when `body` throws
+    ///   no error or an error of another type.
+    static func error<Value>(of body: () async throws -> Value) async -> SessionDirectoryError? {
+        do {
+            _ = try await body()
+            return nil
+        } catch {
+            return error as? SessionDirectoryError
+        }
+    }
+}
+
 /// A router over a durable recordings root and one container, for the
 /// suites of ``RouterSessionDirectory/fork(_:)`` (D205).
 struct ForkFixture<Container: LoadedLLMContainer> {
@@ -226,6 +244,38 @@ struct ForkFixture<Container: LoadedLLMContainer> {
         let directories = TestDirectories(prefix: "RouterSessionDirectoryForkTests")
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
             over: container, cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir)
+        return await make(router: router, profile: profile, over: container, in: directories)
+    }
+
+    /// A restart of this fixture: a new router with the id of ``router``,
+    /// over the same folders and the same container, and so a new session
+    /// directory that holds no live session. The sessions of this fixture
+    /// are recorded sessions for it.
+    ///
+    /// - Returns: The restarted fixture. It shares the folders of this
+    ///   fixture.
+    /// - Throws: What the resolve of the profile throws.
+    func restarted() async throws -> Self {
+        let restarted = RouterTestFixtures.makeRouter(
+            id: router.id, cacheDir: directories.cacheDir, recordingsDir: directories.recordingsDir,
+            recorder: JSONLRecorder(directory: directories.recordingsDir),
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
+        let profile = try await restarted.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        return await Self.make(router: restarted, profile: profile, over: container, in: directories)
+    }
+
+    /// Makes a fixture over `router`. The directory gets the recording root
+    /// of the router, as a host gives it.
+    ///
+    /// - Parameters:
+    ///   - router: The router of the fixture.
+    ///   - profile: The resolved profile of `router`.
+    ///   - container: The container of the sessions.
+    ///   - directories: The folders of the test.
+    /// - Returns: The fixture.
+    private static func make(
+        router: Router, profile: LanguageModelProfile, over container: Container, in directories: TestDirectories
+    ) async -> Self {
         let root = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: directories.recordingsDir)
         await router.sessionDirectory.useRecordingRoots { [root] }
         return Self(directories: directories, router: router, profile: profile, container: container)
@@ -272,11 +322,8 @@ struct ForkFixture<Container: LoadedLLMContainer> {
     ///   - cut: The cut of the fork.
     /// - Returns: The error as a directory error, or `nil`.
     func forkError(of sourceID: ULID, at cut: SessionForkCut) async -> SessionDirectoryError? {
-        do {
-            _ = try await directory.fork(SessionForkRequest(sourceID: sourceID, cut: cut, forker: Self.user))
-            return nil
-        } catch {
-            return error as? SessionDirectoryError
+        await DirectoryErrorCapture.error {
+            try await directory.fork(SessionForkRequest(sourceID: sourceID, cut: cut, forker: Self.user))
         }
     }
 

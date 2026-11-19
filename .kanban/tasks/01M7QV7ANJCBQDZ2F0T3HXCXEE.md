@@ -65,6 +65,52 @@ comments:
     - evidence: new Sources: Recording/ForkCutHistory.swift, Session/RoutedSessionActorForking.swift, RoutedLLMForking.swift; changed: Directory/RouterSessionDirectory.swift, Directory/SessionDefaultTitle.swift, Recording/{FoldedHistory,SessionFacts,SessionTreeRestoration,TranscriptReconstruction,TranscriptTree}.swift, RoutedLLM.swift, Session/{RoutedSessionActor,RoutedSessionActorPump,SessionHooks,SettledTranscript}.swift, Tracing/RouterTelemetry.swift. Tests: ForkCutHistoryTests (18), RouterSessionDirectoryForkTests (27), RouterSessionDirectoryForkToolCallTests (4), RouterSessionDirectoryForkCompactionTests (4), HookLineageTests +1, WriteAheadToolCallTests +1, Helpers/ForkFixtures.swift. Full `swift test`: 3026 tests in 348 suites passed, exit 0, no warnings (scratchpad/full-test-2.txt).
     - next: review
   timestamp: 2026-11-19T01:36:24.727109+00:00
+- actor: claude-code
+  id: 01m7rqvpapfdd4eg3tcyebn15g
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD`: engine 2 findings (2 confirmed, 3 refuted). Orchestrator findings: 2. Total 4: Sources/FoundationModelsRouter/Recording/ForkCutHistory.swift:80 (turn index counts continuation and run-mail prompts; the journal can tell them apart through the `mailDelivered` records of each `.prompt` event), Sources/FoundationModelsRouter/RoutedLLMForking.swift:61 (a recorded fork has no recorded summary after a restart: no lookup by id, no listing, no name check), Tests/FoundationModelsRouterTests/ForkCutHistoryTests.swift:49, Tests/FoundationModelsRouterTests/Helpers/ForkFixtures.swift:274.
+    - checks with no finding: the pump change (`answerStartHistoryOrdinal = historyOrdinal` in `runAnswer(of:workId:)`) is one synchronous write and adds no suspension point. The fork reads the live backend transcript only in `settleAtCallingToolCall()`, after a check that the caller is a tool body of the open model call of the source (`SessionCallMark`); the other cuts use `settledTranscript`, and the fork backend comes from `container.makeSession(transcript:)`. The two tests that the implementer did not watch fail can fail: `aRecordedSourceWithNoLauncherIsRefused` and `aSourceThatRecordsNothingCannotFork` each expect one exact error, and another error or no error fails them (`forkError` gives `nil` when the fork throws no error).
+    - next: implement the 4 findings; the task stays in review.
+  timestamp: 2026-11-19T01:48:39.126735+00:00
+- actor: claude-code
+  id: 01m7rqwr18p1dnqcgbnt8jpj84
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — ForkCutHistory.swift, RoutedSessionActorForking.swift, RoutedLLMForking.swift (new), RouterSessionDirectory.swift and 12 other source files; 4 new test suites
+    - test: green — one full swift test run, 3026 tests in 348 suites, 0 failures
+    - commit: 91474651
+    - review: findings — ForkCutHistory.swift:80 (turn count), RoutedLLMForking.swift:61 (a recorded fork is not seen after a restart), ForkCutHistoryTests.swift:49, ForkFixtures.swift:274
+
+    Orchestrator decision for finding 1 (the turn unit):
+    - A turn index counts each DELIVERED MAIL of sender `.user` (body `.userMessage`) or `.session` (body `.agentMessage`), in the order of the `MailRecord.mailDelivered` segments of the recorded `.prompt` events (and of the running submission). A continuation prompt or a run-mail prompt adds a turn only for such mail that it delivers. This is the same count as ACPAgent: one per user message and one per delivered directory message.
+    - One prompt can deliver more than one such mail (a batch). Rounding rule: `.beforeTurn(n)` cuts just before the prompt that delivers mail n. `.afterTurn(n)` cuts at the end of the answer to the prompt that delivers mail n. Thus a cut inside a batch rounds to the batch edge. Write this in the doc and test it.
+  timestamp: 2026-11-19T01:49:13.640522+00:00
+- actor: claude-code
+  id: 01m7rqy60th0mbvw6kzjq4g0h9
+  text: 'Correction to the turn unit (agreed with foundationmodelsacpagent-9e): count one turn for each delivered mail whose BODY is `.userMessage` or `.agentMessage`, from any route (a user prompt, the directory, the agents tool, the host mail route), in delivery order. Do not filter on the sender: the agents tool (FoundationModelsAgents AgentRun.swift:794-800) builds the same mail as the directory. A continuation, a background-run result, an elicitation answer and other mail kinds add no turn. The batch rounding stays.'
+  timestamp: 2026-11-19T01:50:00.730702+00:00
+- actor: claude-code
+  id: 01m7rr3rqhehqhg6t7y2fd2aen
+  text: |-
+    Picked up the 4 review findings (task back in doing). Research:
+    - Turn rule (coordinator corrections included): one turn for each delivered mail whose BODY is `.userMessage` or `.agentMessage` (any sender), from the `mailDelivered` records of the `.prompt` events of the source's own journal. A message that the source sends is a tool call in its journal, so it never counts. The running submission's `.prompt` entry comes from the backend with no mail records, so the actor keeps the delivered mail of the running submission (`RunningSubmission.deliveredMail`, one synchronous write in `runOpenedSubmission`) and the fork gives it to the last unrecorded `.prompt` entry, as `attachingDeliveredMailRecords` does when it records.
+    - Recorded fork after a restart: `RecordedSessions.summaries()` reads root folders only. Plan: list the root sessions and each recorded fork at any depth (`forkParentId != nil`), with kind `.fork` and `parentID` = `forkParentId`. `restoreSessionTree(root:)` keeps its `notARootSession` contract (RecordedForkTreeRestoreTests); `RoutedModel.restoreSession(id:)` of a fork id restores the tree of the fork root and gives the fork node, so a host launcher (and `fork(_:)` of a recorded fork) works.
+  timestamp: 2026-11-19T01:53:03.729726+00:00
+- actor: claude-code
+  id: 01m7rrje747ag4zkx3pe4pnnqa
+  text: |-
+    Implementation of the 4 findings landed (not committed). Decisions and discoveries:
+    - Turn count: `ForkCutHistory.Entry.prompt(turns:)` holds the number of delivered mails whose body is `.userMessage` or `.agentMessage` (`Mail.startsATurn`, any sender). `turnStarts` lists a prompt once for each such mail (a batch gives the same position more than once). `.beforeTurn(n)` = the prompt that delivers mail n; `.afterTurn(n)` = the next turn prompt after that prompt, or the end of the history, and never after the first prompt of the running answer. `.lastCompletedTurn` = the first prompt of the running answer (any prompt), or the end. The running submission's prompt gets its turns from `RunningSubmission.deliveredMail` (one synchronous write at the top of `runOpenedSubmission`, no new suspension point).
+    - Recorded fork: `RecordedSessions.listedEntries()` = the root entries + each nested record with `forkParentId`. `summaries()` and the directory's `recordedSummaries()` read it, so the lookup by id, the listing and the name check see a recorded fork. The kind/parent rule is shared in `SessionRecord.directoryLineage(forkSource:agentSpawn:)` (the restored node uses it too).
+    - Restore by id: `RoutedModel.restoreSession(id:)` of a fork id now restores the tree of the root of its chain of sources and gives the fork (the root and the other forks are released, as the forks already were). `restoreSessionTree(root:)` still throws `notARootSession` for a fork id (RecordedForkTreeRestoreTests unchanged).
+    - Test helpers: one `DirectoryErrorCapture.error(of:)` (async) in ForkFixtures; `forkError` and ForkCutHistoryTests use it. `ForkFixture.restarted()` makes a new router with the same id over the same folders.
+    - Not done as TDD: the new ForkCutHistoryTests failed only at compile time (the API did not exist), so I did not watch them fail on behavior. The 4 restart tests failed on behavior first (no summary, no listing, notARootSession, name `-fork`).
+
+    ### implement — changed
+    - evidence: Sources: Directory/RecordedSessions.swift, Directory/RouterSessionDirectory.swift, Recording/ForkCutHistory.swift, Recording/SessionRestoration.swift, Recording/SessionTreeRestoration.swift, Session/RoutedSessionActorAnswerExecution.swift, Session/RoutedSessionActorForking.swift, Session/RoutedSessionActorSubmissionEvents.swift. Tests: ForkCutHistoryTests (29), RouterSessionDirectoryForkTests (+4 restart tests), Helpers/ForkFixtures.swift. Filtered: `FoundationModelsRouterTests.ForkCutHistoryTests` 29 passed; `FoundationModelsRouterTests.RouterSessionDirectoryForkTests/aRecordedFork` 4 passed. Full `swift test` one time: 3041 tests in 348 suites passed, exit 0 (scratchpad/full-test-3.txt); the one `warning:` line is the SwiftPM build note "missing creator for mutated node" of the mlx bundle, no compiler warning.
+    - next: review
+  timestamp: 2026-11-19T02:01:04.484139+00:00
 position_column: doing
 position_ordinal: '80'
 title: Fork a live session at a cut point in RouterSessionDirectory (D205)
@@ -102,15 +148,27 @@ The session actor code has pump and cancellation invariants. Read `routed-sessio
 
 ## Tests
 
-- [ ] Fork at `.lastCompletedTurn` of a source with two turns: the fork has the two turns; a prompt to the fork does not change the source; a prompt to the source does not change the fork.
-- [ ] Fork at `.lastCompletedTurn` while a turn runs: the running turn is not in the fork, and it ends normally in the source.
-- [ ] Fork at `.callingToolCall` from inside a tool call: the fork history ends before the call; the source gets the call result.
-- [ ] Fork at `.historyPosition(n)`: the record has `forkedAtHistoryOrdinal == n`; a position after the end gives `forkCutOutOfRange`.
-- [ ] Names: `<slug>-fork`, then `<slug>-fork-2`.
-- [ ] Restart: the fork restores with its prefix and kind `fork`.
-- [ ] Fork of an archived source: refused. Fork of an unknown source: refused.
-- [ ] The fork is not in `unendedChildren(of:)` of the source, and it lives on when the source ends or is archived.
+- [x] Fork at `.lastCompletedTurn` of a source with two turns: the fork has the two turns; a prompt to the fork does not change the source; a prompt to the source does not change the fork.
+- [x] Fork at `.lastCompletedTurn` while a turn runs: the running turn is not in the fork, and it ends normally in the source.
+- [x] Fork at `.callingToolCall` from inside a tool call: the fork history ends before the call; the source gets the call result.
+- [x] Fork at `.historyPosition(n)`: the record has `forkedAtHistoryOrdinal == n`; a position after the end gives `forkCutOutOfRange`.
+- [x] Names: `<slug>-fork`, then `<slug>-fork-2`.
+- [x] Restart: the fork restores with its prefix and kind `fork`.
+- [x] Fork of an archived source: refused. Fork of an unknown source: refused.
+- [x] The fork is not in `unendedChildren(of:)` of the source, and it lives on when the source ends or is archived.
 
 ## After
 
 Push when green. Send the sha to foundationmodelsacpagent-9e, foundationmodelsmultitool-89 and testudoapp-9a. #d205
+
+## Review Findings (2026-11-18 19:37)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 23 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Recording/ForkCutHistory.swift:80` `orchestrator/d205-turn-rule` — The turn index does not agree with the rule that is agreed with FoundationModelsACPAgent. `recordedEntries(of:)` (:80-90) maps each recorded `.prompt` event that is not a compaction checkpoint to `.prompt`. `Entry.init(_:)` (:61-67) maps each `.prompt` entry of the running submission to `.prompt`. `turnStarts` (:97-99) counts all of them. Thus a tool-loop continuation prompt and a background-run mail prompt start a new turn. The agreed rule: a turn starts only at a prompt that a user message or a delivered directory `session_message` starts. A continuation prompt or a run-mail prompt must not start a turn. The journal can tell the prompt kinds apart, and it needs no new field: each recorded `.prompt` event holds one `MailRecordSegment` with `MailRecord.mailDelivered(Mail)` for each mail that it delivered (`Sources/FoundationModelsRouter/Session/MailRecordSegment.swift:22`), and `Mail` holds `sender` (`.user`, `.session`, `.run`, `.elicitation`, `.catalog`) and `body` (`.userMessage`, `.agentMessage`, `.runEvent`, `.elicitationAnswer`, `.catalogChange`). A user message is `.user`/`.userMessage`, and a directory message is `.session`/`.agentMessage` (`Directory/RouterSessionDirectory.swift:1393`, `:1397`). Classify each `.prompt` from these records, for the recorded entries and for the entries of the running submission. A prompt with no user message and no directory message (a continuation with only run mail or its own prompt, a mail-only answer, an elicitation answer, a catalog change) is not a turn. Also: one prompt can deliver more than one user message (one batch, or a continuation that joins the messages that wait, `takeMailJoiningTheAnswer()`), and ACPAgent counts each user message. Make the Router count equal the ACPAgent count in this case. Change the doc at :13-21 to the agreed rule. Add tests: a continuation prompt is not a turn; a run-mail prompt is not a turn; a directory message is a turn; a prompt with two user messages.
+- [x] `Sources/FoundationModelsRouter/RoutedLLMForking.swift:61` `orchestrator/d205-recorded-fork` — A fork records in a folder inside the recording folder of its source. `RecordedSessions.summaries()` (`Sources/FoundationModelsRouter/Directory/RecordedSessions.swift:90`) reads only the root folders, and `RecordedSessions.summary(of:)` (:109) gives only the kind `root` or `subagent`. Thus after a restart a fork has no recorded summary of its own until the source tree is restored: `summary(of:)` (`Sources/FoundationModelsRouter/Directory/RouterSessionDirectory.swift:802`) does not find it by id; `sessions(matching:)` (:736, through `recordedSummaries()` :849) does not list it; the name check `recordedSummaries(besides:)` (:613) does not count its name, so a new fork of the same source can get the same `<slug>-fork` name. D205 says that a fork is a top-level session that the UI shows as a root session (a tab, Pinned and Recent, Switch to Session). The recorded summaries, the lookup by id and the name check must include a recorded fork, with kind `fork` and the source (`forkParentId`) as `parentID`. Add restart tests: a recorded fork is found by id, it is listed with kind `fork`, and its name blocks the same name for a new fork of the source.
+- [x] `Tests/FoundationModelsRouterTests/ForkCutHistoryTests.swift:49` `reuse/reuse` — The private helper directoryError repeats the do/catch that forkError already does in ForkFixtures. Both run a throwing body and return the error cast to SessionDirectoryError or nil. Two copies can drift apart. Move one generic helper into Helpers/ForkFixtures.swift, for example a static func directoryErrorOf<T>(_ body: () throws -> T) -> SessionDirectoryError?. Then ForkCutHistoryTests calls it, and forkError can call it too (or use it for the async case with a matching async helper).
+- [x] `Tests/FoundationModelsRouterTests/Helpers/ForkFixtures.swift:274` `reuse/reuse` — forkError(of:at:) repeats the same do/catch error-to-SessionDirectoryError pattern as directoryError in ForkCutHistoryTests. The same mapping is written twice in the test code. Share one error-mapping helper between the two files. Keep the async variant here and have it reuse the shared mapping, instead of keeping a second copy of the catch logic.

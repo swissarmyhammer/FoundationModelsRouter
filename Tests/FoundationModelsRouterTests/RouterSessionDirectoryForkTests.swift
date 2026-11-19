@@ -387,4 +387,63 @@ import Testing
         #expect(summary.parentID == source.id)
         await fixture.end([tree.root] + tree.children(of: source.id))
     }
+
+    /// Makes a named source with one fork, closes both, and restarts the
+    /// fixture.
+    ///
+    /// - Parameter fixture: The fixture before the restart.
+    /// - Returns: The restarted fixture, the source and the fork. Both are
+    ///   closed.
+    /// - Throws: What the source, the fork or the restart throws.
+    private static func restartAfterAFork(
+        of fixture: Fixture
+    ) async throws -> (restarted: Fixture, source: any RoutedSession, fork: any RoutedSession) {
+        let source = try await fixture.makeSource(answering: Self.twoTurns, title: Self.sourceTitle)
+        let fork = try await fixture.fork(source, at: .afterTurn(0))
+        await source.close()
+        await fork.close()
+        return (try await fixture.restarted(), source, fork)
+    }
+
+    @Test func aRecordedForkIsFoundByIDAfterARestart() async throws {
+        let (restarted, source, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+
+        let summary = try #require(try await restarted.directory.summary(of: fork.id))
+
+        #expect(summary.kind == .fork)
+        #expect(summary.parentID == source.id)
+        restarted.directories.remove()
+    }
+
+    @Test func aRecordedForkIsListedAsAForkAfterARestart() async throws {
+        let (restarted, source, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+
+        let forks = try await restarted.directory.sessions(
+            matching: SessionQuery(kind: .fork, parentID: source.id, includesRecorded: true))
+
+        #expect(forks.map(\.id) == [fork.id])
+        restarted.directories.remove()
+    }
+
+    @Test func aRecordedForkIsRestoredByIDAfterARestart() async throws {
+        let (restarted, _, fork) = try await Self.restartAfterAFork(of: try await Fixture.make())
+
+        let restored = try await restarted.profile.standard.restoreSession(id: fork.id).session
+
+        #expect(restored.id == fork.id)
+        #expect(await restored.transcript.promptTexts == [Self.firstPrompt])
+        await restarted.end([restored])
+    }
+
+    @Test func aRecordedForkNameCountsForANewForkAfterARestart() async throws {
+        let (restarted, source, _) = try await Self.restartAfterAFork(of: try await Fixture.make())
+        let launcher = FakeSessionLauncher(profile: restarted.profile)
+        await restarted.directory.use(launcher: launcher)
+
+        let second = try await restarted.fork(source, at: .lastCompletedTurn)
+
+        #expect(second.facts.title == "review-the-login-fork-2")
+        await launcher.closeSessions()
+        await restarted.end([second])
+    }
 }

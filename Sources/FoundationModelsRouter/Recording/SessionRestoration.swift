@@ -98,7 +98,8 @@ extension RestoredSession {
 }
 
 extension RoutedModel where Container == any LoadedLLMContainer {
-    /// Restores one recorded root session from disk, by its id.
+    /// Restores one recorded root session or one recorded fork from disk, by
+    /// its id.
     ///
     /// This is the resume surface. The session keeps its own id, its parent
     /// id, and its recording directory, so the next submission appends to the
@@ -112,10 +113,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// The recorded forks under the named session are rebuilt too, and are
     /// then released. Nothing in the returned value names one.
     ///
+    /// A recorded fork is a part of the tree of the root session that its
+    /// chain of sources starts at, and a restore rebuilds only whole trees.
+    /// So the id of a fork restores that tree, and the returned value is the
+    /// fork (D205). The root and the other forks of the tree are then
+    /// released.
+    ///
     /// - Precondition: The owning ``LanguageModelProfile`` is still alive.
     ///
     /// - Parameters:
-    ///   - id: The recorded root session's span id.
+    ///   - id: The span id of the recorded root session or of the recorded
+    ///     fork.
     ///   - recordingRoot: The exact directory to load from, or `nil` for the
     ///     nested `<recordingsRoot>/<routerId>/` layout. Pass the same root
     ///     the session was vended with.
@@ -234,15 +242,38 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         switchingModel: Bool = false
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
-            root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
+            root: try treeRoot(ofSession: id, recordingRoot: recordingRoot), recordingRoot: recordingRoot,
+            instructions: instructions, tools: tools,
             toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall,
             userPresence: userPresence, hookSessionKey: hookSessionKey, claimingRuns: claimingRuns,
             transcriptReader: transcriptReader, switchingModel: switchingModel)
+        guard let session = tree.session(id) else { throw TranscriptTreeError.sessionNotFound(id) }
         return RestoredSession(
-            session: tree.root,
+            session: session,
             configurationReport: tree.configurationReport,
             contextMismatches: tree.contextMismatches
         )
+    }
+
+    /// The id of the root of the recorded tree that holds the session `id`:
+    /// `id` itself for a root session, and the start of the chain of sources
+    /// for a fork (``SessionNode/parentId``).
+    ///
+    /// - Parameters:
+    ///   - id: The span id of a recorded session.
+    ///   - recordingRoot: The exact directory to load from, or `nil` for the
+    ///     nested `<recordingsRoot>/<routerId>/` layout.
+    /// - Returns: The id of the root of the tree.
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
+    ///   recording root holds no session with this id; what
+    ///   ``transcriptTree(recordingRoot:)`` throws.
+    private func treeRoot(ofSession id: ULID, recordingRoot: URL?) throws -> ULID {
+        let tree = try transcriptTree(recordingRoot: recordingRoot)
+        guard var node = tree.session(id) else { throw TranscriptTreeError.sessionNotFound(id) }
+        while let source = node.parentId.flatMap(tree.session) {
+            node = source
+        }
+        return node.id
     }
 
     /// The working directory one recorded session was vended with, read from

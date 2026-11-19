@@ -843,11 +843,29 @@ extension SessionNode {
     /// with no source is a `subagent` of the session its record's
     /// ``SessionRecord/agentSpawn`` names, else a `root` with no parent.
     var directoryLineage: (kind: SessionKind, parentID: ULID?) {
-        if let parentId {
-            return (.fork, parentId)
+        SessionRecord.directoryLineage(forkSource: parentId, agentSpawn: record.agentSpawn)
+    }
+}
+
+extension SessionRecord {
+    /// The kind and the parent of a session in the session directory, for a
+    /// restored node and for a recorded summary (``RecordedSessions``). A
+    /// session with a source is a `fork` of that source. A session with no
+    /// source is a `subagent` of the session that `agentSpawn` names, else a
+    /// `root` with no parent.
+    ///
+    /// - Parameters:
+    ///   - forkSource: The source of the session when it is a fork, or `nil`.
+    ///   - agentSpawn: The agent spawn of the record, or `nil`.
+    /// - Returns: The kind and the parent.
+    static func directoryLineage(
+        forkSource: ULID?, agentSpawn: AgentSpawn?
+    ) -> (kind: SessionKind, parentID: ULID?) {
+        if let forkSource {
+            return (.fork, forkSource)
         }
-        if let spawn = record.agentSpawn {
-            return (.subagent, spawn.parentSessionId)
+        if let agentSpawn {
+            return (.subagent, agentSpawn.parentSessionId)
         }
         return (.root, nil)
     }
