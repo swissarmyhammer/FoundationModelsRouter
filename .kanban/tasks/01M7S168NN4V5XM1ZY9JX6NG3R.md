@@ -31,10 +31,32 @@ comments:
     - why not MLXScriptedLM in unit tests: the store is process-wide (its override is internal), other unit suites send it budgets, the unit target has no metallib bootstrap, and the scripted model has no tool calls yet.
     - next: /review. Not committed, not pushed (the card "After" step is for the commit step).
   timestamp: 2026-11-19T08:49:31.017590+00:00
+- actor: claude-code
+  id: 01m7sg7m9xwt4rxy0djqftbhvc
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (3db3d2fd): 0 findings, 0 confirmed, 1 refuted, 14 attempted, 0 failed. The ignore rule excluded 4 .kanban files.
+    - extra checks, all pass:
+      - Mapping: each PromptCacheCopyResult case (copied, sourceNotFound, sourceInUse, refused with sameSession, destinationHasCache, destinationInUse, copyFailed) maps to the router outcome of the same name. This agrees with the mlx-swift-lm pin c1b3d5e.
+      - Scope: each RoutedSessionActor binds its own id (promptCacheSessionID = id.description). The fork does not bind the scope of the source.
+      - Doc: ExecutorPromptCacheStore.copy gives sourceInUse only while a pass has the source checked out. The executor call checks the cache in before it returns. The text about .callingToolCall and .lastCompletedTurn agrees with this. ExecutorPassBoundaryIntegrationTests exists.
+      - Integration tests (read, not run): with the copy removed, the first call of the fork caches 0 tokens, so each "history less 16 tokens" bound fails. The memory and release tests fail on the byte checks. The no-copy test expects 0.
+      - Public API: PromptCacheCopyOutcome and PromptCacheCopyRefusal are internal. No sibling package under swissarmyhammer/*/Sources uses them or the log key.
+    - next: none. The task is in done.
+  timestamp: 2026-11-19T08:54:36.093255+00:00
+- actor: claude-code
+  id: 01m7sg875nsdsmctxr476gz7q2
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — SessionPromptCache.swift, RoutedSessionActorPromptCache.swift, RouterSessionDirectory.swift, RouterTelemetry.swift; MLXPromptCacheCopyTests (new), ForkPromptCacheCopyTests; ForkPromptCacheCopyIntegrationTests (new, 11) and integration support files; mlx-swift-lm pin 31e5cfc9 → c1b3d5e
+    - test: green — one full swift test run, 3103 tests in 353 suites (+50, +19), 0 failures; ForkPromptCacheCopyIntegrationTests 11/11, one run
+    - commit: 3db3d2fd
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-19T08:54:55.413758+00:00
 depends_on:
 - 01M7S15T37N1RG9ECXB2QM6EAS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffbc80
 title: 'A fork copies the MLX prompt cache: the mlx-swift-lm pin, the conformance, and real-cache tests (D205 (f), part 2)'
 ---
 ## Goal
