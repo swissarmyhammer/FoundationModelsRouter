@@ -596,6 +596,93 @@ struct HookLineageTests {
         }
     }
 
+    // MARK: - A restore of a recorded fork by its id
+
+    /// Makes a live source with the hook key ``replacementKey`` and a fork
+    /// of it through the session directory, and closes the fork. The fork is
+    /// then a recorded fork that is not live, and its source is live.
+    ///
+    /// - Parameter hooked: The router with a dispatcher.
+    /// - Returns: The live source and the id of the recorded fork.
+    /// - Throws: What the fork throws.
+    private static func liveSourceWithARecordedFork(
+        in hooked: HookedProfile
+    ) async throws -> (source: any RoutedSession, forkID: ULID) {
+        let source = hooked.profile.standard.makeSession(
+            configuration: SessionConfiguration(hookSessionKey: Self.replacementKey))
+        let summary = try await hooked.router.sessionDirectory.fork(
+            SessionForkRequest(
+                sourceID: source.id, cut: .lastCompletedTurn, forker: .user(clientID: "hook-test-client")))
+        let fork = try #require(hooked.router.sessionDirectory.session(id: summary.id))
+        await fork.close()
+        return (source, summary.id)
+    }
+
+    /// The production change that makes this test fail: a restore of a fork
+    /// id that makes a second instance of the live source, whose hooks
+    /// replace the hook session of the live source.
+    @Test("a restore of a recorded fork by its id keeps the key of its live source for a sub-agent of the source")
+    func aRestoreOfARecordedForkKeepsTheKeyOfItsLiveSource() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (source, forkID) = try await Self.liveSourceWithARecordedFork(in: hooked)
+            let restored = try await hooked.profile.standard.restoreSession(id: forkID)
+
+            let child = hooked.profile.standard.makeSession(
+                configuration: SessionConfiguration(parentCall: .startAgentCall(of: source)))
+            await hooked.dispatcher.drain()
+
+            #expect(try Self.start(of: child.id, in: hooked.visitor).session.sessionKey == Self.replacementKey)
+            await SessionFixtureLifecycle.close([child, restored.session, source])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a fork
+    /// id that starts the hooks of a second instance of the live source.
+    @Test("a restore of a recorded fork by its id sends no session event for its live source")
+    func aRestoreOfARecordedForkSendsNoEventForItsLiveSource() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (source, forkID) = try await Self.liveSourceWithARecordedFork(in: hooked)
+
+            let restored = try await hooked.profile.standard.restoreSession(id: forkID)
+            await hooked.dispatcher.drain()
+
+            #expect(hooked.visitor.events(of: source.id).count == 1)
+            await SessionFixtureLifecycle.close([restored.session, source])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a fork
+    /// id whose second instance of the live source sends a `SessionEnd` for
+    /// it, or removes its hook session before the close.
+    @Test("the live source of a recorded fork that a restore by id restored ends with one SessionEnd")
+    func theLiveSourceOfARestoredForkEndsWithOneSessionEnd() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (source, forkID) = try await Self.liveSourceWithARecordedFork(in: hooked)
+            let restored = try await hooked.profile.standard.restoreSession(id: forkID)
+
+            await SessionFixtureLifecycle.close([restored.session, source])
+            await hooked.dispatcher.drain()
+
+            #expect(Self.endReasons(of: source.id, in: hooked.visitor) == [.completed])
+        }
+    }
+
+    /// The production change that makes this test fail: a restore of a fork
+    /// id that restores the source of the fork too, and starts its hooks.
+    @Test("a restore of a recorded fork by its id with nothing live starts the hooks of the fork only")
+    func aRestoreOfARecordedForkStartsTheHooksOfTheForkOnly() async throws {
+        try await Self.withHookedProfile { hooked in
+            let (source, forkID) = try await Self.liveSourceWithARecordedFork(in: hooked)
+            await source.close()
+
+            let restored = try await hooked.profile.standard.restoreSession(id: forkID)
+            await hooked.dispatcher.drain()
+
+            #expect(Self.resumedSessions(in: hooked.visitor.events).map(\.sessionID) == [forkID.description])
+            await restored.session.close()
+        }
+    }
+
     // MARK: - The lineage function
 
     @Test("a restored fork node whose directory differs only in its form gets the key of its parent")

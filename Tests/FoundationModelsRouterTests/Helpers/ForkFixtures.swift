@@ -194,6 +194,83 @@ final class ForkingTool: Tool, Sendable {
     }
 }
 
+/// A test tool that forks the session of its call at a cut that the test
+/// arms (D205): a turn cut of a source whose answer runs, made from inside
+/// that answer, where the SDK waits in the tool call. A call with no armed
+/// cut forks nothing, and an armed cut serves one call. The tool keeps the
+/// outcome of that fork. An error of another type than
+/// `SessionDirectoryError` fails the call, and then the tool keeps no
+/// outcome.
+final class TurnCutForkingTool: Tool, Sendable {
+    /// The error of a call that runs outside a tool call of a session.
+    struct NoToolContext: Error {}
+
+    /// The model-facing name a scripted call names.
+    static let toolName = "fork-at-cut"
+
+    /// The output of a call that forked or tried to fork.
+    static let forkOutput = "fork tried"
+
+    /// The output of a call with no armed cut.
+    static let idleOutput = "no cut"
+
+    /// The `Tool` name requirement.
+    let name = TurnCutForkingTool.toolName
+
+    /// The `Tool` description requirement. The scripted model picks its call
+    /// by name and never reads it.
+    let description = "test-only tool that forks the session of the call at an armed cut"
+
+    /// The directory each fork goes through.
+    private let directory: RouterSessionDirectory
+
+    /// The cut of the next call, or `nil` when no cut is armed.
+    private let armedCut = Mutex<SessionForkCut?>(nil)
+
+    /// The outcome of the fork of the armed call, or `nil` before that call.
+    private let forkOutcome = Mutex<Result<SessionSummary, SessionDirectoryError>?>(nil)
+
+    /// Makes a tool that forks through `directory`.
+    ///
+    /// - Parameter directory: The directory each fork goes through.
+    init(directory: RouterSessionDirectory) {
+        self.directory = directory
+    }
+
+    /// Arms `cut` for the next call.
+    ///
+    /// - Parameter cut: The cut of the fork of the next call.
+    func arm(_ cut: SessionForkCut) {
+        armedCut.withLock { $0 = cut }
+    }
+
+    /// The outcome of the fork of the armed call, or `nil` before that call.
+    var outcome: Result<SessionSummary, SessionDirectoryError>? {
+        forkOutcome.withLock { $0 }
+    }
+
+    /// Forks the session of the call at the armed cut, when a cut is armed.
+    ///
+    /// - Parameter arguments: The arguments of the call. The tool does not
+    ///   read them.
+    /// - Returns: ``forkOutput``, or ``idleOutput`` with no armed cut.
+    /// - Throws: ``NoToolContext`` outside a tool call of a session, or an
+    ///   error of the fork that is not a `SessionDirectoryError`.
+    func call(arguments: AmbientToolArguments) async throws -> String {
+        guard let source = ToolContext.current?.sessionID else { throw NoToolContext() }
+        guard let cut = armedCut.withLock({ $0.take() }) else { return Self.idleOutput }
+        let request = SessionForkRequest(sourceID: source, cut: cut, forker: .session(source))
+        let outcome: Result<SessionSummary, SessionDirectoryError>
+        do {
+            outcome = .success(try await directory.fork(request))
+        } catch let error as SessionDirectoryError {
+            outcome = .failure(error)
+        }
+        forkOutcome.withLock { $0 = outcome }
+        return Self.forkOutput
+    }
+}
+
 /// The one place where the fork suites map a thrown error to a
 /// `SessionDirectoryError`.
 enum DirectoryErrorCapture {

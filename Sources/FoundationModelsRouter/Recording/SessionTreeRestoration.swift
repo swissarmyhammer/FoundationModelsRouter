@@ -1,10 +1,11 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import FoundationModelsHooks
 
 /// A failure to restore recorded sessions from disk, through
 /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:withForks:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -204,7 +205,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// weakly, so a node that no caller keeps leaves the live list.
     ///
     /// - Parameters:
-    ///   - rootId: The root session's span id.
+    ///   - rootId: The root session's span id, or with `withForks` `false`
+    ///     the span id of any recorded session.
     ///   - recordingRoot: The exact directory to load the tree from, or `nil`
     ///     for the nested `<recordingsRoot>/<routerId>/` layout. Pass the
     ///     same root a session was vended with.
@@ -240,8 +242,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     one client owns the whole restored tree. Thus a supplied value
     ///     replaces the recorded value on the root and on each recorded
     ///     fork. The recorded `index.md` files on disk do not change.
-    ///   - hookSessionKey: The key of the hook lineage of the root node, or
-    ///     `nil` (the default) to give the root its recorded id as its key.
+    ///   - hookSessionKey: The key of the hook lineage of the root node (or
+    ///     of the session that `withForks` `false` restores alone), or `nil`
+    ///     (the default) to give the root its recorded id as its key.
     ///     A recorded fork under the root keeps the fork rule against its
     ///     restored parent: a fork in the working directory of its parent
     ///     gets the key of its parent, so it gets this key too. A sub-agent
@@ -283,6 +286,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     folder and its lineage. A node that is on this slot and this model
     ///     already changes nothing. The restore calls no compaction. See
     ///     ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``.
+    ///   - withForks: `true` (the default) to restore each recorded fork
+    ///     under the named session too, and to refuse a named session that is
+    ///     a fork. `false` to restore the named session alone, also when it
+    ///     is a recorded fork (D205). Then the restore makes no session of
+    ///     the chain of sources of the fork and no fork under it, and it
+    ///     starts, registers and ends no hooks of another session. The
+    ///     history of the fork comes from the recordings of its sources on
+    ///     disk. Its hook parent is the hook session of its source: the open
+    ///     session in this router when the source is live, else the lineage
+    ///     that the record of the source gives. Thus a live source keeps its
+    ///     hooks and its entry in the session directory.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -299,7 +313,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         hookSessionKey: String? = nil,
         claimingRuns: Set<RunKey> = [],
         transcriptReader: (any SessionTranscriptReader)? = nil,
-        switchingModel: Bool = false
+        switchingModel: Bool = false,
+        withForks: Bool = true
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -315,11 +330,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         guard let rootNode = tree.session(rootId) else {
             throw TranscriptTreeError.sessionNotFound(rootId)
         }
-        guard rootNode.parentId == nil else {
+        guard !withForks || rootNode.parentId == nil else {
             throw SessionTreeRestorationError.notARootSession(rootId)
         }
 
-        try Self.requireClaimable(claimingRuns, in: rootNode, of: tree)
+        try Self.requireClaimable(claimingRuns, in: rootNode, withForks: withForks, of: tree)
         // The claimed runs whose open claim no restored node holds yet. The
         // first node whose events hold an orphan run keeps its claim.
         var unplacedClaims = claimingRuns
@@ -344,12 +359,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         var hooksById: [ULID: SessionHooks] = [:]
 
         /// The hooks of one restored node, or `nil` when the router has no
-        /// hook dispatcher. The origin is `.resumed`. A recorded fork follows
-        /// the fork rule against its restored parent, and a node with a
-        /// recorded spawn parent follows the sub-agent rule. The key of the
-        /// restored root is this call's `hookSessionKey`, else its recorded
-        /// id, the same key as before the restore. Every other node derives
-        /// its key from its lineage.
+        /// hook dispatcher. The origin is `.resumed`. The parent is
+        /// ``hookParent(of:in:)``. The key of the named session is this
+        /// call's `hookSessionKey`, else its lineage gives it: its recorded
+        /// id for a root, the same key as before the restore. Every other
+        /// node derives its key from its lineage.
         ///
         /// - Parameters:
         ///   - node: The loaded node.
@@ -357,16 +371,51 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Returns: The hooks of the node, or `nil`.
         func restoredHooks(for node: SessionNode, on routedLLM: RoutedLLM) -> SessionHooks? {
             guard let routerHooks = routedLLM.hooks else { return nil }
-            let parent =
-                node.parentId.flatMap { hooksById[$0]?.forkParent }
-                ?? node.record.agentSpawn.map {
-                    routerHooks.subagentParent(of: $0.parentSessionId, rootSessionID: $0.rootSessionId)
-                }
             let hooks = routerHooks.makeSessionHooks(
-                sessionID: node.id, workingDirectory: node.record.workingDirectory, parent: parent,
+                sessionID: node.id, workingDirectory: node.record.workingDirectory,
+                parent: hookParent(of: node, in: routerHooks),
                 requestedKey: node.id == rootId ? hookSessionKey : nil, isRestored: true)
             hooksById[node.id] = hooks
             return hooks
+        }
+
+        /// The hook parent of one node: a recorded fork follows the fork rule
+        /// against the hook session of its source
+        /// (``sourceHookSession(_:in:)``), and a node with a recorded spawn
+        /// parent follows the sub-agent rule.
+        ///
+        /// - Parameters:
+        ///   - node: The loaded node.
+        ///   - routerHooks: The hooks of the router of the restore.
+        /// - Returns: The hook parent, or `nil` for a root with no spawn.
+        func hookParent(of node: SessionNode, in routerHooks: RouterHooks) -> HookParent? {
+            node.parentId.flatMap { sourceHookSession($0, in: routerHooks) }.map(HookParent.fork(of:))
+                ?? node.record.agentSpawn.map {
+                    routerHooks.subagentParent(of: $0.parentSessionId, rootSessionID: $0.rootSessionId)
+                }
+        }
+
+        /// The hook session of the source of a recorded fork. A source that
+        /// this restore restored gives its restored hooks. Else a source
+        /// that is open in this router gives its open hook session, so that
+        /// a fork restored alone takes the key of its live source. Else the
+        /// lineage of the record of the source gives it, with the same rules
+        /// as a restore of that source, and nothing starts.
+        ///
+        /// - Parameters:
+        ///   - id: The id of the source.
+        ///   - routerHooks: The hooks of the router of the restore.
+        /// - Returns: The hook session of the source, or `nil` when the
+        ///   loaded tree holds no source with this id.
+        func sourceHookSession(_ id: ULID, in routerHooks: RouterHooks) -> HookSession? {
+            if let restored = hooksById[id] { return restored.session }
+            if let open = routerHooks.openSession(id) { return open }
+            guard let source = tree.session(id) else { return nil }
+            return HookLineage.make(
+                sessionID: source.id, workingDirectory: source.record.workingDirectory,
+                dataDirectory: routerHooks.dispatcher.dataDirectory, parent: hookParent(of: source, in: routerHooks),
+                requestedKey: nil, requestedOrigin: nil, isRestored: true
+            ).session
         }
 
         /// The generation handle one node restores onto, when the restore
@@ -427,6 +476,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // the node, in the directory of the router of its handle.
             let lineage = node.directoryLineage
             routedLLM.sessionDirectory?.register(session, kind: lineage.kind, parentID: lineage.parentID)
+            // A session restored alone restores no fork under it.
+            guard withForks else { return session }
             for child in node.children {
                 _ = try await restore(child)
             }
@@ -775,8 +826,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// Applies this call's `instructions` override to one node.
         ///
         /// A caller resumes one session by the id it holds, so the override
-        /// reaches the named root alone. Every recorded fork under that root
-        /// keeps its own recorded string, and
+        /// reaches the named session alone. Every recorded fork under a named
+        /// root keeps its own recorded string, and
         /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:userPresence:hookSessionKey:claimingRuns:transcriptReader:switchingModel:)``
         /// releases those forks anyway.
         ///
@@ -928,13 +979,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Parameters:
     ///   - claims: The runs that the host claims.
     ///   - rootNode: The root of the tree to restore.
+    ///   - withForks: `true` to check the forks under `rootNode` too, as the
+    ///     restore restores them; `false` to check `rootNode` alone.
     ///   - tree: The loaded tree.
     /// - Throws: ``SessionTreeRestorationError/runNotClaimable(_:)`` for the
     ///   first claimed run, in order of tool and `correlationID`, that can not
     ///   be claimed; the errors of
     ///   ``TranscriptTree/effectiveEntryEvents(forSession:)``.
     fileprivate static func requireClaimable(
-        _ claims: Set<RunKey>, in rootNode: SessionNode, of tree: TranscriptTree
+        _ claims: Set<RunKey>, in rootNode: SessionNode, withForks: Bool, of tree: TranscriptTree
     ) throws {
         guard !claims.isEmpty else { return }
         var claimable: Set<RunKey> = []
@@ -944,7 +997,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             claimable.formUnion(OrphanRunScan(scanning: events).orphanedRuns)
             claimable.formUnion(
                 eventlessClaims(claims, in: events, spawnTokens: tree.unendedSpawnTokens(of: node.id)))
-            pending += node.children
+            if withForks {
+                pending += node.children
+            }
         }
         let unclaimable = claims.subtracting(claimable).sorted {
             ($0.tool, $0.correlationID) < ($1.tool, $1.correlationID)

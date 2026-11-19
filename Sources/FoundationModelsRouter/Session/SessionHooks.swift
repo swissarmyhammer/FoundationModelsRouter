@@ -32,6 +32,17 @@ enum HookParent: Sendable, Equatable {
         }
     }
 
+    /// The parent that a fork of the session `source` has: the id, the key,
+    /// the root and the working directory of `source`.
+    ///
+    /// - Parameter source: The hook session of the source of the fork.
+    /// - Returns: The fork parent.
+    static func fork(of source: HookSession) -> HookParent {
+        .fork(
+            sessionID: source.sessionID, sessionKey: source.sessionKey, rootSessionID: source.rootSessionID,
+            workingDirectory: source.workingDirectory)
+    }
+
     /// How a session that comes from this parent relates to it.
     var kind: HookSessionKind {
         switch self {
@@ -192,8 +203,17 @@ package final class RouterHooks: Sendable {
     /// - Returns: The sub-agent parent.
     func subagentParent(of parentID: ULID, rootSessionID: ULID) -> HookParent {
         let sessionID = parentID.description
-        let sessionKey = openSessions.withLock { $0[sessionID]?.sessionKey } ?? sessionID
+        let sessionKey = openSession(parentID)?.sessionKey ?? sessionID
         return .subagent(sessionID: sessionID, sessionKey: sessionKey, rootSessionID: rootSessionID.description)
+    }
+
+    /// The hook session of the session with the id `id` while it is open in
+    /// this router, or `nil`.
+    ///
+    /// - Parameter id: The id of the session.
+    /// - Returns: The hook session, or `nil` when the session is not open.
+    func openSession(_ id: ULID) -> HookSession? {
+        openSessions.withLock { $0[id.description] }
     }
 
     /// Makes the hooks of one session, with the lineage rules of
@@ -306,9 +326,7 @@ final class SessionHooks: Sendable {
     /// (``makeForkHooks(sessionID:workingDirectory:)``), or a restored fork
     /// node of a recording.
     var forkParent: HookParent {
-        .fork(
-            sessionID: session.sessionID, sessionKey: session.sessionKey, rootSessionID: session.rootSessionID,
-            workingDirectory: session.workingDirectory)
+        .fork(of: session)
     }
 
     /// Makes the hooks of a live fork of this session (D205): the kind
