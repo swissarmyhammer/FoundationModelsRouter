@@ -26,16 +26,15 @@ struct GenerationCallFirstTokenTests {
     /// The prompt of every answer. The metered model never reads it.
     private static let prompt = "look things up, then tell me what you found"
 
-    /// The prefill and the decode of a paced call: a prefill shorter than the
-    /// decode, so a time that puts the two together breaks one of the bounds.
+    /// The prefill of a paced call: shorter than the decode, so a time that
+    /// puts the two together breaks one of the checks.
+    ///
+    /// The fixture paces each call on a manual run clock, so the session reads
+    /// exactly these times.
     private static let prefill = Duration.milliseconds(100)
 
-    /// The decode wait of a paced call.
+    /// The decode of a paced call.
     private static let decode = Duration.milliseconds(300)
-
-    /// The least decode time a paced call may report: half of ``decode``. The
-    /// session reads the first token a moment after the call sends it.
-    private static let leastDecodeTime = Duration.milliseconds(150)
 
     /// The pace of a call whose first output is `firstOutput`.
     ///
@@ -71,8 +70,8 @@ struct GenerationCallFirstTokenTests {
         #expect(toolCall.entryKind == .toolCall)
         let timeToFirstToken = try #require(toolCall.timeToFirstToken)
         let decodeTime = try #require(toolCall.decodeTime)
-        #expect(timeToFirstToken >= Self.prefill)
-        #expect(decodeTime >= Self.leastDecodeTime)
+        #expect(timeToFirstToken == Self.prefill)
+        #expect(decodeTime == Self.decode)
         #expect(toolCall.firstTokenSeen)
     }
 
@@ -91,7 +90,7 @@ struct GenerationCallFirstTokenTests {
         #expect(usages.count == calls.count)
         for usage in usages {
             let callDuration = try #require(usage.callDuration)
-            #expect(callDuration >= Self.prefill + Self.leastDecodeTime)
+            #expect(callDuration == Self.prefill + Self.decode)
             #expect(usage.firstTokenSeen == (usage.timeToFirstToken != nil))
         }
         let records = await fixture.recorder.events.filter { $0.kind == .generationCall }
@@ -152,7 +151,7 @@ struct GenerationCallFirstTokenTests {
                 guard case .int64(let callMs) = span.attributes.get(RouterTelemetry.AttributeKey.callMs) else {
                     return false
                 }
-                return callMs >= Int64((Self.prefill + Self.leastDecodeTime).wholeMilliseconds)
+                return callMs == Int64((Self.prefill + Self.decode).wholeMilliseconds)
             })
     }
 }

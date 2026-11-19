@@ -24,9 +24,16 @@ import Testing
     /// The message of the error a dropped save of an `index.md` logs.
     private static let droppedSaveMessage = "dropping a save of a session index.md"
 
-    /// The pause between two submissions, so the millisecond clock of the
-    /// record moves between them.
-    private static let clockStep: Duration = .milliseconds(5)
+    /// How far the test moves the last activity of the record back before a
+    /// second submission, in seconds.
+    ///
+    /// The record reads the wall clock (`Date()`) and has no clock that a test
+    /// can give. Two submissions can start in the same millisecond, so the
+    /// test does not wait for the clock to move. It moves the last activity
+    /// back by this interval. The second submission then must move it to a
+    /// time that is not before the last activity of the first submission, or
+    /// the test fails.
+    private static let lastActivityRewind: TimeInterval = 60
 
     /// The default name of a root session with no agent name and no agent
     /// id: the fallback name of `SessionName`.
@@ -205,18 +212,24 @@ import Testing
 
     /// A second submission moves the last activity of the session later and
     /// leaves its first activity as it was.
+    ///
+    /// Before the second submission, the test moves the last activity back
+    /// (``lastActivityRewind``), so the check needs no wait for the wall
+    /// clock to move.
     @Test func aLaterSubmissionMovesTheLastActivityAndKeepsTheFirst() async throws {
         try await Self.withVendedSession { session, _ in
             _ = try await session.respond(to: "hello")
             let afterFirst = session.record
             let firstActivity = try #require(afterFirst.firstActivityAt)
-            try await Task.sleep(for: Self.clockStep)
+            session.updateRecord {
+                $0.updatedAt = afterFirst.updatedAt.addingTimeInterval(-Self.lastActivityRewind)
+            }
 
             _ = try await session.respond(to: "again")
             let afterSecond = session.record
             let onDisk = try #require(try SessionIndexFile.read(in: session.recordingDirectory))
 
-            #expect(afterSecond.updatedAt > afterFirst.updatedAt)
+            #expect(afterSecond.updatedAt >= afterFirst.updatedAt)
             #expect(afterSecond.firstActivityAt == firstActivity)
             #expect(onDisk.updatedAt == afterSecond.updatedAt)
             #expect(onDisk.firstActivityAt == firstActivity)

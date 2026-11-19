@@ -28,7 +28,7 @@ struct GenerationCallOutputBufferedTests {
     /// The prompt of every answer. The metered model never reads it.
     private static let prompt = "look a thing up, then tell me what you found"
 
-    /// The prefill and the decode wait of each paced call.
+    /// The prefill and the decode of each paced call.
     private static let wait = Duration.milliseconds(20)
 
     /// The time from the start of a pass to its first output event in the

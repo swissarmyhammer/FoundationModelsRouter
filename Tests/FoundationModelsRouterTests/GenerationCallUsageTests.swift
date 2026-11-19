@@ -222,15 +222,10 @@ struct GenerationCallUsageTests {
     // MARK: - The prefill and the decode of one call
 
     /// The pace of each call of ``pacedCalls``: a prefill shorter than the
-    /// decode, so a time that puts the two together breaks one of the bounds
-    /// below.
+    /// decode, so a time that puts the two together breaks one of the checks
+    /// below. The fixture paces each call on a manual run clock, so the
+    /// session reads exactly these times.
     private static let pacing = MeteredCallPacing(prefill: .milliseconds(100), decode: .milliseconds(300))
-
-    /// The least decode time a paced call may report: half of the decode
-    /// wait of ``pacing``. The session reads the first token a moment after
-    /// the call sends it, so the decode time it measures can be a little
-    /// shorter than the wait.
-    private static let leastDecodeTime = Duration.milliseconds(150)
 
     /// Two calls of one tool loop, each paced by ``pacing``: one call that
     /// asks for the tool, then the call that answers.
@@ -251,8 +246,8 @@ struct GenerationCallUsageTests {
         for call in calls {
             let timeToFirstToken = try #require(call.timeToFirstToken)
             let decodeTime = try #require(call.decodeTime)
-            #expect(timeToFirstToken >= Self.pacing.prefill)
-            #expect(decodeTime >= Self.leastDecodeTime)
+            #expect(timeToFirstToken == Self.pacing.prefill)
+            #expect(decodeTime == Self.pacing.decode)
         }
         let records = await fixture.recorder.events.filter { $0.kind == .generationCall }
         #expect(records.map(\.timeToFirstTokenMs) == calls.map { $0.timeToFirstToken?.wholeMilliseconds })
