@@ -1,0 +1,36 @@
+---
+assignees:
+- claude-code
+comments:
+- actor: claude-code
+  id: 01m7v8xczsqpjnfheb4y39egf3
+  text: |-
+    ### finish iteration 1 — clean (no code change)
+    - FoundationModelsLlamaCpp 51bdabb (foundationmodelsllamacpp-44): a live copy now copies the MTP draft state of its source.
+    - Pins: root and IntegrationTests moved to 51bdabb (`--manifest-cache local`); IntegrationTests also moved Extras to cdc6179, because its old pin had no SessionImportProvenance and the integration build failed (the first two runs used an old binary and do not count).
+    - test: green — GGUFProfileIntegrationTests alone 4/4 (the MTP test drafts; a new session with 28 cached tokens accepted 88 of 117 drafted tokens); GGUFForkPromptCacheIntegrationTests alone 2/2 (the fork test still proves its point).
+    - Remaining, not a Router defect: in "a GGUF standard model with itself as its drafter drafts tokens", the second call (a live copy, 28 cached) still falls back with draftOutOfSync for a SEPARATE drafter model. That test checks only its first call, so it passes. Reported to foundationmodelsllamacpp-44 on 2026-11-19.
+    - No Router code change; Package.resolved is gitignored, so CI resolves 51bdabb by itself.
+  timestamp: 2026-11-20T01:25:09.753346+00:00
+position_column: done
+position_ordinal: ffffffffffc380
+title: The GGUF MTP integration test fails when a live copy of the llama.cpp cache turns off the draft (waits for FoundationModelsLlamaCpp)
+---
+## Problem
+
+Router CI run 44539642529 (commit e437cda0, integration job) failed in `IntegrationTests/.../GGUFProfileIntegrationTests.swift:322-323`, "a GGUF standard model with no drafter answers and drafts with its MTP layers": `outcome.speculated` is false and `fallbackReason == "draftOutOfSync"`. Log: `fed 33 tokens (28 cached), generated 128 tokens, ... MTP fell back to plain decode: draftOutOfSync` (Qwen3.5-0.8B-Q8_0.gguf, FoundationModelsLlamaCpp c11b800).
+
+## Cause
+
+FoundationModelsLlamaCpp c11b800 (D205 (f)) makes a live copy of a cache record when a prompt leaves that record before the end of its last user message. After a live copy, MTP decodes plain for the whole call. A NEW session that shares only the instructions (28 tokens) with a live record of an earlier session gets such a copy, so it loses speculation on its first call. The test passed in run 44519273093 on the same c11b800: the result depends on test order (whether an earlier record is live). This is not a Router defect.
+
+## Status
+
+Reported to foundationmodelsllamacpp-44 on 2026-11-19 with the evidence and two fix options (resync the draft after a copy, or no live copy for a short prefix that ends inside the first user message).
+
+## Work when the fix lands
+
+- [ ] Update the FoundationModelsLlamaCpp pin of the root and of IntegrationTests (`--manifest-cache local`).
+- [ ] Run `GGUFProfileIntegrationTests` alone once, and the GGUF fork suite `GGUFForkPromptCacheIntegrationTests` alone once.
+- [ ] If the fix changes the cache rule, check that the fork test of ^h3xtekz still proves its point.
+- [ ] Do not change the Router test to accept the fallback: the test is correct; the defect is in the cache. #ci #d205
