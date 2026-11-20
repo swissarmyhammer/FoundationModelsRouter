@@ -13,8 +13,15 @@ comments:
     - evidence: Extras pin is 41c13c93 in root and IntegrationTests (Package.resolved is gitignored). 3 files: Sources/FoundationModelsRouter/Directory/SessionAddressResolution.swift, Tests/FoundationModelsRouterTests/SessionAddressResolutionTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryMessageTests.swift. `swift build --build-tests` in IntegrationTests: exit 0. One full `swift test`: exit 0, 3250 tests in 364 suites passed, plus 54 and 19 in the other test products; 0 failures, no warning from repo files.
     - next: /review. The `.agent(id:folder:)` rows and tests stay. The fixtures `other`, `nested` and the helper sessions stay in the live set as sessions that the tag and agent rules must ignore.
   timestamp: 2026-11-20T15:16:08.592984+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7wrgp9kya1mrrj9c4gqyawd
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (65cfc070), 0 findings, 0 confirmed, 0 refuted; 7 validator runs, 0 failed; 3 files reviewed
+    - next: send the sha to testudoapp-9a after the push
+  timestamp: 2026-11-20T15:17:04.947225+00:00
+position_column: done
+position_ordinal: ffffffffffc680
 title: Remove the folder target from the address resolution (D199 (e) change)
 ---
 User decision 2026-11-20 (D199 (e) changed, brief from testudoapp-9a): a mention target is only an id, a short id or a slug. `#tag` still names a group. `@<agent name>` still starts the agent. The old forms `@agent:/path` and a folder path alone go, with no compatibility.
