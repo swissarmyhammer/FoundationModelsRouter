@@ -40,8 +40,24 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift. The finding is done: `provenance` is now `provenance(sourceTitle: String? = nil)`, the titled case is `provenance(sourceTitle: Self.sourceTitle)`, and `titledProvenance` is removed. The finding is checked. `swift test --filter SessionIndexFileTests`: 20 tests in 1 suite passed. One full `swift test`: exit 0; 3253 tests in 364 suites, 54 tests in 28 suites and 19 tests in 3 suites passed; 0 failed, 0 skipped. The only warning is the SwiftBuild line `missing creator for mutated node` for the mlx-swift_Cmlx bundle of a dependency. That warning was there before this change. Not committed.
     - next: /review
   timestamp: 2026-11-20T06:02:41.647207+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7vrwp6kgh1qjzm3er1pkez4
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (46b69d9d) — 0 findings, 0 confirmed, 0 refuted; 7 validator runs attempted, 0 failed. The prior finding (SessionIndexFileTests.swift:48 reuse/reuse) is checked.
+    - next: task is in done. Send the sha to testudoapp-9a after the push.
+  timestamp: 2026-11-20T06:04:23.635691+00:00
+- actor: claude-code
+  id: 01m7vrx6rx1eb22vtw2b0vw8xs
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file
+    - test: green — swift test, 3326 passed, 0 failed
+    - commit: 46b69d9d
+    - review: clean
+  timestamp: 2026-11-20T06:04:40.605818+00:00
+position_column: done
+position_ordinal: ffffffffffc580
 title: Keep sourceTitle in the recorded import provenance (D209 follow-up)
 ---
 Extras 5660d0d added the optional `sourceTitle: String?` to `SessionImportProvenance`. Its init argument comes after `sourcePath`, and the default is nil.
