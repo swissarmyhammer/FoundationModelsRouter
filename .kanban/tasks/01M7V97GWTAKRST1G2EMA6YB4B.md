@@ -60,8 +60,24 @@ comments:
     - commit: none yet (the change is in the working tree; it stays red until the llama.cpp fix).
     - next: sent the shapes to foundationmodelsllamacpp-44. When its fix lands: update the IntegrationTests pin, rebuild, run GGUFProfileIntegrationTests alone once, commit, review, push.
   timestamp: 2026-11-20T01:40:42.978789+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7vag2gs8vgtdgftm0t9q7q3
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (91129e32), 0 findings (7 validators attempted, 0 failed). The new checks are correct: `try #require(calls.count > 1)` makes the second call mandatory; each call must have `fallbackReason == nil` and `acceptedDraftTokenCount > 0`, so a call with draftOutOfSync cannot pass. The first-call checks (`tokensOut > 0`, the outcome `#require`, `draftedTokenCount > 0`) stay.
+    - next: none. The test fails until the llama.cpp drafter fix is pinned. Hold the push as the task tells.
+  timestamp: 2026-11-20T01:52:50.201280+00:00
+- actor: claude-code
+  id: 01m7vagmsjr4ky3vh5d4k3ejcx
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: no-change (the test change of iteration 1, moved to main)
+    - test: green — FoundationModelsLlamaCpp ab3bade (the separate-drafter fix) pinned in the root and IntegrationTests; GGUFProfileIntegrationTests alone 4/4; the self-drafter test's call 2 accepted 51 of 54 drafted tokens, no fallback
+    - commit: 91129e32
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-20T01:53:08.914748+00:00
+position_column: done
+position_ordinal: ffffffffffc480
 title: The self-drafting GGUF test also checks its second call, and the Router gives llama.cpp the exact call shapes (draftOutOfSync)
 ---
 ## Problem
