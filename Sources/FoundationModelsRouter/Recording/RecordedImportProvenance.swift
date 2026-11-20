@@ -8,14 +8,15 @@ import FoundationModelsExtras
 /// The value is a map with the keys of `SessionImportProvenance`. Each date
 /// is ISO 8601 text in UTC with milliseconds, as every other date of the
 /// record (``MillisecondDate``), so a provenance with whole milliseconds
-/// reads back equal to the one that was saved.
+/// reads back equal to the one that was saved. The map has no key for an
+/// absent `sourceTitle` or an absent `sourceLastDate`.
 struct RecordedImportProvenance: Codable {
     /// The provenance.
     let provenance: SessionImportProvenance
 
     /// The keys of the map.
     private enum CodingKeys: String, CodingKey {
-        case agent, sourceID, sourcePath, sourceLastDate, importedAt, skippedRecordCount
+        case agent, sourceID, sourcePath, sourceTitle, sourceLastDate, importedAt, skippedRecordCount
     }
 
     /// Wraps a provenance for the frontmatter.
@@ -34,13 +35,14 @@ struct RecordedImportProvenance: Codable {
     static func rounded(_ provenance: SessionImportProvenance) -> SessionImportProvenance {
         SessionImportProvenance(
             agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
+            sourceTitle: provenance.sourceTitle,
             sourceLastDate: provenance.sourceLastDate.map(MillisecondDate.rounded),
             importedAt: MillisecondDate.rounded(provenance.importedAt),
             skippedRecordCount: provenance.skippedRecordCount)
     }
 
-    /// Decodes the provenance from its map. An absent `sourceLastDate` is
-    /// `nil`.
+    /// Decodes the provenance from its map. An absent `sourceTitle` or an
+    /// absent `sourceLastDate` is `nil`.
     ///
     /// - Parameter decoder: The decoder.
     /// - Throws: A decoding error when a required key is absent, a key holds
@@ -52,13 +54,15 @@ struct RecordedImportProvenance: Codable {
             agent: try container.decode(String.self, forKey: .agent),
             sourceID: try container.decode(String.self, forKey: .sourceID),
             sourcePath: try container.decode(String.self, forKey: .sourcePath),
+            sourceTitle: try container.decodeIfPresent(String.self, forKey: .sourceTitle),
             sourceLastDate: try container.decodeMillisecondDateIfPresent(forKey: .sourceLastDate),
             importedAt: try container.decodeMillisecondDate(forKey: .importedAt),
             skippedRecordCount: try container.decode(Int.self, forKey: .skippedRecordCount))
     }
 
     /// Encodes the provenance as its map, each date as text with
-    /// milliseconds, and no key for an absent `sourceLastDate`.
+    /// milliseconds, and no key for an absent `sourceTitle` or an absent
+    /// `sourceLastDate`.
     ///
     /// - Parameter encoder: The encoder.
     /// - Throws: What the encoder throws.
@@ -67,6 +71,7 @@ struct RecordedImportProvenance: Codable {
         try container.encode(provenance.agent, forKey: .agent)
         try container.encode(provenance.sourceID, forKey: .sourceID)
         try container.encode(provenance.sourcePath, forKey: .sourcePath)
+        try container.encodeIfPresent(provenance.sourceTitle, forKey: .sourceTitle)
         try container.encodeIfPresent(
             provenance.sourceLastDate.map(MillisecondDate.text(of:)), forKey: .sourceLastDate)
         try container.encode(MillisecondDate.text(of: provenance.importedAt), forKey: .importedAt)

@@ -41,8 +41,23 @@ import Testing
             sourceLastDate: firstActivityAt, importedAt: updatedAt, skippedRecordCount: 2)
     }
 
+    /// The title of the source session in ``titledProvenance``.
+    private static let sourceTitle = "Fix the login test"
+
+    /// ``provenance`` with the title that the source reader found.
+    private static var titledProvenance: SessionImportProvenance {
+        SessionImportProvenance(
+            agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
+            sourceTitle: sourceTitle, sourceLastDate: provenance.sourceLastDate,
+            importedAt: provenance.importedAt, skippedRecordCount: provenance.skippedRecordCount)
+    }
+
     /// The key of the provenance in the frontmatter.
     private static let importedFromKey = "importedFrom"
+
+    /// The key of the title of the source session, inside the value of
+    /// ``importedFromKey``.
+    private static let sourceTitleKey = "sourceTitle"
 
     /// The key of the time of the import, inside the value of
     /// ``importedFromKey``.
@@ -271,6 +286,42 @@ import Testing
         #expect(lines.contains("\(Self.importedFromKey):"))
         #expect(
             lines.contains { $0.hasPrefix(" ") && $0.contains(Self.importedAtKey) && $0.contains(Self.updatedAtText) })
+    }
+
+    /// The production change that makes this test fail: an encode that
+    /// writes no `sourceTitle`, or a decode or a rounding that does not copy
+    /// it, so the read gives a provenance with no title.
+    @Test func theSourceTitleOfTheImportProvenanceSurvivesASaveAndARead() throws {
+        let directory = try Self.makeSessionDirectory()
+        var record = try Self.makeFullRecord(in: directory)
+        record.facts.importedFrom = Self.titledProvenance
+
+        try SessionIndexFile.save(record, in: directory)
+        let read = try #require(try SessionIndexFile.read(in: directory))
+
+        #expect(read.facts.importedFrom == Self.titledProvenance)
+    }
+
+    /// The production change that makes this test fail: an encode that
+    /// writes a `sourceTitle` key for a provenance with no title.
+    @Test func aProvenanceWithNoSourceTitleWritesNoSourceTitleKey() throws {
+        let directory = try Self.makeSessionDirectory()
+
+        try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
+
+        #expect(!(try Self.indexText(in: directory).contains(Self.sourceTitleKey)))
+    }
+
+    /// The production change that makes this test fail: a decode that
+    /// requires the `sourceTitle` key, so a provenance with no title does not
+    /// read back.
+    @Test func aProvenanceWithNoSourceTitleReadsBackWithNoTitle() throws {
+        let directory = try Self.makeSessionDirectory()
+
+        try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
+        let read = try #require(try SessionIndexFile.read(in: directory))
+
+        #expect(try #require(read.facts.importedFrom).sourceTitle == nil)
     }
 
     /// The production change that makes this test fail: a decode that
