@@ -53,10 +53,6 @@ import Testing
     /// A turn index that no source of this suite has.
     private static let missingTurn = 5
 
-    /// The name of the file of the usage store, in the cache folder of the
-    /// test.
-    private static let usageStoreFileName = "sessions.json"
-
     // MARK: - The last completed turn
 
     @Test func aForkAtTheLastCompletedTurnHasBothTurns() async throws {
@@ -538,8 +534,7 @@ import Testing
     /// - Parameter fixture: The fixture of the test.
     /// - Returns: The store that the directory uses.
     private static func useUsageStore(in fixture: Fixture) async -> JSONFileSessionUsageStore {
-        let store = JSONFileSessionUsageStore(
-            fileURL: fixture.directories.cacheDir.appendingPathComponent(Self.usageStoreFileName, isDirectory: false))
+        let store = RouterTestFixtures.makeUsageStore(in: fixture.directories.cacheDir)
         await fixture.directory.use(usageStore: store)
         return store
     }

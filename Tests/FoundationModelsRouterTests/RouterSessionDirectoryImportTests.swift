@@ -320,13 +320,7 @@ import Testing
     /// A provenance whose dates have a part smaller than one millisecond
     /// (``RouterTestFixtures/subMillisecond``), so each date rounds down to
     /// the date of ``provenance``.
-    private static let subMillisecondProvenance = SessionImportProvenance(
-        agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
-        sourceLastDate: Date(
-            timeIntervalSince1970: TimeInterval(sourceLastMilliseconds) / 1000 + RouterTestFixtures.subMillisecond),
-        importedAt: Date(
-            timeIntervalSince1970: TimeInterval(importedAtMilliseconds) / 1000 + RouterTestFixtures.subMillisecond),
-        skippedRecordCount: skippedRecordCount)
+    private static let subMillisecondProvenance = RouterTestFixtures.provenance(provenance)
 
     /// The production change that makes this test fail: a live session that
     /// holds the provenance dates that are not rounded, while its `index.md`
@@ -443,18 +437,9 @@ import Testing
     ///
     /// - Parameter fixture: The fixture of the test.
     private static func useLauncherRecordingRoot(in fixture: Fixture) async {
-        await fixture.directory.use(usageStore: makeUsageStore(in: fixture))
+        await fixture.directory.use(usageStore: RouterTestFixtures.makeUsageStore(in: fixture.folder))
         await fixture.directory.use(
             launcher: FakeSessionLauncher(profile: fixture.profile, importRecordingRoot: fixture.launcherRecordingRoot))
-    }
-
-    /// Makes a usage store of the usage file in the folder of a test. Each
-    /// store of the same fixture reads and writes the same file.
-    ///
-    /// - Parameter fixture: The fixture of the test.
-    /// - Returns: A new store that has not read the file yet.
-    private static func makeUsageStore(in fixture: Fixture) -> JSONFileSessionUsageStore {
-        JSONFileSessionUsageStore(fileURL: fixture.folder.appendingPathComponent("usage.json", isDirectory: false))
     }
 
     /// The production change that makes this test fail: an import that
@@ -494,7 +479,7 @@ import Testing
             let imported = try await fixture.importSession()
             let restarted = Router(pool: ModelPool()).sessionDirectory
             await restarted.useRecordingRoots { [fixture.recordingRoot] }
-            await restarted.use(usageStore: Self.makeUsageStore(in: fixture))
+            await restarted.use(usageStore: RouterTestFixtures.makeUsageStore(in: fixture.folder))
 
             let listed = try await restarted.sessions(matching: SessionQuery(includesRecorded: true))
 

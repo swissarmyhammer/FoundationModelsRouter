@@ -206,14 +206,7 @@ import Testing
     /// them rounded to the millisecond.
     @Test func theFactsRoundTheProvenanceDatesToTheMillisecond() {
         var facts = SessionFacts()
-        facts.importedFrom = SessionImportProvenance(
-            agent: Self.provenance.agent, sourceID: Self.provenance.sourceID,
-            sourcePath: Self.provenance.sourcePath,
-            sourceLastDate: Self.provenance.sourceLastDate.map {
-                $0.addingTimeInterval(RouterTestFixtures.subMillisecond)
-            },
-            importedAt: Self.provenance.importedAt.addingTimeInterval(RouterTestFixtures.subMillisecond),
-            skippedRecordCount: Self.provenance.skippedRecordCount)
+        facts.importedFrom = RouterTestFixtures.provenance(Self.provenance)
 
         #expect(facts.importedFrom == Self.provenance)
     }

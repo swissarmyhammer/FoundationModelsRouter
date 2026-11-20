@@ -18,6 +18,10 @@ import Testing
         /// The temp folder that holds all the other items.
         let root: URL
 
+        /// The folder of the store file. The store makes it at its first
+        /// write.
+        let storeFolder: URL
+
         /// The file of the store.
         let fileURL: URL
 
@@ -26,9 +30,8 @@ import Testing
 
         init() {
             root = RouterTestFixtures.makeTempDir(prefix: "JSONFileSessionUsageStoreTests")
-            fileURL = root
-                .appendingPathComponent("usage", isDirectory: true)
-                .appendingPathComponent("sessions.json", isDirectory: false)
+            storeFolder = root.appendingPathComponent("usage", isDirectory: true)
+            fileURL = RouterTestFixtures.usageStoreURL(in: storeFolder)
             recordingRoot = root.appendingPathComponent("recordings", isDirectory: true)
         }
 
@@ -40,7 +43,7 @@ import Testing
         func makeStore(
             maximumRecentCount: Int = JSONFileSessionUsageStore.defaultMaximumRecentCount
         ) -> JSONFileSessionUsageStore {
-            JSONFileSessionUsageStore(fileURL: fileURL, maximumRecentCount: maximumRecentCount)
+            RouterTestFixtures.makeUsageStore(in: storeFolder, maximumRecentCount: maximumRecentCount)
         }
 
         /// Writes `text` to ``fileURL`` in place of a valid store file.

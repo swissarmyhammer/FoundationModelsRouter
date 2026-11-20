@@ -158,6 +158,51 @@ enum RouterTestFixtures {
     /// adds this one value.
     static let subMillisecond: TimeInterval = 0.000_25
 
+    /// The name of the file of each test usage store
+    /// (``makeUsageStore(in:maximumRecentCount:)``).
+    static let usageStoreFileName = "usage.json"
+
+    /// The file of the test usage store in `folder`.
+    ///
+    /// - Parameter folder: The folder that holds the store file.
+    /// - Returns: The URL of ``usageStoreFileName`` in `folder`.
+    static func usageStoreURL(in folder: URL) -> URL {
+        folder.appendingPathComponent(usageStoreFileName, isDirectory: false)
+    }
+
+    /// Makes a usage store of the file ``usageStoreURL(in:)`` in `folder`.
+    /// Each store of the same folder reads and writes the same file.
+    ///
+    /// - Parameters:
+    ///   - folder: The folder that holds the store file.
+    ///   - maximumRecentCount: The maximum number of the entries that are not
+    ///     pinned. The default is the default of the store.
+    /// - Returns: A new store that has not read the file yet.
+    static func makeUsageStore(
+        in folder: URL, maximumRecentCount: Int = JSONFileSessionUsageStore.defaultMaximumRecentCount
+    ) -> JSONFileSessionUsageStore {
+        JSONFileSessionUsageStore(fileURL: usageStoreURL(in: folder), maximumRecentCount: maximumRecentCount)
+    }
+
+    /// A copy of `provenance` whose two dates are later by `shift`. The other
+    /// values do not change.
+    ///
+    /// - Parameters:
+    ///   - provenance: The provenance to copy.
+    ///   - shift: The interval to add to each date, in seconds. The default
+    ///     is ``subMillisecond``, so each date of the copy rounds back to the
+    ///     date of a `provenance` with whole-millisecond dates.
+    /// - Returns: The copy with the shifted dates.
+    static func provenance(
+        _ provenance: SessionImportProvenance, shiftedBy shift: TimeInterval = subMillisecond
+    ) -> SessionImportProvenance {
+        SessionImportProvenance(
+            agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
+            sourceLastDate: provenance.sourceLastDate.map { $0.addingTimeInterval(shift) },
+            importedAt: provenance.importedAt.addingTimeInterval(shift),
+            skippedRecordCount: provenance.skippedRecordCount)
+    }
+
     /// The `num_hidden_layers` of ``configJSON``. Two layers keep the KV
     /// cache of the stub model tiny, so its footprint is mostly the weights
     /// of ``weightFileBytes``.

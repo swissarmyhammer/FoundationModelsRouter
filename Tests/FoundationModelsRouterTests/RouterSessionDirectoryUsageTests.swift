@@ -22,11 +22,10 @@ import Testing
         /// The two routers over one recordings folder.
         let pair: SessionDirectoryRouterPair
 
-        /// The file of the usage store, in the cache folder of the test.
-        var storeFile: URL {
-            pair.directories.cacheDir
-                .appendingPathComponent("usage", isDirectory: true)
-                .appendingPathComponent("sessions.json", isDirectory: false)
+        /// The folder of the usage store file, in the cache folder of the
+        /// test.
+        var storeFolder: URL {
+            pair.directories.cacheDir.appendingPathComponent("usage", isDirectory: true)
         }
 
         /// The directory of the recording router, which holds its live
@@ -37,11 +36,11 @@ import Testing
         /// the recording router recorded.
         var readingDirectory: RouterSessionDirectory { pair.directory }
 
-        /// Makes a new store of ``storeFile``.
+        /// Makes a new store of the store file in ``storeFolder``.
         ///
         /// - Returns: A store that has not read the file yet.
         func makeStore() -> JSONFileSessionUsageStore {
-            JSONFileSessionUsageStore(fileURL: storeFile)
+            RouterTestFixtures.makeUsageStore(in: storeFolder)
         }
 
         /// Vends a live root session of the recording router.
