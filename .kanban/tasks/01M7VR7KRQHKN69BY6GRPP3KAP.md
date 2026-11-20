@@ -17,6 +17,29 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Recording/RecordedImportProvenance.swift, Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift. Extras resolved at 5660d0d (root and IntegrationTests). One full `swift test`: exit 0; 3253 tests in 364 suites, 54 tests in 28 suites, 19 tests in 3 suites passed; 0 failed. Not committed.
     - next: /review
   timestamp: 2026-11-20T05:58:21.225394+00:00
+- actor: claude-code
+  id: 01m7vrmys0fyc8pm1sxbw70zgx
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (0a1d1ddb); 1 finding (1 confirmed, 0 refuted) — Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift:48 reuse/reuse
+    - next: implement the finding (make `provenance` take an optional `sourceTitle` and remove the parallel `titledProvenance` copy), then test, commit and review again.
+  timestamp: 2026-11-20T06:00:10.272416+00:00
+- actor: claude-code
+  id: 01m7vrndcjffaf5th8dr4z3s4k
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 2 files
+    - test: green — swift test, 3326 passed, 0 failed
+    - commit: 0a1d1ddb
+    - review: findings — Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift:48
+  timestamp: 2026-11-20T06:00:25.234711+00:00
+- actor: claude-code
+  id: 01m7vrsjkftb9gjgrb1bmbepgh
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift. The finding is done: `provenance` is now `provenance(sourceTitle: String? = nil)`, the titled case is `provenance(sourceTitle: Self.sourceTitle)`, and `titledProvenance` is removed. The finding is checked. `swift test --filter SessionIndexFileTests`: 20 tests in 1 suite passed. One full `swift test`: exit 0; 3253 tests in 364 suites, 54 tests in 28 suites and 19 tests in 3 suites passed; 0 failed, 0 skipped. The only warning is the SwiftBuild line `missing creator for mutated node` for the mlx-swift_Cmlx bundle of a dependency. That warning was there before this change. Not committed.
+    - next: /review
+  timestamp: 2026-11-20T06:02:41.647207+00:00
 position_column: doing
 position_ordinal: '80'
 title: Keep sourceTitle in the recorded import provenance (D209 follow-up)
@@ -34,3 +57,12 @@ In `Sources/FoundationModelsRouter/Recording/RecordedImportProvenance.swift`, `r
 - [x] `swift test` passes (one full run).
 
 Requested by testudoapp-9a. Send the sha to it after the push.
+
+## Review Findings (2026-11-19 23:58)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SessionIndexFileTests.swift:48` `reuse/reuse` — `titledProvenance` rebuilds the whole `SessionImportProvenance` that the existing `provenance` property (lines 37-42) already builds, changing only `sourceTitle`. This is a near-match that was not extended. Giving `provenance` a `sourceTitle` parameter (default nil) would remove the parallel copy, so the field list is kept in one place and a future field added to `provenance` cannot drift from the titled copy. Make `provenance` take an optional title, for example `private static func provenance(sourceTitle: String? = nil) -> SessionImportProvenance`, and build the titled case as `provenance(sourceTitle: sourceTitle)`. Update the existing uses of `provenance` to the new form, or keep a computed `provenance` that calls it with the default. Then delete `titledProvenance`, or keep it as a one-line alias.

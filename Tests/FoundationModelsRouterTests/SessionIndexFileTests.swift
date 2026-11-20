@@ -32,25 +32,22 @@ import Testing
     /// from before D206 does not hold.
     private static let recapKeys = ["lastSummary", "recap", "recapAt"]
 
-    /// The provenance of every made record (D209 (h)). Its dates are
+    /// The provenance of a made record (D209 (h)). Its dates are
     /// ``firstActivityAt`` and ``updatedAt``, inside a second.
-    private static var provenance: SessionImportProvenance {
+    ///
+    /// - Parameter sourceTitle: The title that the source reader found, or
+    ///   `nil` for a source with no title. Every made record has no title.
+    /// - Returns: The provenance.
+    private static func provenance(sourceTitle: String? = nil) -> SessionImportProvenance {
         SessionImportProvenance(
             agent: "claude-code", sourceID: "source-session-1",
             sourcePath: "/Users/dev/.claude/projects/example/source-session-1.jsonl",
-            sourceLastDate: firstActivityAt, importedAt: updatedAt, skippedRecordCount: 2)
+            sourceTitle: sourceTitle, sourceLastDate: firstActivityAt, importedAt: updatedAt,
+            skippedRecordCount: 2)
     }
 
-    /// The title of the source session in ``titledProvenance``.
+    /// The title of the source session in a titled ``provenance(sourceTitle:)``.
     private static let sourceTitle = "Fix the login test"
-
-    /// ``provenance`` with the title that the source reader found.
-    private static var titledProvenance: SessionImportProvenance {
-        SessionImportProvenance(
-            agent: provenance.agent, sourceID: provenance.sourceID, sourcePath: provenance.sourcePath,
-            sourceTitle: sourceTitle, sourceLastDate: provenance.sourceLastDate,
-            importedAt: provenance.importedAt, skippedRecordCount: provenance.skippedRecordCount)
-    }
 
     /// The key of the provenance in the frontmatter.
     private static let importedFromKey = "importedFrom"
@@ -109,7 +106,7 @@ import Testing
             lastSummary: lastSummary,
             recap: recap,
             recapAt: updatedAt,
-            importedFrom: provenance)
+            importedFrom: provenance())
     }
 
     /// A record with every field filled: a fork with a spawn, a profile and
@@ -271,7 +268,7 @@ import Testing
         try SessionIndexFile.save(try Self.makeFullRecord(in: directory), in: directory)
         let read = try #require(try SessionIndexFile.read(in: directory))
 
-        #expect(read.facts.importedFrom == Self.provenance)
+        #expect(read.facts.importedFrom == Self.provenance())
     }
 
     /// The production change that makes this test fail: an encode that
@@ -294,12 +291,12 @@ import Testing
     @Test func theSourceTitleOfTheImportProvenanceSurvivesASaveAndARead() throws {
         let directory = try Self.makeSessionDirectory()
         var record = try Self.makeFullRecord(in: directory)
-        record.facts.importedFrom = Self.titledProvenance
+        record.facts.importedFrom = Self.provenance(sourceTitle: Self.sourceTitle)
 
         try SessionIndexFile.save(record, in: directory)
         let read = try #require(try SessionIndexFile.read(in: directory))
 
-        #expect(read.facts.importedFrom == Self.titledProvenance)
+        #expect(read.facts.importedFrom == Self.provenance(sourceTitle: Self.sourceTitle))
     }
 
     /// The production change that makes this test fail: an encode that
