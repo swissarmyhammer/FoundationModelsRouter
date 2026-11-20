@@ -276,7 +276,8 @@ private struct GGUFRouterFixture {
 ///    drafter, and the router reports it in
 ///    ``GenerationCallUsage/speculativeDecoding`` of each call of the answer.
 /// 3. The model drafts with a drafter the reference names, here a second copy
-///    of itself, and each call of the answer reports the drafted tokens.
+///    of itself, and each call of the answer drafts with no fallback: the
+///    first call, and the recovery after its reasoning stop.
 /// 4. One slot that names an MLX candidate and a GGUF candidate resolves by
 ///    fit: the MLX candidate does not fit the budget, and the GGUF candidate
 ///    wins the slot.
@@ -331,10 +332,17 @@ struct GGUFProfileIntegrationTests {
 
         let calls = try await fixture.answer(on: selfDraftingProfile).calls
 
+        // The first call reasons up to the ceiling, so the answer has a
+        // second call: the recovery after the reasoning stop. That call runs
+        // on a new `LanguageModelSession` over the same model, with the
+        // reasoning off, and it must also draft.
+        try #require(calls.count > 1)
         for usage in calls {
             #expect(usage.tokensOut > 0)
             let outcome = try #require(usage.speculativeDecoding)
             #expect(outcome.draftedTokenCount > 0)
+            #expect(outcome.fallbackReason == nil, "the call fell back to plain decode: \(usage)")
+            #expect(outcome.acceptedDraftTokenCount > 0, "the target accepted no drafted token: \(usage)")
         }
     }
 
