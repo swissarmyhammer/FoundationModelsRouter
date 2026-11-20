@@ -143,6 +143,30 @@ comments:
     - evidence: 6 files — Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, RouterSessionDirectoryImportTests.swift, SessionSummaryRecordTests.swift, JSONFileSessionUsageStoreTests.swift, RouterSessionDirectoryUsageTests.swift, RouterSessionDirectoryForkTests.swift. Suites (Target.Suite filters, 5 suites): 121 tests passed. Full `swift test` once: exit 0, 3250 tests in 364 suites + 54 + 19 passed; one build-system warning only ("missing creator for mutated node" for the mlx-swift_Cmlx bundle, not from source). Log: scratchpad/full-suite.log.
     - next: /review
   timestamp: 2026-11-20T00:08:18.193423+00:00
+- actor: claude-code
+  id: 01m7v4nyf8ktaj2c9thafzg5n7
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit 3c7c49a6): 1 finding, 1 confirmed, 1 refuted. Tests/FoundationModelsRouterTests/JSONFileSessionUsageStoreTests.swift:33 (`duplication/duplication`: the subfolder name "usage" is a literal in two test files). The 2 items of 17:58 are fixed. No test reads the store file name, so the change from `sessions.json` to `usage.json` keeps the meaning of each test.
+    - next: implement the 18:08 item (put the "usage" folder name and a folder helper in RouterTestFixtures, and use them in JSONFileSessionUsageStoreTests and RouterSessionDirectoryUsageTests), then review again.
+  timestamp: 2026-11-20T00:11:11.208068+00:00
+- actor: claude-code
+  id: 01m7v4ppjsrt5yk912kp7jfjr3
+  text: |-
+    ### finish iteration 4 — findings
+    - implement: changed — RouterTestFixtures.swift (one store factory, one shifted provenance), 5 test files
+    - test: green — one full swift test run, 3250 tests in 364 suites (+54, +19), 0 failures
+    - commit: 3c7c49a6
+    - review: findings — JSONFileSessionUsageStoreTests.swift:33 (the "usage" subfolder name is a literal in two test files)
+  timestamp: 2026-11-20T00:11:35.897354+00:00
+- actor: claude-code
+  id: 01m7v4tprb5t8bsy8w77d2sga7
+  text: |-
+    ### implement — changed
+    - Fix of the 18:08 finding: `RouterTestFixtures.usageStoreFolderName` ("usage") and `RouterTestFixtures.usageStoreFolder(in:)` are new, beside `usageStoreFileName`. `JSONFileSessionUsageStoreTests.Fixture.storeFolder` and `RouterSessionDirectoryUsageTests.Fixture.storeFolder` call `usageStoreFolder(in:)`. A search of all the Swift test files (Tests, IntegrationTests) found no other copy of the "usage" folder literal. No behavior change: each suite keeps the same folder.
+    - evidence: Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, Tests/FoundationModelsRouterTests/JSONFileSessionUsageStoreTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryUsageTests.swift; `swift test --filter 'FoundationModelsRouterTests.JSONFileSessionUsageStoreTests|FoundationModelsRouterTests.RouterSessionDirectoryUsageTests'`: 37 tests in 2 suites passed, 0 warnings, 0 errors. No full `swift test`: the change is only a test-only rename of a literal.
+    - next: review
+  timestamp: 2026-11-20T00:13:47.147144+00:00
 depends_on:
 - 01M7TY6VQ8MK2NV6ADXMDHQ7RH
 position_column: doing
@@ -198,3 +222,14 @@ Push when green. Send the sha to foundationmodelsacpagent-9e and testudoapp-9a. 
 
 - [x] `Tests/FoundationModelsRouterTests/RouterSessionDirectoryImportTests.swift:456` `reuse/reuse` — The new helper makeUsageStore(in:) builds a JSONFileSessionUsageStore over a 'usage.json' file in the test folder. This is the same job as the existing store factories in other test files. It is a parallel copy, not a shared helper, so the test-store construction is spread across three files. Move the store factory to the shared test fixtures (RouterTestFixtures) as one function that takes the folder. Then have the import tests, the usage tests and the JSON store tests call it. Keep the 'usage.json' file name in one place so the tests cannot drift apart.
 - [x] `Tests/FoundationModelsRouterTests/SessionSummaryRecordTests.swift:212` `reuse/reuse` — The test theFactsRoundTheProvenanceDatesToTheMillisecond rebuilds a SessionImportProvenance with a sub-millisecond shift on both dates. This is a near copy of the provenance that RouterSessionDirectoryImportTests already builds as subMillisecondProvenance. The same field-by-field construction now exists in two places. Build the shifted provenance once in a shared test helper (for example beside RouterTestFixtures.provenance, taking the date shift as a parameter) and use it from both test files. Alternatively, lift the import tests' subMillisecondProvenance into the shared helper and let the summary test use it.
+
+## Review Findings (2026-11-19 18:08)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> Commit 3c7c49a6. The engine gave 1 finding (1 refuted). Checked and correct: the 2 items of 17:58 are fixed (`RouterTestFixtures.usageStoreFileName`, `usageStoreURL(in:)` and `makeUsageStore(in:maximumRecentCount:)` are the one store factory of the import, usage, JSON store and fork tests; `RouterTestFixtures.provenance(_:shiftedBy:)` is the one shifted provenance of the import and summary tests). No test lost its meaning: no test and no source file reads the store file name (`sessions.json` and `usage.json` occur only in `RouterTestFixtures`; `sessions.jsonl` of `RouterSessionDirectoryRecordedTests` is a different file), each suite keeps the same folder, and the JSON store tests still write to `fileURL`, which is the same file that the store reads. The base provenance of the import tests has whole-millisecond dates, so the shifted copy rounds back to it as before.
+
+- [x] `Tests/FoundationModelsRouterTests/JSONFileSessionUsageStoreTests.swift:33` `duplication/duplication` — The name of the usage store subfolder, "usage", is written as a literal in two test files. The new storeFolder property here and the new storeFolder property in RouterSessionDirectoryUsageTests.swift each build the same subfolder with the same literal. The shared fixture already owns the store file name (RouterTestFixtures.usageStoreFileName), but not this folder name, so the two copies can drift apart. Add a shared `static let usageStoreFolderName = "usage"` to RouterTestFixtures next to usageStoreFileName, and add a helper such as `static func usageStoreFolder(in base: URL) -> URL` that both files call. Each test then passes only its own base folder.

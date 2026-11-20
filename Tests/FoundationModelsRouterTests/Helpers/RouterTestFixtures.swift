@@ -162,6 +162,19 @@ enum RouterTestFixtures {
     /// (``makeUsageStore(in:maximumRecentCount:)``).
     static let usageStoreFileName = "usage.json"
 
+    /// The name of the subfolder that holds the file of a test usage store
+    /// (``usageStoreFolder(in:)``).
+    static let usageStoreFolderName = "usage"
+
+    /// The subfolder of `base` that holds the file of a test usage store.
+    /// This function does not make the subfolder.
+    ///
+    /// - Parameter base: The folder of the test.
+    /// - Returns: The URL of ``usageStoreFolderName`` in `base`.
+    static func usageStoreFolder(in base: URL) -> URL {
+        base.appendingPathComponent(usageStoreFolderName, isDirectory: true)
+    }
+
     /// The file of the test usage store in `folder`.
     ///
     /// - Parameter folder: The folder that holds the store file.

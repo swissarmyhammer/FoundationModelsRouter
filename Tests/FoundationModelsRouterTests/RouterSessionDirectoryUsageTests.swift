@@ -25,7 +25,7 @@ import Testing
         /// The folder of the usage store file, in the cache folder of the
         /// test.
         var storeFolder: URL {
-            pair.directories.cacheDir.appendingPathComponent("usage", isDirectory: true)
+            RouterTestFixtures.usageStoreFolder(in: pair.directories.cacheDir)
         }
 
         /// The directory of the recording router, which holds its live

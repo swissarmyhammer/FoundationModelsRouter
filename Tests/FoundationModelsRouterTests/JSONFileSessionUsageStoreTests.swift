@@ -30,7 +30,7 @@ import Testing
 
         init() {
             root = RouterTestFixtures.makeTempDir(prefix: "JSONFileSessionUsageStoreTests")
-            storeFolder = root.appendingPathComponent("usage", isDirectory: true)
+            storeFolder = RouterTestFixtures.usageStoreFolder(in: root)
             fileURL = RouterTestFixtures.usageStoreURL(in: storeFolder)
             recordingRoot = root.appendingPathComponent("recordings", isDirectory: true)
         }
