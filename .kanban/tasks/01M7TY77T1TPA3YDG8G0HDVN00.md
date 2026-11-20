@@ -167,10 +167,26 @@ comments:
     - evidence: Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, Tests/FoundationModelsRouterTests/JSONFileSessionUsageStoreTests.swift, Tests/FoundationModelsRouterTests/RouterSessionDirectoryUsageTests.swift; `swift test --filter 'FoundationModelsRouterTests.JSONFileSessionUsageStoreTests|FoundationModelsRouterTests.RouterSessionDirectoryUsageTests'`: 37 tests in 2 suites passed, 0 warnings, 0 errors. No full `swift test`: the change is only a test-only rename of a literal.
     - next: review
   timestamp: 2026-11-20T00:13:47.147144+00:00
+- actor: claude-code
+  id: 01m7v4zyhcqzsqs33w0gzn9z0h
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 873c9f8b) gave 0 findings (3 files reviewed, 2 `.kanban/` files not reviewed). The item of 18:08 is fixed: `RouterTestFixtures.usageStoreFolderName` and `usageStoreFolder(in:)` replace the "usage" literal in `JSONFileSessionUsageStoreTests` and `RouterSessionDirectoryUsageTests`, and the literal occurs only in `RouterTestFixtures` now. All prior review items are checked. `swift test --filter 'RouterSessionDirectoryImportTests|SessionIndexFileTests|SessionSummaryRecordTests'`: 59 tests in 3 suites passed, 0 warnings. The 4 items of "## Tests" are ticked: (1) `anImportRestoresToTheGivenTranscript`, `aRestoredImportHasTheImportOrigin`, `aRestoredImportGivesItsProvenance`, `aRestoredImportIsARootSession`, `anImportGivesItsProvenanceAfterARestart`; (2) `theListShowsTheImportWithTheTitleOfTheRequest`, `aSecondImportWithTheSameTitleGetsTheNextFreeNumber`; (3) `SessionIndexFileTests.aRecordWithNoImportedFromKeyReadsItAsNil`; (4) `aFailedWriteLeavesNoFolder`, `aFailedWriteLeavesNoDirectoryEntry`.
+    - next: the task is done. Do the "## After" step (push, send the sha).
+  timestamp: 2026-11-20T00:16:38.956010+00:00
+- actor: claude-code
+  id: 01m7v50jq19hbaphqbhjm7natt
+  text: |-
+    ### finish iteration 5 — clean
+    - implement: changed — RouterTestFixtures.swift, JSONFileSessionUsageStoreTests.swift, RouterSessionDirectoryUsageTests.swift (the folder literal)
+    - test: green — the 2 changed suites 37/37; the import, index file and summary suites 59/59; the last full run (3250 tests) was before this test-only rename
+    - commit: 873c9f8b
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-11-20T00:16:59.617064+00:00
 depends_on:
 - 01M7TY6VQ8MK2NV6ADXMDHQ7RH
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffffffc280
 title: 'The session directory imports a session: importSession, the importedFrom fact, and the name (D209 (h), part 2)'
 ---
 ## Goal
@@ -190,10 +206,10 @@ title: 'The session directory imports a session: importSession, the importedFrom
 
 ## Tests
 
-- [ ] An import writes a recording that restores; the summary is a `root` with origin `import`, and `importedFrom` reads back (also after a restart).
-- [ ] `list` of the directory shows the session with the name; a second import with the same title gets the next free number.
-- [ ] An old `index.md` with no `importedFrom` reads as nil.
-- [ ] A failed write leaves no folder and no directory entry.
+- [x] An import writes a recording that restores; the summary is a `root` with origin `import`, and `importedFrom` reads back (also after a restart).
+- [x] `list` of the directory shows the session with the name; a second import with the same title gets the next free number.
+- [x] An old `index.md` with no `importedFrom` reads as nil.
+- [x] A failed write leaves no folder and no directory entry.
 
 ## After
 
