@@ -38,10 +38,6 @@ enum SessionAddressResolution: Sendable, Equatable {
     /// `nil` when no session matched it.
     case refused(reason: String, target: ULID?)
 
-    /// The reason for a folder with no live root session: a folder alone does
-    /// not name an agent (D61).
-    static let noRootSessionInTheFolderReason = "Name an agent: @agent:/path."
-
     /// The reason for a tag that no live session other than the sender has.
     static let noSessionHasTheTagReason = "No live session has the tag."
 
@@ -54,21 +50,6 @@ enum SessionAddressResolution: Sendable, Equatable {
     ///   file for a recorded one.
     fileprivate static func reaching(session target: SessionSummary) -> Self {
         guard target.isLive, target.state != .archived else { return .sendToRecorded(target.id) }
-        return .deliver([target.id])
-    }
-
-    /// The decision for a folder address.
-    ///
-    /// - Parameters:
-    ///   - folder: The folder of the address.
-    ///   - live: The live sessions.
-    /// - Returns: A delivery to the newest live root session of any agent in
-    ///   the folder, else refused with the hint to name an agent and no
-    ///   target.
-    fileprivate static func reaching(folder: URL, among live: [SessionSummary]) -> Self {
-        guard let target = newestRoot(among: live, in: folder) else {
-            return .refused(reason: noRootSessionInTheFolderReason, target: nil)
-        }
         return .deliver([target.id])
     }
 
@@ -93,22 +74,6 @@ enum SessionAddressResolution: Sendable, Equatable {
         guard !targets.isEmpty else { return .refused(reason: noSessionHasTheTagReason, target: nil) }
         return .deliver(targets)
     }
-
-    /// The newest live root session of any agent in the folder. A subagent
-    /// or a fork never matches. Newest is ULID order, as in
-    /// `RouterSessionDirectory.sessions(matching:)`.
-    ///
-    /// - Parameters:
-    ///   - live: The live sessions.
-    ///   - folder: The folder. It compares by
-    ///     ``RouterSessionDirectory/comparablePath(of:)``.
-    /// - Returns: The summary, or `nil` when none matches.
-    private static func newestRoot(among live: [SessionSummary], in folder: URL) -> SessionSummary? {
-        let path = RouterSessionDirectory.comparablePath(of: folder)
-        return live
-            .filter { $0.kind == .root && RouterSessionDirectory.comparablePath(of: $0.workingDirectory) == path }
-            .max { $0.id < $1.id }
-    }
 }
 
 extension SessionAddress {
@@ -127,13 +92,8 @@ extension SessionAddress {
     ///   directory does not look for a live session of the agent. The folder
     ///   of the start is the folder of the address, else the working folder
     ///   of a session sender, else `nil` for a user sender.
-    /// - A folder gives its newest live root session of any agent, else a
-    ///   refusal with the hint "Name an agent: @agent:/path.".
     /// - A tag gives each live session with the tag but the sender, else one
     ///   refusal.
-    ///
-    /// A folder address compares folders with symbolic links resolved and no
-    /// trailing `/`.
     ///
     /// - Parameters:
     ///   - sender: The sender of the message.
@@ -161,8 +121,6 @@ extension SessionAddress {
             return .reaching(session: try knownSummary(of: id))
         case .agent(let agentID, let folder):
             return .startAgent(agentID: agentID, folder: folder ?? senderSummary?.workingDirectory)
-        case .folder(let folder):
-            return .reaching(folder: folder, among: live)
         case .tag(let tag):
             return .reaching(tag: tag, from: senderSummary?.id, among: live)
         }

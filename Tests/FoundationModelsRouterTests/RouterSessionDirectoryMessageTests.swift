@@ -346,37 +346,6 @@ import Testing
         await fixture.close([])
     }
 
-    /// A folder address with a live root session in the folder delivers to
-    /// it.
-    @Test func aFolderWithALiveRootDeliversToIt() async throws {
-        let fixture = try await Self.makeFixture()
-        let folder = fixture.directories.cacheDir
-        let target = fixture.makeSession(SessionConfiguration(workingDirectory: folder))
-
-        let receipts = try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(from: .user(clientID: Self.clientID), to: .folder(folder), text: Self.text))
-
-        let messageID = try Self.messageID(of: receipts)
-        #expect(receipts == [SessionSendReceipt(messageID: messageID, target: target.id, outcome: .delivered)])
-        await fixture.close([target])
-    }
-
-    /// A folder address with no live root session is refused with the hint
-    /// to name an agent, and no target.
-    @Test func aFolderWithNoLiveRootIsRefusedWithTheHint() async throws {
-        let fixture = try await Self.makeFixture()
-
-        let receipts = try await fixture.directory.sendAndAwaitDelivery(
-            OutgoingSessionMessage(
-                from: .user(clientID: Self.clientID), to: .folder(fixture.directories.cacheDir), text: Self.text))
-
-        #expect(
-            receipts == [
-                SessionSendReceipt(outcome: .refused, reason: SessionAddressResolution.noRootSessionInTheFolderReason)
-            ])
-        await fixture.close([])
-    }
-
     /// A tag address delivers to each live session with the tag but the
     /// sender, the oldest first.
     @Test func aTagDeliversToEachSessionWithTheTagButTheSender() async throws {

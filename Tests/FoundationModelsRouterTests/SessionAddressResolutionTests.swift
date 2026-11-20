@@ -10,9 +10,7 @@ import Testing
 /// with its reason and target, or the `unknownSession` error of the
 /// FoundationModelsExtras send contract for an unknown sender or target.
 ///
-/// Each test builds the summaries by hand: no session runs. Only the link
-/// test makes a real folder, because a symbolic link must exist on disk to
-/// resolve.
+/// Each test builds the summaries by hand: no session runs.
 @Suite("SessionAddressResolution: the address rules")
 struct SessionAddressResolutionTests {
     /// The decision of the resolver, or the error that it throws.
@@ -36,34 +34,6 @@ struct SessionAddressResolutionTests {
 
         /// The name of the row.
         var testDescription: String { name }
-    }
-
-    /// A real folder and a symbolic link to it, in a fresh temp directory
-    /// that the test removes with ``remove()``, usually in a `defer`.
-    struct LinkedFolder {
-        /// The temp directory that holds the folder and the link.
-        let scratch = RouterTestFixtures.makeTempDir(prefix: "SessionAddressResolutionTests")
-
-        /// The real folder.
-        let folder: URL
-
-        /// The symbolic link to ``folder``.
-        let link: URL
-
-        /// Makes the folder and the link.
-        ///
-        /// - Throws: The error of the file manager when it cannot make them.
-        init() throws {
-            folder = scratch.appendingPathComponent("real", isDirectory: true)
-            link = scratch.appendingPathComponent("link", isDirectory: true)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder)
-        }
-
-        /// Removes the temp directory and all that it holds.
-        func remove() {
-            try? FileManager.default.removeItem(at: scratch)
-        }
     }
 
     /// The start second of each hand-built session. The order of the starts
@@ -151,7 +121,7 @@ struct SessionAddressResolutionTests {
     static let helperFork = summary(starting: .helperFork, agentID: helper, in: nested, kind: .fork)
 
     /// A recorded session of the coder that is not live. It is the newest
-    /// root session in ``project``, and still no folder address may pick it.
+    /// root session in ``project``.
     static let recorded = summary(starting: .recorded, agentID: coder, in: project, isLive: false)
 
     /// An archived session of the coder.
@@ -178,7 +148,7 @@ struct SessionAddressResolutionTests {
     // MARK: - The table
 
     /// One row for each rule of the addressing table.
-    static let rows: [Row] = sessionRows + agentRows + folderRows + tagRows + unknownSenderRows
+    static let rows: [Row] = sessionRows + agentRows + tagRows + unknownSenderRows
 
     /// The rows of a session id address.
     static let sessionRows: [Row] = [
@@ -223,24 +193,6 @@ struct SessionAddressResolutionTests {
             expected: .success(.startAgent(agentID: absentAgent, folder: nil))),
     ]
 
-    /// The rows of a folder address.
-    static let folderRows: [Row] = [
-        Row(
-            name: "a folder gives its newest live root session of any agent, not a newer subagent or fork",
-            sender: fromUser, address: .folder(project), expected: .success(.deliver([reviewer.id]))),
-        Row(
-            name: "another folder gives its one live root session",
-            sender: fromReviewer, address: .folder(other), expected: .success(.deliver([elsewhereCoder.id]))),
-        Row(
-            name: "a folder with no session is refused with the hint to name an agent, and no target",
-            sender: fromReviewer, address: .folder(empty),
-            expected: .success(.refused(reason: "Name an agent: @agent:/path.", target: nil))),
-        Row(
-            name: "a folder with only a subagent and a fork is refused with the hint to name an agent, and no target",
-            sender: fromUser, address: .folder(nested),
-            expected: .success(.refused(reason: "Name an agent: @agent:/path.", target: nil))),
-    ]
-
     /// The rows of a tag address.
     static let tagRows: [Row] = [
         Row(
@@ -271,10 +223,6 @@ struct SessionAddressResolutionTests {
         Row(
             name: "an unknown session sender to an agent with no folder throws unknownSession with the sender id",
             sender: fromUnknownSession, address: .agent(id: coder, folder: nil),
-            expected: .failure(.unknownSession(unknownID))),
-        Row(
-            name: "an unknown session sender to a folder throws unknownSession with the sender id",
-            sender: fromUnknownSession, address: .folder(project),
             expected: .failure(.unknownSession(unknownID))),
         Row(
             name: "an unknown session sender to a tag throws unknownSession with the sender id",
@@ -375,17 +323,4 @@ struct SessionAddressResolutionTests {
         #expect(decision == .success(.startAgent(agentID: Self.coder, folder: Self.project)))
     }
 
-    /// A folder address matches the session through a symbolic link to its
-    /// folder, and with a trailing `/`.
-    @Test func aLinkAndATrailingSlashMatchTheSameFolder() throws {
-        let linked = try LinkedFolder()
-        defer { linked.remove() }
-        let withSlash = URL(fileURLWithPath: linked.folder.path + "/")
-        let session = Self.summary(starting: .olderCoder, agentID: Self.coder, in: linked.folder)
-
-        let addresses: [SessionAddress] = [.folder(linked.link), .folder(withSlash)]
-        let decisions = addresses.map { Self.resolve($0, from: Self.fromUser, among: [session]) }
-
-        #expect(decisions == Array(repeating: .success(.deliver([session.id])), count: addresses.count))
-    }
 }
