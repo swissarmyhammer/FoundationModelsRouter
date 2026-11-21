@@ -18,8 +18,15 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Core/ProfileDefinition.swift, Tests/FoundationModelsRouterTests/CoreTypesTests.swift. RED: build failed on missing members. GREEN: CoreTypesTests 23/23 pass. Full `swift test` one run: 3262 tests in 364 suites passed, 54 in 28 passed, 19 in 3 passed, 0 failures. IntegrationTests `swift build --build-tests`: Build complete.
     - next: review; after commit and push, send the sha to foundationmodelsacpagent-9e.
   timestamp: 2026-11-21T11:39:03.834503+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m7yyk790hxcps8dgzsfgv65d
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings, 0 confirmed, 0 refuted (7 attempted, 0 failed). The .kanban/ files are excluded by .reviewignore. No earlier review findings were on the task.
+    - next: The task is in done. Send the sha to foundationmodelsacpagent-9e after the push.
+  timestamp: 2026-11-21T11:41:48.192031+00:00
+position_column: done
+position_ordinal: ffffffffffc780
 title: Code defaults for standard, flash, embedding and description in ProfileDefinition
 ---
 User decision 2026-11-21 (request from foundationmodelsacpagent-9e, its card ^f4z8wj9): a profile must not take its missing keys from the bundled `large` profile. The defaults go in `ProfileDefinition` (`Sources/FoundationModelsRouter/Core/ProfileDefinition.swift`), in one place, consistent with the existing defaults (`decision`, `context`, `decisionContext`, `kvBits`).
