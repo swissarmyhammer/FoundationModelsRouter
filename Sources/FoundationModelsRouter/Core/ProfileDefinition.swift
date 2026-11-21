@@ -2,7 +2,7 @@
 ///
 /// Each slot (`standard`, `flash`, `embedding`, `decision`) lists candidate
 /// ``ModelRef``s in preference order; resolution picks the first that fits the
-/// request and residency constraints. Every slot is required: when no
+/// request and residency constraints. Every slot must resolve: when no
 /// candidate of a slot fits, the decision slot included, the resolve fails.
 /// `context` is the working context size in tokens — it
 /// scales the KV-cache footprint and determines whether a candidate fits.
@@ -15,28 +15,66 @@
 /// and `Codable`. `context`'s `Codable` shape is back-compatible by
 /// construction (an ordinary `Optional`'s synthesized coding): JSON that omits
 /// the key decodes to `nil`, and legacy JSON carrying a number decodes to that
-/// number unchanged. JSON that omits the `decision` key decodes to
-/// ``defaultDecisionCandidates``, and JSON that omits the `decisionContext`
-/// key decodes to ``defaultDecisionContext``.
+/// number unchanged.
+///
+/// Only the `name` key is required. Each other key has a default here, in
+/// this type, and a profile never takes a missing key from another profile:
+///
+/// - `description`: ``defaultDescription``.
+/// - `standard`: ``defaultStandardCandidates``.
+/// - `flash`: the `standard` list of the same profile.
+/// - `embedding`: ``defaultEmbeddingCandidates``.
+/// - `decision`: ``defaultDecisionCandidates``.
+/// - `context`: `nil`.
+/// - `decisionContext`: ``defaultDecisionContext``.
+/// - `kvBits`: an fp16 cache.
 public struct ProfileDefinition: Sendable, Codable {
     /// The profile's unique, human-meaningful name.
     public var name: String
 
     /// A short description of the profile's intent.
+    ///
+    /// The default is ``defaultDescription``.
     public var description: String
 
+    /// The description that a profile gets when it names none: an empty
+    /// text.
+    public static let defaultDescription = ""
+
     /// Candidate models for the `standard` slot, in preference order.
+    ///
+    /// The default is ``defaultStandardCandidates``.
     public var standard: [ModelRef]
+
+    /// The `standard` candidates that a profile gets when it names none: the
+    /// `mlx-community/Qwen3.5-9B-4bit` model, with its MTP head
+    /// `mlx-community/Qwen3.5-9B-MTP-4bit` as the drafter.
+    ///
+    /// A host needs 16 GB of memory or more, and this model fits in that
+    /// minimum. Thus the default resolves on each Mac that a host supports.
+    public static let defaultStandardCandidates: [ModelRef] = [
+        ModelRef(repo: "mlx-community/Qwen3.5-9B-4bit", drafter: "mlx-community/Qwen3.5-9B-MTP-4bit")
+    ]
 
     /// Candidate models for the `flash` slot, in preference order.
     ///
     /// A candidate can be the model of the `standard` slot. The resolve then
     /// loads that model once, and the `flash` slot costs only one session of
-    /// KV cache at the context.
+    /// KV cache at the context. The default is the ``standard`` list of the
+    /// same profile.
     public var flash: [ModelRef]
 
     /// Candidate models for the `embedding` slot, in preference order.
+    ///
+    /// The default is ``defaultEmbeddingCandidates``.
     public var embedding: [ModelRef]
+
+    /// The `embedding` candidates that a profile gets when it names none: the
+    /// `erjigit17/embeddinggemma-300m-ane-coreml` model, a Core ML model for
+    /// the Neural Engine.
+    public static let defaultEmbeddingCandidates: [ModelRef] = [
+        "erjigit17/embeddinggemma-300m-ane-coreml"
+    ]
 
     /// The candidate models of the decision slot, in preference order.
     ///
@@ -95,11 +133,16 @@ public struct ProfileDefinition: Sendable, Codable {
     /// Creates a profile definition.
     ///
     /// - Parameters:
-    ///   - name: The profile's unique, human-meaningful name.
-    ///   - description: A short description of the profile's intent.
-    ///   - standard: Candidate models for the `standard` slot.
-    ///   - flash: Candidate models for the `flash` slot.
-    ///   - embedding: Candidate models for the `embedding` slot.
+    ///   - name: The profile's unique, human-meaningful name. It is the
+    ///     only parameter with no default.
+    ///   - description: A short description of the profile's intent. Omit it
+    ///     to use ``defaultDescription``.
+    ///   - standard: Candidate models for the `standard` slot. Omit it to use
+    ///     ``defaultStandardCandidates``.
+    ///   - flash: Candidate models for the `flash` slot. Omit it, or pass
+    ///     `nil`, to use the `standard` list.
+    ///   - embedding: Candidate models for the `embedding` slot. Omit it to
+    ///     use ``defaultEmbeddingCandidates``.
     ///   - decision: Candidate models for the decision slot. Omit it to use
     ///     ``defaultDecisionCandidates``.
     ///   - context: The working context size in tokens, as an override.
@@ -111,10 +154,10 @@ public struct ProfileDefinition: Sendable, Codable {
     ///     cache. Omit it, or pass `nil`, for fp16.
     public init(
         name: String,
-        description: String,
-        standard: [ModelRef],
-        flash: [ModelRef],
-        embedding: [ModelRef],
+        description: String = ProfileDefinition.defaultDescription,
+        standard: [ModelRef] = ProfileDefinition.defaultStandardCandidates,
+        flash: [ModelRef]? = nil,
+        embedding: [ModelRef] = ProfileDefinition.defaultEmbeddingCandidates,
         decision: [ModelRef] = ProfileDefinition.defaultDecisionCandidates,
         context: Int? = nil,
         decisionContext: Int = ProfileDefinition.defaultDecisionContext,
@@ -123,7 +166,7 @@ public struct ProfileDefinition: Sendable, Codable {
         self.name = name
         self.description = description
         self.standard = standard
-        self.flash = flash
+        self.flash = flash ?? standard
         self.embedding = embedding
         self.decision = decision
         self.context = context
@@ -139,21 +182,29 @@ public struct ProfileDefinition: Sendable, Codable {
 
     /// Creates a profile definition from a decoder.
     ///
-    /// A missing `decision` key gives ``defaultDecisionCandidates``. A missing
+    /// Only the `name` key is required. A missing `description` key gives
+    /// ``defaultDescription``. A missing `standard` key gives
+    /// ``defaultStandardCandidates``. A missing `flash` key gives the
+    /// `standard` list of this profile, decoded or default. A missing
+    /// `embedding` key gives ``defaultEmbeddingCandidates``. A missing
+    /// `decision` key gives ``defaultDecisionCandidates``. A missing
     /// `context` key gives `nil`. A missing `decisionContext` key gives
     /// ``defaultDecisionContext``. A missing `kvBits` key gives an fp16 cache.
     ///
     /// - Parameter decoder: The decoder to read the profile from.
-    /// - Throws: `DecodingError` when a required key is missing, when a
+    /// - Throws: `DecodingError` when the `name` key is missing, when a
     ///   value has the wrong type, or when `kvBits` is not 8 or 4.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             name: try container.decode(String.self, forKey: .name),
-            description: try container.decode(String.self, forKey: .description),
-            standard: try container.decode([ModelRef].self, forKey: .standard),
-            flash: try container.decode([ModelRef].self, forKey: .flash),
-            embedding: try container.decode([ModelRef].self, forKey: .embedding),
+            description: try container.decodeIfPresent(String.self, forKey: .description)
+                ?? Self.defaultDescription,
+            standard: try container.decodeIfPresent([ModelRef].self, forKey: .standard)
+                ?? Self.defaultStandardCandidates,
+            flash: try container.decodeIfPresent([ModelRef].self, forKey: .flash),
+            embedding: try container.decodeIfPresent([ModelRef].self, forKey: .embedding)
+                ?? Self.defaultEmbeddingCandidates,
             decision: try container.decodeIfPresent([ModelRef].self, forKey: .decision)
                 ?? Self.defaultDecisionCandidates,
             context: try container.decodeIfPresent(Int.self, forKey: .context),
